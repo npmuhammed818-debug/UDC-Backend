@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: database
+    description: Database connectivity operations
 paths:
   /healthz:
     get:
@@ -24,9 +26,38 @@ paths:
             text/plain:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /db/healthz:
+    get:
+      operationId: databaseHealthCheck
+      tags: [database]
+      summary: Database connectivity check
+      description: Checks whether the backend can reach the configured Supabase PostgreSQL database
+      responses:
+        "200":
+          description: Database is reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseHealthStatus"
+        "503":
+          description: Database is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseHealthStatus"
 components:
   schemas:
     HealthStatus:
       type: string
       example: UDC is running
+    DatabaseHealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        database:
+          type: string
+      required:
+        - status
+        - database
 

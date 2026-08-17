@@ -16,6 +16,7 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  DatabaseHealthStatus,
   HealthStatus
 } from './api.schemas';
 
@@ -112,6 +113,84 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDatabaseHealthCheckUrl = () => {
+
+
+
+
+  return `/api/db/healthz`
+}
+
+/**
+ * Checks whether the backend can reach the configured Supabase PostgreSQL database
+ * @summary Database connectivity check
+ */
+export const databaseHealthCheck = async ( options?: Parameters<typeof customFetch>[1]): Promise<DatabaseHealthStatus> => {
+
+  return customFetch<DatabaseHealthStatus>(getDatabaseHealthCheckUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDatabaseHealthCheckQueryKey = () => {
+    return [
+    `/api/db/healthz`
+    ] as const;
+    }
+
+
+export const getDatabaseHealthCheckQueryOptions = <TData = Awaited<ReturnType<typeof databaseHealthCheck>>, TError = ErrorType<DatabaseHealthStatus>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof databaseHealthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDatabaseHealthCheckQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof databaseHealthCheck>>> = ({ signal }) => databaseHealthCheck({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof databaseHealthCheck>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DatabaseHealthCheckQueryResult = NonNullable<Awaited<ReturnType<typeof databaseHealthCheck>>>
+export type DatabaseHealthCheckQueryError = ErrorType<DatabaseHealthStatus>
+
+
+/**
+ * @summary Database connectivity check
+ */
+
+export function useDatabaseHealthCheck<TData = Awaited<ReturnType<typeof databaseHealthCheck>>, TError = ErrorType<DatabaseHealthStatus>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof databaseHealthCheck>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDatabaseHealthCheckQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

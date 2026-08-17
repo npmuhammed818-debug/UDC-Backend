@@ -5,10 +5,8 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export type HealthStatus = string;
 
 export interface DatabaseHealthStatus {
   status: string;
   database: string;
 }
-

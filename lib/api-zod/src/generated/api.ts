@@ -15,3 +15,13 @@ import * as zod from 'zod';
 export const HealthCheckResponse = zod.string()
 
 
+/**
+ * Checks whether the backend can reach the configured Supabase PostgreSQL database
+ * @summary Database connectivity check
+ */
+export const DatabaseHealthCheckResponse = zod.object({
+  "status": zod.string(),
+  "database": zod.string()
+})
+
+
