@@ -1,6 +1,6 @@
-# [Project name]
+# UDC Backend
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+The initial UDC (UpDownCircle) backend provides a small Node.js API foundation for a future WhatsApp-based B2B trade platform.
 
 ## Run & Operate
 
@@ -22,15 +22,23 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/api-server/src/index.ts` — server entry point
+- `artifacts/api-server/src/app.ts` — Express application setup
+- `artifacts/api-server/src/routes/` — API route modules
+- `artifacts/api-server/src/routes/health.ts` — current UDC test endpoint
+- `lib/api-spec/openapi.yaml` — source of truth for API contracts
+- `lib/api-client-react/` and `lib/api-zod/` — generated API clients and schemas
+- `lib/db/` — reserved shared database package for future persistence
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Express routes are grouped by domain so future WhatsApp, users, buyers, sellers, agents, and deals modules can be added independently.
+- OpenAPI is the API contract source of truth; generated clients and schemas are refreshed with codegen.
+- The server requires `PORT` from the runtime environment and is routed under `/api`.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The first increment is intentionally limited to a running API check. Future increments can add WhatsApp Cloud API integration, AI workflows, database persistence, and B2B trade entities without replacing the server foundation.
 
 ## User preferences
 
@@ -38,7 +46,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- After editing `lib/api-spec/openapi.yaml`, run `pnpm --filter @workspace/api-spec run codegen`.
+- Verify the API through the routed path: `GET /api/healthz`.
 
 ## Pointers
 

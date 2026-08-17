@@ -16,21 +16,17 @@ paths:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
+      description: Returns the UDC service status
       responses:
         "200":
           description: Healthy
           content:
-            application/json:
+            text/plain:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 components:
   schemas:
     HealthStatus:
-      type: object
-      properties:
-        status:
-          type: string
-      required:
-        - status
+      type: string
+      example: UDC is running
 

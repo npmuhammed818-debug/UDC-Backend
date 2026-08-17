@@ -1,0 +1,1 @@
+- [OpenAPI text responses](orval-text-responses.md) — keep primitive response schemas named components so Orval preserves generated barrel modules.
