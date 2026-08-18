@@ -1,1 +1,2 @@
 - [OpenAPI text responses](orval-text-responses.md) — keep primitive response schemas named components so Orval preserves generated barrel modules.
+- [Supabase pooler connectivity](supabase-pooler-connectivity.md) — use the IPv4 shared pooler for runtime database access in this environment.
