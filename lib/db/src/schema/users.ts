@@ -16,6 +16,7 @@ export const usersTable = pgTable(
     email: text("email"),
     phone: text("phone"),
     fullName: text("full_name"),
+    passwordHash: text("password_hash").notNull(),
     role: text("role").notNull().default("buyer"),
     status: text("status").notNull().default("pending"),
     country: text("country"),

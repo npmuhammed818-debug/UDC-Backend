@@ -1,12 +1,18 @@
+import adminRouter from "./admin";
+import authRouter from "./auth";
+import companyRouter from "./company";
 import { Router, type IRouter } from "express";
 import databaseRouter from "./database";
-import databaseInspectionRouter from "./databaseInspection";
 import healthRouter from "./health";
+import profileRouter from "./profile";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(databaseRouter);
-router.use(databaseInspectionRouter);
+router.use(authRouter);
+router.use(profileRouter);
+router.use(companyRouter);
+router.use(adminRouter);
 
 export default router;
