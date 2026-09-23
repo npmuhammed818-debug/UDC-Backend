@@ -1,2 +1,3 @@
 - [OpenAPI text responses](orval-text-responses.md) — keep primitive response schemas named components so Orval preserves generated barrel modules.
 - [Supabase pooler connectivity](supabase-pooler-connectivity.md) — use the IPv4 shared pooler for runtime database access in this environment.
+- [UDC communication boundary](udc-communication-boundary.md) — keep WhatsApp external for live conversation; UDC is the source of truth for verified execution records.

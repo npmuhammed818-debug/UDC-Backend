@@ -1,24 +1,22 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 0.2.0
+  description: UpDownCircle trade execution API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
-    description: Health operations
-  - name: database
-    description: Database connectivity operations
+  - name: auth
+  - name: workspace
+  - name: trade
+  - name: admin
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
-      summary: Health check
-      description: Returns the UDC service status
       responses:
         "200":
           description: Healthy
@@ -29,9 +27,7 @@ paths:
   /db/healthz:
     get:
       operationId: databaseHealthCheck
-      tags: [database]
-      summary: Database connectivity check
-      description: Checks whether the backend can reach the configured Supabase PostgreSQL database
+      tags: [health]
       responses:
         "200":
           description: Database is reachable
@@ -45,7 +41,423 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DatabaseHealthStatus"
+  /auth/register:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+  /auth/login:
+    post:
+      operationId: loginUser
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+  /auth/logout:
+    post:
+      operationId: logoutUser
+      tags: [auth]
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserEnvelope"
+  /profile:
+    put:
+      operationId: updateProfile
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdate"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileEnvelope"
+  /company:
+    get:
+      operationId: getCompany
+      tags: [workspace]
+      responses:
+        "200":
+          description: Current company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyEnvelope"
+    post:
+      operationId: createCompany
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyInput"
+      responses:
+        "201":
+          description: Created company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyEnvelope"
+    put:
+      operationId: updateCompany
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyUpdate"
+      responses:
+        "200":
+          description: Updated company
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyEnvelope"
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [workspace]
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardEnvelope"
+  /products:
+    get:
+      operationId: listProducts
+      tags: [trade]
+      responses:
+        "200":
+          description: Products
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductsEnvelope"
+    post:
+      operationId: createProduct
+      tags: [trade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Created product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductEnvelope"
+  /seller-listings:
+    get:
+      operationId: listSellerListings
+      tags: [trade]
+      responses:
+        "200":
+          description: Seller listings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListingsEnvelope"
+    post:
+      operationId: createSellerListing
+      tags: [trade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListingInput"
+      responses:
+        "201":
+          description: Created listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListingEnvelope"
+  /buyer-requests:
+    get:
+      operationId: listBuyerRequests
+      tags: [trade]
+      responses:
+        "200":
+          description: Buyer requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementsEnvelope"
+    post:
+      operationId: createBuyerRequest
+      tags: [trade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequirementInput"
+      responses:
+        "201":
+          description: Created requirement
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequirementEnvelope"
+  /matches:
+    get:
+      operationId: listMatches
+      tags: [trade]
+      responses:
+        "200":
+          description: Matches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchesEnvelope"
+    post:
+      operationId: generateMatches
+      tags: [trade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MatchRunInput"
+      responses:
+        "200":
+          description: Generated matches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchesEnvelope"
+  /matches/{id}:
+    patch:
+      operationId: updateMatch
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MatchUpdate"
+      responses:
+        "200":
+          description: Updated match
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MatchEnvelope"
+  /deals:
+    get:
+      operationId: listDeals
+      tags: [trade]
+      responses:
+        "200":
+          description: Deals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealsEnvelope"
+    post:
+      operationId: createDeal
+      tags: [trade]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealInput"
+      responses:
+        "201":
+          description: Created deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealEnvelope"
+  /deals/{id}:
+    get:
+      operationId: getDeal
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealEnvelope"
+    patch:
+      operationId: updateDeal
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DealUpdate"
+      responses:
+        "200":
+          description: Updated deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DealEnvelope"
+  /deals/{id}/documents:
+    get:
+      operationId: listDealDocuments
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Documents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentsEnvelope"
+    post:
+      operationId: createDealDocument
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentInput"
+      responses:
+        "201":
+          description: Document metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentEnvelope"
+  /deals/{id}/messages:
+    get:
+      operationId: listDealMessages
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagesEnvelope"
+    post:
+      operationId: createDealMessage
+      tags: [trade]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageInput"
+      responses:
+        "201":
+          description: Message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageEnvelope"
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [workspace]
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationsEnvelope"
+  /notifications/{id}/read:
+    patch:
+      operationId: markNotificationRead
+      tags: [workspace]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationEnvelope"
+  /admin/overview:
+    get:
+      operationId: getAdminOverview
+      tags: [admin]
+      responses:
+        "200":
+          description: Admin review summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOverviewEnvelope"
 components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: string
@@ -53,11 +465,349 @@ components:
     DatabaseHealthStatus:
       type: object
       properties:
-        status:
-          type: string
-        database:
-          type: string
-      required:
-        - status
-        - database
-
+        status: { type: string }
+        database: { type: string }
+      required: [status, database]
+    User:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        email: { type: ["string", "null"] }
+        fullName: { type: ["string", "null"] }
+        role: { type: string }
+        status: { type: string }
+      required: [id, role, status]
+    Company:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        companyName: { type: string }
+        verificationStatus: { type: string }
+      required: [id, companyName, verificationStatus]
+    Product:
+      type: object
+      additionalProperties: true
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: ["string", "null"] }
+        hsCode: { type: ["string", "null"] }
+        description: { type: ["string", "null"] }
+    Listing:
+      type: object
+      additionalProperties: true
+      required: [id, productId, quantity, unit, price, currency, status]
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        quantity: { type: string }
+        unit: { type: string }
+        price: { type: string }
+        currency: { type: string }
+        status: { type: string }
+    Requirement:
+      type: object
+      additionalProperties: true
+      required: [id, productId, quantity, unit, destination, status]
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        quantity: { type: string }
+        unit: { type: string }
+        destination: { type: string }
+        status: { type: string }
+    Match:
+      type: object
+      additionalProperties: true
+      required: [id, buyerRequestId, sellerListingId, status]
+      properties:
+        id: { type: string }
+        buyerRequestId: { type: string }
+        sellerListingId: { type: string }
+        matchScore: { type: ["string", "null"] }
+        status: { type: string }
+    Deal:
+      type: object
+      additionalProperties: true
+      required: [id, dealNumber, buyerUserId, sellerUserId, productId, quantity, unit, agreedPrice, currency, status]
+      properties:
+        id: { type: string }
+        dealNumber: { type: string }
+        buyerUserId: { type: string }
+        sellerUserId: { type: string }
+        productId: { type: string }
+        quantity: { type: string }
+        unit: { type: string }
+        agreedPrice: { type: string }
+        currency: { type: string }
+        status: { type: string }
+    Document:
+      type: object
+      additionalProperties: true
+      required: [id, dealId, documentType, fileUrl, status]
+      properties:
+        id: { type: string }
+        dealId: { type: string }
+        documentType: { type: string }
+        fileUrl: { type: string }
+        status: { type: string }
+    Message:
+      type: object
+      additionalProperties: true
+      required: [id, dealId, senderUserId, receiverUserId, message]
+      properties:
+        id: { type: string }
+        dealId: { type: string }
+        senderUserId: { type: string }
+        receiverUserId: { type: string }
+        message: { type: string }
+    Notification:
+      type: object
+      additionalProperties: true
+      required: [id, title, body, read]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        body: { type: string }
+        read: { type: boolean }
+    RegisterInput:
+      type: object
+      required: [full_name, email, password, role]
+      properties:
+        full_name: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        password: { type: string, minLength: 12 }
+        role: { type: string, enum: [buyer, seller, agent] }
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string }
+    ProfileUpdate:
+      type: object
+      additionalProperties: true
+    CompanyInput:
+      type: object
+      required: [company_name]
+      properties:
+        company_name: { type: string }
+        registration_number: { type: ["string", "null"] }
+        country: { type: ["string", "null"] }
+        address: { type: ["string", "null"] }
+        website: { type: ["string", "null"] }
+    CompanyUpdate:
+      allOf:
+        - $ref: "#/components/schemas/CompanyInput"
+    ProductInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        category: { type: string }
+        hs_code: { type: string }
+        description: { type: string }
+        grade: { type: string }
+    ListingInput:
+      type: object
+      required: [product_id, quantity, unit, price]
+      properties:
+        product_id: { type: string }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        unit: { type: string }
+        price: { type: number, minimum: 0 }
+        currency: { type: string }
+        incoterm: { type: string }
+        origin_country: { type: string }
+        destination: { type: string }
+        status: { type: string, enum: [draft, pending_verification, active, paused, sold, cancelled] }
+    RequirementInput:
+      type: object
+      required: [product_id, quantity, unit, destination]
+      properties:
+        product_id: { type: string }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        unit: { type: string }
+        target_price: { type: number, minimum: 0 }
+        currency: { type: string }
+        destination: { type: string }
+        preferred_incoterm: { type: string }
+        status: { type: string, enum: [open, matched, negotiating, converted, cancelled] }
+    MatchRunInput:
+      type: object
+      required: [buyer_request_id]
+      properties:
+        buyer_request_id: { type: string }
+    MatchUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [suggested, accepted, rejected, expired] }
+    DealInput:
+      type: object
+      required: [seller_user_id, product_id, quantity, unit, agreed_price]
+      properties:
+        seller_user_id: { type: string }
+        buyer_request_id: { type: string }
+        seller_listing_id: { type: string }
+        product_id: { type: string }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        unit: { type: string }
+        agreed_price: { type: number, minimum: 0 }
+        currency: { type: string }
+        incoterm: { type: string }
+        destination: { type: string }
+    DealUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [initiated, confirmed, contract_pending, payment_pending, production, inspection, shipment, delivered, completed, cancelled, disputed] }
+    DocumentInput:
+      type: object
+      required: [document_type, file_url]
+      properties:
+        document_type: { type: string }
+        file_url: { type: string, minLength: 1 }
+    MessageInput:
+      type: object
+      required: [receiver_user_id, message]
+      properties:
+        receiver_user_id: { type: string }
+        message: { type: string, minLength: 1, maxLength: 10000 }
+    UserEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+    ProfileEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+    CompanyEnvelope:
+      type: object
+      required: [company]
+      properties:
+        company:
+          anyOf:
+            - $ref: "#/components/schemas/Company"
+            - type: "null"
+    ProductEnvelope:
+      type: object
+      required: [product]
+      properties:
+        product: { $ref: "#/components/schemas/Product" }
+    ProductsEnvelope:
+      type: object
+      required: [products]
+      properties:
+        products:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+    ListingEnvelope:
+      type: object
+      required: [listing]
+      properties:
+        listing: { $ref: "#/components/schemas/Listing" }
+    ListingsEnvelope:
+      type: object
+      required: [listings]
+      properties:
+        listings:
+          type: array
+          items: { $ref: "#/components/schemas/Listing" }
+    RequirementEnvelope:
+      type: object
+      required: [requirement]
+      properties:
+        requirement: { $ref: "#/components/schemas/Requirement" }
+    RequirementsEnvelope:
+      type: object
+      required: [requirements]
+      properties:
+        requirements:
+          type: array
+          items: { $ref: "#/components/schemas/Requirement" }
+    MatchEnvelope:
+      type: object
+      required: [match]
+      properties:
+        match: { $ref: "#/components/schemas/Match" }
+    MatchesEnvelope:
+      type: object
+      required: [matches]
+      properties:
+        matches:
+          type: array
+          items: { $ref: "#/components/schemas/Match" }
+    DealEnvelope:
+      type: object
+      required: [deal]
+      properties:
+        deal: { $ref: "#/components/schemas/Deal" }
+    DealsEnvelope:
+      type: object
+      required: [deals]
+      properties:
+        deals:
+          type: array
+          items: { $ref: "#/components/schemas/Deal" }
+    DocumentEnvelope:
+      type: object
+      required: [document]
+      properties:
+        document: { $ref: "#/components/schemas/Document" }
+    DocumentsEnvelope:
+      type: object
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          items: { $ref: "#/components/schemas/Document" }
+    MessageEnvelope:
+      type: object
+      required: [message]
+      properties:
+        message: { $ref: "#/components/schemas/Message" }
+    MessagesEnvelope:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/Message" }
+    NotificationEnvelope:
+      type: object
+      required: [notification]
+      properties:
+        notification: { $ref: "#/components/schemas/Notification" }
+    NotificationsEnvelope:
+      type: object
+      required: [notifications]
+      properties:
+        notifications:
+          type: array
+          items: { $ref: "#/components/schemas/Notification" }
+    DashboardEnvelope:
+      type: object
+      required: [dashboard]
+      properties:
+        dashboard:
+          type: object
+          additionalProperties: true
+    AdminOverviewEnvelope:
+      type: object
+      required: [overview]
+      properties:
+        overview:
+          type: object
+          additionalProperties: true
+    SuccessEnvelope:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
