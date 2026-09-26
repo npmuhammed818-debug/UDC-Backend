@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, or } from "drizzle-orm";
-import { db, dealFinancialsTable, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { auditLogsTable, db, dealFinancialsTable, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -168,6 +168,25 @@ router.get("/deals/:dealId/payment-status", requireAuth, async (req, res) => {
   } catch {
     res.status(500).json({ error: "payment_status_fetch_failed" });
   }
+});
+
+router.get("/deals/:dealId/timeline", requireAuth, async (req, res) => {
+  try {
+    const dealId = String(req.params["dealId"] ?? "");
+    const [deal] = await db.select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
+      .from(dealsTable).where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id))).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const events = await db.select({
+      action: auditLogsTable.action,
+      metadata: auditLogsTable.metadata,
+      createdAt: auditLogsTable.createdAt,
+    }).from(auditLogsTable).where(and(
+      eq(auditLogsTable.entityType, "deal"),
+      eq(auditLogsTable.entityId, deal.id),
+      inArray(auditLogsTable.action, ["deal_created", "deal_status_updated", "inspection_status_updated", "shipment_status_updated", "financial_instrument_status_updated"]),
+    )).orderBy(desc(auditLogsTable.createdAt));
+    res.json({ deal, events });
+  } catch { res.status(500).json({ error: "deal_timeline_fetch_failed" }); }
 });
 
 export default router;
