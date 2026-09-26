@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, inspectionsTable, matchesTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -110,6 +110,18 @@ const sendDealNotificationSchema = z.object({
   dealId: z.string().uuid(),
   recipientUserId: z.string().uuid(),
   message: z.string().min(1).max(1000),
+});
+
+const createInspectionSchema = z.object({
+  dealId: z.string().uuid(),
+  inspectorName: z.string().min(2).max(160).optional(),
+  scheduledAt: z.coerce.date().optional(),
+  resultSummary: z.string().max(2000).optional(),
+});
+
+const inspectionStatusSchema = z.object({
+  status: z.enum(["requested", "scheduled", "in_progress", "passed", "failed", "cancelled"]),
+  resultSummary: z.string().max(2000).optional(),
 });
 
 async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
@@ -628,6 +640,66 @@ router.get("/admin/buyer-requests/:requirementId/match-recommendations", require
   }
 
   res.json({ buyerRequest, recommendations });
+});
+
+router.get("/admin/inspections", requireRole("admin"), async (req, res) => {
+  const dealId = req.query.dealId;
+  const inspections = typeof dealId === "string"
+    ? await db.select().from(inspectionsTable).where(eq(inspectionsTable.dealId, dealId)).orderBy(desc(inspectionsTable.updatedAt))
+    : await db.select().from(inspectionsTable).orderBy(desc(inspectionsTable.updatedAt));
+  res.json({ inspections });
+});
+
+router.post("/admin/inspections", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = createInspectionSchema.parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+    const [inspection] = await db.insert(inspectionsTable).values({
+      dealId: deal.id,
+      requestedBy: req.authUser.id,
+      inspectorName: input.inspectorName,
+      scheduledAt: input.scheduledAt,
+      resultSummary: input.resultSummary,
+      status: input.scheduledAt ? "scheduled" : "requested",
+    }).returning();
+    res.status(201).json({ inspection });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "inspection_create_failed" });
+  }
+});
+
+router.patch("/admin/inspections/:inspectionId", requireRole("admin"), async (req, res) => {
+  try {
+    const input = inspectionStatusSchema.parse(req.body);
+    const inspectionId = req.params["inspectionId"];
+    if (typeof inspectionId !== "string") {
+      res.status(400).json({ error: "invalid_inspection_id" });
+      return;
+    }
+    const [inspection] = await db.update(inspectionsTable)
+      .set({ status: input.status, ...(input.resultSummary === undefined ? {} : { resultSummary: input.resultSummary }), updatedAt: new Date() })
+      .where(eq(inspectionsTable.id, inspectionId))
+      .returning();
+    if (!inspection) {
+      res.status(404).json({ error: "inspection_not_found" });
+      return;
+    }
+    res.json({ inspection });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "inspection_update_failed" });
+  }
 });
 
 export default router;
