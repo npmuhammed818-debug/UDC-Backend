@@ -3,7 +3,7 @@ import akifIntelligenceRouter from "./akifIntelligence";
 import akifOperationsRouter from "./akifOperations";
 import akifStoreRouter from "./akifStore";
 import akifHermesRouter from "./akifHermes";
-import akifOfficialSourcesRouter from "./akifOfficialSources";
+import akifOfficialSourcesRouter from "./akifOfficialSources";\nimport akifImpexqRouter from "./akifImpexq";
 import authRouter from "./auth";
 import commissionRouter from "./commissions";
 import companyRouter from "./company";
@@ -37,7 +37,7 @@ router.use(akifIntelligenceRouter);
 router.use(akifOperationsRouter);
 router.use(akifStoreRouter);
 router.use(akifHermesRouter);
-router.use(akifOfficialSourcesRouter);
+router.use(akifOfficialSourcesRouter);\nrouter.use(akifImpexqRouter);
 router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
 
