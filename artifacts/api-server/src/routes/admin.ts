@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, inspectionsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -138,6 +138,23 @@ const shipmentStatusSchema = z.object({
   status: z.enum(["planned", "booked", "in_transit", "arrived", "delivered", "cancelled"]),
   notes: z.string().max(2000).optional(),
   estimatedArrival: z.coerce.date().optional(),
+});
+
+const createFinancialInstrumentSchema = z.object({
+  dealId: z.string().uuid(),
+  instrumentType: z.enum(["LC", "DLC", "SBLC", "BG", "TT", "OTHER"]),
+  amount: z.coerce.number().positive().optional(),
+  currency: z.string().length(3).optional(),
+  terms: z.string().max(2000).optional(),
+  reference: z.string().max(160).optional(),
+  provider: z.string().max(160).optional(),
+});
+
+const financialInstrumentStatusSchema = z.object({
+  status: z.enum(["not_started", "requested", "pending", "received", "confirmed", "rejected", "cancelled"]),
+  reference: z.string().max(160).optional(),
+  provider: z.string().max(160).optional(),
+  terms: z.string().max(2000).optional(),
 });
 
 async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
@@ -772,6 +789,76 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       return;
     }
     res.status(500).json({ error: "shipment_update_failed" });
+  }
+});
+
+router.get("/admin/financial-instruments", requireRole("admin"), async (req, res) => {
+  const dealId = req.query.dealId;
+  const instruments = typeof dealId === "string"
+    ? await db.select().from(dealFinancialsTable).where(eq(dealFinancialsTable.dealId, dealId)).orderBy(desc(dealFinancialsTable.updatedAt))
+    : await db.select().from(dealFinancialsTable).orderBy(desc(dealFinancialsTable.updatedAt));
+  res.json({ instruments });
+});
+
+router.post("/admin/financial-instruments", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = createFinancialInstrumentSchema.parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id, currency: dealsTable.currency }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+    const [instrument] = await db.insert(dealFinancialsTable).values({
+      dealId: deal.id, instrumentType: input.instrumentType, status: "not_started",
+      amount: input.amount === undefined ? undefined : String(input.amount),
+      currency: (input.currency ?? deal.currency).toUpperCase(), terms: input.terms,
+      reference: input.reference, provider: input.provider,
+    }).returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id, action: "financial_instrument_created",
+      entityType: "deal", entityId: deal.id,
+      metadata: { instrumentId: instrument.id, instrumentType: instrument.instrumentType, status: instrument.status },
+    });
+    res.status(201).json({ instrument });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "financial_instrument_create_failed" });
+  }
+});
+
+router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = financialInstrumentStatusSchema.parse(req.body);
+    const instrumentId = req.params["instrumentId"];
+    if (typeof instrumentId !== "string") {
+      res.status(400).json({ error: "invalid_instrument_id" });
+      return;
+    }
+    const [existing] = await db.select().from(dealFinancialsTable).where(eq(dealFinancialsTable.id, instrumentId)).limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "financial_instrument_not_found" });
+      return;
+    }
+    const [instrument] = await db.update(dealFinancialsTable).set({
+      status: input.status, ...(input.reference === undefined ? {} : { reference: input.reference }),
+      ...(input.provider === undefined ? {} : { provider: input.provider }),
+      ...(input.terms === undefined ? {} : { terms: input.terms }), updatedAt: new Date(),
+    }).where(eq(dealFinancialsTable.id, instrumentId)).returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id, action: "financial_instrument_status_updated",
+      entityType: "deal", entityId: instrument.dealId,
+      metadata: { instrumentId: instrument.id, previousStatus: existing.status, newStatus: instrument.status },
+    });
+    res.json({ instrument });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "financial_instrument_update_failed" });
   }
 });
 
