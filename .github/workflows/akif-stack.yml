@@ -5,12 +5,16 @@ on:
     paths:
       - "artifacts/api-server/**"
       - "services/akif-worker/**"
+      - "services/hermes-learning/**"
+      - "docker-compose.hermes.yml"
       - ".github/workflows/akif-stack.yml"
   push:
     branches: [main]
     paths:
       - "artifacts/api-server/**"
       - "services/akif-worker/**"
+      - "services/hermes-learning/**"
+      - "docker-compose.hermes.yml"
       - ".github/workflows/akif-stack.yml"
 
 jobs:
@@ -36,3 +40,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m compileall -q services/akif-worker/app services/akif-worker/tests
+
+
+  hermes-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: HERMES_AKIF_API_KEY=test-only-key docker compose -f docker-compose.hermes.yml config
