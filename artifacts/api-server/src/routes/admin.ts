@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, companiesTable, matchesTable, sellerListingsTable } from "@workspace/db";
+import { buyerRequestsTable, companiesTable, dealsTable, matchesTable, sellerListingsTable } from "@workspace/db";
 import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -63,6 +63,15 @@ const requirementStatusSchema = z.object({
 const createMatchSchema = z.object({
   buyerRequestId: z.string().uuid(),
   sellerListingId: z.string().uuid(),
+});
+
+const createDealSchema = z.object({
+  matchId: z.string().uuid(),
+  quantity: z.coerce.number().positive(),
+  agreedPrice: z.coerce.number().positive(),
+  currency: z.string().length(3).optional(),
+  incoterm: z.string().min(2).max(12).optional(),
+  destination: z.string().min(2).max(120).optional(),
 });
 
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
@@ -193,6 +202,60 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
       return;
     }
     res.status(500).json({ error: "match_creation_failed" });
+  }
+});
+
+router.post("/admin/deals", requireRole("admin"), async (req, res) => {
+  try {
+    const input = createDealSchema.parse(req.body);
+    const [match] = await db.select().from(matchesTable).where(eq(matchesTable.id, input.matchId)).limit(1);
+    if (!match || match.status !== "approved") {
+      res.status(409).json({ error: "deal_requires_approved_match" });
+      return;
+    }
+
+    const [buyerRequest] = await db.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.id, match.buyerRequestId)).limit(1);
+    const [sellerOffer] = await db.select().from(sellerListingsTable).where(eq(sellerListingsTable.id, match.sellerListingId)).limit(1);
+    if (!buyerRequest || !sellerOffer || buyerRequest.status !== "approved" || sellerOffer.status !== "approved") {
+      res.status(409).json({ error: "deal_records_require_admin_approval" });
+      return;
+    }
+    if (buyerRequest.productId !== sellerOffer.productId || buyerRequest.unit !== sellerOffer.unit) {
+      res.status(409).json({ error: "deal_terms_do_not_match" });
+      return;
+    }
+
+    const [existingDeal] = await db.select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
+      .from(dealsTable)
+      .where(and(eq(dealsTable.buyerRequestId, buyerRequest.id), eq(dealsTable.sellerListingId, sellerOffer.id)))
+      .limit(1);
+    if (existingDeal) {
+      res.status(409).json({ error: "deal_already_exists", dealId: existingDeal.id, dealNumber: existingDeal.dealNumber });
+      return;
+    }
+
+    const [deal] = await db.insert(dealsTable).values({
+      buyerUserId: buyerRequest.buyerUserId,
+      sellerUserId: sellerOffer.sellerUserId,
+      buyerRequestId: buyerRequest.id,
+      sellerListingId: sellerOffer.id,
+      productId: buyerRequest.productId,
+      quantity: String(input.quantity),
+      unit: buyerRequest.unit,
+      agreedPrice: String(input.agreedPrice),
+      currency: (input.currency ?? sellerOffer.currency).toUpperCase(),
+      incoterm: input.incoterm ?? sellerOffer.incoterm ?? buyerRequest.preferredIncoterm,
+      destination: input.destination ?? buyerRequest.destination ?? sellerOffer.destination,
+      dealValue: String(input.quantity * input.agreedPrice),
+      status: "initiated",
+    }).returning();
+    res.status(201).json({ deal });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "deal_creation_failed" });
   }
 });
 
