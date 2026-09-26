@@ -530,6 +530,13 @@ router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
       commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
       commissionAmount: String(input.amount),
     }).returning();
+    await db.insert(notificationsTable).values({
+      userId: commission.beneficiaryUserId,
+      type: "commission_created",
+      title: "Commission recorded",
+      body: `A ${commission.currency} ${commission.amount} commission was recorded for your deal.`,
+      link: "/commissions",
+    });
     res.status(201).json({ commission });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -556,6 +563,13 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       res.status(404).json({ error: "commission_not_found" });
       return;
     }
+    await db.insert(notificationsTable).values({
+      userId: commission.beneficiaryUserId,
+      type: "commission_status_updated",
+      title: "Commission status updated",
+      body: `Your commission is now ${commission.status}.`,
+      link: "/commissions",
+    });
     res.json({ commission });
   } catch (error) {
     if (error instanceof z.ZodError) {
