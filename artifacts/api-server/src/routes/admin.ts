@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, inspectionsTable, matchesTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, inspectionsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -122,6 +122,22 @@ const createInspectionSchema = z.object({
 const inspectionStatusSchema = z.object({
   status: z.enum(["requested", "scheduled", "in_progress", "passed", "failed", "cancelled"]),
   resultSummary: z.string().max(2000).optional(),
+});
+
+const createShipmentSchema = z.object({
+  dealId: z.string().uuid(),
+  carrier: z.string().min(2).max(160).optional(),
+  trackingNumber: z.string().min(2).max(160).optional(),
+  origin: z.string().min(2).max(160).optional(),
+  destination: z.string().min(2).max(160).optional(),
+  estimatedArrival: z.coerce.date().optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+const shipmentStatusSchema = z.object({
+  status: z.enum(["planned", "booked", "in_transit", "arrived", "delivered", "cancelled"]),
+  notes: z.string().max(2000).optional(),
+  estimatedArrival: z.coerce.date().optional(),
 });
 
 async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
@@ -699,6 +715,63 @@ router.patch("/admin/inspections/:inspectionId", requireRole("admin"), async (re
       return;
     }
     res.status(500).json({ error: "inspection_update_failed" });
+  }
+});
+
+router.get("/admin/shipments", requireRole("admin"), async (req, res) => {
+  const dealId = req.query.dealId;
+  const shipments = typeof dealId === "string"
+    ? await db.select().from(shipmentsTable).where(eq(shipmentsTable.dealId, dealId)).orderBy(desc(shipmentsTable.updatedAt))
+    : await db.select().from(shipmentsTable).orderBy(desc(shipmentsTable.updatedAt));
+  res.json({ shipments });
+});
+
+router.post("/admin/shipments", requireRole("admin"), async (req, res) => {
+  try {
+    const input = createShipmentSchema.parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+    const [shipment] = await db.insert(shipmentsTable).values({
+      dealId: deal.id, carrier: input.carrier, trackingNumber: input.trackingNumber,
+      origin: input.origin, destination: input.destination, estimatedArrival: input.estimatedArrival,
+      notes: input.notes, status: "planned",
+    }).returning();
+    res.status(201).json({ shipment });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "shipment_create_failed" });
+  }
+});
+
+router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, res) => {
+  try {
+    const input = shipmentStatusSchema.parse(req.body);
+    const shipmentId = req.params["shipmentId"];
+    if (typeof shipmentId !== "string") {
+      res.status(400).json({ error: "invalid_shipment_id" });
+      return;
+    }
+    const [shipment] = await db.update(shipmentsTable)
+      .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
+      .where(eq(shipmentsTable.id, shipmentId))
+      .returning();
+    if (!shipment) {
+      res.status(404).json({ error: "shipment_not_found" });
+      return;
+    }
+    res.json({ shipment });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "shipment_update_failed" });
   }
 });
 
