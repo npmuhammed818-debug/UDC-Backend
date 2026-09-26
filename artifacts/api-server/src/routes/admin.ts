@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -318,7 +318,7 @@ router.get("/admin/deals", requireRole("admin"), async (_req, res) => {
   res.json({ deals });
 });
 
-router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req, res) => {
+router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = dealStatusSchema.parse(req.body);
     const dealId = req.params["dealId"];
@@ -334,6 +334,13 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req, re
       res.status(404).json({ error: "deal_not_found" });
       return;
     }
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "deal_status_updated",
+      entityType: "deal",
+      entityId: deal.id,
+      metadata: { status: deal.status },
+    });
     res.json({ deal });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -342,6 +349,18 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req, re
     }
     res.status(500).json({ error: "deal_status_update_failed" });
   }
+});
+
+router.get("/admin/deals/:dealId/audit-log", requireRole("admin"), async (req, res) => {
+  const dealId = req.params["dealId"];
+  if (typeof dealId !== "string") {
+    res.status(400).json({ error: "invalid_deal_id" });
+    return;
+  }
+  const logs = await db.select().from(auditLogsTable)
+    .where(and(eq(auditLogsTable.entityType, "deal"), eq(auditLogsTable.entityId, dealId)))
+    .orderBy(desc(auditLogsTable.createdAt));
+  res.json({ logs });
 });
 
 router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
