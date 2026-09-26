@@ -24,6 +24,15 @@ router.patch(
         res.status(400).json({ error: "invalid_company_id" });
         return;
       }
+      const [existing] = await db.select({
+        id: companiesTable.id,
+        ownerUserId: companiesTable.ownerUserId,
+        verificationStatus: companiesTable.verificationStatus,
+      }).from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+      if (!existing) {
+        res.status(404).json({ error: "company_not_found" });
+        return;
+      }
       const [company] = await db
         .update(companiesTable)
         .set({
@@ -36,10 +45,21 @@ router.patch(
           verificationStatus: companiesTable.verificationStatus,
           updatedAt: companiesTable.updatedAt,
         });
-
-      if (!company) {
-        res.status(404).json({ error: "company_not_found" });
-        return;
+      await db.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "company_verification_status_updated",
+        entityType: "company",
+        entityId: company.id,
+        metadata: { previousStatus: existing.verificationStatus, newStatus: company.verificationStatus },
+      });
+      if (existing.verificationStatus !== company.verificationStatus) {
+        await db.insert(notificationsTable).values({
+          userId: existing.ownerUserId,
+          type: "company_verification_status_updated",
+          title: "Company verification updated",
+          body: `Your company verification status is now ${company.verificationStatus}.`,
+          link: "/company",
+        });
       }
       res.json({ company });
     } catch (error) {
