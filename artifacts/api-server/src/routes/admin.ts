@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, sellerListingsTable, usersTable } from "@workspace/db";
@@ -99,6 +99,10 @@ const createDocumentSchema = z.object({
 
 const documentStatusSchema = z.object({
   status: z.enum(["approved", "rejected"]),
+});
+
+const userVerificationStatusSchema = z.object({
+  status: z.enum(["pending", "under_review", "verified", "rejected", "suspended"]),
 });
 
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
@@ -435,6 +439,46 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       return;
     }
     res.status(500).json({ error: "document_review_failed" });
+  }
+});
+
+router.get("/admin/users/pending-verification", requireRole("admin"), async (_req, res) => {
+  const users = await db.select().from(usersTable)
+    .where(and(
+      inArray(usersTable.role, ["buyer", "seller"]),
+      inArray(usersTable.status, ["pending", "under_review"]),
+    ))
+    .orderBy(desc(usersTable.updatedAt));
+  res.json({ users });
+});
+
+router.patch("/admin/users/:userId/verification", requireRole("admin"), async (req, res) => {
+  try {
+    const input = userVerificationStatusSchema.parse(req.body);
+    const userId = req.params["userId"];
+    if (typeof userId !== "string") {
+      res.status(400).json({ error: "invalid_user_id" });
+      return;
+    }
+    const [user] = await db.update(usersTable)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(eq(usersTable.id, userId))
+      .returning({ id: usersTable.id, role: usersTable.role, status: usersTable.status, updatedAt: usersTable.updatedAt });
+    if (!user) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+    if (!["buyer", "seller"].includes(user.role)) {
+      res.status(409).json({ error: "user_is_not_trade_counterparty" });
+      return;
+    }
+    res.json({ user });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "user_verification_failed" });
   }
 });
 
