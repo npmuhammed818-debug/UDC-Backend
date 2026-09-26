@@ -353,6 +353,29 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
       sellerListingId: sellerOffer.id,
       status: "approved",
     }).returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "match_created",
+      entityType: "match",
+      entityId: match.id,
+      metadata: { buyerRequestId: match.buyerRequestId, sellerListingId: match.sellerListingId },
+    });
+    await db.insert(notificationsTable).values([
+      {
+        userId: buyerRequest.buyerUserId,
+        type: "match_created",
+        title: "New verified match",
+        body: "UDC approved a seller match for your requirement.",
+        link: "/notifications",
+      },
+      {
+        userId: sellerOffer.sellerUserId,
+        type: "match_created",
+        title: "New verified match",
+        body: "UDC approved a buyer match for your offer.",
+        link: "/notifications",
+      },
+    ]);
     res.status(201).json({ match });
   } catch (error) {
     if (error instanceof z.ZodError) {
