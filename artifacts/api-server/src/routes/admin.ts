@@ -74,6 +74,10 @@ const createDealSchema = z.object({
   destination: z.string().min(2).max(120).optional(),
 });
 
+const dealStatusSchema = z.object({
+  status: z.enum(["initiated", "negotiation", "verification", "loi", "icpo", "fco_sco", "contract", "banking", "inspection", "loading", "shipment", "delivery", "payment", "commission", "completed", "on_hold", "cancelled", "rejected", "disputed"]),
+});
+
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
   const requirements = await db
     .select()
@@ -256,6 +260,37 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       return;
     }
     res.status(500).json({ error: "deal_creation_failed" });
+  }
+});
+
+router.get("/admin/deals", requireRole("admin"), async (_req, res) => {
+  const deals = await db.select().from(dealsTable).orderBy(desc(dealsTable.updatedAt));
+  res.json({ deals });
+});
+
+router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req, res) => {
+  try {
+    const input = dealStatusSchema.parse(req.body);
+    const dealId = req.params["dealId"];
+    if (typeof dealId !== "string") {
+      res.status(400).json({ error: "invalid_deal_id" });
+      return;
+    }
+    const [deal] = await db.update(dealsTable)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(eq(dealsTable.id, dealId))
+      .returning();
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+    res.json({ deal });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "deal_status_update_failed" });
   }
 });
 
