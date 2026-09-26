@@ -118,6 +118,10 @@ const referralStatusSchema = z.object({
   status: z.enum(["pending", "approved", "rejected", "cancelled"]),
 });
 
+const addAgentParticipantSchema = z.object({
+  userId: z.string().uuid(),
+});
+
 const sendDealNotificationSchema = z.object({
   dealId: z.string().uuid(),
   recipientUserId: z.string().uuid(),
@@ -1226,6 +1230,60 @@ router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"),
       return;
     }
     res.status(500).json({ error: "financial_instrument_update_failed" });
+  }
+});
+
+router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = addAgentParticipantSchema.parse(req.body);
+    const dealId = req.params["dealId"];
+    if (typeof dealId !== "string") {
+      res.status(400).json({ error: "invalid_deal_id" });
+      return;
+    }
+    const [[deal], [agent]] = await Promise.all([
+      db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
+      db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
+    ]);
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+    if (agent?.role !== "agent") {
+      res.status(409).json({ error: "user_is_not_agent" });
+      return;
+    }
+    const [participant] = await db.insert(dealParticipantsTable).values({
+      dealId: deal.id,
+      userId: agent.id,
+      participantRole: "agent",
+      status: "active",
+    }).onConflictDoNothing().returning();
+    if (!participant) {
+      res.status(409).json({ error: "agent_already_assigned" });
+      return;
+    }
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "deal_agent_assigned",
+      entityType: "deal",
+      entityId: deal.id,
+      metadata: { agentUserId: agent.id },
+    });
+    await db.insert(notificationsTable).values({
+      userId: agent.id,
+      type: "deal_agent_assigned",
+      title: "You were assigned to a deal",
+      body: "UDC assigned you to a deal. You can now follow its progress.",
+      link: `/deals/${deal.id}`,
+    });
+    res.status(201).json({ participant });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "deal_agent_assignment_failed" });
   }
 });
 
