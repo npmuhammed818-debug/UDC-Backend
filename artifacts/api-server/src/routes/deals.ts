@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { auditLogsTable, db, dealFinancialsTable, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
+import { auditLogsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -9,6 +9,16 @@ function dealAccess(userId: string) {
   return or(
     eq(dealsTable.buyerUserId, userId),
     eq(dealsTable.sellerUserId, userId),
+    inArray(
+      dealsTable.id,
+      db.select({ dealId: dealParticipantsTable.dealId })
+        .from(dealParticipantsTable)
+        .where(and(
+          eq(dealParticipantsTable.userId, userId),
+          eq(dealParticipantsTable.participantRole, "agent"),
+          eq(dealParticipantsTable.status, "active"),
+        )),
+    ),
   );
 }
 
