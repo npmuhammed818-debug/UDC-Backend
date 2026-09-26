@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -398,6 +398,12 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       entityId: deal.id,
       metadata: { previousStatus: existingDeal.status, newStatus: deal.status },
     });
+    if (existingDeal.status !== deal.status) {
+      await db.insert(notificationsTable).values([
+        { userId: deal.buyerUserId, type: "deal_status_updated", title: "Deal status updated", body: `Deal ${deal.dealNumber} is now ${deal.status}.`, link: `/deals/${deal.id}` },
+        { userId: deal.sellerUserId, type: "deal_status_updated", title: "Deal status updated", body: `Deal ${deal.dealNumber} is now ${deal.status}.`, link: `/deals/${deal.id}` },
+      ]);
+    }
     res.json({ deal });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -896,6 +902,14 @@ router.get("/admin/documents/:documentId/access", requireRole("admin"), async (r
     .where(eq(documentAccessTable.documentId, documentId))
     .orderBy(desc(documentAccessTable.createdAt));
   res.json({ access });
+});
+
+router.get("/admin/notifications", requireRole("admin"), async (req, res) => {
+  const userId = req.query.userId;
+  const notifications = typeof userId === "string"
+    ? await db.select().from(notificationsTable).where(eq(notificationsTable.userId, userId)).orderBy(desc(notificationsTable.createdAt))
+    : await db.select().from(notificationsTable).orderBy(desc(notificationsTable.createdAt));
+  res.json({ notifications });
 });
 
 export default router;
