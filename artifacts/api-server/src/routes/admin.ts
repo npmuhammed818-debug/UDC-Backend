@@ -96,7 +96,7 @@ const commissionStatusSchema = z.object({
 const createDocumentSchema = z.object({
   dealId: z.string().uuid(),
   documentType: z.string().min(2).max(80),
-  fileUrl: z.string().url().refine((value) => value.startsWith("https://"), "secure_url_required"),
+  fileUrl: z.string().refine((value) => value.startsWith("storage://udc-documents/") || value.startsWith("https://"), "secure_url_required"),
 });
 
 const documentStatusSchema = z.object({
