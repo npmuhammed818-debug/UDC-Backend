@@ -7,6 +7,7 @@ import {
   dedupeAkifEntities,
   getAkifWorkerCapabilities,
   isAkifWorkerConfigured,
+  previewAkifComtrade,
 } from "../akif/intelligence/workerClient";
 
 const router: IRouter = Router();
@@ -29,6 +30,22 @@ const entityDedupeSchema = z
       .min(2)
       .max(500),
     threshold: z.number().min(0.5).max(1).optional(),
+  })
+  .strict();
+
+const comtradePreviewSchema = z
+  .object({
+    period: z.string().min(4).max(100),
+    reporter_code: z.string().min(1).max(50),
+    cmd_code: z.string().min(1).max(200),
+    flow_code: z.string().min(1).max(20),
+    partner_code: z.string().max(50).optional(),
+    partner2_code: z.string().max(50).optional(),
+    customs_code: z.string().max(50).optional(),
+    mot_code: z.string().max(50).optional(),
+    frequency: z.enum(["A", "M"]).optional(),
+    classification: z.string().min(1).max(20).optional(),
+    max_records: z.number().int().min(1).max(500).optional(),
   })
   .strict();
 
@@ -142,6 +159,35 @@ router.post(
         return;
       }
       res.status(502).json({ error: "akif_entity_resolution_failed" });
+    }
+  },
+);
+
+
+router.post(
+  "/admin/akif/intelligence/trade/comtrade/preview",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const input = comtradePreviewSchema.parse(req.body);
+      const result = await previewAkifComtrade(input);
+      res.json({
+        ...result,
+        notice:
+          "UN Comtrade statistics are source evidence for analysis, not proof of a specific company's activity or verification status.",
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          error: "validation_error",
+          details: error.issues.map((issue) => ({
+            field: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+        return;
+      }
+      res.status(502).json({ error: "akif_comtrade_request_failed" });
     }
   },
 );
