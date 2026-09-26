@@ -759,13 +759,32 @@ router.patch("/admin/inspections/:inspectionId", requireRole("admin"), async (re
       res.status(400).json({ error: "invalid_inspection_id" });
       return;
     }
+    const [existing] = await db.select().from(inspectionsTable)
+      .where(eq(inspectionsTable.id, inspectionId))
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "inspection_not_found" });
+      return;
+    }
     const [inspection] = await db.update(inspectionsTable)
       .set({ status: input.status, ...(input.resultSummary === undefined ? {} : { resultSummary: input.resultSummary }), updatedAt: new Date() })
       .where(eq(inspectionsTable.id, inspectionId))
       .returning();
-    if (!inspection) {
-      res.status(404).json({ error: "inspection_not_found" });
-      return;
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "inspection_status_updated",
+      entityType: "deal",
+      entityId: inspection.dealId,
+      metadata: { inspectionId: inspection.id, previousStatus: existing.status, newStatus: inspection.status },
+    });
+    if (existing.status !== inspection.status) {
+      await notifyDealCounterparties(
+        inspection.dealId,
+        "inspection_status_updated",
+        "Inspection status updated",
+        `Inspection for your deal is now ${inspection.status}.`,
+        `/deals/${inspection.dealId}/tracking`,
+      );
     }
     res.json({ inspection });
   } catch (error) {
@@ -816,13 +835,32 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       res.status(400).json({ error: "invalid_shipment_id" });
       return;
     }
+    const [existing] = await db.select().from(shipmentsTable)
+      .where(eq(shipmentsTable.id, shipmentId))
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "shipment_not_found" });
+      return;
+    }
     const [shipment] = await db.update(shipmentsTable)
       .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
       .where(eq(shipmentsTable.id, shipmentId))
       .returning();
-    if (!shipment) {
-      res.status(404).json({ error: "shipment_not_found" });
-      return;
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "shipment_status_updated",
+      entityType: "deal",
+      entityId: shipment.dealId,
+      metadata: { shipmentId: shipment.id, previousStatus: existing.status, newStatus: shipment.status },
+    });
+    if (existing.status !== shipment.status) {
+      await notifyDealCounterparties(
+        shipment.dealId,
+        "shipment_status_updated",
+        "Shipment status updated",
+        `Shipment for your deal is now ${shipment.status}.`,
+        `/deals/${shipment.dealId}/tracking`,
+      );
     }
     res.json({ shipment });
   } catch (error) {
@@ -894,6 +932,15 @@ router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"),
       entityType: "deal", entityId: instrument.dealId,
       metadata: { instrumentId: instrument.id, previousStatus: existing.status, newStatus: instrument.status },
     });
+    if (existing.status !== instrument.status) {
+      await notifyDealCounterparties(
+        instrument.dealId,
+        "payment_status_updated",
+        "Payment status updated",
+        `${instrument.instrumentType} for your deal is now ${instrument.status}.`,
+        `/deals/${instrument.dealId}/payment-status`,
+      );
+    }
     res.json({ instrument });
   } catch (error) {
     if (error instanceof z.ZodError) {
