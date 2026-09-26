@@ -460,18 +460,22 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       res.status(400).json({ error: "invalid_user_id" });
       return;
     }
+    const [existingUser] = await db.select({ id: usersTable.id, role: usersTable.role })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .limit(1);
+    if (!existingUser) {
+      res.status(404).json({ error: "user_not_found" });
+      return;
+    }
+    if (!["buyer", "seller"].includes(existingUser.role)) {
+      res.status(409).json({ error: "user_is_not_trade_counterparty" });
+      return;
+    }
     const [user] = await db.update(usersTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(usersTable.id, userId))
       .returning({ id: usersTable.id, role: usersTable.role, status: usersTable.status, updatedAt: usersTable.updatedAt });
-    if (!user) {
-      res.status(404).json({ error: "user_not_found" });
-      return;
-    }
-    if (!["buyer", "seller"].includes(user.role)) {
-      res.status(409).json({ error: "user_is_not_trade_counterparty" });
-      return;
-    }
     res.json({ user });
   } catch (error) {
     if (error instanceof z.ZodError) {
