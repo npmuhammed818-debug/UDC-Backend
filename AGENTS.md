@@ -513,3 +513,16 @@ Inspect the repository and report only:
 5. The single best next implementation step
 
 Keep the report concise.
+
+## 27. AKIF Open-Source Intelligence Strategy
+Current architecture decision:
+
+- Keep AKIF inside the existing UDC TypeScript backend. Do not replace UDC with a separate CRM/backend.
+- TradeCRM (Apache-2.0) is an approved architectural reference for buyer discovery, company enrichment, shipment intelligence, trade-interest mapping and agent workflows. Reuse compatible ideas/modules selectively; do not import its whole Python stack into UDC.
+- Keep AKIF research provider-neutral. Official trade data, customs/shipment data, company sources, sanctions/compliance sources and future commercial APIs must plug into the AKIF provider interface and preserve provenance.
+- Every discovered company/opportunity must retain source evidence, retrieval timestamps and confidence. Discovery is never equivalent to verification.
+- Opportunity scoring must remain explainable and assistive. Compliance, verification, legal, banking and transaction approvals remain human-controlled.
+- Prefer provider-neutral/self-hostable AI model interfaces rather than hard-wiring AKIF to one model vendor.
+- Add a graph/agent orchestration framework only when AKIF has genuine multi-step tool workflows that need durable state; do not add orchestration complexity prematurely.
+- Any third-party source code incorporated into UDC must comply with its license and retain required notices/attribution.
+
