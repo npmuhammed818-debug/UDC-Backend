@@ -493,6 +493,41 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
   }
 });
 
+const dealIssueSchema = z.object({
+  status: z.enum(["on_hold", "disputed"]),
+  reason: z.string().min(5).max(2000),
+});
+
+router.post("/admin/deals/:dealId/issues", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = dealIssueSchema.parse(req.body);
+    const dealId = String(req.params["dealId"] ?? "");
+    const [deal] = await db.update(dealsTable)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(eq(dealsTable.id, dealId))
+      .returning();
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "deal_issue_recorded",
+      entityType: "deal",
+      entityId: deal.id,
+      metadata: { status: input.status, reason: input.reason },
+    });
+    await notifyDealCounterparties(
+      deal.id,
+      "deal_issue_recorded",
+      "Deal requires attention",
+      `Your deal is now ${input.status}. UDC will contact you with the next step.`,
+      `/deals/${deal.id}`,
+    );
+    res.json({ deal });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "deal_issue_record_failed" });
+  }
+});
+
 router.get("/admin/deals/:dealId/audit-log", requireRole("admin"), async (req, res) => {
   const dealId = req.params["dealId"];
   if (typeof dealId !== "string") {
