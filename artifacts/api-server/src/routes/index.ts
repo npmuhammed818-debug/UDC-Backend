@@ -2,6 +2,7 @@ import adminRouter from "./admin";
 import akifIntelligenceRouter from "./akifIntelligence";
 import akifOperationsRouter from "./akifOperations";
 import akifStoreRouter from "./akifStore";
+import akifHermesRouter from "./akifHermes";
 import authRouter from "./auth";
 import commissionRouter from "./commissions";
 import companyRouter from "./company";
@@ -34,6 +35,7 @@ router.use(adminRouter);
 router.use(akifIntelligenceRouter);
 router.use(akifOperationsRouter);
 router.use(akifStoreRouter);
+router.use(akifHermesRouter);
 router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
 
