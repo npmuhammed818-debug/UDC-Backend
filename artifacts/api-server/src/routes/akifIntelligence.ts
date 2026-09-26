@@ -101,7 +101,7 @@ router.get(
       res.json({
         status: "not_configured",
         configured: false,
-        requiredEnvironmentVariable: "AKIF_WORKER_URL",
+        requiredEnvironmentVariables: ["AKIF_WORKER_URL", "AKIF_WORKER_TOKEN"],
       });
       return;
     }
