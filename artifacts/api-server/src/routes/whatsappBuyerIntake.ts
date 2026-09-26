@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import {
   buyerRequestsTable,
@@ -7,6 +8,7 @@ import {
 } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { z } from "zod/v4";
+import { hashPassword } from "../auth/passwords";
 
 const router: IRouter = Router();
 
@@ -43,6 +45,7 @@ router.post("/whatsapp/buyer-intake", async (req, res) => {
         fullName: intake.fullName,
         role: "buyer",
         status: "pending",
+        passwordHash: await hashPassword(randomUUID()),
       })
       .onConflictDoUpdate({
         target: usersTable.phone,
