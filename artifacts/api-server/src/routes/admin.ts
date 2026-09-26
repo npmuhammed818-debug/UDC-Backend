@@ -647,7 +647,11 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       res.status(400).json({ error: "invalid_user_id" });
       return;
     }
-    const [existingUser] = await db.select({ id: usersTable.id, role: usersTable.role })
+    const [existingUser] = await db.select({
+      id: usersTable.id,
+      role: usersTable.role,
+      status: usersTable.status,
+    })
       .from(usersTable)
       .where(eq(usersTable.id, userId))
       .limit(1);
@@ -663,6 +667,22 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(usersTable.id, userId))
       .returning({ id: usersTable.id, role: usersTable.role, status: usersTable.status, updatedAt: usersTable.updatedAt });
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "user_verification_status_updated",
+      entityType: "user",
+      entityId: user.id,
+      metadata: { previousStatus: existingUser.status, newStatus: user.status },
+    });
+    if (existingUser.status !== user.status) {
+      await db.insert(notificationsTable).values({
+        userId: user.id,
+        type: "verification_status_updated",
+        title: "Verification status updated",
+        body: `Your UDC verification status is now ${user.status}.`,
+        link: "/profile",
+      });
+    }
     res.json({ user });
   } catch (error) {
     if (error instanceof z.ZodError) {
