@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
+import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 
 const router: IRouter = Router();
 
@@ -45,7 +46,21 @@ router.post("/webhooks/whatsapp", (req, res) => {
     return;
   }
 
-  // AKIF processing is intentionally added later; this endpoint only admits verified Meta events.
+  const messages = Array.isArray(req.body?.entry)
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { messages?: Array<{ id?: string; text?: { body?: string } }> } }> }) =>
+        (entry.changes ?? []).flatMap((change) => change.value?.messages ?? []),
+      )
+    : [];
+
+  for (const message of messages) {
+    if (typeof message.text?.body !== "string") continue;
+    const draft = triageBuyerRequirement(message.text.body);
+    req.log.info(
+      { whatsappMessageId: message.id, missingFields: draft.missingFields },
+      "AKIF triaged verified WhatsApp buyer message",
+    );
+  }
+
   res.sendStatus(200);
 });
 
