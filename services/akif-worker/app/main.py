@@ -6,8 +6,15 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from .documents import extract_document
 from .entity_resolution import dedupe_entities
 from .llm_gateway import status as llm_status
-from .models import (\n    ComtradePreviewRequest,\n    ComtradePreviewResponse,\n    DocumentExtractionResponse,\n    EntityDedupeRequest,\n    EntityDedupeResponse,\n)
-from .orchestration import status as orchestration_status\nfrom .trade_data import preview_comtrade
+from .models import (
+    ComtradePreviewRequest,
+    ComtradePreviewResponse,
+    DocumentExtractionResponse,
+    EntityDedupeRequest,
+    EntityDedupeResponse,
+)
+from .orchestration import status as orchestration_status
+from .trade_data import preview_comtrade
 
 app = FastAPI(
     title="UDC AKIF Intelligence Worker",
