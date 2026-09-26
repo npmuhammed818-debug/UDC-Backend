@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { Router, type IRouter, type Response } from "express";
 import { z } from "zod/v4";
 import {
+  akifResearchRunsTable,
   buyerRequestsTable,
   db,
   sellerListingsTable,
@@ -10,6 +11,9 @@ import { requireRole } from "../auth/middleware";
 import { getAkifDealContext } from "../akif/intelligence/dealContext";
 import { assessDealRisks } from "../akif/intelligence/dealMonitoring";
 import { scoreBuyerSellerMatch } from "../akif/intelligence/matchScoring";
+import { getAkifAdminSummary } from "../akif/intelligence/adminSummary";
+import { parseResearchIntent } from "../akif/intelligence/researchIntent";
+import { runMarketResearch } from "../akif/intelligence/researchOrchestrator";
 import {
   analyzeAkifMarket,
   analyzeAkifProduct,
@@ -67,6 +71,11 @@ const documentCompareSchema = z.object({
 
 const learnSchema = z.object({
   topic: z.string().trim().min(2).max(120),
+}).strict();
+
+const researchSchema = z.object({
+  query: z.string().trim().min(5).max(500),
+  period: z.string().trim().min(4).max(20).optional(),
 }).strict();
 
 function validationError(res: Response, error: unknown) {
@@ -216,5 +225,50 @@ router.get(
     }
   },
 );
+
+
+router.post("/admin/akif/research", requireRole("admin"), async (req, res) => {
+  try {
+    const input = researchSchema.parse(req.body);
+    const intent = parseResearchIntent(input.query);
+    if (!intent) {
+      res.status(400).json({
+        error: "unsupported_research_query",
+        example: "Find buyers for W320 cashew in UAE",
+      });
+      return;
+    }
+    const result = await runMarketResearch({
+      requestedBy: req.authUser!.id,
+      product: intent.product,
+      targetCountry: intent.targetCountry,
+      direction: intent.direction,
+      period: input.period,
+    });
+    res.json(result);
+  } catch (error) {
+    if (validationError(res, error)) return;
+    res.status(502).json({ error: "akif_research_failed" });
+  }
+});
+
+router.get("/admin/akif/research", requireRole("admin"), async (_req, res) => {
+  try {
+    const runs = await db.select().from(akifResearchRunsTable)
+      .orderBy(desc(akifResearchRunsTable.createdAt))
+      .limit(50);
+    res.json({ runs });
+  } catch {
+    res.status(500).json({ error: "akif_research_history_failed" });
+  }
+});
+
+router.get("/admin/akif/summary", requireRole("admin"), async (_req, res) => {
+  try {
+    res.json(await getAkifAdminSummary());
+  } catch {
+    res.status(500).json({ error: "akif_summary_failed" });
+  }
+});
 
 export default router;
