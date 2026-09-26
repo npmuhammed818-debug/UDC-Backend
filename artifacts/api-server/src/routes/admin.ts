@@ -209,14 +209,33 @@ router.patch(
         res.status(400).json({ error: "invalid_requirement_id" });
         return;
       }
+      const [existing] = await db.select().from(buyerRequestsTable)
+        .where(eq(buyerRequestsTable.id, requirementId))
+        .limit(1);
+      if (!existing) {
+        res.status(404).json({ error: "buyer_request_not_found" });
+        return;
+      }
       const [requirement] = await db
         .update(buyerRequestsTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(buyerRequestsTable.id, requirementId))
         .returning();
-      if (!requirement) {
-        res.status(404).json({ error: "buyer_request_not_found" });
-        return;
+      await db.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "buyer_requirement_reviewed",
+        entityType: "buyer_request",
+        entityId: requirement.id,
+        metadata: { previousStatus: existing.status, newStatus: requirement.status },
+      });
+      if (existing.status !== requirement.status) {
+        await db.insert(notificationsTable).values({
+          userId: requirement.buyerUserId,
+          type: "buyer_requirement_reviewed",
+          title: "Requirement review completed",
+          body: `Your buyer requirement was ${requirement.status} by UDC.`,
+          link: "/notifications",
+        });
       }
       res.json({ requirement });
     } catch (error) {
@@ -249,14 +268,33 @@ router.patch(
         res.status(400).json({ error: "invalid_offer_id" });
         return;
       }
+      const [existing] = await db.select().from(sellerListingsTable)
+        .where(eq(sellerListingsTable.id, offerId))
+        .limit(1);
+      if (!existing) {
+        res.status(404).json({ error: "seller_offer_not_found" });
+        return;
+      }
       const [offer] = await db
         .update(sellerListingsTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(sellerListingsTable.id, offerId))
         .returning();
-      if (!offer) {
-        res.status(404).json({ error: "seller_offer_not_found" });
-        return;
+      await db.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "seller_offer_reviewed",
+        entityType: "seller_listing",
+        entityId: offer.id,
+        metadata: { previousStatus: existing.status, newStatus: offer.status },
+      });
+      if (existing.status !== offer.status) {
+        await db.insert(notificationsTable).values({
+          userId: offer.sellerUserId,
+          type: "seller_offer_reviewed",
+          title: "Offer review completed",
+          body: `Your seller offer was ${offer.status} by UDC.`,
+          link: "/notifications",
+        });
       }
       res.json({ offer });
     } catch (error) {
