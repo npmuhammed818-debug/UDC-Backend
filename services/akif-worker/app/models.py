@@ -36,3 +36,25 @@ class DocumentExtractionResponse(BaseModel):
     markdown: str
     character_count: int
     parser: Literal["docling"] = "docling"
+
+
+class ComtradePreviewRequest(BaseModel):
+    period: str = Field(min_length=4, max_length=100)
+    reporter_code: str = Field(min_length=1, max_length=50)
+    cmd_code: str = Field(min_length=1, max_length=200)
+    flow_code: str = Field(min_length=1, max_length=20)
+    partner_code: str | None = Field(default=None, max_length=50)
+    partner2_code: str | None = Field(default=None, max_length=50)
+    customs_code: str | None = Field(default=None, max_length=50)
+    mot_code: str | None = Field(default=None, max_length=50)
+    frequency: Literal["A", "M"] = "A"
+    classification: str = Field(default="HS", min_length=1, max_length=20)
+    max_records: int = Field(default=100, ge=1, le=500)
+
+
+class ComtradePreviewResponse(BaseModel):
+    provider: Literal["un_comtrade"] = "un_comtrade"
+    retrieved_at: str
+    source_url: str
+    query: dict
+    records: list[dict]
