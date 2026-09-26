@@ -2,6 +2,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
+import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
+import { buyerRequirementReply } from "../akif/buyerRequirementReply";
+import { sellerOfferReply } from "../akif/sellerOfferReply";
+import { isSellerOffer, triageSellerOffer } from "../akif/sellerOfferTriage";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -52,30 +56,35 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
       if (typeof message.text?.body !== "string") continue;
-      const draft = triageBuyerRequirement(message.text.body);
-      const requirement =
-        draft.missingFields.length === 0 && message.from && fullName
+
+      const sellerMessage = isSellerOffer(message.text.body);
+      const buyerDraft = sellerMessage ? null : triageBuyerRequirement(message.text.body);
+      const sellerDraft = sellerMessage ? triageSellerOffer(message.text.body) : null;
+      const record = sellerDraft
+        ? sellerDraft.missingFields.length === 0 && message.from && fullName
+          ? await recordPendingSellerOffer({
+              phone: message.from, fullName, product: sellerDraft.product!, quantity: sellerDraft.quantity!,
+              unit: sellerDraft.unit ?? "MT", price: sellerDraft.price!, currency: sellerDraft.currency ?? "USD",
+              originCountry: sellerDraft.originCountry, destination: sellerDraft.destination, incoterm: sellerDraft.incoterm,
+            })
+          : null
+        : buyerDraft && buyerDraft.missingFields.length === 0 && message.from && fullName
           ? await recordPendingBuyerRequirement({
-              phone: message.from,
-              fullName,
-              product: draft.product!,
-              quantity: draft.quantity!,
-              unit: draft.unit ?? "MT",
-              targetPrice: draft.targetPrice,
-              currency: draft.currency ?? "USD",
-              destination: draft.destination!,
-              incoterm: draft.incoterm,
+              phone: message.from, fullName, product: buyerDraft.product!, quantity: buyerDraft.quantity!,
+              unit: buyerDraft.unit ?? "MT", targetPrice: buyerDraft.targetPrice, currency: buyerDraft.currency ?? "USD",
+              destination: buyerDraft.destination!, incoterm: buyerDraft.incoterm,
             })
           : null;
-      const reply = requirement
-        ? "Thanks. UDC recorded your requirement for administrator review."
-        : buyerRequirementReply(draft);
+
+      const reply = record
+        ? sellerDraft ? "Thanks. UDC recorded your offer for administrator review." : "Thanks. UDC recorded your requirement for administrator review."
+        : sellerDraft ? sellerOfferReply(sellerDraft) : buyerRequirementReply(buyerDraft!);
       const delivery = message.from
         ? await sendWhatsAppText(message.from, reply)
         : { delivered: false as const, reason: "missing_sender" as const };
       req.log.info(
-        { whatsappMessageId: message.id, requirementId: requirement?.id, missingFields: draft.missingFields, delivery },
-        "AKIF processed verified WhatsApp buyer message",
+        { whatsappMessageId: message.id, flow: sellerDraft ? "seller_offer" : "buyer_requirement", recordId: record?.id, missingFields: sellerDraft?.missingFields ?? buyerDraft?.missingFields, delivery },
+        "AKIF processed verified WhatsApp trade message",
       );
     }
   }
