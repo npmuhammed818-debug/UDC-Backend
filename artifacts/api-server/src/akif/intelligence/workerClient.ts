@@ -168,3 +168,25 @@ export function runAkifReasoning(input: Record<string, unknown>) {
     body: input,
   });
 }
+
+export function searchAkifGleifCompany(input: {
+  name: string;
+  country_code?: string;
+  limit?: number;
+}) {
+  return requestWorker<Record<string, unknown>>("/company/gleif/search", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function screenAkifOfac(input: {
+  name: string;
+  threshold?: number;
+  limit?: number;
+}) {
+  return requestWorker<Record<string, unknown>>("/compliance/ofac/screen", {
+    method: "POST",
+    body: input,
+  });
+}
