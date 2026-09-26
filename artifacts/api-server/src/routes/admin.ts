@@ -326,20 +326,24 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       res.status(400).json({ error: "invalid_deal_id" });
       return;
     }
+    const [existingDeal] = await db.select({ id: dealsTable.id, status: dealsTable.status })
+      .from(dealsTable)
+      .where(eq(dealsTable.id, dealId))
+      .limit(1);
+    if (!existingDeal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
     const [deal] = await db.update(dealsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(dealsTable.id, dealId))
       .returning();
-    if (!deal) {
-      res.status(404).json({ error: "deal_not_found" });
-      return;
-    }
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser.id,
       action: "deal_status_updated",
       entityType: "deal",
       entityId: deal.id,
-      metadata: { status: deal.status },
+      metadata: { previousStatus: existingDeal.status, newStatus: deal.status },
     });
     res.json({ deal });
   } catch (error) {
