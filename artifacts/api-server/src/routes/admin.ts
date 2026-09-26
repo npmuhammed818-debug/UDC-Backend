@@ -547,4 +547,21 @@ router.post("/admin/deal-notifications/whatsapp", requireRole("admin"), async (r
   }
 });
 
+router.get("/admin/deals/:dealId/messages", requireRole("admin"), async (req, res) => {
+  const dealId = req.params["dealId"];
+  if (typeof dealId !== "string") {
+    res.status(400).json({ error: "invalid_deal_id" });
+    return;
+  }
+  const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
+  if (!deal) {
+    res.status(404).json({ error: "deal_not_found" });
+    return;
+  }
+  const messages = await db.select().from(messagesTable)
+    .where(eq(messagesTable.dealId, deal.id))
+    .orderBy(desc(messagesTable.createdAt));
+  res.json({ messages });
+});
+
 export default router;
