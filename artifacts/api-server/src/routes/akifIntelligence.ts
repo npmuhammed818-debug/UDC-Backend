@@ -3,8 +3,51 @@ import { z } from "zod/v4";
 import { requireRole } from "../auth/middleware";
 import { scoreOpportunity } from "../akif/intelligence/opportunityScoring";
 import { akifProviderRegistry } from "../akif/intelligence/providerRegistry";
+import {
+  dedupeAkifEntities,
+  getAkifWorkerCapabilities,
+  isAkifWorkerConfigured,
+  previewAkifComtrade,
+} from "../akif/intelligence/workerClient";
 
 const router: IRouter = Router();
+
+const entityDedupeSchema = z
+  .object({
+    records: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(200),
+            name: z.string().trim().min(1).max(300),
+            country: z.string().trim().max(120).optional(),
+            website: z.string().url().optional(),
+            email: z.string().email().optional(),
+            phone: z.string().trim().max(80).optional(),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(500),
+    threshold: z.number().min(0.5).max(1).optional(),
+  })
+  .strict();
+
+const comtradePreviewSchema = z
+  .object({
+    period: z.string().min(4).max(100),
+    reporter_code: z.string().min(1).max(50),
+    cmd_code: z.string().min(1).max(200),
+    flow_code: z.string().min(1).max(20),
+    partner_code: z.string().max(50).optional(),
+    partner2_code: z.string().max(50).optional(),
+    customs_code: z.string().max(50).optional(),
+    mot_code: z.string().max(50).optional(),
+    frequency: z.enum(["A", "M"]).optional(),
+    classification: z.string().min(1).max(20).optional(),
+    max_records: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
 
 const opportunitySignalsSchema = z
   .object({
@@ -31,8 +74,10 @@ router.get(
           "provider_registry",
           "source_provenance",
           "explainable_opportunity_scoring",
+          "open_source_worker_bridge",
         ],
         connectedResearchProviders: akifProviderRegistry.list(),
+        workerConfigured: isAkifWorkerConfigured(),
       },
     });
   },
@@ -61,6 +106,88 @@ router.post(
         return;
       }
       res.status(500).json({ error: "akif_intelligence_score_failed" });
+    }
+  },
+);
+
+router.get(
+  "/admin/akif/intelligence/worker",
+  requireRole("admin"),
+  async (_req, res) => {
+    if (!isAkifWorkerConfigured()) {
+      res.json({
+        status: "not_configured",
+        configured: false,
+        requiredEnvironmentVariables: ["AKIF_WORKER_URL", "AKIF_WORKER_TOKEN"],
+      });
+      return;
+    }
+
+    try {
+      const capabilities = await getAkifWorkerCapabilities();
+      res.json({ status: "connected", configured: true, capabilities });
+    } catch {
+      res.status(502).json({
+        error: "akif_worker_unavailable",
+        configured: true,
+      });
+    }
+  },
+);
+
+router.post(
+  "/admin/akif/intelligence/entities/dedupe",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const input = entityDedupeSchema.parse(req.body);
+      const result = await dedupeAkifEntities(input);
+      res.json({
+        ...result,
+        notice:
+          "Entity-resolution links are candidate duplicates only. They do not verify company identity.",
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          error: "validation_error",
+          details: error.issues.map((issue) => ({
+            field: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+        return;
+      }
+      res.status(502).json({ error: "akif_entity_resolution_failed" });
+    }
+  },
+);
+
+
+router.post(
+  "/admin/akif/intelligence/trade/comtrade/preview",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const input = comtradePreviewSchema.parse(req.body);
+      const result = await previewAkifComtrade(input);
+      res.json({
+        ...result,
+        notice:
+          "UN Comtrade statistics are source evidence for analysis, not proof of a specific company's activity or verification status.",
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          error: "validation_error",
+          details: error.issues.map((issue) => ({
+            field: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+        return;
+      }
+      res.status(502).json({ error: "akif_comtrade_request_failed" });
     }
   },
 );
