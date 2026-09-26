@@ -308,7 +308,7 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req, re
 });
 
 router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
-  const commissions = await db.select().from(commissionsTable).orderBy(desc(commissions.updatedAt));
+  const commissions = await db.select().from(commissionsTable).orderBy(desc(commissionsTable.updatedAt));
   res.json({ commissions });
 });
 
