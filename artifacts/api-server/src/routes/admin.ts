@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -492,7 +492,7 @@ router.get("/admin/documents", requireRole("admin"), async (req, res) => {
 router.post("/admin/documents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createDocumentSchema.parse(req.body);
-    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    const [deal] = await db.select({ id: dealsTable.id, buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
     if (!deal) {
       res.status(404).json({ error: "deal_not_found" });
       return;
@@ -505,6 +505,10 @@ router.post("/admin/documents", requireRole("admin"), async (req: AuthenticatedR
       fileUrl: input.fileUrl,
       status: "pending",
     }).returning();
+    await db.insert(documentAccessTable).values([
+      { documentId: document.id, userId: deal.buyerUserId, accessRole: "viewer" },
+      { documentId: document.id, userId: deal.sellerUserId, accessRole: "viewer" },
+    ]);
     res.status(201).json({ document });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -880,6 +884,18 @@ router.get("/admin/deals/:dealId/participants", requireRole("admin"), async (req
     .where(eq(dealParticipantsTable.dealId, dealId))
     .orderBy(desc(dealParticipantsTable.createdAt));
   res.json({ participants });
+});
+
+router.get("/admin/documents/:documentId/access", requireRole("admin"), async (req, res) => {
+  const documentId = req.params["documentId"];
+  if (typeof documentId !== "string") {
+    res.status(400).json({ error: "invalid_document_id" });
+    return;
+  }
+  const access = await db.select().from(documentAccessTable)
+    .where(eq(documentAccessTable.documentId, documentId))
+    .orderBy(desc(documentAccessTable.createdAt));
+  res.json({ access });
 });
 
 export default router;
