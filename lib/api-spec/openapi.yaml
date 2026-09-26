@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: database
     description: Database connectivity operations
+  - name: whatsapp
+    description: WhatsApp-first intake operations
 paths:
   /healthz:
     get:
@@ -45,6 +47,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DatabaseHealthStatus"
+  /whatsapp/buyer-intake:
+    post:
+      operationId: createWhatsappBuyerIntake
+      tags: [whatsapp]
+      summary: Record a buyer requirement from a WhatsApp conversation
+      description: Creates a buyer requirement awaiting manual UDC administrator review. It does not match sellers or approve a party automatically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhatsappBuyerIntake"
+      responses:
+        "201":
+          description: Requirement received for manual review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsappBuyerIntakeResponse"
+        "400":
+          description: Invalid intake details
 components:
   schemas:
     HealthStatus:
@@ -60,4 +83,43 @@ components:
       required:
         - status
         - database
-
+    WhatsappBuyerIntake:
+      type: object
+      required: [phone, fullName, quantity, destination]
+      properties:
+        phone:
+          type: string
+        fullName:
+          type: string
+        product:
+          type: string
+          default: Copper scrap
+        quantity:
+          type: number
+        unit:
+          type: string
+          default: MT
+        targetPrice:
+          type: number
+        currency:
+          type: string
+          default: USD
+        destination:
+          type: string
+        incoterm:
+          type: string
+    WhatsappBuyerIntakeResponse:
+      type: object
+      required: [status, requirementId, reviewStatus, message]
+      properties:
+        status:
+          type: string
+          example: received
+        requirementId:
+          type: string
+          format: uuid
+        reviewStatus:
+          type: string
+          example: pending_admin_review
+        message:
+          type: string
