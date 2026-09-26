@@ -483,7 +483,7 @@ router.get("/admin/referrals", requireRole("admin"), async (_req, res) => {
 router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createReferralSchema.parse(req.body);
-    const [agent, referred] = await Promise.all([
+    const [[agent], [referred]] = await Promise.all([
       db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.agentUserId)).limit(1),
       db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
     ]);
