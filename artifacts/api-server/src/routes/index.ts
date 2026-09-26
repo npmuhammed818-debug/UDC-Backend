@@ -1,4 +1,5 @@
 import adminRouter from "./admin";
+import akifIntelligenceRouter from "./akifIntelligence";
 import authRouter from "./auth";
 import commissionRouter from "./commissions";
 import companyRouter from "./company";
@@ -28,6 +29,7 @@ router.use(documentRouter);
 router.use(dealRouter);
 router.use(companyRouter);
 router.use(adminRouter);
+router.use(akifIntelligenceRouter);
 router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
 
