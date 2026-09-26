@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import { akifResearchRunsTable, db } from "@workspace/db";
 import { scoreOpportunity } from "./opportunityScoring";
 import { unM49Code } from "./countryCodes";
+import { isHermesAkifConfigured } from "./hermesClient";
+import { learnFromResearchRun } from "./hermesLearning";
 import {
   analyzeAkifMarket,
   analyzeAkifProduct,
@@ -168,7 +170,34 @@ export async function runMarketResearch(input: RunResearchInput) {
       })
       .where(eq(akifResearchRunsTable.id, run.id));
 
-    return { runId: run.id, status: "completed", ...result, evidence };
+    let hermesLearning:
+      | { attempted: false }
+      | { attempted: true; status: "review_required" | "failed" } = {
+      attempted: false,
+    };
+
+    if (
+      process.env.AKIF_HERMES_AUTO_LEARN === "true" &&
+      isHermesAkifConfigured()
+    ) {
+      try {
+        await learnFromResearchRun({
+          researchRunId: run.id,
+          requestedBy: input.requestedBy,
+        });
+        hermesLearning = { attempted: true, status: "review_required" };
+      } catch {
+        hermesLearning = { attempted: true, status: "failed" };
+      }
+    }
+
+    return {
+      runId: run.id,
+      status: "completed",
+      ...result,
+      evidence,
+      hermesLearning,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
     await db.update(akifResearchRunsTable)

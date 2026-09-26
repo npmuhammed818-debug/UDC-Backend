@@ -1,0 +1,38 @@
+services:
+  hermes-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - akif-hermes-data:/opt/data
+      - ./services/hermes-learning:/opt/akif-bootstrap:ro
+    command:
+      - /bin/sh
+      - /opt/akif-bootstrap/bootstrap.sh
+    restart: "no"
+
+  hermes-akif:
+    image: nousresearch/hermes-agent:v2026.9.14
+    depends_on:
+      hermes-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - akif-hermes-data:/opt/data
+    environment:
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: "0.0.0.0"
+      API_SERVER_PORT: "8642"
+      API_SERVER_KEY: "${HERMES_AKIF_API_KEY:?HERMES_AKIF_API_KEY is required}"
+      API_SERVER_MODEL_NAME: "akif-hermes"
+    ports:
+      - "127.0.0.1:8642:8642"
+    command: ["gateway", "run"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8642/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  akif-hermes-data:
