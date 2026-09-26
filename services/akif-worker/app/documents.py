@@ -1,7 +1,7 @@
+from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from docling.document_converter import DocumentConverter
 from fastapi import HTTPException, UploadFile
 
 from .models import DocumentExtractionResponse
@@ -18,7 +18,12 @@ ALLOWED_SUFFIXES = {
     ".md",
 }
 
-_converter = DocumentConverter()
+
+@lru_cache(maxsize=1)
+def _get_converter():
+    from docling.document_converter import DocumentConverter
+
+    return DocumentConverter()
 
 
 async def extract_document(file: UploadFile) -> DocumentExtractionResponse:
@@ -39,7 +44,7 @@ async def extract_document(file: UploadFile) -> DocumentExtractionResponse:
             tmp.write(payload)
             temp_path = Path(tmp.name)
 
-        result = _converter.convert(temp_path)
+        result = _get_converter().convert(temp_path)
         markdown = result.document.export_to_markdown()
         return DocumentExtractionResponse(
             filename=filename,
