@@ -1,0 +1,38 @@
+name: AKIF stack
+
+on:
+  pull_request:
+    paths:
+      - "artifacts/api-server/**"
+      - "services/akif-worker/**"
+      - ".github/workflows/akif-stack.yml"
+  push:
+    branches: [main]
+    paths:
+      - "artifacts/api-server/**"
+      - "services/akif-worker/**"
+      - ".github/workflows/akif-stack.yml"
+
+jobs:
+  api-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @workspace/api-server typecheck
+
+  worker-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m compileall -q services/akif-worker/app services/akif-worker/tests
