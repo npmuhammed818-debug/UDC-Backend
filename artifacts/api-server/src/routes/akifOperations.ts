@@ -21,6 +21,7 @@ import {
   calculateAkifLandedCost,
   compareAkifDocuments,
   explainAkifTopic,
+  runAkifReasoning,
 } from "../akif/intelligence/workerClient";
 
 const router: IRouter = Router();
@@ -76,6 +77,18 @@ const learnSchema = z.object({
 const researchSchema = z.object({
   query: z.string().trim().min(5).max(500),
   period: z.string().trim().min(4).max(20).optional(),
+}).strict();
+
+const reasoningSchema = z.object({
+  task: z.enum([
+    "trade_question",
+    "company_analysis",
+    "document_analysis",
+    "opportunity_analysis",
+    "message_understanding",
+  ]),
+  prompt: z.string().min(1).max(20_000),
+  context: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 
 function validationError(res: Response, error: unknown) {
@@ -226,6 +239,15 @@ router.get(
   },
 );
 
+
+router.post("/admin/akif/reasoning", requireRole("admin"), async (req, res) => {
+  try {
+    res.json(await runAkifReasoning(reasoningSchema.parse(req.body)));
+  } catch (error) {
+    if (validationError(res, error)) return;
+    res.status(502).json({ error: "akif_reasoning_failed" });
+  }
+});
 
 router.post("/admin/akif/research", requireRole("admin"), async (req, res) => {
   try {
