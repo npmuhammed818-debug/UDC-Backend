@@ -32,7 +32,7 @@ router.get("/webhooks/whatsapp", (req, res) => {
   res.type("text/plain").send(challenge);
 });
 
-router.post("/webhooks/whatsapp", (req, res) => {
+router.post("/webhooks/whatsapp", async (req, res) => {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.header("x-hub-signature-256");
   const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
