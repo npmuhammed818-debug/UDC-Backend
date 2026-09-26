@@ -705,21 +705,33 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       res.status(400).json({ error: "invalid_commission_id" });
       return;
     }
+    const [existing] = await db.select().from(commissionsTable)
+      .where(eq(commissionsTable.id, commissionId))
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "commission_not_found" });
+      return;
+    }
     const [commission] = await db.update(commissionsTable)
       .set({ status: input.status, paidAt: input.status === "paid" ? new Date() : null, updatedAt: new Date() })
       .where(eq(commissionsTable.id, commissionId))
       .returning();
-    if (!commission) {
-      res.status(404).json({ error: "commission_not_found" });
-      return;
-    }
-    await db.insert(notificationsTable).values({
-      userId: commission.beneficiaryUserId,
-      type: "commission_status_updated",
-      title: "Commission status updated",
-      body: `Your commission is now ${commission.status}.`,
-      link: "/commissions",
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "commission_status_updated",
+      entityType: "commission",
+      entityId: commission.id,
+      metadata: { dealId: commission.dealId, previousStatus: existing.status, newStatus: commission.status },
     });
+    if (existing.status !== commission.status) {
+      await db.insert(notificationsTable).values({
+        userId: commission.beneficiaryUserId,
+        type: "commission_status_updated",
+        title: "Commission status updated",
+        body: `Your commission is now ${commission.status}.`,
+        link: "/commissions",
+      });
+    }
     res.json({ commission });
   } catch (error) {
     if (error instanceof z.ZodError) {
