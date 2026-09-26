@@ -252,6 +252,33 @@ router.post("/admin/akif/research", requireRole("admin"), async (req, res) => {
   }
 });
 
+router.post("/admin/akif/research/:runId/execute", requireRole("admin"), async (req, res) => {
+  try {
+    const runId = z.string().uuid().parse(req.params["runId"]);
+    const [run] = await db.select().from(akifResearchRunsTable)
+      .where(eq(akifResearchRunsTable.id, runId)).limit(1);
+    if (!run) {
+      res.status(404).json({ error: "research_run_not_found" });
+      return;
+    }
+    if (!run.product || !run.targetCountry || (run.direction !== "buyer" && run.direction !== "seller")) {
+      res.status(409).json({ error: "research_run_missing_structured_intent" });
+      return;
+    }
+    const result = await runMarketResearch({
+      researchRunId: run.id,
+      requestedBy: run.requestedBy ?? undefined,
+      product: run.product,
+      targetCountry: run.targetCountry,
+      direction: run.direction,
+    });
+    res.json(result);
+  } catch (error) {
+    if (validationError(res, error)) return;
+    res.status(502).json({ error: "akif_research_execution_failed" });
+  }
+});
+
 router.get("/admin/akif/research", requireRole("admin"), async (_req, res) => {
   try {
     const runs = await db.select().from(akifResearchRunsTable)
