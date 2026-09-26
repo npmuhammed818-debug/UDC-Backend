@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { companiesTable } from "@workspace/db";
+import { buyerRequestsTable, companiesTable } from "@workspace/db";
 import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -52,6 +52,50 @@ router.patch(
         return;
       }
       res.status(500).json({ error: "company_verification_failed" });
+    }
+  },
+);
+
+const requirementStatusSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+});
+
+router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
+  const requirements = await db
+    .select()
+    .from(buyerRequestsTable)
+    .where(eq(buyerRequestsTable.status, "pending_admin_review"))
+    .orderBy(desc(buyerRequestsTable.createdAt));
+  res.json({ requirements });
+});
+
+router.patch(
+  "/admin/buyer-requests/:requirementId/status",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const input = requirementStatusSchema.parse(req.body);
+      const requirementId = req.params["requirementId"];
+      if (typeof requirementId !== "string") {
+        res.status(400).json({ error: "invalid_requirement_id" });
+        return;
+      }
+      const [requirement] = await db
+        .update(buyerRequestsTable)
+        .set({ status: input.status, updatedAt: new Date() })
+        .where(eq(buyerRequestsTable.id, requirementId))
+        .returning();
+      if (!requirement) {
+        res.status(404).json({ error: "buyer_request_not_found" });
+        return;
+      }
+      res.json({ requirement });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "validation_error" });
+        return;
+      }
+      res.status(500).json({ error: "buyer_request_review_failed" });
     }
   },
 );
