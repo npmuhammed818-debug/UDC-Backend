@@ -21,7 +21,7 @@ router.get("/notifications", requireAuth, async (req, res) => {
 
 router.patch("/notifications/:notificationId/read", requireAuth, async (req, res) => {
   try {
-    const notificationId = req.params["notificationId"];
+    const notificationId = String(req.params["notificationId"] ?? "");
     if (!notificationId) {
       res.status(400).json({ error: "notification_id_required" });
       return;
