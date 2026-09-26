@@ -1,5 +1,6 @@
 import adminRouter from "./admin";
 import authRouter from "./auth";
+import commissionRouter from "./commissions";
 import companyRouter from "./company";
 import { Router, type IRouter } from "express";
 import databaseRouter from "./database";
@@ -17,6 +18,7 @@ router.use(healthRouter);
 router.use(databaseRouter);
 router.use(authRouter);
 router.use(profileRouter);
+router.use(commissionRouter);
 router.use(notificationRouter);
 router.use(documentRouter);
 router.use(dealRouter);
