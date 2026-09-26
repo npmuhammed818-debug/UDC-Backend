@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { db, documentAccessTable, documentsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { createSignedDownloadUrl, parseStoragePath } from "../supabase/storage";
 
 const router: IRouter = Router();
 
@@ -30,7 +31,14 @@ router.get("/documents", requireAuth, async (req, res) => {
       )
       .orderBy(desc(documentsTable.createdAt));
 
-    res.json({ documents });
+    const accessibleDocuments = await Promise.all(documents.map(async (document) => ({
+      ...document,
+      fileUrl: parseStoragePath(document.fileUrl)
+        ? await createSignedDownloadUrl(parseStoragePath(document.fileUrl)!)
+        : document.fileUrl,
+    })));
+
+    res.json({ documents: accessibleDocuments });
   } catch {
     res.status(500).json({ error: "documents_fetch_failed" });
   }
