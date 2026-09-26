@@ -10,6 +10,7 @@ from .entity_resolution import dedupe_entities
 from .learn import LearnRequest, LearnResponse, explain_topic
 from .market_analysis import MarketAnalysisRequest, MarketAnalysisResponse, analyze_market
 from .product_intelligence import ProductIntelligenceRequest, ProductIntelligenceResponse, analyze_product
+from .reasoning import ReasoningRequest, ReasoningResponse, reason
 from .verification import VerificationAssessment, VerificationSignals, assess_verification
 from .llm_gateway import status as llm_status
 from .models import (
@@ -75,6 +76,10 @@ def capabilities() -> dict:
             "verification_assistance": {"enabled": True, "human_decision_required": True},
             "document_comparison": {"enabled": True},
             "akif_learn": {"enabled": True},
+            "model_reasoning": {
+                "enabled": llm_status()["configured"],
+                "provider_neutral": True,
+            },
             "orchestration": orchestration_status(),
             "llm_gateway": llm_status(),
         },
@@ -169,3 +174,12 @@ def documents_compare(request: DocumentCompareRequest) -> DocumentCompareRespons
 )
 def learn_explain(request: LearnRequest) -> LearnResponse:
     return explain_topic(request)
+
+
+@app.post(
+    "/reasoning/analyze",
+    response_model=ReasoningResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def reasoning_analyze(request: ReasoningRequest) -> ReasoningResponse:
+    return reason(request)
