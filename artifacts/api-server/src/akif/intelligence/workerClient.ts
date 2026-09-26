@@ -89,3 +89,33 @@ export function dedupeAkifEntities(input: AkifEntityDedupeInput) {
     body: input,
   });
 }
+
+
+export type AkifComtradePreviewInput = {
+  period: string;
+  reporter_code: string;
+  cmd_code: string;
+  flow_code: string;
+  partner_code?: string;
+  partner2_code?: string;
+  customs_code?: string;
+  mot_code?: string;
+  frequency?: "A" | "M";
+  classification?: string;
+  max_records?: number;
+};
+
+export type AkifComtradePreviewResult = {
+  provider: "un_comtrade";
+  retrieved_at: string;
+  source_url: string;
+  query: Record<string, unknown>;
+  records: Array<Record<string, unknown>>;
+};
+
+export function previewAkifComtrade(input: AkifComtradePreviewInput) {
+  return requestWorker<AkifComtradePreviewResult>("/trade/comtrade/preview", {
+    method: "POST",
+    body: input,
+  });
+}
