@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, companiesTable } from "@workspace/db";
+import { buyerRequestsTable, companiesTable, sellerListingsTable } from "@workspace/db";
 import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -96,6 +96,46 @@ router.patch(
         return;
       }
       res.status(500).json({ error: "buyer_request_review_failed" });
+    }
+  },
+);
+
+router.get("/admin/seller-offers", requireRole("admin"), async (_req, res) => {
+  const offers = await db
+    .select()
+    .from(sellerListingsTable)
+    .where(eq(sellerListingsTable.status, "pending_admin_review"))
+    .orderBy(desc(sellerListingsTable.createdAt));
+  res.json({ offers });
+});
+
+router.patch(
+  "/admin/seller-offers/:offerId/status",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const input = requirementStatusSchema.parse(req.body);
+      const offerId = req.params["offerId"];
+      if (typeof offerId !== "string") {
+        res.status(400).json({ error: "invalid_offer_id" });
+        return;
+      }
+      const [offer] = await db
+        .update(sellerListingsTable)
+        .set({ status: input.status, updatedAt: new Date() })
+        .where(eq(sellerListingsTable.id, offerId))
+        .returning();
+      if (!offer) {
+        res.status(404).json({ error: "seller_offer_not_found" });
+        return;
+      }
+      res.json({ offer });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "validation_error" });
+        return;
+      }
+      res.status(500).json({ error: "seller_offer_review_failed" });
     }
   },
 );
