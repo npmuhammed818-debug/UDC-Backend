@@ -114,6 +114,10 @@ const createReferralSchema = z.object({
   commissionRate: z.coerce.number().min(0).max(100).optional(),
 });
 
+const referralStatusSchema = z.object({
+  status: z.enum(["pending", "approved", "rejected", "cancelled"]),
+});
+
 const sendDealNotificationSchema = z.object({
   dealId: z.string().uuid(),
   recipientUserId: z.string().uuid(),
@@ -504,6 +508,51 @@ router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedR
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
     res.status(500).json({ error: "referral_create_failed" });
+  }
+});
+
+router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = referralStatusSchema.parse(req.body);
+    const referralId = req.params["referralId"];
+    if (typeof referralId !== "string") {
+      res.status(400).json({ error: "invalid_referral_id" });
+      return;
+    }
+    const [existing] = await db.select().from(referralsTable)
+      .where(eq(referralsTable.id, referralId))
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "referral_not_found" });
+      return;
+    }
+    const [referral] = await db.update(referralsTable)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(eq(referralsTable.id, referralId))
+      .returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "referral_status_updated",
+      entityType: "referral",
+      entityId: referral.id,
+      metadata: { previousStatus: existing.status, newStatus: referral.status },
+    });
+    if (existing.status !== referral.status) {
+      await db.insert(notificationsTable).values({
+        userId: referral.agentUserId,
+        type: "referral_status_updated",
+        title: "Referral status updated",
+        body: `Your referral is now ${referral.status}.`,
+        link: "/referrals",
+      });
+    }
+    res.json({ referral });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "referral_status_update_failed" });
   }
 });
 
