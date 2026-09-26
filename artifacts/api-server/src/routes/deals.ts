@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, or } from "drizzle-orm";
-import { db, dealsTable } from "@workspace/db";
+import { db, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -74,6 +74,61 @@ router.get("/deals/:dealId", requireAuth, async (req, res) => {
     res.json({ deal });
   } catch {
     res.status(500).json({ error: "deal_fetch_failed" });
+  }
+});
+
+router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
+  try {
+    const dealId = String(req.params["dealId"] ?? "");
+    if (!dealId) {
+      res.status(400).json({ error: "deal_id_required" });
+      return;
+    }
+
+    const [deal] = await db
+      .select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber, status: dealsTable.status })
+      .from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id)))
+      .limit(1);
+
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+
+    const [inspections, shipments] = await Promise.all([
+      db
+        .select({
+          id: inspectionsTable.id,
+          inspectorName: inspectionsTable.inspectorName,
+          status: inspectionsTable.status,
+          scheduledAt: inspectionsTable.scheduledAt,
+          resultSummary: inspectionsTable.resultSummary,
+          updatedAt: inspectionsTable.updatedAt,
+        })
+        .from(inspectionsTable)
+        .where(eq(inspectionsTable.dealId, deal.id))
+        .orderBy(desc(inspectionsTable.updatedAt)),
+      db
+        .select({
+          id: shipmentsTable.id,
+          carrier: shipmentsTable.carrier,
+          trackingNumber: shipmentsTable.trackingNumber,
+          status: shipmentsTable.status,
+          origin: shipmentsTable.origin,
+          destination: shipmentsTable.destination,
+          estimatedArrival: shipmentsTable.estimatedArrival,
+          notes: shipmentsTable.notes,
+          updatedAt: shipmentsTable.updatedAt,
+        })
+        .from(shipmentsTable)
+        .where(eq(shipmentsTable.dealId, deal.id))
+        .orderBy(desc(shipmentsTable.updatedAt)),
+    ]);
+
+    res.json({ deal, inspections, shipments });
+  } catch {
+    res.status(500).json({ error: "deal_tracking_fetch_failed" });
   }
 });
 
