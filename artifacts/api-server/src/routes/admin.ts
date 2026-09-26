@@ -105,6 +105,14 @@ const userVerificationStatusSchema = z.object({
   status: z.enum(["pending", "under_review", "verified", "rejected", "suspended"]),
 });
 
+async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
+  const users = await db.select({ id: usersTable.id, role: usersTable.role })
+    .from(usersTable)
+    .where(and(inArray(usersTable.id, [buyerUserId, sellerUserId]), eq(usersTable.status, "verified")));
+  return users.some((user) => user.id === buyerUserId && user.role === "buyer")
+    && users.some((user) => user.id === sellerUserId && user.role === "seller");
+}
+
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
   const requirements = await db
     .select()
@@ -211,6 +219,10 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
       res.status(409).json({ error: "match_products_do_not_match" });
       return;
     }
+    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, sellerOffer.sellerUserId)) {
+      res.status(409).json({ error: "match_requires_verified_counterparties" });
+      return;
+    }
 
     const [existingMatch] = await db.select({ id: matchesTable.id }).from(matchesTable).where(and(
       eq(matchesTable.buyerRequestId, buyerRequest.id),
@@ -253,6 +265,10 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
     }
     if (buyerRequest.productId !== sellerOffer.productId || buyerRequest.unit !== sellerOffer.unit) {
       res.status(409).json({ error: "deal_terms_do_not_match" });
+      return;
+    }
+    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, sellerOffer.sellerUserId)) {
+      res.status(409).json({ error: "deal_requires_verified_counterparties" });
       return;
     }
 
