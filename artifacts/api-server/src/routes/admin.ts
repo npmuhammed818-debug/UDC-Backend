@@ -165,6 +165,30 @@ async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: stri
     && users.some((user) => user.id === sellerUserId && user.role === "seller");
 }
 
+async function notifyDealCounterparties(
+  dealId: string,
+  type: string,
+  title: string,
+  body: string,
+  link: string,
+) {
+  const [deal] = await db
+    .select({
+      buyerUserId: dealsTable.buyerUserId,
+      sellerUserId: dealsTable.sellerUserId,
+    })
+    .from(dealsTable)
+    .where(eq(dealsTable.id, dealId))
+    .limit(1);
+
+  if (!deal) return;
+
+  await db.insert(notificationsTable).values([
+    { userId: deal.buyerUserId, type, title, body, link },
+    { userId: deal.sellerUserId, type, title, body, link },
+  ]);
+}
+
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
   const requirements = await db
     .select()
