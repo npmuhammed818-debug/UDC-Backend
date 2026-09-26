@@ -1,4 +1,7 @@
-from fastapi import FastAPI, File, UploadFile
+import os
+import secrets
+
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 
 from .documents import extract_document
 from .entity_resolution import dedupe_entities
@@ -9,9 +12,22 @@ from .orchestration import status as orchestration_status
 app = FastAPI(
     title="UDC AKIF Intelligence Worker",
     version="0.1.0",
-    docs_url="/docs",
+    docs_url=None,
     redoc_url=None,
 )
+
+
+def require_internal_token(
+    x_akif_worker_token: str | None = Header(default=None),
+) -> None:
+    expected = os.getenv("AKIF_WORKER_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="worker_token_not_configured")
+    if not x_akif_worker_token or not secrets.compare_digest(
+        x_akif_worker_token,
+        expected,
+    ):
+        raise HTTPException(status_code=401, detail="invalid_worker_token")
 
 
 @app.get("/health")
@@ -19,7 +35,7 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "akif-worker"}
 
 
-@app.get("/capabilities")
+@app.get("/capabilities", dependencies=[Depends(require_internal_token)])
 def capabilities() -> dict:
     return {
         "service": "akif-worker",
@@ -44,12 +60,20 @@ def capabilities() -> dict:
     }
 
 
-@app.post("/entities/dedupe", response_model=EntityDedupeResponse)
+@app.post(
+    "/entities/dedupe",
+    response_model=EntityDedupeResponse,
+    dependencies=[Depends(require_internal_token)],
+)
 def entities_dedupe(request: EntityDedupeRequest) -> EntityDedupeResponse:
     return dedupe_entities(request)
 
 
-@app.post("/documents/extract", response_model=DocumentExtractionResponse)
+@app.post(
+    "/documents/extract",
+    response_model=DocumentExtractionResponse,
+    dependencies=[Depends(require_internal_token)],
+)
 async def documents_extract(
     file: UploadFile = File(...),
 ) -> DocumentExtractionResponse:
