@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { buyerRequirementReply } from "../akif/buyerRequirementReply";
+import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -18,13 +19,7 @@ router.get("/webhooks/whatsapp", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (
-    !verifyToken ||
-    mode !== "subscribe" ||
-    typeof token !== "string" ||
-    !isEqual(token, verifyToken) ||
-    typeof challenge !== "string"
-  ) {
+  if (!verifyToken || mode !== "subscribe" || typeof token !== "string" || !isEqual(token, verifyToken) || typeof challenge !== "string") {
     res.sendStatus(403);
     return;
   }
@@ -48,22 +43,41 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     return;
   }
 
-  const messages = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { messages?: Array<{ id?: string; from?: string; text?: { body?: string } }> } }> }) =>
-        (entry.changes ?? []).flatMap((change) => change.value?.messages ?? []),
-      )
+  const changes = Array.isArray(req.body?.entry)
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; text?: { body?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
-  for (const message of messages) {
-    if (typeof message.text?.body !== "string") continue;
-    const draft = triageBuyerRequirement(message.text.body);
-    const delivery = message.from
-      ? await sendWhatsAppText(message.from, buyerRequirementReply(draft))
-      : { delivered: false as const, reason: "missing_sender" as const };
-    req.log.info(
-      { whatsappMessageId: message.id, missingFields: draft.missingFields, delivery },
-      "AKIF triaged verified WhatsApp buyer message",
-    );
+  for (const change of changes) {
+    const value = change.value;
+    const fullName = value?.contacts?.[0]?.profile?.name;
+    for (const message of value?.messages ?? []) {
+      if (typeof message.text?.body !== "string") continue;
+      const draft = triageBuyerRequirement(message.text.body);
+      const requirement =
+        draft.missingFields.length === 0 && message.from && fullName
+          ? await recordPendingBuyerRequirement({
+              phone: message.from,
+              fullName,
+              product: draft.product!,
+              quantity: draft.quantity!,
+              unit: draft.unit ?? "MT",
+              targetPrice: draft.targetPrice,
+              currency: draft.currency ?? "USD",
+              destination: draft.destination!,
+              incoterm: draft.incoterm,
+            })
+          : null;
+      const reply = requirement
+        ? "Thanks. UDC recorded your requirement for administrator review."
+        : buyerRequirementReply(draft);
+      const delivery = message.from
+        ? await sendWhatsAppText(message.from, reply)
+        : { delivered: false as const, reason: "missing_sender" as const };
+      req.log.info(
+        { whatsappMessageId: message.id, requirementId: requirement?.id, missingFields: draft.missingFields, delivery },
+        "AKIF processed verified WhatsApp buyer message",
+      );
+    }
   }
 
   res.sendStatus(200);
