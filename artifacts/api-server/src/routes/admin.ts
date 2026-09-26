@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, companiesTable, dealsTable, matchesTable, sellerListingsTable } from "@workspace/db";
+import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, matchesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -76,6 +76,19 @@ const createDealSchema = z.object({
 
 const dealStatusSchema = z.object({
   status: z.enum(["initiated", "negotiation", "verification", "loi", "icpo", "fco_sco", "contract", "banking", "inspection", "loading", "shipment", "delivery", "payment", "commission", "completed", "on_hold", "cancelled", "rejected", "disputed"]),
+});
+
+const createCommissionSchema = z.object({
+  dealId: z.string().uuid(),
+  beneficiaryUserId: z.string().uuid(),
+  amount: z.coerce.number().positive(),
+  currency: z.string().length(3).optional(),
+  commissionType: z.enum(["percentage", "fixed_per_mt", "fixed_amount"]).optional(),
+  commissionRate: z.coerce.number().nonnegative().optional(),
+});
+
+const commissionStatusSchema = z.object({
+  status: z.enum(["pending", "paid", "cancelled"]),
 });
 
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
@@ -291,6 +304,67 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req, re
       return;
     }
     res.status(500).json({ error: "deal_status_update_failed" });
+  }
+});
+
+router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
+  const commissions = await db.select().from(commissionsTable).orderBy(desc(commissions.updatedAt));
+  res.json({ commissions });
+});
+
+router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
+  try {
+    const input = createCommissionSchema.parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id, currency: dealsTable.currency }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    const [beneficiary] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
+    if (!deal || !beneficiary) {
+      res.status(404).json({ error: "commission_record_not_found" });
+      return;
+    }
+
+    const [commission] = await db.insert(commissionsTable).values({
+      dealId: deal.id,
+      beneficiaryUserId: beneficiary.id,
+      amount: String(input.amount),
+      currency: (input.currency ?? deal.currency).toUpperCase(),
+      status: "pending",
+      commissionType: input.commissionType,
+      commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
+      commissionAmount: String(input.amount),
+    }).returning();
+    res.status(201).json({ commission });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "commission_creation_failed" });
+  }
+});
+
+router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), async (req, res) => {
+  try {
+    const input = commissionStatusSchema.parse(req.body);
+    const commissionId = req.params["commissionId"];
+    if (typeof commissionId !== "string") {
+      res.status(400).json({ error: "invalid_commission_id" });
+      return;
+    }
+    const [commission] = await db.update(commissionsTable)
+      .set({ status: input.status, paidAt: input.status === "paid" ? new Date() : null, updatedAt: new Date() })
+      .where(eq(commissionsTable.id, commissionId))
+      .returning();
+    if (!commission) {
+      res.status(404).json({ error: "commission_not_found" });
+      return;
+    }
+    res.json({ commission });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "commission_status_update_failed" });
   }
 });
 
