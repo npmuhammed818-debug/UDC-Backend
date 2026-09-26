@@ -2,8 +2,8 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, matchesTable, sellerListingsTable, usersTable } from "@workspace/db";
-import { requireRole } from "../auth/middleware";
+import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
 
@@ -89,6 +89,16 @@ const createCommissionSchema = z.object({
 
 const commissionStatusSchema = z.object({
   status: z.enum(["pending", "paid", "cancelled"]),
+});
+
+const createDocumentSchema = z.object({
+  dealId: z.string().uuid(),
+  documentType: z.string().min(2).max(80),
+  fileUrl: z.string().url().refine((value) => value.startsWith("https://"), "secure_url_required"),
+});
+
+const documentStatusSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
 });
 
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
@@ -365,6 +375,66 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       return;
     }
     res.status(500).json({ error: "commission_status_update_failed" });
+  }
+});
+
+router.get("/admin/documents", requireRole("admin"), async (req, res) => {
+  const dealId = req.query.dealId;
+  const documents = typeof dealId === "string"
+    ? await db.select().from(documentsTable).where(eq(documentsTable.dealId, dealId)).orderBy(desc(documentsTable.createdAt))
+    : await db.select().from(documentsTable).orderBy(desc(documentsTable.createdAt));
+  res.json({ documents });
+});
+
+router.post("/admin/documents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = createDocumentSchema.parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+
+    const [document] = await db.insert(documentsTable).values({
+      dealId: deal.id,
+      uploadedBy: req.authUser.id,
+      documentType: input.documentType,
+      fileUrl: input.fileUrl,
+      status: "pending",
+    }).returning();
+    res.status(201).json({ document });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "document_registration_failed" });
+  }
+});
+
+router.patch("/admin/documents/:documentId/status", requireRole("admin"), async (req, res) => {
+  try {
+    const input = documentStatusSchema.parse(req.body);
+    const documentId = req.params["documentId"];
+    if (typeof documentId !== "string") {
+      res.status(400).json({ error: "invalid_document_id" });
+      return;
+    }
+    const [document] = await db.update(documentsTable)
+      .set({ status: input.status, updatedAt: new Date() })
+      .where(eq(documentsTable.id, documentId))
+      .returning();
+    if (!document) {
+      res.status(404).json({ error: "document_not_found" });
+      return;
+    }
+    res.json({ document });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "document_review_failed" });
   }
 });
 
