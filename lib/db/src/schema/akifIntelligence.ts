@@ -1,0 +1,123 @@
+import {
+  boolean,
+  jsonb,
+  numeric,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+export const akifDataSourcesTable = pgTable("akif_data_sources", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  sourceType: text("source_type").notNull(),
+  baseUrl: text("base_url"),
+  apiUrl: text("api_url"),
+  description: text("description"),
+  accessStatus: text("access_status").notNull(),
+  licenseStatus: text("license_status").notNull(),
+  permittedUse: text("permitted_use"),
+  refreshFrequency: text("refresh_frequency"),
+  lastCollectedAt: timestamp("last_collected_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+export const akifDataRecordsTable = pgTable("akif_data_records", {
+  id: uuid("id").primaryKey(),
+  sourceId: uuid("source_id").notNull(),
+  externalId: text("external_id"),
+  recordType: text("record_type").notNull(),
+  country: text("country"),
+  partnerCountry: text("partner_country"),
+  productName: text("product_name"),
+  hsCode: text("hs_code"),
+  period: text("period"),
+  quantity: numeric("quantity"),
+  value: numeric("value"),
+  currency: text("currency"),
+  rawData: jsonb("raw_data").$type<Record<string, unknown>>().notNull(),
+  normalizedData: jsonb("normalized_data").$type<Record<string, unknown>>().notNull(),
+  confidence: numeric("confidence"),
+  collectedAt: timestamp("collected_at", { withTimezone: true }).notNull(),
+  sourceUpdatedAt: timestamp("source_updated_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const akifCompaniesTable = pgTable("akif_companies", {
+  id: uuid("id").primaryKey(),
+  sourceId: uuid("source_id"),
+  externalId: text("external_id"),
+  companyName: text("company_name").notNull(),
+  country: text("country"),
+  website: text("website"),
+  companyType: text("company_type"),
+  sourceUrl: text("source_url"),
+  verificationStatus: text("verification_status").notNull(),
+  confidence: numeric("confidence"),
+  rawData: jsonb("raw_data").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+export const akifMarketSignalsTable = pgTable("akif_market_signals", {
+  id: uuid("id").primaryKey(),
+  sourceId: uuid("source_id"),
+  productId: uuid("product_id"),
+  hsCode: text("hs_code"),
+  country: text("country"),
+  signalType: text("signal_type").notNull(),
+  period: text("period"),
+  metricName: text("metric_name").notNull(),
+  metricValue: numeric("metric_value"),
+  unit: text("unit"),
+  confidence: numeric("confidence"),
+  evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const akifProductsTable = pgTable("akif_products", {
+  id: uuid("id").primaryKey(),
+  hsCode: text("hs_code").notNull(),
+  hsLevel: text("hs_level").notNull(),
+  productName: text("product_name").notNull(),
+  normalizedName: text("normalized_name").notNull(),
+  parentHsCode: text("parent_hs_code"),
+  description: text("description"),
+  aliases: jsonb("aliases").$type<unknown[]>().notNull(),
+  sourceId: uuid("source_id"),
+  sourceUrl: text("source_url"),
+  confidence: numeric("confidence"),
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+export const akifProductObservationsTable = pgTable("akif_product_observations", {
+  id: uuid("id").primaryKey(),
+  productId: uuid("product_id"),
+  sourceId: uuid("source_id").notNull(),
+  hsCode: text("hs_code"),
+  reporterCountry: text("reporter_country"),
+  partnerCountry: text("partner_country"),
+  tradeFlow: text("trade_flow").notNull(),
+  period: text("period").notNull(),
+  value: numeric("value"),
+  quantity: numeric("quantity"),
+  quantityUnit: text("quantity_unit"),
+  currency: text("currency"),
+  rawRecordId: uuid("raw_record_id"),
+  confidence: numeric("confidence"),
+  sourceUrl: text("source_url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
+
+export const akifIdentityTable = pgTable("akif_identity", {
+  id: boolean("id").primaryKey(),
+  displayName: text("display_name").notNull(),
+  fullName: text("full_name").notNull(),
+  mission: text("mission").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});

@@ -119,3 +119,52 @@ export function previewAkifComtrade(input: AkifComtradePreviewInput) {
     body: input,
   });
 }
+
+export function analyzeAkifProduct(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/product/analyze", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function analyzeAkifMarket(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/market/analyze", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function calculateAkifLandedCost(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/economics/landed-cost", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function assessAkifVerification(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/verification/assess", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function compareAkifDocuments(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/documents/compare", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function explainAkifTopic(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/learn/explain", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function runAkifReasoning(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/reasoning/analyze", {
+    method: "POST",
+    body: input,
+  });
+}

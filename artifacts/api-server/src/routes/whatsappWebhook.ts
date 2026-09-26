@@ -4,6 +4,7 @@ import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
+import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer, triageSellerOffer } from "../akif/sellerOfferTriage";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { sendWhatsAppText } from "../whatsapp/client";
@@ -55,6 +56,25 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
       if (typeof message.text?.body !== "string") continue;
+
+      if (message.from) {
+        const research = await queueWhatsAppResearch(message.from, message.text.body);
+        if (research) {
+          const reply =
+            `AKIF queued your ${research.intent.direction} research for ${research.intent.product} in ${research.intent.targetCountry}. UDC will keep the research result separate from verification and deal approval.`;
+          const delivery = await sendWhatsAppText(message.from, reply);
+          req.log.info(
+            {
+              whatsappMessageId: message.id,
+              flow: "akif_research",
+              researchRunId: research.run.id,
+              delivery,
+            },
+            "AKIF queued WhatsApp research request",
+          );
+          continue;
+        }
+      }
 
       const sellerMessage = isSellerOffer(message.text.body);
       const buyerDraft = sellerMessage ? null : triageBuyerRequirement(message.text.body);

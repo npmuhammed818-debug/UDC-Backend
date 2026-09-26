@@ -4,7 +4,14 @@ import secrets
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 
 from .documents import extract_document
+from .document_compare import DocumentCompareRequest, DocumentCompareResponse, compare_documents
+from .economics import LandedCostRequest, LandedCostResponse, calculate_landed_cost
 from .entity_resolution import dedupe_entities
+from .learn import LearnRequest, LearnResponse, explain_topic
+from .market_analysis import MarketAnalysisRequest, MarketAnalysisResponse, analyze_market
+from .product_intelligence import ProductIntelligenceRequest, ProductIntelligenceResponse, analyze_product
+from .reasoning import ReasoningRequest, ReasoningResponse, reason
+from .verification import VerificationAssessment, VerificationSignals, assess_verification
 from .llm_gateway import status as llm_status
 from .models import (
     ComtradePreviewRequest,
@@ -63,6 +70,16 @@ def capabilities() -> dict:
                     "subscription_key_required": False,
                 }
             },
+            "product_intelligence": {"enabled": True, "hs_candidate_mode": True},
+            "market_analysis": {"enabled": True},
+            "landed_cost": {"enabled": True},
+            "verification_assistance": {"enabled": True, "human_decision_required": True},
+            "document_comparison": {"enabled": True},
+            "akif_learn": {"enabled": True},
+            "model_reasoning": {
+                "enabled": llm_status()["configured"],
+                "provider_neutral": True,
+            },
             "orchestration": orchestration_status(),
             "llm_gateway": llm_status(),
         },
@@ -103,3 +120,66 @@ def trade_comtrade_preview(
     request: ComtradePreviewRequest,
 ) -> ComtradePreviewResponse:
     return preview_comtrade(request)
+
+
+@app.post(
+    "/product/analyze",
+    response_model=ProductIntelligenceResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def product_analyze(request: ProductIntelligenceRequest) -> ProductIntelligenceResponse:
+    return analyze_product(request)
+
+
+@app.post(
+    "/market/analyze",
+    response_model=MarketAnalysisResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def market_analyze(request: MarketAnalysisRequest) -> MarketAnalysisResponse:
+    return analyze_market(request)
+
+
+@app.post(
+    "/economics/landed-cost",
+    response_model=LandedCostResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def economics_landed_cost(request: LandedCostRequest) -> LandedCostResponse:
+    return calculate_landed_cost(request)
+
+
+@app.post(
+    "/verification/assess",
+    response_model=VerificationAssessment,
+    dependencies=[Depends(require_internal_token)],
+)
+def verification_assess(request: VerificationSignals) -> VerificationAssessment:
+    return assess_verification(request)
+
+
+@app.post(
+    "/documents/compare",
+    response_model=DocumentCompareResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def documents_compare(request: DocumentCompareRequest) -> DocumentCompareResponse:
+    return compare_documents(request)
+
+
+@app.post(
+    "/learn/explain",
+    response_model=LearnResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def learn_explain(request: LearnRequest) -> LearnResponse:
+    return explain_topic(request)
+
+
+@app.post(
+    "/reasoning/analyze",
+    response_model=ReasoningResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def reasoning_analyze(request: ReasoningRequest) -> ReasoningResponse:
+    return reason(request)
