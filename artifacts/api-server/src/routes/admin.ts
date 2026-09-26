@@ -564,4 +564,47 @@ router.get("/admin/deals/:dealId/messages", requireRole("admin"), async (req, re
   res.json({ messages });
 });
 
+router.get("/admin/buyer-requests/:requirementId/match-recommendations", requireRole("admin"), async (req, res) => {
+  const requirementId = req.params["requirementId"];
+  const parsedId = z.string().uuid().safeParse(requirementId);
+  if (!parsedId.success) {
+    res.status(400).json({ error: "invalid_requirement_id" });
+    return;
+  }
+
+  const [buyerRequest] = await db.select().from(buyerRequestsTable)
+    .where(eq(buyerRequestsTable.id, parsedId.data))
+    .limit(1);
+  if (!buyerRequest || buyerRequest.status !== "approved") {
+    res.status(404).json({ error: "approved_buyer_request_not_found" });
+    return;
+  }
+
+  const offers = await db.select().from(sellerListingsTable)
+    .where(and(eq(sellerListingsTable.status, "approved"), eq(sellerListingsTable.productId, buyerRequest.productId)))
+    .orderBy(desc(sellerListingsTable.updatedAt));
+  const recommendations = [];
+
+  for (const offer of offers) {
+    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, offer.sellerUserId)) continue;
+    const buyerQuantity = Number(buyerRequest.quantity);
+    const availableQuantity = Number(offer.quantity);
+    const targetPrice = buyerRequest.targetPrice ? Number(buyerRequest.targetPrice) : undefined;
+    const offerPrice = Number(offer.price);
+    const reasons = ["same approved product", "both counterparties verified"];
+    let score = 50;
+    if (availableQuantity >= buyerQuantity) {
+      score += 25;
+      reasons.push("available quantity covers the request");
+    }
+    if (targetPrice !== undefined && offer.currency === buyerRequest.currency && offerPrice <= targetPrice) {
+      score += 25;
+      reasons.push("offer price is within the buyer target");
+    }
+    recommendations.push({ sellerOffer: offer, score, reasons });
+  }
+
+  res.json({ buyerRequest, recommendations });
+});
+
 export default router;
