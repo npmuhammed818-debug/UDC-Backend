@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, companiesTable, sellerListingsTable } from "@workspace/db";
+import { buyerRequestsTable, companiesTable, matchesTable, sellerListingsTable } from "@workspace/db";
 import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -58,6 +58,11 @@ router.patch(
 
 const requirementStatusSchema = z.object({
   status: z.enum(["approved", "rejected"]),
+});
+
+const createMatchSchema = z.object({
+  buyerRequestId: z.string().uuid(),
+  sellerListingId: z.string().uuid(),
 });
 
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
@@ -139,5 +144,56 @@ router.patch(
     }
   },
 );
+
+router.get("/admin/match-candidates", requireRole("admin"), async (_req, res) => {
+  const [buyerRequests, sellerOffers] = await Promise.all([
+    db.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.status, "approved")).orderBy(desc(buyerRequestsTable.updatedAt)),
+    db.select().from(sellerListingsTable).where(eq(sellerListingsTable.status, "approved")).orderBy(desc(sellerListingsTable.updatedAt)),
+  ]);
+  res.json({ buyerRequests, sellerOffers });
+});
+
+router.post("/admin/matches", requireRole("admin"), async (req, res) => {
+  try {
+    const input = createMatchSchema.parse(req.body);
+    const [buyerRequest] = await db.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.id, input.buyerRequestId)).limit(1);
+    const [sellerOffer] = await db.select().from(sellerListingsTable).where(eq(sellerListingsTable.id, input.sellerListingId)).limit(1);
+
+    if (!buyerRequest || !sellerOffer) {
+      res.status(404).json({ error: "match_record_not_found" });
+      return;
+    }
+    if (buyerRequest.status !== "approved" || sellerOffer.status !== "approved") {
+      res.status(409).json({ error: "match_records_require_admin_approval" });
+      return;
+    }
+    if (buyerRequest.productId !== sellerOffer.productId) {
+      res.status(409).json({ error: "match_products_do_not_match" });
+      return;
+    }
+
+    const [existingMatch] = await db.select({ id: matchesTable.id }).from(matchesTable).where(and(
+      eq(matchesTable.buyerRequestId, buyerRequest.id),
+      eq(matchesTable.sellerListingId, sellerOffer.id),
+    )).limit(1);
+    if (existingMatch) {
+      res.status(409).json({ error: "match_already_exists", matchId: existingMatch.id });
+      return;
+    }
+
+    const [match] = await db.insert(matchesTable).values({
+      buyerRequestId: buyerRequest.id,
+      sellerListingId: sellerOffer.id,
+      status: "approved",
+    }).returning();
+    res.status(201).json({ match });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(500).json({ error: "match_creation_failed" });
+  }
+});
 
 export default router;
