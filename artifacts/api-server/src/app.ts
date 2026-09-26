@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
@@ -29,7 +29,13 @@ app.use(
 );
 app.use(cors());
 app.use(cookieParser());
-app.use(express.json());
+app.use(
+  express.json({
+    verify(req, _res, buffer) {
+      (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(loadAuth);
 
