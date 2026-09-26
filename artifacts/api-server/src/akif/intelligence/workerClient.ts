@@ -5,31 +5,36 @@ type WorkerRequestInit = {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-function workerBaseUrl() {
-  const value = process.env.AKIF_WORKER_URL?.trim();
-  return value ? value.replace(/\/$/, "") : null;
+function workerConfig() {
+  const rawUrl = process.env.AKIF_WORKER_URL?.trim();
+  const token = process.env.AKIF_WORKER_TOKEN?.trim();
+  if (!rawUrl || !token) return null;
+  return { baseUrl: rawUrl.replace(/\/$/, ""), token };
 }
 
 export function isAkifWorkerConfigured() {
-  return workerBaseUrl() !== null;
+  return workerConfig() !== null;
 }
 
 async function requestWorker<T>(
   path: string,
   init: WorkerRequestInit = {},
 ): Promise<T> {
-  const baseUrl = workerBaseUrl();
-  if (!baseUrl) {
-    throw new Error("AKIF_WORKER_URL is not configured");
+  const config = workerConfig();
+  if (!config) {
+    throw new Error("AKIF worker URL/token is not configured");
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetch(`${config.baseUrl}${path}`, {
       method: init.method ?? "GET",
-      headers: init.body === undefined ? undefined : { "content-type": "application/json" },
+      headers: {
+        "x-akif-worker-token": config.token,
+        ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+      },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: controller.signal,
     });
