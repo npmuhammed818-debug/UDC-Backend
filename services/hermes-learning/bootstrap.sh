@@ -2,7 +2,7 @@
 set -eu
 
 DATA_DIR="${HERMES_DATA_DIR:-/opt/data}"
-BOOTSTRAP_DIR="/opt/akif-bootstrap"
+BOOTSTRAP_DIR="${HERMES_BOOTSTRAP_DIR:-/opt/akif-bootstrap}"
 
 mkdir -p "$DATA_DIR/skills/akif-trade-research" "$DATA_DIR/memories"
 
