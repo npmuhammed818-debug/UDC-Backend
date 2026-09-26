@@ -1,3 +1,4 @@
+export * from "./akifIntelligence";
 export * from "./akifResearch";
 export * from "./authSessions";
 export * from "./buyerRequests";
