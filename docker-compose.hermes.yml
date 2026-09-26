@@ -11,7 +11,7 @@ services:
     restart: "no"
 
   hermes-akif:
-    image: nousresearch/hermes-agent:v2026.9.14
+    image: nousresearch/hermes-agent:v2026.9.24
     depends_on:
       hermes-init:
         condition: service_completed_successfully
