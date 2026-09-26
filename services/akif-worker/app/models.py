@@ -28,7 +28,7 @@ class EntityLink(BaseModel):
 class EntityDedupeResponse(BaseModel):
     links: list[EntityLink]
     method: Literal["splink", "rapidfuzz"]
-    warnings: list[str] = []
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DocumentExtractionResponse(BaseModel):
