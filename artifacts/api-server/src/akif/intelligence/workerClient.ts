@@ -1,6 +1,7 @@
 type WorkerRequestInit = {
   method?: "GET" | "POST";
   body?: unknown;
+  timeoutMs?: number;
 };
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -26,7 +27,10 @@ async function requestWorker<T>(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    init.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
 
   try {
     const response = await fetch(`${config.baseUrl}${path}`, {
@@ -166,5 +170,29 @@ export function runAkifReasoning(input: Record<string, unknown>) {
   return requestWorker<Record<string, unknown>>("/reasoning/analyze", {
     method: "POST",
     body: input,
+  });
+}
+
+export function searchAkifGleifCompany(input: {
+  name: string;
+  country_code?: string;
+  limit?: number;
+}) {
+  return requestWorker<Record<string, unknown>>("/company/gleif/search", {
+    method: "POST",
+    body: input,
+    timeoutMs: 25_000,
+  });
+}
+
+export function screenAkifOfac(input: {
+  name: string;
+  threshold?: number;
+  limit?: number;
+}) {
+  return requestWorker<Record<string, unknown>>("/compliance/ofac/screen", {
+    method: "POST",
+    body: input,
+    timeoutMs: 45_000,
   });
 }

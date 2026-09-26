@@ -4,6 +4,8 @@ import secrets
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 
 from .documents import extract_document
+from .company_identity import GleifCompanySearchRequest, GleifCompanySearchResponse, search_gleif
+from .compliance import OfacScreenRequest, OfacScreenResponse, screen_ofac
 from .document_compare import DocumentCompareRequest, DocumentCompareResponse, compare_documents
 from .economics import LandedCostRequest, LandedCostResponse, calculate_landed_cost
 from .entity_resolution import dedupe_entities
@@ -74,6 +76,20 @@ def capabilities() -> dict:
             "market_analysis": {"enabled": True},
             "landed_cost": {"enabled": True},
             "verification_assistance": {"enabled": True, "human_decision_required": True},
+            "official_identity": {
+                "gleif": {
+                    "enabled": True,
+                    "authentication_required": False,
+                    "data_license": "CC0-1.0",
+                }
+            },
+            "compliance_screening": {
+                "ofac": {
+                    "enabled": True,
+                    "scope": "US_OFAC_ONLY",
+                    "human_review_required": True,
+                }
+            },
             "document_comparison": {"enabled": True},
             "akif_learn": {"enabled": True},
             "model_reasoning": {
@@ -183,3 +199,25 @@ def learn_explain(request: LearnRequest) -> LearnResponse:
 )
 def reasoning_analyze(request: ReasoningRequest) -> ReasoningResponse:
     return reason(request)
+
+
+@app.post(
+    "/company/gleif/search",
+    response_model=GleifCompanySearchResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def company_gleif_search(
+    request: GleifCompanySearchRequest,
+) -> GleifCompanySearchResponse:
+    return search_gleif(request)
+
+
+@app.post(
+    "/compliance/ofac/screen",
+    response_model=OfacScreenResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def compliance_ofac_screen(
+    request: OfacScreenRequest,
+) -> OfacScreenResponse:
+    return screen_ofac(request)
