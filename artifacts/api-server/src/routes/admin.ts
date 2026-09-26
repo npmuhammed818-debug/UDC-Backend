@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { createSignedUploadUrl, storagePath } from "../supabase/storage";
@@ -105,6 +105,13 @@ const documentStatusSchema = z.object({
 
 const userVerificationStatusSchema = z.object({
   status: z.enum(["pending", "under_review", "verified", "rejected", "suspended"]),
+});
+
+const createReferralSchema = z.object({
+  agentUserId: z.string().uuid(),
+  referredUserId: z.string().uuid(),
+  referralCode: z.string().trim().min(3).max(80),
+  commissionRate: z.coerce.number().min(0).max(100).optional(),
 });
 
 const sendDealNotificationSchema = z.object({
@@ -465,6 +472,38 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       return;
     }
     res.status(500).json({ error: "deal_creation_failed" });
+  }
+});
+
+router.get("/admin/referrals", requireRole("admin"), async (_req, res) => {
+  const referrals = await db.select().from(referralsTable).orderBy(desc(referralsTable.updatedAt));
+  res.json({ referrals });
+});
+
+router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = createReferralSchema.parse(req.body);
+    const [agent, referred] = await Promise.all([
+      db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.agentUserId)).limit(1),
+      db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
+    ]);
+    if (agent?.role !== "agent" || !referred) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
+    const [referral] = await db.insert(referralsTable).values({
+      agentUserId: agent.id,
+      referredUserId: referred.id,
+      referralCode: input.referralCode,
+      commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
+      status: "pending",
+    }).returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id, action: "referral_created",
+      entityType: "referral", entityId: referral.id,
+      metadata: { agentUserId: referral.agentUserId, referredUserId: referral.referredUserId },
+    });
+    res.status(201).json({ referral });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "referral_create_failed" });
   }
 });
 
