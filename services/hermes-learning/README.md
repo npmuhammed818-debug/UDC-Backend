@@ -6,7 +6,7 @@ The service is deliberately separate from the UDC API and AKIF intelligence work
 
 ## Runtime
 
-The deployment uses the official Nous Research Hermes Agent Docker image pinned to the stable release `v2026.9.14`.
+The deployment uses the official Nous Research Hermes Agent Docker image pinned to the stable release `v2026.9.24`.
 
 State is stored in the `akif-hermes-data` Docker volume. The API is exposed only on host loopback by default.
 
