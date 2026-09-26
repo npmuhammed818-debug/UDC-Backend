@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
+import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
+import { sendWhatsAppText } from "../whatsapp/client";
 
 const router: IRouter = Router();
 
@@ -47,7 +49,7 @@ router.post("/webhooks/whatsapp", (req, res) => {
   }
 
   const messages = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { messages?: Array<{ id?: string; text?: { body?: string } }> } }> }) =>
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { messages?: Array<{ id?: string; from?: string; text?: { body?: string } }> } }> }) =>
         (entry.changes ?? []).flatMap((change) => change.value?.messages ?? []),
       )
     : [];
@@ -55,8 +57,11 @@ router.post("/webhooks/whatsapp", (req, res) => {
   for (const message of messages) {
     if (typeof message.text?.body !== "string") continue;
     const draft = triageBuyerRequirement(message.text.body);
+    const delivery = message.from
+      ? await sendWhatsAppText(message.from, buyerRequirementReply(draft))
+      : { delivered: false as const, reason: "missing_sender" as const };
     req.log.info(
-      { whatsappMessageId: message.id, missingFields: draft.missingFields },
+      { whatsappMessageId: message.id, missingFields: draft.missingFields, delivery },
       "AKIF triaged verified WhatsApp buyer message",
     );
   }
