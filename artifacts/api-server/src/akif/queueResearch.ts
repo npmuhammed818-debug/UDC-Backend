@@ -20,6 +20,7 @@ export async function queueWhatsAppResearch(phone: string, text: string) {
     status: "queued",
     query: {
       source: "whatsapp",
+      phone,
       rawText: text,
       ...intent,
     },
