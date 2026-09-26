@@ -9,6 +9,7 @@ import {
 } from "./workerClient";
 
 export type RunResearchInput = {
+  researchRunId?: string;
   requestedBy?: string;
   product: string;
   targetCountry: string;
@@ -21,18 +22,38 @@ function clamp(value: number) {
 }
 
 export async function runMarketResearch(input: RunResearchInput) {
-  const [run] = await db
-    .insert(akifResearchRunsTable)
-    .values({
-      requestedBy: input.requestedBy,
-      intent: "market_discovery",
-      product: input.product,
-      targetCountry: input.targetCountry,
-      direction: input.direction,
-      status: "running",
-      query: input,
-    })
-    .returning();
+  let run;
+  if (input.researchRunId) {
+    const [existing] = await db.select().from(akifResearchRunsTable)
+      .where(eq(akifResearchRunsTable.id, input.researchRunId)).limit(1);
+    if (!existing) throw new Error("research_run_not_found");
+    const [updated] = await db.update(akifResearchRunsTable)
+      .set({
+        status: "running",
+        product: input.product,
+        targetCountry: input.targetCountry,
+        direction: input.direction,
+        query: { ...existing.query, ...input },
+        errorMessage: null,
+        completedAt: null,
+      })
+      .where(eq(akifResearchRunsTable.id, existing.id))
+      .returning();
+    run = updated;
+  } else {
+    [run] = await db
+      .insert(akifResearchRunsTable)
+      .values({
+        requestedBy: input.requestedBy,
+        intent: "market_discovery",
+        product: input.product,
+        targetCountry: input.targetCountry,
+        direction: input.direction,
+        status: "running",
+        query: input,
+      })
+      .returning();
+  }
 
   try {
     const productInsight = await analyzeAkifProduct({
