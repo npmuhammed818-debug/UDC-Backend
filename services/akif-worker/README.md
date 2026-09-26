@@ -23,4 +23,4 @@ pip install -e ".[agents,dev]"
 uvicorn app.main:app --reload --port 8080
 ```
 
-The Node API connects to this worker through `AKIF_WORKER_URL`. Keep the worker on a private/internal network in production.
+The Node API connects through `AKIF_WORKER_URL` and authenticates with `AKIF_WORKER_TOKEN`. Configure the same strong random token on both services and keep the worker on a private/internal network in production.
