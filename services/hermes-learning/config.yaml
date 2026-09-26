@@ -1,0 +1,28 @@
+skills:
+  write_approval: true
+  guard_agent_created: true
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: false
+  write_approval: true
+  memory_char_limit: 2200
+
+display:
+  memory_notifications: verbose
+
+agent:
+  disabled_toolsets:
+    - terminal
+    - browser
+
+tool_loop_guardrails:
+  non_interactive_hard_stop_enabled: true
+
+gateway:
+  api_server:
+    enabled: true
+    port: 8642
+    host: 0.0.0.0
+    model_name: akif-hermes
+    max_concurrent_runs: 2
