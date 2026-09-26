@@ -611,13 +611,32 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       res.status(400).json({ error: "invalid_document_id" });
       return;
     }
+    const [existing] = await db.select().from(documentsTable)
+      .where(eq(documentsTable.id, documentId))
+      .limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "document_not_found" });
+      return;
+    }
     const [document] = await db.update(documentsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(documentsTable.id, documentId))
       .returning();
-    if (!document) {
-      res.status(404).json({ error: "document_not_found" });
-      return;
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "document_reviewed",
+      entityType: "document",
+      entityId: document.id,
+      metadata: { previousStatus: existing.status, newStatus: document.status },
+    });
+    if (existing.status !== document.status) {
+      await notifyDealCounterparties(
+        document.dealId,
+        "document_reviewed",
+        "Document review completed",
+        `A deal document was ${document.status} by UDC.`,
+        "/documents",
+      );
     }
     res.json({ document });
   } catch (error) {
