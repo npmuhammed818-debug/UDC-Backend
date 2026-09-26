@@ -526,3 +526,17 @@ Current architecture decision:
 - Add a graph/agent orchestration framework only when AKIF has genuine multi-step tool workflows that need durable state; do not add orchestration complexity prematurely.
 - Any third-party source code incorporated into UDC must comply with its license and retain required notices/attribution.
 
+## 28. AKIF Hermes Learning Strategy
+Hermes Agent is the optional self-improvement layer for AKIF.
+
+- Run Hermes as an isolated internal service with persistent state. Do not merge its runtime into the core UDC API process.
+- Use the stable official Hermes Docker image pinned by version for deployments.
+- Hermes may learn reusable research, matching, document-analysis and monitoring procedures.
+- Hermes must not independently approve companies, compliance, legal conclusions, banking/payment actions, inspection results, shipments or deals.
+- Keep `skills.write_approval=true` and `memory.write_approval=true`.
+- Treat learned skills as untrusted proposals until an authorized UDC admin approves them.
+- Do not store secrets, bank details, unnecessary personal data or private document contents in Hermes memory/skills.
+- Preserve provenance: a learned procedure can improve how AKIF researches, but it cannot become evidence itself.
+- UDC must maintain an audit trail for Hermes learning proposals and admin review actions.
+- Automatic post-research learning is opt-in through `AKIF_HERMES_AUTO_LEARN=true` and must fail open for the research result: Hermes downtime must never cause successful AKIF research to fail.
+
