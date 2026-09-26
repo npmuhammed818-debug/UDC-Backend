@@ -47,15 +47,12 @@ export async function getAkifCompanyDossier(id: string) {
         .where(eq(akifDataSourcesTable.id, company.sourceId)).limit(1))[0] ?? null
     : null;
 
-  const relatedRecords = await db.select().from(akifDataRecordsTable)
-    .where(
-      or(
-        ilike(akifDataRecordsTable.productName, `%${company.companyName}%`),
-        company.country ? eq(akifDataRecordsTable.country, company.country) : undefined!,
-      ),
-    )
-    .orderBy(desc(akifDataRecordsTable.collectedAt))
-    .limit(25);
+  const relatedRecords = company.country
+    ? await db.select().from(akifDataRecordsTable)
+        .where(eq(akifDataRecordsTable.country, company.country))
+        .orderBy(desc(akifDataRecordsTable.collectedAt))
+        .limit(25)
+    : [];
 
   return {
     company,
