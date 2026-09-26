@@ -6,8 +6,8 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from .documents import extract_document
 from .entity_resolution import dedupe_entities
 from .llm_gateway import status as llm_status
-from .models import DocumentExtractionResponse, EntityDedupeRequest, EntityDedupeResponse
-from .orchestration import status as orchestration_status
+from .models import (\n    ComtradePreviewRequest,\n    ComtradePreviewResponse,\n    DocumentExtractionResponse,\n    EntityDedupeRequest,\n    EntityDedupeResponse,\n)
+from .orchestration import status as orchestration_status\nfrom .trade_data import preview_comtrade
 
 app = FastAPI(
     title="UDC AKIF Intelligence Worker",
@@ -49,6 +49,13 @@ def capabilities() -> dict:
                 "engine": "splink",
                 "fallback": "rapidfuzz",
             },
+            "trade_data": {
+                "un_comtrade_preview": {
+                    "enabled": True,
+                    "max_records": 500,
+                    "subscription_key_required": False,
+                }
+            },
             "orchestration": orchestration_status(),
             "llm_gateway": llm_status(),
         },
@@ -78,3 +85,14 @@ async def documents_extract(
     file: UploadFile = File(...),
 ) -> DocumentExtractionResponse:
     return await extract_document(file)
+
+
+@app.post(
+    "/trade/comtrade/preview",
+    response_model=ComtradePreviewResponse,
+    dependencies=[Depends(require_internal_token)],
+)
+def trade_comtrade_preview(
+    request: ComtradePreviewRequest,
+) -> ComtradePreviewResponse:
+    return preview_comtrade(request)
