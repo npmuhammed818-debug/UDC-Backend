@@ -161,3 +161,10 @@ export function explainAkifTopic(input: Record<string, unknown>) {
     body: input,
   });
 }
+
+export function runAkifReasoning(input: Record<string, unknown>) {
+  return requestWorker<Record<string, unknown>>("/reasoning/analyze", {
+    method: "POST",
+    body: input,
+  });
+}
