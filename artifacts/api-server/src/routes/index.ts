@@ -6,6 +6,7 @@ import databaseRouter from "./database";
 import healthRouter from "./health";
 import profileRouter from "./profile";
 import whatsappBuyerIntakeRouter from "./whatsappBuyerIntake";
+import whatsappWebhookRouter from "./whatsappWebhook";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(profileRouter);
 router.use(companyRouter);
 router.use(adminRouter);
 router.use(whatsappBuyerIntakeRouter);
+router.use(whatsappWebhookRouter);
 
 export default router;
