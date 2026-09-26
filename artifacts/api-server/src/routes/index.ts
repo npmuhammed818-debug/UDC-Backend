@@ -5,6 +5,7 @@ import { Router, type IRouter } from "express";
 import databaseRouter from "./database";
 import healthRouter from "./health";
 import profileRouter from "./profile";
+import whatsappBuyerIntakeRouter from "./whatsappBuyerIntake";
 
 const router: IRouter = Router();
 
@@ -14,5 +15,6 @@ router.use(authRouter);
 router.use(profileRouter);
 router.use(companyRouter);
 router.use(adminRouter);
+router.use(whatsappBuyerIntakeRouter);
 
 export default router;
