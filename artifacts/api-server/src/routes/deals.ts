@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq, or } from "drizzle-orm";
-import { db, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
+import { db, dealFinancialsTable, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -129,6 +129,44 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
     res.json({ deal, inspections, shipments });
   } catch {
     res.status(500).json({ error: "deal_tracking_fetch_failed" });
+  }
+});
+
+router.get("/deals/:dealId/payment-status", requireAuth, async (req, res) => {
+  try {
+    const dealId = String(req.params["dealId"] ?? "");
+    if (!dealId) {
+      res.status(400).json({ error: "deal_id_required" });
+      return;
+    }
+
+    const [deal] = await db
+      .select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber, status: dealsTable.status })
+      .from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id)))
+      .limit(1);
+
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+
+    const instruments = await db
+      .select({
+        id: dealFinancialsTable.id,
+        instrumentType: dealFinancialsTable.instrumentType,
+        status: dealFinancialsTable.status,
+        amount: dealFinancialsTable.amount,
+        currency: dealFinancialsTable.currency,
+        updatedAt: dealFinancialsTable.updatedAt,
+      })
+      .from(dealFinancialsTable)
+      .where(eq(dealFinancialsTable.dealId, deal.id))
+      .orderBy(desc(dealFinancialsTable.updatedAt));
+
+    res.json({ deal, instruments });
+  } catch {
+    res.status(500).json({ error: "payment_status_fetch_failed" });
   }
 });
 
