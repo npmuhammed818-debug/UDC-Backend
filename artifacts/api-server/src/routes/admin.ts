@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 
@@ -348,6 +348,14 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       dealValue: String(input.quantity * input.agreedPrice),
       status: "initiated",
     }).returning();
+    await db.insert(dealParticipantsTable).values([
+      { dealId: deal.id, userId: deal.buyerUserId, participantRole: "buyer", status: "active" },
+      { dealId: deal.id, userId: deal.sellerUserId, participantRole: "seller", status: "active" },
+    ]);
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id, action: "deal_created", entityType: "deal", entityId: deal.id,
+      metadata: { dealNumber: deal.dealNumber, buyerUserId: deal.buyerUserId, sellerUserId: deal.sellerUserId },
+    });
     res.status(201).json({ deal });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -860,6 +868,18 @@ router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"),
     }
     res.status(500).json({ error: "financial_instrument_update_failed" });
   }
+});
+
+router.get("/admin/deals/:dealId/participants", requireRole("admin"), async (req, res) => {
+  const dealId = req.params["dealId"];
+  if (typeof dealId !== "string") {
+    res.status(400).json({ error: "invalid_deal_id" });
+    return;
+  }
+  const participants = await db.select().from(dealParticipantsTable)
+    .where(eq(dealParticipantsTable.dealId, dealId))
+    .orderBy(desc(dealParticipantsTable.createdAt));
+  res.json({ participants });
 });
 
 export default router;
