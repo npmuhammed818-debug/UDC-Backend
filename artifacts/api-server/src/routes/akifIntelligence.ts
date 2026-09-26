@@ -2,9 +2,30 @@ import { Router, type IRouter } from "express";
 import { z } from "zod/v4";
 import { requireRole } from "../auth/middleware";
 import { scoreOpportunity } from "../akif/intelligence/opportunityScoring";
-import { akifProviderRegistry } from "../akif/intelligence/providerRegistry";
+import { akifProviderRegistry } from "../akif/intelligence/providerRegistry";\nimport {\n  dedupeAkifEntities,\n  getAkifWorkerCapabilities,\n  isAkifWorkerConfigured,\n} from "../akif/intelligence/workerClient";
 
 const router: IRouter = Router();
+
+const entityDedupeSchema = z
+  .object({
+    records: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(200),
+            name: z.string().trim().min(1).max(300),
+            country: z.string().trim().max(120).optional(),
+            website: z.string().url().optional(),
+            email: z.string().email().optional(),
+            phone: z.string().trim().max(80).optional(),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(500),
+    threshold: z.number().min(0.5).max(1).optional(),
+  })
+  .strict();
 
 const opportunitySignalsSchema = z
   .object({
