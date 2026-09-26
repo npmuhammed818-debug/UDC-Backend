@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "udc-akif-worker"
+version = "0.1.0"
+description = "Open-source intelligence worker for UDC AKIF"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.34,<1",
+  "pydantic>=2.11,<3",
+  "python-multipart>=0.0.20,<1",
+  "docling>=2.130.0,<2.131.0",
+  "splink==4.0.17",
+  "pandas>=2.2,<3",
+  "rapidfuzz>=3.14,<4",
+]
+
+[project.optional-dependencies]
+agents = [
+  "langgraph==1.2.12",
+  "litellm==1.104.0",
+]
+dev = [
+  "pytest>=8,<9",
+  "httpx>=0.28,<1",
+  "ruff>=0.11,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
