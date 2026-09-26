@@ -2,8 +2,9 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { buyerRequestsTable, commissionsTable, companiesTable, dealsTable, documentsTable, matchesTable, messagesTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
+import { sendWhatsAppText } from "../whatsapp/client";
 
 const router: IRouter = Router();
 
@@ -103,6 +104,12 @@ const documentStatusSchema = z.object({
 
 const userVerificationStatusSchema = z.object({
   status: z.enum(["pending", "under_review", "verified", "rejected", "suspended"]),
+});
+
+const sendDealNotificationSchema = z.object({
+  dealId: z.string().uuid(),
+  recipientUserId: z.string().uuid(),
+  message: z.string().min(1).max(1000),
 });
 
 async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
@@ -499,6 +506,44 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       return;
     }
     res.status(500).json({ error: "user_verification_failed" });
+  }
+});
+
+router.post("/admin/deal-notifications/whatsapp", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = sendDealNotificationSchema.parse(req.body);
+    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+    if (!deal || ![deal.buyerUserId, deal.sellerUserId].includes(input.recipientUserId)) {
+      res.status(404).json({ error: "deal_recipient_not_found" });
+      return;
+    }
+    const [recipient] = await db.select({ id: usersTable.id, phone: usersTable.phone })
+      .from(usersTable)
+      .where(eq(usersTable.id, input.recipientUserId))
+      .limit(1);
+    if (!recipient?.phone) {
+      res.status(409).json({ error: "recipient_phone_missing" });
+      return;
+    }
+
+    const delivery = await sendWhatsAppText(recipient.phone, input.message);
+    if (!delivery.delivered) {
+      res.status(503).json({ error: "whatsapp_not_configured" });
+      return;
+    }
+    const [message] = await db.insert(messagesTable).values({
+      dealId: deal.id,
+      senderUserId: req.authUser.id,
+      receiverUserId: recipient.id,
+      message: input.message,
+    }).returning();
+    res.status(201).json({ message, delivery });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: "validation_error" });
+      return;
+    }
+    res.status(502).json({ error: "whatsapp_delivery_failed" });
   }
 });
 
