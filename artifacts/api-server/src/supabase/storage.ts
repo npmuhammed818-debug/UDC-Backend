@@ -22,3 +22,20 @@ export async function createSignedUploadUrl(path: string) {
 export function storagePath(path: string) {
   return `storage://${bucket}/${path}`;
 }
+
+export async function createSignedDownloadUrl(path: string) {
+  const { url, key } = config();
+  const response = await fetch(`${url}/storage/v1/object/sign/${bucket}/${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({ expiresIn: 300 }),
+  });
+  if (!response.ok) throw new Error("signed_download_url_failed");
+  const result = await response.json() as { signedURL: string };
+  return `${url}/storage/v1${result.signedURL}`;
+}
+
+export function parseStoragePath(value: string) {
+  const prefix = `storage://${bucket}/`;
+  return value.startsWith(prefix) ? value.slice(prefix.length) : undefined;
+}
