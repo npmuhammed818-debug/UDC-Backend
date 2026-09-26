@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
+import { createSignedUploadUrl, storagePath } from "../supabase/storage";
 
 const router: IRouter = Router();
 
@@ -562,6 +563,30 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       return;
     }
     res.status(500).json({ error: "commission_status_update_failed" });
+  }
+});
+
+const documentUploadSchema = z.object({
+  dealId: z.string().uuid(),
+  documentType: z.string().min(2).max(80),
+  fileName: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(180),
+});
+
+router.post("/admin/document-uploads", requireRole("admin"), async (req, res) => {
+  try {
+    const input = documentUploadSchema.parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
+      .where(eq(dealsTable.id, input.dealId)).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const path = `deals/${deal.id}/${crypto.randomUUID()}-${input.fileName}`;
+    const uploadUrl = await createSignedUploadUrl(path);
+    res.status(201).json({
+      uploadUrl,
+      document: { dealId: deal.id, documentType: input.documentType, fileUrl: storagePath(path) },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(503).json({ error: "document_storage_unavailable" });
   }
 });
 
