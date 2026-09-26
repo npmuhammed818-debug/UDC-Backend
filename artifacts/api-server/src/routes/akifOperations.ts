@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { z } from "zod/v4";
 import {
   buyerRequestsTable,
@@ -69,7 +69,7 @@ const learnSchema = z.object({
   topic: z.string().trim().min(2).max(120),
 }).strict();
 
-function validationError(res: Parameters<Parameters<IRouter["post"]>[1]>[1], error: unknown) {
+function validationError(res: Response, error: unknown) {
   if (!(error instanceof z.ZodError)) return false;
   res.status(400).json({
     error: "validation_error",
