@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { auditLogsTable, db } from "@workspace/db";
 import { z } from "zod/v4";
 import { requireRole } from "../auth/middleware";
 import { scoreOpportunity } from "../akif/intelligence/opportunityScoring";
@@ -8,6 +9,7 @@ import {
   getAkifWorkerCapabilities,
   isAkifWorkerConfigured,
   previewAkifComtrade,
+  runAkifReasoning,
 } from "../akif/intelligence/workerClient";
 
 const router: IRouter = Router();
@@ -62,6 +64,21 @@ const opportunitySignalsSchema = z
   })
   .strict();
 
+const reasoningSchema = z
+  .object({
+    task: z.enum([
+      "trade_question",
+      "company_analysis",
+      "document_analysis",
+      "opportunity_analysis",
+      "message_understanding",
+    ]),
+    prompt: z.string().min(1).max(20_000),
+    context: z.record(z.string(), z.unknown()).default({}),
+    mode: z.enum(["single", "specialist_review"]).default("single"),
+  })
+  .strict();
+
 router.get(
   "/admin/akif/intelligence/capabilities",
   requireRole("admin"),
@@ -75,6 +92,7 @@ router.get(
           "source_provenance",
           "explainable_opportunity_scoring",
           "open_source_worker_bridge",
+          "specialist_review",
         ],
         connectedResearchProviders: akifProviderRegistry.list(),
         workerConfigured: isAkifWorkerConfigured(),
@@ -136,6 +154,47 @@ router.get(
 );
 
 router.post(
+  "/admin/akif/intelligence/reason",
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const input = reasoningSchema.parse(req.body);
+      const result = await runAkifReasoning(input);
+      await db.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action:
+          input.mode === "specialist_review"
+            ? "akif_specialist_review_run"
+            : "akif_reasoning_run",
+        entityType: "akif_reasoning",
+        metadata: {
+          task: input.task,
+          mode: result.mode,
+          model: result.model,
+          humanReviewRequired: result.human_review_required,
+          roles: result.specialist_review
+            ? ["evidence_analyst", "risk_reviewer", "coordinator"]
+            : ["single"],
+        },
+      });
+      res.json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({
+          error: "validation_error",
+          details: error.issues.map((issue) => ({
+            field: issue.path.join("."),
+            message: issue.message,
+          })),
+        });
+        return;
+      }
+      res.status(502).json({ error: "akif_reasoning_failed" });
+    }
+  },
+);
+
+router.post(
   "/admin/akif/intelligence/entities/dedupe",
   requireRole("admin"),
   async (req, res) => {
@@ -162,7 +221,6 @@ router.post(
     }
   },
 );
-
 
 router.post(
   "/admin/akif/intelligence/trade/comtrade/preview",
