@@ -202,6 +202,7 @@ export async function interpretActiveDealConversation(input: {
 
   const [history, snapshotRows] = await Promise.all([
     db.select({
+      id: dealConversationEventsTable.id,
       participantRole: dealConversationEventsTable.participantRole,
       intent: dealConversationEventsTable.intent,
       originalText: dealConversationEventsTable.originalText,
@@ -232,6 +233,7 @@ export async function interpretActiveDealConversation(input: {
     "Do not execute or claim to execute payments, banking instruments, legal commitments, or document approvals.",
     "If the user proposes or accepts a commercial term, you may record/relay their stated position, but never invent acceptance by the other party.",
     "A short reply such as yes/no/ok must be interpreted only against replyContextKind when it is present. Never treat a bare yes/no as acceptance of price, quantity, payment, or other deal terms unless the replied-to context is explicitly a commercial offer or acceptance request.",
+    "When replyContextKind contains an event id after a colon, match it to recentConversation.eventId and confirm only the terms that were actually present in that exact relayed message. Never add quantity, price, payment, or document terms from a different message.",
     "Keep buyer and seller roles separate. Never attribute a buyer statement to the seller or a seller statement to the buyer.",
     "Never expose internal storage:// paths, database UUIDs, service URLs, or backend implementation details in WhatsApp replies.",
     "If this is clearly a separate new buyer requirement or seller offer unrelated to the current deal, set newTradeIntake=true.",
@@ -252,6 +254,7 @@ export async function interpretActiveDealConversation(input: {
     },
     dealMemory,
     recentConversation: history.reverse().map((event) => ({
+      eventId: event.id,
       role: event.participantRole,
       intent: event.intent,
       text: event.originalText,
