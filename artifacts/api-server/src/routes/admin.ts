@@ -5,7 +5,8 @@ import { db } from "@workspace/db";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
-import { createSignedUploadUrl, storagePath } from "../supabase/storage";
+import { createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
+import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 
 const router: IRouter = Router();
 
@@ -1411,6 +1412,81 @@ router.get("/admin/notifications", requireRole("admin"), async (req, res) => {
     ? await db.select().from(notificationsTable).where(eq(notificationsTable.userId, userId)).orderBy(desc(notificationsTable.createdAt))
     : await db.select().from(notificationsTable).orderBy(desc(notificationsTable.createdAt));
   res.json({ notifications });
+});
+
+
+router.get("/admin/deals/:dealId/intelligence", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = req.params["dealId"];
+    if (typeof dealId !== "string") {
+      res.status(400).json({ error: "invalid_deal_id" });
+      return;
+    }
+
+    const snapshot = await refreshDealIntelligenceSnapshot(dealId);
+    res.json({ snapshot });
+  } catch (error) {
+    if (error instanceof Error && error.message === "deal_not_found") {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+    res.status(500).json({ error: "deal_intelligence_fetch_failed" });
+  }
+});
+
+router.post("/admin/deals/:dealId/intelligence/rebuild", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = req.params["dealId"];
+    if (typeof dealId !== "string") {
+      res.status(400).json({ error: "invalid_deal_id" });
+      return;
+    }
+
+    const [deal] = await db.select({ id: dealsTable.id })
+      .from(dealsTable)
+      .where(eq(dealsTable.id, dealId))
+      .limit(1);
+    if (!deal) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+
+    const documents = await db.select()
+      .from(documentsTable)
+      .where(eq(documentsTable.dealId, dealId))
+      .orderBy(desc(documentsTable.createdAt));
+
+    const rebuildable = documents
+      .map((document) => ({ document, path: parseStoragePath(document.fileUrl) }))
+      .filter((item): item is { document: typeof documents[number]; path: string } => Boolean(item.path));
+
+    void (async () => {
+      for (const item of rebuildable) {
+        try {
+          const downloaded = await downloadDocumentBytes(item.path);
+          const fileName = item.path.split("/").pop() || "document";
+          await processDocumentIntelligence({
+            documentId: item.document.id,
+            dealId,
+            documentType: item.document.documentType,
+            bytes: downloaded.bytes,
+            fileName,
+            mimeType: downloaded.contentType,
+          });
+        } catch {
+          // The extraction record stores retry failure state; continue other documents.
+        }
+      }
+      await refreshDealIntelligenceSnapshot(dealId).catch(() => undefined);
+    })();
+
+    res.status(202).json({
+      queued: rebuildable.length,
+      skipped: documents.length - rebuildable.length,
+    });
+  } catch {
+    res.status(500).json({ error: "deal_intelligence_rebuild_failed" });
+  }
 });
 
 export default router;
