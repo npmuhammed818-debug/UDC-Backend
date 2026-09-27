@@ -397,7 +397,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     const failed = s.sent.length;
     await send("111111111", "Please ask about arrival", "Rate limit exceeded");
     assert.equal(s.sent.length, failed + 1);
-    assert.match(s.sent.at(-1).body, /didn’t pass/);
+    assert.match(s.sent.at(-1).body, /haven’t passed anything on/);
   } finally {
     globalThis.fetch = oldFetch;
     for (const [k, v] of Object.entries(oldEnv))
