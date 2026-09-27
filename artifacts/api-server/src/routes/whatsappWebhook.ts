@@ -12,6 +12,7 @@ import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
+import { looksLikeNewTradeIntake } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { directDealFactReply } from "../akif/dealFactReply";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
@@ -97,11 +98,6 @@ function classifyConversationIntent(text: string): ConversationIntent | null {
   return null;
 }
 
-function looksLikeNewTradeIntake(text: string) {
-  const normalized = text.toLowerCase();
-  return /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b/.test(normalized)
-    && /\b(?:need|want|buy|supply|sell|offer|deliver|delivered|from|to)\b/.test(normalized);
-}
 
 function mediatorCopy(role: string, intent: ConversationIntent, text: string) {
   const party = role === "buyer" ? "buyer" : "seller";
