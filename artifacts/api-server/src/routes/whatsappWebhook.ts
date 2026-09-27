@@ -453,27 +453,36 @@ async function handleDealWhatsAppMessage(
     message: messageBody,
   });
 
-  if (aiDecision?.newTradeIntake) {
+  if (aiDecision?.newTradeIntake && looksLikeNewTradeIntake(messageBody)) {
     return null;
   }
 
-  const effectiveIntent = aiDecision?.intent ?? ruleIntent;
-  if (!effectiveIntent) {
+  // A keyword match cannot safely interpret a trade negotiation. In particular,
+  // it may turn a question into an acceptance or forward confidential wording.
+  if (!aiDecision) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "unprocessed",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
     return {
-      reply: "I’m following this deal with you, but I’m not fully sure what you mean. Tell me naturally what you want me to do next and I’ll handle it.",
+      reply: "I received your message, but my conversation service is temporarily unavailable. I haven't passed it to the other party. Please try again shortly, or ask a UDC team member to follow up.",
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,
     };
   }
 
-  const copy = aiDecision
-    ? {
-        toSender: aiDecision.replyToSender,
-        toOther: aiDecision.relayToCounterparty,
-        relay: aiDecision.relay,
-      }
-    : mediatorCopy(sender.role, ruleIntent!, messageBody);
+  const effectiveIntent = aiDecision.intent;
+  const copy = {
+    toSender: aiDecision.replyToSender,
+    toOther: aiDecision.relayToCounterparty,
+    relay: aiDecision.relay,
+  };
 
   const [event] = await db.insert(dealConversationEventsTable).values({
     dealId: deal.id,
