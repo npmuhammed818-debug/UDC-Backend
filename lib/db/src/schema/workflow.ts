@@ -149,11 +149,11 @@ export const dealFinancialsTable = pgTable(
     dealId: uuid("deal_id")
       .notNull()
       .references(() => dealsTable.id, { onDelete: "cascade" }),
-    instrumentType: text("instrument_type").notNull(),
+    instrumentType: text("instrument_type").$type<"DLC">().notNull().default("DLC"),
     status: text("status").notNull().default("not_started"),
     amount: numeric("amount", { precision: 18, scale: 2 }),
     currency: text("currency").notNull().default("USD"),
-    terms: text("terms"),
+    terms: text("terms").default("Release after SGS inspection at destination"),
     reference: text("reference"),
     provider: text("provider"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
