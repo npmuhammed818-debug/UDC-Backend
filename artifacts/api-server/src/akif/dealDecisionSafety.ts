@@ -79,6 +79,94 @@ function looksLikeNewTradeIntake(text: string) {
     && /\b(?:need|want|buy|supply|sell|offer|deliver|delivered|from|to)\b/.test(normalized);
 }
 
+function highConfidenceIntent(text: string) {
+  const normalized = text.trim().toLowerCase();
+
+  if (/^(?:hi|hy|hello|hey|yo|sup|gm|good morning|good afternoon|good evening)[.! ]*$/i.test(normalized)) {
+    return "casual";
+  }
+
+  if (looksLikeNewTradeIntake(normalized)) return "new_trade_intake";
+
+  if ([
+    /\b(?:i|we)\s+(?:agree|accept|confirm|approve)\b/,
+    /\b(?:i|we)\s+(?:will|want to)\s+(?:proceed|continue|move ahead|move forward|go forward)\b/,
+    /\b(?:accepted|agreed|confirmed)\b/,
+  ].some((pattern) => pattern.test(normalized))) {
+    return "acceptance";
+  }
+
+  if ([
+    /\b(?:i|we)\s+(?:reject|decline|do not accept|don't accept|will not proceed|won't proceed)\b/,
+    /\b(?:rejected|declined|not interested|cancel the deal)\b/,
+  ].some((pattern) => pattern.test(normalized))) {
+    return "rejection";
+  }
+
+  if ([
+    /\b(?:counter|counteroffer|counter offer|make it|lower the price|too expensive|price is too high|can (?:you|he|she|they|seller|buyer) do)\b/,
+    /\$\s*\d[\d,.]*/,
+    /\b(?:usd|aed|inr|eur)\s*\d[\d,.]*/i,
+    /\b\d[\d,.]*\s*(?:usd|aed|inr|eur)\b/i,
+  ].some((pattern) => pattern.test(normalized))) {
+    return "counteroffer";
+  }
+
+  if (/\b(?:send|share|provide|upload|need|require|where|whr)\b.*\b(?:document|documents|coa|coi|sgs|bl|bill of lading|icpo|loi|fco|sco|spa|proof|certificate)\b/i.test(normalized)) {
+    return "document_request";
+  }
+
+  if (/\b(?:meet|meeting|call|video call|zoom|teams|appointment)\b/i.test(normalized)) {
+    return "meeting_request";
+  }
+
+  if (/\b(?:status|stage|deal update|where are we with (?:this|the) deal|where is (?:this|the) deal)\b/i.test(normalized)) {
+    return "status_question";
+  }
+
+  return null;
+}
+
+function deterministicCopy(intent: string, participantRole: string, message: string) {
+  const party = participantRole === "buyer" ? "buyer" : "seller";
+  const clean = message.trim().slice(0, 900);
+
+  switch (intent) {
+    case "acceptance":
+      return {
+        replyToSender: "Got it. I recorded that you want to proceed. I’ll keep the next step tied to the exact deal context.",
+        relay: true,
+        relayToCounterparty: `The ${party} says they want to proceed on the stated terms. Please confirm your side.`,
+      };
+    case "rejection":
+      return {
+        replyToSender: "Understood. I recorded that you do not accept the current terms.",
+        relay: true,
+        relayToCounterparty: `The ${party} does not accept the current terms. Revised terms can be proposed if needed.`,
+      };
+    case "counteroffer":
+      return {
+        replyToSender: "Got it. I recorded the revised commercial terms and I’ll take only those terms to the other side.",
+        relay: true,
+        relayToCounterparty: `The ${party} proposed revised commercial terms: ${clean} Please confirm whether you accept or send your counter.`,
+      };
+    case "document_request":
+      return {
+        replyToSender: "I’ve noted the document request. I’ll use the document already attached to this deal when available; otherwise I’ll ask the other side only for what is needed.",
+        relay: true,
+        relayToCounterparty: `The ${party} requested this deal document/information: ${clean}`,
+      };
+    case "meeting_request":
+      return {
+        replyToSender: "I’ll coordinate the meeting request and come back with the other side’s availability.",
+        relay: true,
+        relayToCounterparty: `The ${party} would like to arrange a meeting: ${clean} Please send your availability.`,
+      };
+    default:
+      return null;
+  }
+}
+
 function structuredReplyFallback(intent: string, deal: DealStateForReply) {
   if (intent === "status_question") {
     return `The deal is currently in ${deal.status}. Confirmed terms in UDC are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}. Tell me if you want the latest document, payment status, or next step.`;
@@ -292,6 +380,7 @@ export function normalizeModelDecision(input: {
   const tradeKnowledgeQuestion =
     /\b(?:what|wht)\s+(?:is|are|does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming)
     || /\b(?:explain|meaning of|what does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming);
+  const deterministicIntent = highConfidenceIntent(input.incomingMessage);
 
   const json = extractJson(input.content);
   if (!json) return plainLanguageFallback(input);
@@ -322,6 +411,8 @@ export function normalizeModelDecision(input: {
     else intent = "casual";
   } else if (greeting) {
     intent = "casual";
+  } else if (deterministicIntent) {
+    intent = deterministicIntent;
   }
 
   const newTradeIntakeRequested = parsed.newTradeIntake === true || intent === "new_trade_intake";
@@ -340,17 +431,19 @@ export function normalizeModelDecision(input: {
     intent = "other";
   }
 
+  const deterministic = deterministicCopy(intent, input.participantRole, input.incomingMessage);
   const rawReply = typeof parsed.replyToSender === "string"
     ? parsed.replyToSender.trim().slice(0, 1200)
     : "";
 
-  const replyToSender = rawReply
-    && !containsInternalLeak(rawReply)
-    && !looksLikeProviderDiagnostic(rawReply)
-    ? rawReply
-    : structuredReplyFallback(intent, input.deal);
+  const replyToSender = deterministic?.replyToSender
+    ?? (rawReply
+      && !containsInternalLeak(rawReply)
+      && !looksLikeProviderDiagnostic(rawReply)
+      ? rawReply
+      : structuredReplyFallback(intent, input.deal));
 
-  let relayRequested = parsed.relay === true;
+  let relayRequested = deterministic?.relay ?? (parsed.relay === true);
 
   // Greetings, general trade-term questions, status checks, and unanchored short
   // replies never need the counterparty. This blocks unnecessary forwarding even
@@ -363,9 +456,10 @@ export function normalizeModelDecision(input: {
   ) {
     relayRequested = false;
   }
-  const rawRelay = relayRequested && typeof parsed.relayToCounterparty === "string"
-    ? parsed.relayToCounterparty.trim().slice(0, 1200)
-    : "";
+  const rawRelay = deterministic?.relayToCounterparty
+    ?? (relayRequested && typeof parsed.relayToCounterparty === "string"
+      ? parsed.relayToCounterparty.trim().slice(0, 1200)
+      : "");
 
   const relayToCounterparty = rawRelay
     && !containsInternalLeak(rawRelay)
