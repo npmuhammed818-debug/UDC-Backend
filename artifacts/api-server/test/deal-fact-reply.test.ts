@@ -37,3 +37,10 @@ test("handles common typo-style fact questions", () => {
   assert.match(directDealFactReply("wht is current price?", deal) ?? "", /USD 7000/);
   assert.match(directDealFactReply("whr is confirmed destination?", deal) ?? "", /Jebel Ali/);
 });
+
+
+test("trade-term education is not mistaken for the current deal Incoterm", () => {
+  assert.equal(directDealFactReply("what is CIF?", deal), null);
+  assert.equal(directDealFactReply("what is FOB?", deal), null);
+  assert.match(directDealFactReply("what is the incoterm?", deal) ?? "", /CIF/);
+});
