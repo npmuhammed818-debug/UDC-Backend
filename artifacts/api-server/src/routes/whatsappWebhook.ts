@@ -357,6 +357,7 @@ async function resolveActiveDealForUser(userId: string) {
 async function handleWhatsAppDealDocument(
   from: string,
   document: { id: string; filename?: string; mime_type?: string; caption?: string },
+  inboundProviderMessageId?: string,
 ) {
   const [sender] = await db
     .select({ id: usersTable.id, status: usersTable.status })
@@ -371,6 +372,22 @@ async function handleWhatsAppDealDocument(
   const dealId = await resolveActiveDealForUser(sender.id);
   if (!dealId) {
     return { reply: "I received the file, but I can’t safely tell which active deal it belongs to. Reply to the relevant deal message and send the document again." };
+  }
+
+  if (inboundProviderMessageId) {
+    const [claim] = await db.insert(whatsappMessageContextsTable)
+      .values({
+        providerMessageId: inboundProviderMessageId,
+        dealId,
+        recipientUserId: sender.id,
+        kind: "inbound_document_processing",
+      })
+      .onConflictDoNothing()
+      .returning({ id: whatsappMessageContextsTable.id });
+
+    if (!claim) {
+      return { duplicate: true as const, reply: "" };
+    }
   }
 
   const media = await downloadWhatsAppMedia(document.id);
@@ -844,12 +861,23 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     for (const message of value?.messages ?? []) {
       if (message.from && typeof message.document?.id === "string") {
         try {
-          const documentResult = await handleWhatsAppDealDocument(message.from, {
-            id: message.document.id,
-            filename: message.document.filename,
-            mime_type: message.document.mime_type,
-            caption: message.document.caption,
-          });
+          const documentResult = await handleWhatsAppDealDocument(
+            message.from,
+            {
+              id: message.document.id,
+              filename: message.document.filename,
+              mime_type: message.document.mime_type,
+              caption: message.document.caption,
+            },
+            message.id,
+          );
+          if ("duplicate" in documentResult && documentResult.duplicate) {
+            req.log.info(
+              { whatsappMessageId: message.id, flow: "deal_document" },
+              "UDC ignored duplicate WhatsApp deal document",
+            );
+            continue;
+          }
           const delivery = await deliverWhatsAppReply(message.from, documentResult.reply);
           req.log.info(
             { flow: "deal_document", delivered: delivery.delivered },
