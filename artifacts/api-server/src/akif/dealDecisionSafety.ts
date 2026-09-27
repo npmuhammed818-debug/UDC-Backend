@@ -6,26 +6,6 @@ export type DealConversationDecision = {
   newTradeIntake: boolean;
 };
 
-function formatTradeNumber(value: string | number, max = 6) {
-  const numeric = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numeric)) return String(value);
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: max,
-    useGrouping: true,
-  }).format(numeric);
-}
-
-function formatTradeQuantity(value: string | number) {
-  return formatTradeNumber(value, 6);
-}
-
-function formatTradeMoney(currency: string, value: string | number) {
-  const amount = formatTradeNumber(value, 2);
-  const code = currency.trim().toUpperCase();
-  return code === "USD" ? `$${amount}` : `${code} ${amount}`;
-}
-
 export type DealStateForReply = {
   status: string;
   quantity: string;
@@ -157,412 +137,10 @@ export function looksLikeNewTradeIntake(text: string) {
   return productWords.length > 0;
 }
 
-function highConfidenceIntent(text: string) {
-  const normalized = text.trim().toLowerCase();
-
-  if (/^(?:hi|hy|hello|hey|yo|sup|gm|good morning|good afternoon|good evening)[.! ]*$/i.test(normalized)) {
-    return "casual";
-  }
-
-  if (looksLikeNewTradeIntake(normalized)) return "new_trade_intake";
-
-  if ([
-    /\b(?:i|we)\s+(?:agree|accept|confirm|approve)\b/,
-    /\b(?:i|we)\s+(?:will|want to)\s+(?:proceed|continue|move ahead|move forward|go forward)\b/,
-    /\b(?:accepted|agreed|confirmed)\b/,
-  ].some((pattern) => pattern.test(normalized))) {
-    return "acceptance";
-  }
-
-  if ([
-    /\b(?:i|we)\s+(?:reject|decline|do not accept|don't accept|will not proceed|won't proceed)\b/,
-    /\b(?:rejected|declined|not interested|cancel the deal)\b/,
-  ].some((pattern) => pattern.test(normalized))) {
-    return "rejection";
-  }
-
-  if ([
-    /\b(?:counter|counteroffer|counter offer|make it|lower the price|too expensive|price is too high|can (?:you|he|she|they|seller|buyer) do)\b/,
-    /\$\s*\d[\d,.]*/,
-    /\b(?:usd|aed|inr|eur)\s*\d[\d,.]*/i,
-    /\b\d[\d,.]*\s*(?:usd|aed|inr|eur)\b/i,
-  ].some((pattern) => pattern.test(normalized))) {
-    return "counteroffer";
-  }
-
-  if (/\b(?:send|share|provide|upload|need|require|where|whr)\b.*\b(?:document|documents|coa|coi|sgs|bl|bill of lading|icpo|loi|fco|sco|spa|proof|certificate)\b/i.test(normalized)) {
-    return "document_request";
-  }
-
-  if (/\b(?:meet|meeting|call|video call|zoom|teams|appointment)\b/i.test(normalized)) {
-    return "meeting_request";
-  }
-
-  if (/\b(?:status|stage|deal update|where are we with (?:this|the) deal|where is (?:this|the) deal)\b/i.test(normalized)) {
-    return "status_question";
-  }
-
-  return null;
-}
-
-function isFixedPaymentPolicyMessage(text: string) {
-  const normalized = text.trim().toLowerCase();
-
-  const asksPayment =
-    /\b(?:payment terms?|payment method|how (?:do|will|should) (?:i|we|you) pay|how is payment|how does payment work|what payment|which payment)\b/i.test(normalized);
-
-  const alternativeInstrument =
-    /\b(?:tt|t\/t|mt103|sblc|standby letter of credit|lc|letter of credit|cash on delivery|cod|escrow|bank transfer|wire transfer)\b/i.test(normalized)
-    && !/\bdlc\b/i.test(normalized);
-
-  return asksPayment || alternativeInstrument;
-}
-
-function fixedPaymentPolicyDecision(): DealConversationDecision {
-  return {
-    intent: "deal_question",
-    replyToSender: "We use DLC with release after SGS at destination.",
-    relay: false,
-    relayToCounterparty: null,
-    newTradeIntake: false,
-  };
-}
-
-function deterministicCopy(intent: string, participantRole: string, message: string) {
-  const clean = message.trim().slice(0, 900);
-  const recipientFramed = participantRole === "buyer"
-    ? clean
-        .replace(/\b(?:the\s+)?seller\b/gi, "you")
-        .replace(/\bcan\s+(?:he|she|they)\b/gi, "can you")
-        .replace(/^\s*(?:i|we)\s+can\s+do\s+/i, "Can you do ")
-    : clean
-        .replace(/\b(?:the\s+)?buyer\b/gi, "you")
-        .replace(/\bcan\s+(?:he|she|they)\b/gi, "can you")
-        .replace(/^\s*(?:i|we)\s+can\s+do\s+/i, "Can you do ");
-
-  switch (intent) {
-    case "acceptance":
-      return {
-        replyToSender: "Perfect. I’ll move it forward from here.",
-        relay: true,
-        relayToCounterparty: "Perfect, we’re aligned on those terms. I’ll move this to the next step.",
-      };
-    case "rejection":
-      return {
-        replyToSender: "No problem. Send me what would work for you and I’ll take it from there.",
-        relay: true,
-        relayToCounterparty: "That won’t work as it stands. What’s your best revised offer?",
-      };
-    case "counteroffer":
-      return {
-        replyToSender: "Got it. I’ll check that and come back to you.",
-        relay: true,
-        relayToCounterparty: `${recipientFramed.charAt(0).toUpperCase() + recipientFramed.slice(1)}${/[?.!]$/.test(recipientFramed) ? "" : "?"} If not, send me your best.`,
-      };
-    case "document_request":
-      return {
-        replyToSender: "Sure, I’ll sort that.",
-        relay: true,
-        relayToCounterparty: "Can you send that document over?",
-      };
-    case "meeting_request":
-      return {
-        replyToSender: "Sure. I’ll set it up and get back to you.",
-        relay: true,
-        relayToCounterparty: `${recipientFramed.charAt(0).toUpperCase() + recipientFramed.slice(1)} What time works for you?`,
-      };
-    default:
-      return null;
-  }
-}
-
-export function preflightDealDecision(input: {
-  participantRole: string;
-  incomingMessage: string;
-  replyContextKind?: string;
-}): DealConversationDecision | null {
-  const normalized = input.incomingMessage.trim().toLowerCase();
-  const shortReply = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|no|nope|nah|done|go ahead|proceed)[.! ]*$/i.test(normalized);
-  const affirmative = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|done|go ahead|proceed)[.! ]*$/i.test(normalized);
-  const negative = /^(?:no|nope|nah)[.! ]*$/i.test(normalized);
-  const exactCounteroffer = Boolean(input.replyContextKind?.startsWith("mediated_counteroffer:"));
-  const documentContext = Boolean(input.replyContextKind?.includes("document"));
-
-  if (isFixedPaymentPolicyMessage(input.incomingMessage)) {
-    return fixedPaymentPolicyDecision();
-  }
-
-  if (shortReply) {
-    if (exactCounteroffer && affirmative) {
-      return {
-        intent: "acceptance",
-        replyToSender: "Perfect.",
-        relay: true,
-        relayToCounterparty: "Perfect, those terms work. I’ll move us to the next step.",
-        newTradeIntake: false,
-      };
-    }
-
-    if (exactCounteroffer && negative) {
-      return {
-        intent: "rejection",
-        replyToSender: "No problem.",
-        relay: true,
-        relayToCounterparty: "That one won’t work. What’s your best revised offer?",
-        newTradeIntake: false,
-      };
-    }
-
-    if (documentContext) {
-      return {
-        intent: "document_request",
-        replyToSender: "Got it.",
-        relay: false,
-        relayToCounterparty: null,
-        newTradeIntake: false,
-      };
-    }
-
-    return {
-      intent: "casual",
-      replyToSender: "Got it.",
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: false,
-    };
-  }
-
-  const intent = highConfidenceIntent(input.incomingMessage);
-  if (!intent) return null;
-
-  if (intent === "new_trade_intake") {
-    return {
-      intent,
-      replyToSender: "",
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: true,
-    };
-  }
-
-  if (intent === "casual") {
-    return {
-      intent,
-      replyToSender: "Hey, what’s up?",
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: false,
-    };
-  }
-
-  if (intent === "status_question") {
-    return null;
-  }
-
-  const deterministic = deterministicCopy(intent, input.participantRole, input.incomingMessage);
-  return deterministic
-    ? {
-        intent,
-        replyToSender: deterministic.replyToSender,
-        relay: deterministic.relay,
-        relayToCounterparty: deterministic.relayToCounterparty,
-        newTradeIntake: false,
-      }
-    : null;
-}
-
-function structuredReplyFallback(intent: string, deal: DealStateForReply) {
-  if (intent === "status_question") {
-    return `We’re still in ${deal.status}. Right now it’s ${formatTradeQuantity(deal.quantity)} ${deal.unit} at ${formatTradeMoney(deal.currency, deal.agreedPrice)}/${deal.unit}.`;
-  }
-
-  if (intent === "deal_question") {
-    return `Yep, I’ve got it. It’s ${formatTradeQuantity(deal.quantity)} ${deal.unit} at ${formatTradeMoney(deal.currency, deal.agreedPrice)}/${deal.unit}, and we’re in ${deal.status}. What do you want to check?`;
-  }
-
-  if (intent === "document_request") {
-    return "Which document do you need?";
-  }
-
-  if (intent === "casual") {
-    return "What’s up?";
-  }
-
-  if (intent === "clarification") {
-    return "What do you want me to clarify?";
-  }
-
-  if (intent === "counterparty_question") {
-    return "I’ll check that and come back to you if I need anything else.";
-  }
-
-  return "I’m with you. What do you want to do next?";
-}
-
-function plainLanguageFallback(input: {
-  content: string;
-  participantRole: string;
-  incomingMessage: string;
-  replyContextKind?: string;
-  deal: DealStateForReply;
-}): DealConversationDecision | null {
-  const reply = input.content.trim().slice(0, 1200);
-  if (!reply || looksLikeProviderDiagnostic(reply)) return null;
-  if (looksStructured(reply) || containsInternalLeak(reply) || narratesCounterparty(reply)) {
-    return {
-      intent: "other",
-      replyToSender: structuredReplyFallback("other", input.deal),
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: false,
-    };
-  }
-
-  if (looksLikeNewTradeIntake(input.incomingMessage)) {
-    return {
-      intent: "new_trade_intake",
-      replyToSender: "",
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: true,
-    };
-  }
-
-  const normalized = input.incomingMessage.trim().toLowerCase();
-  if (/^(?:hi|hy|hello|hey|yo|sup|gm|good morning|good afternoon|good evening)[.! ]*$/i.test(normalized)) {
-    return {
-      intent: "casual",
-      replyToSender: reply,
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: false,
-    };
-  }
-
-  const shortReply = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|no|nope|nah|done|go ahead|proceed)[.! ]*$/i.test(normalized);
-  if (shortReply) {
-    const explicitCommercialReply = Boolean(input.replyContextKind?.startsWith("mediated_counteroffer:"));
-    const explicitDocumentReply = Boolean(input.replyContextKind?.includes("document"));
-    const affirmative = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|done|go ahead|proceed)[.! ]*$/i.test(normalized);
-    const negative = /^(?:no|nope|nah)[.! ]*$/i.test(normalized);
-
-    if (explicitCommercialReply && affirmative) {
-      return {
-        intent: "acceptance",
-        replyToSender: reply,
-        relay: true,
-        relayToCounterparty: "Perfect, those terms work. I’ll move us to the next step.",
-        newTradeIntake: false,
-      };
-    }
-
-    if (explicitCommercialReply && negative) {
-      return {
-        intent: "rejection",
-        replyToSender: reply,
-        relay: true,
-        relayToCounterparty: "That one won’t work. What’s your best revised offer?",
-        newTradeIntake: false,
-      };
-    }
-
-    if (explicitDocumentReply) {
-      return {
-        intent: "document_request",
-        replyToSender: reply,
-        relay: false,
-        relayToCounterparty: null,
-        newTradeIntake: false,
-      };
-    }
-
-    return {
-      intent: "casual",
-      replyToSender: reply,
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: false,
-    };
-  }
-
-  const acceptance = [
-    /\b(?:i|we)\s+(?:agree|accept|confirm|approve)\b/,
-    /\b(?:i|we)\s+(?:will|want to)\s+(?:proceed|continue|move ahead|move forward|go forward)\b/,
-    /\b(?:accepted|agreed|confirmed)\b/,
-  ].some((pattern) => pattern.test(normalized));
-
-  if (acceptance) {
-    return {
-      intent: "acceptance",
-      replyToSender: reply,
-      relay: true,
-      relayToCounterparty: "Perfect, we’re aligned on those terms. I’ll move this to the next step.",
-      newTradeIntake: false,
-    };
-  }
-
-  const rejection = [
-    /\b(?:i|we)\s+(?:reject|decline|do not accept|don't accept)\b/,
-    /\b(?:rejected|declined|not interested|cancel the deal)\b/,
-  ].some((pattern) => pattern.test(normalized));
-
-  if (rejection) {
-    return {
-      intent: "rejection",
-      replyToSender: reply,
-      relay: true,
-      relayToCounterparty: "That won’t work as it stands. What’s your best revised offer?",
-      newTradeIntake: false,
-    };
-  }
-
-  const counteroffer = [
-    /\b(?:counter|counteroffer|counter offer|make it|lower the price|too expensive|price is too high|can you do)\b/,
-    /\$\s*\d[\d,.]*/,
-    /\b(?:usd|aed|inr|eur)\s*\d[\d,.]*/i,
-    /\b\d[\d,.]*\s*(?:usd|aed|inr|eur)\b/i,
-  ].some((pattern) => pattern.test(normalized));
-
-  if (counteroffer) {
-    return {
-      intent: "counteroffer",
-      replyToSender: reply,
-      relay: true,
-      relayToCounterparty: `${input.incomingMessage.trim().slice(0, 900)} If not, send me your best.`,
-      newTradeIntake: false,
-    };
-  }
-
-  if (/\b(?:send|share|provide|upload|need|require|where|whr)\b.*\b(?:document|documents|coa|coi|sgs|bl|bill of lading|icpo|loi|fco|sco|spa|proof|certificate)\b/i.test(normalized)) {
-    return {
-      intent: "document_request",
-      replyToSender: reply,
-      relay: true,
-      relayToCounterparty: "Can you send that document over?",
-      newTradeIntake: false,
-    };
-  }
-
-  if (/\b(?:meet|meeting|call|video call|zoom|teams|appointment)\b/i.test(normalized)) {
-    return {
-      intent: "meeting_request",
-      replyToSender: reply,
-      relay: true,
-      relayToCounterparty: `${input.incomingMessage.trim().slice(0, 900)} What time works for you?`,
-      newTradeIntake: false,
-    };
-  }
-
-  const question = /\?$/.test(normalized)
-    || /^(?:can|could|will|would|does|do|is|are|when|where|whr|what|wht|how|why|who)\b/.test(normalized);
-
-  return {
-    intent: question ? "counterparty_question" : "other",
-    replyToSender: reply,
-    relay: false,
-    relayToCounterparty: null,
-    newTradeIntake: false,
-  };
+export function isSafeConversationText(text: string) {
+  return Boolean(text.trim()) && !containsInternalLeak(text)
+    && !looksLikeProviderDiagnostic(text) && !narratesCounterparty(text)
+    && !looksLikePrecisionChatter(text) && !looksStructured(text);
 }
 
 export function normalizeModelDecision(input: {
@@ -582,27 +160,17 @@ export function normalizeModelDecision(input: {
   const tradeKnowledgeQuestion =
     /\b(?:what|wht)\s+(?:is|are|does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming)
     || /\b(?:explain|meaning of|what does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming);
-  const deterministicIntent = highConfidenceIntent(input.incomingMessage);
-
-  if (isFixedPaymentPolicyMessage(input.incomingMessage)) {
-    return fixedPaymentPolicyDecision();
-  }
 
   const json = extractJson(input.content);
-  if (!json) return plainLanguageFallback(input);
+  if (!json) return null;
 
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return {
-      intent: "other",
-      replyToSender: structuredReplyFallback("other", input.deal),
-      relay: false,
-      relayToCounterparty: null,
-      newTradeIntake: false,
-    };
+    return null;
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
   let intent = typeof parsed.intent === "string" && allowedIntents.has(parsed.intent)
     ? parsed.intent
@@ -617,8 +185,7 @@ export function normalizeModelDecision(input: {
     else intent = "casual";
   } else if (greeting) {
     intent = "casual";
-  } else if (deterministicIntent) {
-    intent = deterministicIntent;
+
   }
 
   const newTradeIntakeRequested = parsed.newTradeIntake === true || intent === "new_trade_intake";
@@ -634,26 +201,24 @@ export function normalizeModelDecision(input: {
   }
 
   if (newTradeIntakeRequested && !newTradeIntake && intent === "new_trade_intake") {
-    intent = deterministicIntent && deterministicIntent !== "new_trade_intake"
-      ? deterministicIntent
-      : "other";
+    intent = "other";
   }
 
-  const deterministic = deterministicCopy(intent, input.participantRole, input.incomingMessage);
   const rawReply = typeof parsed.replyToSender === "string"
     ? parsed.replyToSender.trim().slice(0, 1200)
     : "";
 
-  const replyToSender = deterministic?.replyToSender
-    ?? (rawReply
+  const replyToSender = rawReply
       && !containsInternalLeak(rawReply)
       && !looksLikeProviderDiagnostic(rawReply)
       && !narratesCounterparty(rawReply)
       && !looksLikePrecisionChatter(rawReply)
+      && !looksStructured(rawReply)
       ? rawReply
-      : structuredReplyFallback(intent, input.deal));
+      : null;
+  if (!replyToSender) return null;
 
-  let relayRequested = deterministic?.relay ?? (parsed.relay === true);
+  let relayRequested = parsed.relay === true;
 
   // Greetings, general trade-term questions, status checks, and unanchored short
   // replies never need the counterparty. This blocks unnecessary forwarding even
@@ -666,16 +231,16 @@ export function normalizeModelDecision(input: {
   ) {
     relayRequested = false;
   }
-  const rawRelay = deterministic?.relayToCounterparty
-    ?? (relayRequested && typeof parsed.relayToCounterparty === "string"
+  const rawRelay = relayRequested && typeof parsed.relayToCounterparty === "string"
       ? parsed.relayToCounterparty.trim().slice(0, 1200)
-      : "");
+      : "";
 
   const relayToCounterparty = rawRelay
     && !containsInternalLeak(rawRelay)
     && !looksLikeProviderDiagnostic(rawRelay)
     && !narratesCounterparty(rawRelay)
     && !looksLikePrecisionChatter(rawRelay)
+    && !looksStructured(rawRelay)
     ? rawRelay
     : null;
 
