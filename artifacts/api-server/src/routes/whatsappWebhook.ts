@@ -13,6 +13,7 @@ import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from ".
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
+import { directDealFactReply } from "../akif/dealFactReply";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 
 const router: IRouter = Router();
@@ -246,49 +247,6 @@ async function applyAcceptedCounterofferToDeal(dealId: string, eventText: string
       updatedAt: new Date(),
     })
     .where(eq(dealsTable.id, dealId));
-}
-
-function directDealFactReply(
-  text: string,
-  deal: {
-    status: string;
-    quantity: string;
-    unit: string;
-    agreedPrice: string;
-    currency: string;
-    incoterm: string | null;
-    destination: string | null;
-  },
-) {
-  const normalized = text.trim().toLowerCase();
-
-  if (/\b(?:status|stage|where are we|where is the deal|deal update|current deal)\b/.test(normalized)) {
-    return `The deal is currently in ${deal.status}. Confirmed terms in UDC are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}${deal.incoterm ? `, ${deal.incoterm}` : ""}${deal.destination ? ` to ${deal.destination}` : ""}.`;
-  }
-
-  if (/^(?:what|wht|whats|what's|tell me)?\s*(?:is|are)?\s*(?:the\s*)?(?:price|rate|agreed price|current price)\??$/i.test(normalized)
-    || /\b(?:what|wht).*\b(?:price|rate)\b/.test(normalized)) {
-    return `The confirmed price in UDC is ${deal.currency} ${deal.agreedPrice} per ${deal.unit}.`;
-  }
-
-  if (/^(?:what|wht|whats|what's|tell me)?\s*(?:is|are)?\s*(?:the\s*)?(?:quantity|qty|volume)\??$/i.test(normalized)
-    || /\b(?:what|wht).*\b(?:quantity|qty|volume)\b/.test(normalized)) {
-    return `The confirmed quantity in UDC is ${deal.quantity} ${deal.unit}.`;
-  }
-
-  if (/\b(?:destination|delivery place|delivery port|port)\b/.test(normalized) && /\b(?:what|wht|where|whr|which|current|confirmed)\b/.test(normalized)) {
-    return deal.destination
-      ? `The confirmed destination in UDC is ${deal.destination}.`
-      : "UDC does not have a confirmed destination recorded for this deal yet.";
-  }
-
-  if (/\b(?:incoterm|cif|fob|cfr|exw)\b/.test(normalized) && /\b(?:what|wht|which|current|confirmed)\b/.test(normalized)) {
-    return deal.incoterm
-      ? `The confirmed Incoterm in UDC is ${deal.incoterm}.`
-      : "UDC does not have a confirmed Incoterm recorded for this deal yet.";
-  }
-
-  return null;
 }
 
 async function setActiveDealContext(userId: string, dealId: string) {
