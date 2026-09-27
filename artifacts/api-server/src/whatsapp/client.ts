@@ -101,3 +101,49 @@ export async function sendWhatsAppText(to: string, body: string) {
 
   return { delivered: true as const, messageId };
 }
+
+
+export async function downloadWhatsAppMedia(mediaId: string) {
+  const config = getConfig();
+  if (!config) throw new Error("whatsapp_not_configured");
+
+  const metaResponse = await fetch(
+    `https://graph.facebook.com/v21.0/${encodeURIComponent(mediaId)}`,
+    {
+      headers: { authorization: `Bearer ${config.accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    },
+  );
+  if (!metaResponse.ok) {
+    const error = await providerError(metaResponse);
+    throw new Error(`whatsapp_media_lookup_failed http=${error.httpStatus} code=${error.code ?? "unknown"}`);
+  }
+
+  const metadata = await metaResponse.json() as {
+    url?: unknown;
+    mime_type?: unknown;
+    file_size?: unknown;
+  };
+  if (typeof metadata.url !== "string") {
+    throw new Error("whatsapp_media_url_missing");
+  }
+
+  const fileResponse = await fetch(metadata.url, {
+    headers: { authorization: `Bearer ${config.accessToken}` },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!fileResponse.ok) {
+    throw new Error(`whatsapp_media_download_failed http=${fileResponse.status}`);
+  }
+
+  const bytes = new Uint8Array(await fileResponse.arrayBuffer());
+  const mimeType = typeof metadata.mime_type === "string"
+    ? metadata.mime_type
+    : fileResponse.headers.get("content-type") ?? "application/octet-stream";
+
+  return {
+    bytes,
+    mimeType,
+    fileSize: typeof metadata.file_size === "number" ? metadata.file_size : bytes.byteLength,
+  };
+}
