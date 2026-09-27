@@ -1,4 +1,7 @@
 import express, { type Express, type Request } from "express";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
@@ -103,5 +106,24 @@ app.get("/data-deletion", (_req, res) => {
 });
 
 app.use("/api", router);
+
+const webDistPath = fileURLToPath(
+  new URL("../../udc-app/dist/public/", import.meta.url),
+);
+const webIndexPath = path.join(webDistPath, "index.html");
+
+if (existsSync(webIndexPath)) {
+  app.use(express.static(webDistPath));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api/")) {
+      next();
+      return;
+    }
+
+    res.sendFile(webIndexPath, (error) => {
+      if (error) next(error);
+    });
+  });
+}
 
 export default app;
