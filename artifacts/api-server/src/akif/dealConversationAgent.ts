@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsTable } from "@workspace/db";
 import { runHermesChat } from "./intelligence/hermesClient";
+import { refreshDealIntelligenceSnapshot } from "./documentIntelligence";
 
 export type DealConversationDecision = {
   intent: string;
@@ -58,6 +59,8 @@ export async function interpretActiveDealConversation(input: {
     .limit(1);
 
   if (!deal) return null;
+
+  await refreshDealIntelligenceSnapshot(input.dealId).catch(() => undefined);
 
   const [history, snapshotRows] = await Promise.all([
     db.select({
