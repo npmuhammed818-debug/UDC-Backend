@@ -162,6 +162,111 @@ async function setActiveDealContext(userId: string, dealId: string) {
     });
 }
 
+function inferDocumentType(filename?: string, caption?: string) {
+  const value = `${filename ?? ""} ${caption ?? ""}`.toLowerCase();
+  if (/\bloi\b|letter of intent/.test(value)) return "LOI";
+  if (/\bicpo\b/.test(value)) return "ICPO";
+  if (/\bfco\b/.test(value)) return "FCO";
+  if (/\bsco\b/.test(value)) return "SCO";
+  if (/\bspa\b|sales purchase agreement/.test(value)) return "SPA";
+  if (/\bncnda\b/.test(value)) return "NCNDA";
+  if (/\bsgs\b/.test(value)) return "SGS";
+  if (/bill of lading|\bbl\b/.test(value)) return "BL";
+  if (/certificate of origin|\bco\b/.test(value)) return "CO";
+  if (/coa|assay/.test(value)) return "COA";
+  return "trade_document";
+}
+
+async function resolveActiveDealForUser(userId: string) {
+  const [saved] = await db
+    .select({ activeDealId: whatsappUserContextsTable.activeDealId })
+    .from(whatsappUserContextsTable)
+    .where(eq(whatsappUserContextsTable.userId, userId))
+    .limit(1);
+
+  if (saved) {
+    const [participant] = await db
+      .select({ dealId: dealParticipantsTable.dealId })
+      .from(dealParticipantsTable)
+      .where(and(
+        eq(dealParticipantsTable.dealId, saved.activeDealId),
+        eq(dealParticipantsTable.userId, userId),
+        eq(dealParticipantsTable.status, "active"),
+      ))
+      .limit(1);
+    if (participant) return saved.activeDealId;
+  }
+
+  const deals = await db
+    .select({ dealId: dealParticipantsTable.dealId })
+    .from(dealParticipantsTable)
+    .innerJoin(dealsTable, eq(dealParticipantsTable.dealId, dealsTable.id))
+    .where(and(
+      eq(dealParticipantsTable.userId, userId),
+      eq(dealParticipantsTable.status, "active"),
+      eq(dealsTable.status, "negotiation"),
+    ));
+
+  return deals.length === 1 ? deals[0]!.dealId : null;
+}
+
+async function handleWhatsAppDealDocument(
+  from: string,
+  document: { id: string; filename?: string; mime_type?: string; caption?: string },
+) {
+  const [sender] = await db
+    .select({ id: usersTable.id, status: usersTable.status })
+    .from(usersTable)
+    .where(eq(usersTable.phone, from))
+    .limit(1);
+
+  if (!sender || sender.status !== "verified") {
+    return { reply: "I received the file, but this WhatsApp account is not verified for UDC deal documents yet." };
+  }
+
+  const dealId = await resolveActiveDealForUser(sender.id);
+  if (!dealId) {
+    return { reply: "I received the file, but I can’t safely tell which active deal it belongs to. Reply to the relevant deal message and send the document again." };
+  }
+
+  const media = await downloadWhatsAppMedia(document.id);
+  if (media.bytes.byteLength > 25 * 1024 * 1024) {
+    return { reply: "I received the document, but it is over the current 25 MB UDC WhatsApp document limit." };
+  }
+
+  const safeFilename = (document.filename || "document")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .slice(0, 120);
+  const objectPath = `deals/${dealId}/whatsapp/${randomUUID()}-${safeFilename}`;
+  const fileUrl = await uploadDocumentBytes(objectPath, media.bytes, media.mimeType);
+  const documentType = inferDocumentType(document.filename, document.caption);
+
+  await db.insert(documentsTable).values({
+    dealId,
+    uploadedBy: sender.id,
+    documentType,
+    fileUrl,
+    status: "pending",
+  });
+
+  await setActiveDealContext(sender.id, dealId);
+  await db.insert(dealConversationEventsTable).values({
+    dealId,
+    userId: sender.id,
+    participantRole: "document_sender",
+    intent: "document_submission",
+    originalText: `Uploaded ${documentType}: ${document.filename ?? "document"}${document.caption ? ` — ${document.caption}` : ""}`,
+    relayText: null,
+    relayed: false,
+  });
+
+  return {
+    reply: `Got it. I received the ${documentType} and attached it to this deal for review. I won’t treat it as approved or send it onward until the appropriate UDC review step.`,
+    dealId,
+    recipientUserId: sender.id,
+  };
+}
+
 async function handleDealWhatsAppMessage(
   from: string,
   text: string,
