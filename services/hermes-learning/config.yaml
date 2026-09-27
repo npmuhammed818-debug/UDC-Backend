@@ -11,10 +11,25 @@ memory:
 display:
   memory_notifications: verbose
 
+# Hermes API is used only as AKIF's learning/skills layer. Keep its exposed
+# tool surface intentionally narrow even though the service itself is
+# protected by bearer authentication.
+platform_toolsets:
+  api_server:
+    - skills
+    - memory
+    - session_search
+
 agent:
   disabled_toolsets:
     - terminal
     - browser
+    - file
+    - code_execution
+    - connections
+    - cronjob
+    - computer_use
+    - web
 
 tool_loop_guardrails:
   non_interactive_hard_stop_enabled: true
