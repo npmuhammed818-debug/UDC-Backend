@@ -55,3 +55,21 @@ test("instant deal facts sound like a person, not a database", () => {
 
   assert.doesNotMatch(messages, /confirmed terms in UDC|confirmed price in UDC|confirmed quantity in UDC|recorded for this deal/i);
 });
+
+
+test("deal fact replies format stored numeric precision for humans", () => {
+  const preciseDeal = {
+    ...deal,
+    quantity: "100.000000",
+    agreedPrice: "5900.00",
+  };
+
+  assert.equal(
+    directDealFactReply("what is the current price?", preciseDeal),
+    "$5,900/MT right now.",
+  );
+  assert.equal(
+    directDealFactReply("confirmed qty?", preciseDeal),
+    "100 MT right now.",
+  );
+});
