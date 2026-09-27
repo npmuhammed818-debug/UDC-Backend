@@ -4,6 +4,9 @@ packages:
   - lib/integrations/*
   - scripts
 
+allowBuilds:
+  esbuild: true
+
 autoInstallPeers: false
 
 catalog:
