@@ -1,3 +1,4 @@
+import { formatTradeMoney, formatTradeQuantity } from "./tradeDisplay";
 export type DealConversationDecision = {
   intent: string;
   replyToSender: string;
@@ -81,6 +82,11 @@ function looksLikeProviderDiagnostic(text: string) {
 
 function narratesCounterparty(text: string) {
   return /\b(?:the\s+)?(?:buyer|seller)\s+(?:said|says|asked|requested|clarified|confirmed|accepted|rejected|proposed|wants|needs|provided|uploaded|agreed)\b/i.test(text);
+}
+
+function looksLikePrecisionChatter(text: string) {
+  return /\b(?:full precision|quantity decimals?|price decimals?|decimal formatting|more units)\b/i.test(text)
+    || /\b\d+\.0{2,}\s*(?:mt|kg|tons?|containers?)\b/i.test(text);
 }
 
 function containsInternalLeak(text: string) {
@@ -321,11 +327,11 @@ export function preflightDealDecision(input: {
 
 function structuredReplyFallback(intent: string, deal: DealStateForReply) {
   if (intent === "status_question") {
-    return `We’re still in ${deal.status}. Right now it’s ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}.`;
+    return `We’re still in ${deal.status}. Right now it’s ${formatTradeQuantity(deal.quantity)} ${deal.unit} at ${formatTradeMoney(deal.currency, deal.agreedPrice)}/${deal.unit}.`;
   }
 
   if (intent === "deal_question") {
-    return `Yep, I’ve got it. It’s ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}, and we’re in ${deal.status}. What do you want to check?`;
+    return `Yep, I’ve got it. It’s ${formatTradeQuantity(deal.quantity)} ${deal.unit} at ${formatTradeMoney(deal.currency, deal.agreedPrice)}/${deal.unit}, and we’re in ${deal.status}. What do you want to check?`;
   }
 
   if (intent === "document_request") {
@@ -593,6 +599,7 @@ export function normalizeModelDecision(input: {
       && !containsInternalLeak(rawReply)
       && !looksLikeProviderDiagnostic(rawReply)
       && !narratesCounterparty(rawReply)
+      && !looksLikePrecisionChatter(rawReply)
       ? rawReply
       : structuredReplyFallback(intent, input.deal));
 
@@ -618,6 +625,7 @@ export function normalizeModelDecision(input: {
     && !containsInternalLeak(rawRelay)
     && !looksLikeProviderDiagnostic(rawRelay)
     && !narratesCounterparty(rawRelay)
+    && !looksLikePrecisionChatter(rawRelay)
     ? rawRelay
     : null;
 
