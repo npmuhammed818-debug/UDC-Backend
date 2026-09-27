@@ -80,3 +80,20 @@ test("generic products are captured without copper-only logic", () => {
   assert.equal(buyer.destination, "Dubai");
   assert.equal(buyer.targetPrice, 2500);
 });
+
+
+test("specific product context is not lost when a later message is more generic", () => {
+  const first = mergeBuyerRequirementDraft(
+    null,
+    triageBuyerRequirement("millberry"),
+    "millberry",
+  );
+  const second = mergeBuyerRequirementDraft(
+    first,
+    triageBuyerRequirement("I need copper 50 MT"),
+    "I need copper 50 MT",
+  );
+
+  assert.equal(second.product, "Copper Millberry");
+  assert.equal(second.quantity, 50);
+});
