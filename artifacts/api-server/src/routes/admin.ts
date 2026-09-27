@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { createSignedUploadUrl, storagePath } from "../supabase/storage";
@@ -1015,6 +1015,22 @@ router.post("/admin/deal-notifications/whatsapp", requireRole("admin"), async (r
     }
     res.status(502).json({ error: "whatsapp_delivery_failed" });
   }
+});
+
+router.get("/admin/deals/:dealId/conversation", requireRole("admin"), async (req, res) => {
+  const dealId = req.params["dealId"];
+  if (typeof dealId !== "string") {
+    res.status(400).json({ error: "invalid_deal_id" });
+    return;
+  }
+
+  const events = await db
+    .select()
+    .from(dealConversationEventsTable)
+    .where(eq(dealConversationEventsTable.dealId, dealId))
+    .orderBy(desc(dealConversationEventsTable.createdAt));
+
+  res.json({ events });
 });
 
 router.get("/admin/deals/:dealId/messages", requireRole("admin"), async (req, res) => {
