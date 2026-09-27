@@ -289,3 +289,43 @@ test("structured provider diagnostics are never shown or relayed", () => {
   assert.equal(decision.relay, false);
   assert.equal(decision.relayToCounterparty, null);
 });
+
+
+test("mixed internal diagnostics and another trade can never reach the active deal reply", () => {
+  const badReply = "Thanks — glad the FCO is good and SPA is next. The buyer clarified DLC at destination after SGS for 100 MT at $5,900/MT. Note the FCO and LOI extractions failed (502) so please review the uploaded files directly. For the new frozen chicken request — please send that as a separate intake when ready.";
+
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "other",
+      replyToSender: badReply,
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    }),
+    participantRole: "seller",
+    incomingMessage: "what next?",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.doesNotMatch(decision.replyToSender, /buyer clarified|seller said|502|extraction|frozen chicken/i);
+  assert.match(decision.replyToSender, /this deal/i);
+});
+
+test("internal extraction failures are blocked even without buyer seller narration", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "document_request",
+      replyToSender: "The FCO extraction failed with HTTP 502. Review it directly.",
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    }),
+    participantRole: "buyer",
+    incomingMessage: "what about the fco?",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.doesNotMatch(decision.replyToSender, /502|http|extraction failed/i);
+});
