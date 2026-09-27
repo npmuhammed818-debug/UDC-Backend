@@ -59,6 +59,39 @@ function looksLikeNewTradeIntake(text: string) {
     && /\b(?:need|want|buy|supply|sell|offer|deliver|delivered|from|to)\b/.test(normalized);
 }
 
+function structuredReplyFallback(
+  intent: string,
+  deal: {
+    status: string;
+    quantity: string;
+    unit: string;
+    agreedPrice: string;
+    currency: string;
+  },
+) {
+  if (intent === "status_question") {
+    return `The deal is currently in ${deal.status}. Confirmed terms in UDC are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}. Tell me if you want the latest document, payment status, or next step.`;
+  }
+
+  if (intent === "deal_question") {
+    return `I have the current deal open. Confirmed terms are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}, and the deal is in ${deal.status}. What do you want to check?`;
+  }
+
+  if (intent === "document_request") {
+    return "I understand the document request. Tell me which document you need and I’ll check what is attached to this deal.";
+  }
+
+  if (intent === "casual") {
+    return "I’m here. Tell me what you need for this deal.";
+  }
+
+  if (intent === "clarification") {
+    return "I understand. Tell me what you want clarified and I’ll answer from the current deal record.";
+  }
+
+  return "I understood your message, but the AI reply format was invalid. I kept it inside this deal and did not forward anything incorrectly. Please send the request again.";
+}
+
 /**
  * Formatting must never take the WhatsApp conversation offline.
  *
@@ -239,6 +272,8 @@ export async function interpretActiveDealConversation(input: {
     "Never expose internal storage:// paths, database UUIDs, service URLs, or backend implementation details in WhatsApp replies.",
     "If this is clearly a separate new buyer requirement or seller offer unrelated to the current deal, set newTradeIntake=true.",
     "Your ENTIRE response must be exactly one valid JSON object beginning with { and ending with }. No markdown, preface, explanation, or text outside the JSON.",
+    "replyToSender MUST always be a JSON string containing the actual WhatsApp sentence. NEVER use true, false, null, an object, or an array for replyToSender.",
+    "relay MUST always be a JSON boolean. relayToCounterparty MUST be either a JSON string or null. newTradeIntake MUST always be a JSON boolean.",
   ].join(" ");
 
   const user = JSON.stringify({
@@ -314,8 +349,14 @@ export async function interpretActiveDealConversation(input: {
     }
 
     if (!replyToSender) {
-      console.warn("AKIF deal conversation returned no sender reply");
-      return naturalLanguageFallback(content, input.participantRole, input.message);
+      console.warn("AKIF deal conversation returned invalid sender reply type");
+      return {
+        intent,
+        replyToSender: structuredReplyFallback(intent, deal),
+        relay: false,
+        relayToCounterparty: null,
+        newTradeIntake: false,
+      };
     }
 
     return {
