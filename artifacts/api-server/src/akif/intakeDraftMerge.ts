@@ -4,16 +4,16 @@ import type { SellerOfferDraft } from "./sellerOfferTriage";
 function cleanDestinationHint(text: string) {
   const cleaned = text
     .trim()
-    .replace(/(?:i|we)s+(?:already|alrdy|alreadys+did|said).*$/i, "")
-    .replace(/(?:right|rite)s*??$/i, "")
+    .replace(/\b(?:i|we)\s+(?:already|alrdy|already\s+did|said)\b.*$/i, "")
+    .replace(/\b(?:right|rite)\s*\??$/i, "")
     .replace(/[!?.,]+$/g, "")
     .trim();
 
-  if (!cleaned || /d|$|(?:usd|aed|inr|eur|dlc|sgs|fco|spa|loi|icpo|yes|no|ok|okay)/i.test(cleaned)) {
+  if (!cleaned || /\d|\$|\b(?:usd|aed|inr|eur|dlc|sgs|fco|spa|loi|icpo|yes|no|ok|okay)\b/i.test(cleaned)) {
     return undefined;
   }
 
-  const words = cleaned.split(/s+/);
+  const words = cleaned.split(/\s+/);
   if (words.length > 5 || cleaned.length > 80) return undefined;
   if (!/^[A-Za-z][A-Za-z .'-]*$/.test(cleaned)) return undefined;
   return cleaned;
