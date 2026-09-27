@@ -68,3 +68,26 @@ export async function uploadDocumentBytes(
   await response.body?.cancel();
   return storagePath(path);
 }
+
+
+export async function downloadDocumentBytes(path: string) {
+  const { url, key } = config();
+  const response = await fetch(
+    `${url}/storage/v1/object/${bucket}/${path}`,
+    {
+      headers: {
+        authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`document_download_failed http=${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "application/octet-stream";
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  return { bytes, contentType };
+}
