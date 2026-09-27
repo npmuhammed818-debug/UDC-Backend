@@ -10,6 +10,10 @@ if [ ! -f "$DATA_DIR/config.yaml" ]; then
   cp "$BOOTSTRAP_DIR/config.yaml" "$DATA_DIR/config.yaml"
 fi
 
+# Existing persistent Hermes homes keep their settings across deploys. Migrate
+# only the previously pinned free model, preserving all other user settings.
+sed -i 's/^[[:space:]]*default: qwen\/qwen3\.8-27b:free[[:space:]]*$/  default: openrouter\/free/' "$DATA_DIR/config.yaml"
+
 if [ ! -f "$DATA_DIR/SOUL.md" ]; then
   cp "$BOOTSTRAP_DIR/SOUL.md" "$DATA_DIR/SOUL.md"
 fi
