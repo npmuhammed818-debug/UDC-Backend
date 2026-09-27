@@ -28,10 +28,13 @@ async function deliverWhatsAppReply(to: string | undefined, body: string) {
 
   try {
     return await sendWhatsAppText(to, body);
-  } catch (error) {
+  } catch {
     return {
       delivered: false as const,
-      reason: error instanceof Error ? error.message : "whatsapp_delivery_failed",
+      // Provider errors must not be copied into logs: they can contain user or
+      // provider data. The WhatsApp client already records only safe status/code
+      // metadata before it throws.
+      reason: "whatsapp_delivery_failed" as const,
     };
   }
 }
@@ -596,7 +599,11 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           );
         } catch (error) {
           req.log.error(
-            { flow: "deal_document", reason: error instanceof Error ? error.message : "document_processing_failed" },
+            {
+              flow: "deal_document",
+              errorName: error instanceof Error ? error.name : "UnknownError",
+              reason: "document_processing_failed",
+            },
             "UDC could not process WhatsApp deal document",
           );
           await deliverWhatsAppReply(

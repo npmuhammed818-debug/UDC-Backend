@@ -25,9 +25,14 @@ export async function extractDocumentBytes(input: {
 }) {
   const { baseUrl, token } = config();
   const body = new FormData();
+  // Copy into an ArrayBuffer-backed view before constructing a Blob. Incoming
+  // Node buffers may be backed by SharedArrayBuffer, which is not a valid
+  // BlobPart in the current TypeScript DOM definitions.
+  const blobBytes = new Uint8Array(input.bytes.byteLength);
+  blobBytes.set(input.bytes);
   body.set(
     "file",
-    new Blob([input.bytes], { type: input.mimeType }),
+    new Blob([blobBytes.buffer], { type: input.mimeType }),
     input.fileName,
   );
 
