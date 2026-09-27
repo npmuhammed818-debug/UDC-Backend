@@ -153,15 +153,46 @@ function plainLanguageFallback(input: {
   if (shortReply) {
     const explicitCommercialReply = Boolean(input.replyContextKind?.startsWith("mediated_counteroffer:"));
     const explicitDocumentReply = Boolean(input.replyContextKind?.includes("document"));
-    if (!explicitCommercialReply && !explicitDocumentReply) {
+    const affirmative = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|done|go ahead|proceed)[.! ]*$/i.test(normalized);
+    const negative = /^(?:no|nope|nah)[.! ]*$/i.test(normalized);
+
+    if (explicitCommercialReply && affirmative) {
       return {
-        intent: "casual",
+        intent: "acceptance",
+        replyToSender: reply,
+        relay: true,
+        relayToCounterparty: `The ${party} accepted the exact counteroffer they replied to.`,
+        newTradeIntake: false,
+      };
+    }
+
+    if (explicitCommercialReply && negative) {
+      return {
+        intent: "rejection",
+        replyToSender: reply,
+        relay: true,
+        relayToCounterparty: `The ${party} rejected the exact counteroffer they replied to.`,
+        newTradeIntake: false,
+      };
+    }
+
+    if (explicitDocumentReply) {
+      return {
+        intent: "document_request",
         replyToSender: reply,
         relay: false,
         relayToCounterparty: null,
         newTradeIntake: false,
       };
     }
+
+    return {
+      intent: "casual",
+      replyToSender: reply,
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    };
   }
 
   const acceptance = [
