@@ -145,7 +145,7 @@ function mediatorCopy(_role: string, intent: ConversationIntent, text: string) {
     case "document_request":
       return {
         toSender: "Sure, I’ll sort that.",
-        toOther: `Can you send this over: ${text.trim()}`,
+        toOther: "Can you send that document over?",
         relay: true,
       };
     case "meeting_request":
@@ -381,12 +381,12 @@ async function handleWhatsAppDealDocument(
     .limit(1);
 
   if (!sender || sender.status !== "verified") {
-    return { reply: "I received the file, but this WhatsApp account is not verified for UDC deal documents yet." };
+    return { reply: "I got the file, but this number isn’t verified for UDC documents yet." };
   }
 
   const dealId = await resolveActiveDealForUser(sender.id);
   if (!dealId) {
-    return { reply: "I received the file, but I can’t safely tell which active deal it belongs to. Reply to the relevant deal message and send the document again." };
+    return { reply: "I got the file, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
   }
 
   if (inboundProviderMessageId) {
@@ -407,7 +407,7 @@ async function handleWhatsAppDealDocument(
 
   const media = await downloadWhatsAppMedia(document.id);
   if (media.bytes.byteLength > 25 * 1024 * 1024) {
-    return { reply: "I received the document, but it is over the current 25 MB UDC WhatsApp document limit." };
+    return { reply: "That file is over the 25 MB limit. Send a smaller copy and I’ll take it from there." };
   }
 
   const safeFilename = (document.filename || "document")
@@ -465,7 +465,7 @@ async function handleWhatsAppDealDocument(
   });
 
   return {
-    reply: `Got it. I received the ${documentType} and attached it to this deal for review. I won’t treat it as approved or send it onward until the appropriate UDC review step.`,
+    reply: `Got the ${documentType}. I’ll keep it here for review.`,
     dealId,
     recipientUserId: sender.id,
   };
@@ -488,13 +488,13 @@ async function handleDealWhatsAppMessage(
 
   if (!sender) {
     return explicitMatch || ruleIntent || replyToProviderMessageId
-      ? { reply: "I couldn’t link this WhatsApp number to a UDC trade account.", deliveredToCounterparty: false }
+      ? { reply: "I don’t recognize this number yet. Make sure it’s linked to your UDC account.", deliveredToCounterparty: false }
       : null;
   }
 
   if (sender.status !== "verified") {
     return explicitMatch || ruleIntent || replyToProviderMessageId
-      ? { reply: "Your UDC account needs to be verified before I can handle deal negotiation.", deliveredToCounterparty: false }
+      ? { reply: "I need your UDC account verified before I can handle this deal.", deliveredToCounterparty: false }
       : null;
   }
 
@@ -570,7 +570,7 @@ async function handleDealWhatsAppMessage(
 
     if (activeDeals.length > 1) {
       return {
-        reply: "You have more than one active negotiation. Reply to the specific UDC deal message so I know which one you mean.",
+        reply: "You’ve got more than one deal open. Reply to the deal message you mean.",
         deliveredToCounterparty: false,
       };
     }
@@ -601,7 +601,7 @@ async function handleDealWhatsAppMessage(
 
   if (deal.status !== "negotiation") {
     return {
-      reply: `This deal is currently at the ${deal.status} stage. I’ll keep this conversation tied to that stage.`,
+      reply: `We’re at ${deal.status} on this one.`,
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,
@@ -619,7 +619,7 @@ async function handleDealWhatsAppMessage(
     .limit(1);
 
   if (!participant) {
-    return { reply: "This WhatsApp account isn’t an active participant in that deal.", deliveredToCounterparty: false };
+    return { reply: "I can’t match this number to that deal.", deliveredToCounterparty: false };
   }
 
   const receiverUserId = sender.id === deal.buyerUserId
@@ -688,7 +688,7 @@ async function handleDealWhatsAppMessage(
 
           if (!receiver?.phone) {
             return {
-              reply: `I found the latest ${storedDocument.documentType}, but I can’t deliver it to the other side right now.`,
+              reply: `I’ve got the ${storedDocument.documentType}, but it didn’t send. I’ll keep it here for now.`,
               deliveredToCounterparty: false,
               dealId: deal.id,
               recipientUserId: sender.id,
@@ -704,7 +704,7 @@ async function handleDealWhatsAppMessage(
               receiver.phone,
               signedUrl,
               `${storedDocument.documentType}.${extension}`,
-              `Latest ${storedDocument.documentType} for this deal. Please review it and reply here with the next step.`,
+              `${storedDocument.documentType} for review. Let me know what you want to do next.`,
             );
             documentDelivered = documentDelivery.delivered;
             documentMessageId = "messageId" in documentDelivery
@@ -727,8 +727,8 @@ async function handleDealWhatsAppMessage(
 
           return {
             reply: documentDelivered
-              ? `Done. I sent the latest ${storedDocument.documentType} for review. I’ll keep the response in this deal.`
-              : `I found the latest ${storedDocument.documentType}, but WhatsApp could not deliver the file right now. I kept it attached to this deal.`,
+              ? `Done. I sent the ${storedDocument.documentType}.`
+              : `I’ve got the ${storedDocument.documentType}, but it didn’t send. I’ll keep it here for now.`,
             deliveredToCounterparty: documentDelivered,
             dealId: deal.id,
             recipientUserId: sender.id,
@@ -739,7 +739,7 @@ async function handleDealWhatsAppMessage(
         }
 
         return {
-          reply: `I found the latest ${storedDocument.documentType}. I’m sending it here now.`,
+          reply: `Got it. Sending the ${storedDocument.documentType} now.`,
           deliveredToCounterparty: false,
           dealId: deal.id,
           recipientUserId: sender.id,
@@ -756,7 +756,7 @@ async function handleDealWhatsAppMessage(
     if (deliveryTarget === "counterparty") {
       const label = requestedDocument === "LATEST" ? "requested document" : requestedDocument;
       return {
-        reply: `I don’t have the ${label} attached to this deal yet. Upload it here and I’ll send it for review.`,
+        reply: `I don’t have the ${label} yet. Send it here and I’ll pass it on.`,
         deliveredToCounterparty: false,
         dealId: deal.id,
         recipientUserId: sender.id,
@@ -816,12 +816,12 @@ async function handleDealWhatsAppMessage(
     ? effectiveIntent === "acceptance"
       ? {
           toSender: "Perfect.",
-          toOther: `Perfect, those terms work: ${exactCounteroffer.originalText.trim()} I’ll move us to the next step.`,
+          toOther: `Perfect. Those terms work. ${exactCounteroffer.originalText.trim()} I’ll move us to the next step.`,
           relay: true,
         }
       : {
           toSender: "No problem.",
-          toOther: `That one won’t work: ${exactCounteroffer.originalText.trim()} What’s your best revised offer?`,
+          toOther: `That one won’t work. ${exactCounteroffer.originalText.trim()} What’s your best revised offer?`,
           relay: true,
         }
     : {
@@ -1063,8 +1063,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             }
 
             const replyBody = documentDelivered
-              ? `Sent the latest ${dealMessage.documentToSender.documentType} here.`
-              : `I found the ${dealMessage.documentToSender.documentType}, but WhatsApp could not send the file right now. The document is still safely attached to this deal.`;
+              ? `Sent the ${dealMessage.documentToSender.documentType}.`
+              : `I’ve got the ${dealMessage.documentToSender.documentType}, but it didn’t send. I’ll keep it here for now.`;
             const delivery = await deliverWhatsAppReply(message.from, replyBody);
 
             if (documentDelivered && documentMessageId && dealMessage.dealId && dealMessage.recipientUserId) {
@@ -1119,7 +1119,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         const research = await queueWhatsAppResearch(message.from, message.text.body);
         if (research) {
           const reply =
-            `AKIF queued your ${research.intent.direction} research for ${research.intent.product} in ${research.intent.targetCountry}. UDC will keep the research result separate from verification and deal approval.`;
+            `Sure. I’ll look for ${research.intent.direction === "buyer" ? "buyers" : "sellers"} for ${research.intent.product} in ${research.intent.targetCountry} and come back with what I find.`;
           const delivery = await deliverWhatsAppReply(message.from, reply);
           if (!delivery.delivered) {
             req.log.error(
