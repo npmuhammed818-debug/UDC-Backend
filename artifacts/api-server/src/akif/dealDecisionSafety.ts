@@ -174,42 +174,42 @@ function deterministicCopy(intent: string, participantRole: string, message: str
     ? clean
         .replace(/\b(?:the\s+)?seller\b/gi, "you")
         .replace(/\bcan\s+(?:he|she|they)\b/gi, "can you")
-        .replace(/^\s*(?:i|we)\s+can\s+do\s+/i, "Can you work with ")
+        .replace(/^\s*(?:i|we)\s+can\s+do\s+/i, "Can you do ")
     : clean
         .replace(/\b(?:the\s+)?buyer\b/gi, "you")
         .replace(/\bcan\s+(?:he|she|they)\b/gi, "can you")
-        .replace(/^\s*(?:i|we)\s+can\s+do\s+/i, "Can you work with ");
+        .replace(/^\s*(?:i|we)\s+can\s+do\s+/i, "Can you do ");
 
   switch (intent) {
     case "acceptance":
       return {
-        replyToSender: "Got it. I recorded that you want to proceed. I’ll keep the next step tied to the exact deal context.",
+        replyToSender: "Perfect. I’ll move it forward from here.",
         relay: true,
-        relayToCounterparty: "The current terms can move forward. Please confirm you’re ready for the next step.",
+        relayToCounterparty: "Perfect, we’re aligned on those terms. I’ll move this to the next step.",
       };
     case "rejection":
       return {
-        replyToSender: "Understood. I recorded that you do not accept the current terms.",
+        replyToSender: "No problem. Send me what would work for you and I’ll take it from there.",
         relay: true,
-        relayToCounterparty: "The current terms weren’t accepted. Send revised terms if you want me to keep negotiating.",
+        relayToCounterparty: "That won’t work as it stands. What’s your best revised offer?",
       };
     case "counteroffer":
       return {
-        replyToSender: "Got it. I recorded the revised commercial terms and I’ll take only those terms to the other side.",
+        replyToSender: "Got it. I’ll check that and come back to you.",
         relay: true,
-        relayToCounterparty: `Can you work with these revised terms: ${recipientFramed} Please confirm or send your counter.`,
+        relayToCounterparty: `${recipientFramed.charAt(0).toUpperCase() + recipientFramed.slice(1)}${/[?.!]$/.test(recipientFramed) ? "" : "?"} If not, send me your best.`,
       };
     case "document_request":
       return {
-        replyToSender: "I’ve noted the document request. I’ll use the document already attached to this deal when available; otherwise I’ll ask the other side only for what is needed.",
+        replyToSender: "Sure, I’ll sort that.",
         relay: true,
-        relayToCounterparty: `Please provide this for the deal: ${recipientFramed}`,
+        relayToCounterparty: `Can you send this over: ${recipientFramed}`,
       };
     case "meeting_request":
       return {
-        replyToSender: "I’ll coordinate the meeting request and come back with the other side’s availability.",
+        replyToSender: "Sure. I’ll set it up and get back to you.",
         relay: true,
-        relayToCounterparty: `Can we arrange this meeting: ${recipientFramed} Please send your availability.`,
+        relayToCounterparty: `${recipientFramed.charAt(0).toUpperCase() + recipientFramed.slice(1)} What time works for you?`,
       };
     default:
       return null;
@@ -232,9 +232,9 @@ export function preflightDealDecision(input: {
     if (exactCounteroffer && affirmative) {
       return {
         intent: "acceptance",
-        replyToSender: "Confirmed. I recorded your reply to that exact counteroffer.",
+        replyToSender: "Perfect.",
         relay: true,
-        relayToCounterparty: "Your counteroffer has been accepted. I’ll keep the next step tied to those exact terms.",
+        relayToCounterparty: "Perfect, those terms work. I’ll move us to the next step.",
         newTradeIntake: false,
       };
     }
@@ -242,9 +242,9 @@ export function preflightDealDecision(input: {
     if (exactCounteroffer && negative) {
       return {
         intent: "rejection",
-        replyToSender: "Understood. I recorded your rejection of that exact counteroffer.",
+        replyToSender: "No problem.",
         relay: true,
-        relayToCounterparty: "That counteroffer wasn’t accepted. Send revised terms if you want me to keep negotiating.",
+        relayToCounterparty: "That one won’t work. What’s your best revised offer?",
         newTradeIntake: false,
       };
     }
@@ -252,7 +252,7 @@ export function preflightDealDecision(input: {
     if (documentContext) {
       return {
         intent: "document_request",
-        replyToSender: "Got it. I’ll keep this reply tied to the document request.",
+        replyToSender: "Got it.",
         relay: false,
         relayToCounterparty: null,
         newTradeIntake: false,
@@ -284,7 +284,7 @@ export function preflightDealDecision(input: {
   if (intent === "casual") {
     return {
       intent,
-      replyToSender: "Hi. I’m here with this deal. Tell me what you need.",
+      replyToSender: "Hey, what’s up?",
       relay: false,
       relayToCounterparty: null,
       newTradeIntake: false,
@@ -309,30 +309,30 @@ export function preflightDealDecision(input: {
 
 function structuredReplyFallback(intent: string, deal: DealStateForReply) {
   if (intent === "status_question") {
-    return `The deal is currently in ${deal.status}. Confirmed terms in UDC are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}. Tell me if you want the latest document, payment status, or next step.`;
+    return `We’re still in ${deal.status}. Right now it’s ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}.`;
   }
 
   if (intent === "deal_question") {
-    return `I have the current deal open. Confirmed terms are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}, and the deal is in ${deal.status}. What do you want to check?`;
+    return `Yep, I’ve got it. It’s ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}, and we’re in ${deal.status}. What do you want to check?`;
   }
 
   if (intent === "document_request") {
-    return "I understand the document request. Tell me which document you need and I’ll check what is attached to this deal.";
+    return "Which document do you need?";
   }
 
   if (intent === "casual") {
-    return "I’m here. Tell me what you need for this deal.";
+    return "What’s up?";
   }
 
   if (intent === "clarification") {
-    return "Tell me what you want clarified and I’ll answer from the current deal record.";
+    return "What do you want me to clarify?";
   }
 
   if (intent === "counterparty_question") {
-    return "I understand the question. I’ll answer from the deal record if UDC already knows it; otherwise I’ll ask the other party only if their input is actually needed.";
+    return "I’ll check that and come back to you if I need anything else.";
   }
 
-  return "I’m following this deal. Tell me naturally what you want me to do next and I’ll keep it inside this deal.";
+  return "I’m with you. What do you want to do next?";
 }
 
 function plainLanguageFallback(input: {
@@ -387,7 +387,7 @@ function plainLanguageFallback(input: {
         intent: "acceptance",
         replyToSender: reply,
         relay: true,
-        relayToCounterparty: "Your counteroffer has been accepted. I’ll keep the next step tied to those exact terms.",
+        relayToCounterparty: "Perfect, those terms work. I’ll move us to the next step.",
         newTradeIntake: false,
       };
     }
@@ -397,7 +397,7 @@ function plainLanguageFallback(input: {
         intent: "rejection",
         replyToSender: reply,
         relay: true,
-        relayToCounterparty: "That counteroffer wasn’t accepted. Send revised terms if you want me to keep negotiating.",
+        relayToCounterparty: "That one won’t work. What’s your best revised offer?",
         newTradeIntake: false,
       };
     }
@@ -432,7 +432,7 @@ function plainLanguageFallback(input: {
       intent: "acceptance",
       replyToSender: reply,
       relay: true,
-      relayToCounterparty: "The current terms can move forward. Please confirm you’re ready for the next step.",
+      relayToCounterparty: "Perfect, we’re aligned on those terms. I’ll move this to the next step.",
       newTradeIntake: false,
     };
   }
@@ -447,7 +447,7 @@ function plainLanguageFallback(input: {
       intent: "rejection",
       replyToSender: reply,
       relay: true,
-      relayToCounterparty: "The current terms weren’t accepted. Send revised terms if you want me to keep negotiating.",
+      relayToCounterparty: "That won’t work as it stands. What’s your best revised offer?",
       newTradeIntake: false,
     };
   }
@@ -464,7 +464,7 @@ function plainLanguageFallback(input: {
       intent: "counteroffer",
       replyToSender: reply,
       relay: true,
-      relayToCounterparty: `Can you work with these revised terms: ${input.incomingMessage.trim().slice(0, 900)} Please confirm or send your counter.`,
+      relayToCounterparty: `${input.incomingMessage.trim().slice(0, 900)} If not, send me your best.`,
       newTradeIntake: false,
     };
   }
@@ -474,7 +474,7 @@ function plainLanguageFallback(input: {
       intent: "document_request",
       replyToSender: reply,
       relay: true,
-      relayToCounterparty: `Please provide this for the deal: ${input.incomingMessage.trim().slice(0, 900)}`,
+      relayToCounterparty: `Can you send this over: ${input.incomingMessage.trim().slice(0, 900)}`,
       newTradeIntake: false,
     };
   }
@@ -484,7 +484,7 @@ function plainLanguageFallback(input: {
       intent: "meeting_request",
       replyToSender: reply,
       relay: true,
-      relayToCounterparty: `Can we arrange this meeting: ${input.incomingMessage.trim().slice(0, 900)} Please send your availability.`,
+      relayToCounterparty: `${input.incomingMessage.trim().slice(0, 900)} What time works for you?`,
       newTradeIntake: false,
     };
   }
