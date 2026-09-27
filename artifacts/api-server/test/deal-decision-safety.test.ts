@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeModelDecision } from "../src/akif/dealDecisionSafety.ts";
+import { normalizeModelDecision, preflightDealDecision } from "../src/akif/dealDecisionSafety.ts";
 
 const deal = {
   status: "negotiating",
@@ -399,4 +399,36 @@ test("fallback trade values remove meaningless trailing zeros", () => {
   assert.match(decision.replyToSender, /100 MT/);
   assert.match(decision.replyToSender, /\$5,900\/MT/);
   assert.doesNotMatch(decision.replyToSender, /100\.000|5,900\.00/);
+});
+
+
+test("UDC never asks or negotiates alternative payment routes", () => {
+  for (const message of [
+    "what payment terms?",
+    "can we do TT?",
+    "payment by MT103",
+    "can we use SBLC",
+    "cash on delivery?",
+  ]) {
+    const decision = preflightDealDecision({
+      participantRole: "buyer",
+      incomingMessage: message,
+    });
+
+    assert.ok(decision, message);
+    assert.equal(decision.replyToSender, "We use DLC with release after SGS at destination.", message);
+    assert.equal(decision.relay, false, message);
+    assert.equal(decision.relayToCounterparty, null, message);
+  }
+});
+
+test("standard SGS wording in a price counteroffer still negotiates the price", () => {
+  const decision = preflightDealDecision({
+    participantRole: "buyer",
+    incomingMessage: "can seller do $5,900 with payment after SGS?",
+  });
+
+  assert.ok(decision);
+  assert.equal(decision.intent, "counteroffer");
+  assert.equal(decision.relay, true);
 });
