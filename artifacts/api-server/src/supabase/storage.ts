@@ -39,3 +39,32 @@ export function parseStoragePath(value: string) {
   const prefix = `storage://${bucket}/`;
   return value.startsWith(prefix) ? value.slice(prefix.length) : undefined;
 }
+
+
+export async function uploadDocumentBytes(
+  path: string,
+  bytes: Uint8Array,
+  contentType: string,
+) {
+  const { url, key } = config();
+  const response = await fetch(
+    `${url}/storage/v1/object/${bucket}/${path}`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        apikey: key,
+        "content-type": contentType,
+        "x-upsert": "false",
+      },
+      body: bytes,
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`document_upload_failed http=${response.status}`);
+  }
+
+  await response.body?.cancel();
+  return storagePath(path);
+}
