@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import os
 from typing import Any
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from pydantic import BaseModel
-from pypdf import PdfReader
+import pypdfium2 as pdfium
 from docx import Document
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from openpyxl import load_workbook
+from pydantic import BaseModel, Field
+from pypdf import PdfReader
 
-app = FastAPI(title="UDC Document Extractor", version="1.0.0")
+app = FastAPI(title="UDC Document Extractor", version="1.1.0")
 
 
 class ExtractionResponse(BaseModel):
@@ -20,6 +22,7 @@ class ExtractionResponse(BaseModel):
     extraction_method: str
     warnings: list[str]
     metadata: dict[str, Any]
+    vision_pages: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def require_token(authorization: str | None) -> None:
@@ -30,10 +33,50 @@ def require_token(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
+def render_sparse_pages(data: bytes, sparse_page_numbers: list[int]) -> tuple[list[dict[str, Any]], list[str]]:
+    warnings: list[str] = []
+    vision_pages: list[dict[str, Any]] = []
+    max_pages = 20
+
+    if len(sparse_page_numbers) > max_pages:
+        warnings.append("vision_fallback_limited_to_20_pages")
+
+    targets = sparse_page_numbers[:max_pages]
+    if not targets:
+        return vision_pages, warnings
+
+    pdf = pdfium.PdfDocument(data)
+    try:
+        for page_number in targets:
+            try:
+                page = pdf[page_number - 1]
+                bitmap = page.render(scale=1.5)
+                image = bitmap.to_pil()
+                if image.mode not in ("RGB", "L"):
+                    image = image.convert("RGB")
+                output = io.BytesIO()
+                image.save(output, format="JPEG", quality=72, optimize=True)
+                vision_pages.append(
+                    {
+                        "page_number": page_number,
+                        "mime_type": "image/jpeg",
+                        "base64": base64.b64encode(output.getvalue()).decode("ascii"),
+                    }
+                )
+                page.close()
+            except Exception:
+                warnings.append(f"page_{page_number}_render_failed")
+    finally:
+        pdf.close()
+
+    return vision_pages, warnings
+
+
 def extract_pdf(data: bytes) -> ExtractionResponse:
     reader = PdfReader(io.BytesIO(data))
     pages: list[str] = []
     warnings: list[str] = []
+    sparse_pages: list[int] = []
 
     for index, page in enumerate(reader.pages, start=1):
         try:
@@ -41,24 +84,33 @@ def extract_pdf(data: bytes) -> ExtractionResponse:
         except Exception:
             text = ""
             warnings.append(f"page_{index}_text_extraction_failed")
-        pages.append(f"\n--- PAGE {index} ---\n{text.strip()}")
+
+        cleaned = text.strip()
+        if len(cleaned) < 30:
+            sparse_pages.append(index)
+        pages.append(f"\n--- PAGE {index} ---\n{cleaned}")
 
     joined = "\n".join(pages).strip()
-    if len(joined.replace("\n", " ").strip()) < max(100, len(reader.pages) * 30):
-        warnings.append("low_text_density_possible_scan")
+    vision_pages, render_warnings = render_sparse_pages(data, sparse_pages)
+    warnings.extend(render_warnings)
+
+    if sparse_pages:
+        warnings.append("sparse_pages_sent_for_vision_fallback")
 
     return ExtractionResponse(
         text=joined,
         page_count=len(reader.pages),
-        extraction_method="pypdf",
+        extraction_method="pypdf+pypdfium2",
         warnings=warnings,
         metadata={
             "pdf_metadata": {
                 str(k): str(v)
                 for k, v in (reader.metadata or {}).items()
                 if v is not None
-            }
+            },
+            "sparse_page_numbers": sparse_pages,
         },
+        vision_pages=vision_pages,
     )
 
 
