@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
+import { replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
 
 const rawPort = process.env["PORT"];
 
@@ -34,7 +35,12 @@ app.listen(port, (err) => {
     logger.info({ whatsapp }, "WhatsApp credential check completed; delivery still requires a message test");
 
     const subscription = await ensureWhatsAppWebhookSubscription();
-    if (subscription.ok) logger.info({ subscription }, "WhatsApp WABA webhook subscription confirmed");
-    else logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
+    if (subscription.ok) {
+      logger.info({ subscription }, "WhatsApp WABA webhook subscription confirmed");
+      const replay = await replayVerificationWhatsAppNotifications();
+      if (replay.configured) {
+        logger.info({ replay }, "WhatsApp verification notification replay completed");
+      }
+    } else logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
   });
 });
