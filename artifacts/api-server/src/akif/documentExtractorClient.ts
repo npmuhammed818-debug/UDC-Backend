@@ -24,28 +24,42 @@ export async function extractDocumentBytes(input: {
   mimeType: string;
 }) {
   const { baseUrl, token } = config();
-  const body = new FormData();
   // Copy into an ArrayBuffer-backed view before constructing a Blob. Incoming
   // Node buffers may be backed by SharedArrayBuffer, which is not a valid
   // BlobPart in the current TypeScript DOM definitions.
   const blobBytes = new Uint8Array(input.bytes.byteLength);
   blobBytes.set(input.bytes);
-  body.set(
-    "file",
-    new Blob([blobBytes.buffer], { type: input.mimeType }),
-    input.fileName,
-  );
 
-  const response = await fetch(`${baseUrl}/extract`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${token}` },
-    body,
-    signal: AbortSignal.timeout(60_000),
-  });
+  let lastStatus: number | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const body = new FormData();
+    body.set(
+      "file",
+      new Blob([blobBytes.buffer], { type: input.mimeType }),
+      input.fileName,
+    );
 
-  if (!response.ok) {
-    throw new Error(`document_extractor_failed http=${response.status}`);
+    try {
+      const response = await fetch(`${baseUrl}/extract`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+        body,
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (response.ok) {
+        return await response.json() as DocumentExtractionResult;
+      }
+
+      lastStatus = response.status;
+      await response.body?.cancel();
+      if (![502, 503, 504].includes(response.status) || attempt === 2) break;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)));
   }
 
-  return await response.json() as DocumentExtractionResult;
+  throw new Error(`document_extractor_failed http=${lastStatus ?? "network"}`);
 }
