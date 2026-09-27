@@ -1,5 +1,5 @@
 import { desc, eq } from "drizzle-orm";
-import { db, dealConversationEventsTable, dealsTable } from "@workspace/db";
+import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsTable } from "@workspace/db";
 import { runHermesChat } from "./intelligence/hermesClient";
 
 export type DealConversationDecision = {
@@ -59,8 +59,8 @@ export async function interpretActiveDealConversation(input: {
 
   if (!deal) return null;
 
-  const history = await db
-    .select({
+  const [history, snapshotRows] = await Promise.all([
+    db.select({
       participantRole: dealConversationEventsTable.participantRole,
       intent: dealConversationEventsTable.intent,
       originalText: dealConversationEventsTable.originalText,
@@ -68,10 +68,17 @@ export async function interpretActiveDealConversation(input: {
       relayed: dealConversationEventsTable.relayed,
       createdAt: dealConversationEventsTable.createdAt,
     })
-    .from(dealConversationEventsTable)
-    .where(eq(dealConversationEventsTable.dealId, input.dealId))
-    .orderBy(desc(dealConversationEventsTable.createdAt))
-    .limit(10);
+      .from(dealConversationEventsTable)
+      .where(eq(dealConversationEventsTable.dealId, input.dealId))
+      .orderBy(desc(dealConversationEventsTable.createdAt))
+      .limit(12),
+    db.select({ snapshot: dealIntelligenceSnapshotsTable.snapshot })
+      .from(dealIntelligenceSnapshotsTable)
+      .where(eq(dealIntelligenceSnapshotsTable.dealId, input.dealId))
+      .limit(1),
+  ]);
+
+  const dealMemory = snapshotRows[0]?.snapshot ?? null;
 
   const system = [
     "You are AKIF, the human-like trade coordinator inside UDC.",
@@ -99,6 +106,7 @@ export async function interpretActiveDealConversation(input: {
       incoterm: deal.incoterm,
       destination: deal.destination,
     },
+    dealMemory,
     recentConversation: history.reverse().map((event) => ({
       role: event.participantRole,
       intent: event.intent,
