@@ -113,7 +113,7 @@ A simplified original UDC transaction flow:
 3. Seller responds with commercial terms.
 4. Buyer/seller information and documents are verified.
 5. Contract and transaction structure are coordinated.
-6. Payment instrument / LC process is coordinated according to the actual deal and applicable banking/legal requirements.
+6. UDC coordinates the DLC workflow. The UDC route is DLC with release after SGS inspection at destination.
 7. Seller prepares and ships goods.
 8. Seller uploads packing/shipping/status information.
 9. Tracking/status is available through UDC or trusted external sources.
@@ -125,7 +125,7 @@ A simplified original UDC transaction flow:
 15. The deal is marked closed with an audit trail.
 
 IMPORTANT:
-Do not hard-code legal or banking claims into the software. Actual LC/DLC/payment, contract, inspection, customs and trade rules depend on the jurisdiction, banks, commodity and deal. The platform should support configurable workflows and human/legal/banking review where needed.
+UDC's product workflow is fixed to DLC with release after SGS inspection at destination. This is a platform workflow rule, not a claim that UDC is a bank or can guarantee release. Actual DLC wording, bank handling, compliant presentation, SGS evidence, contracts, customs and legal effect still depend on the banks, transaction documents, jurisdiction and applicable law.
 
 ---
 
