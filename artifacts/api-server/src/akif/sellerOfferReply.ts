@@ -8,7 +8,7 @@ const labels: Record<SellerOfferDraft["missingFields"][number], string> = {
 
 export function sellerOfferReply(draft: SellerOfferDraft) {
   if (draft.missingFields.length === 0) {
-    return "Thanks. UDC recorded your offer for administrator review before it is considered for matching.";
+    return "Got it. I’ve got the offer. I’ll take it from here and come back once it’s ready to move.";
   }
-  return `Thanks. To record your offer, please share: ${draft.missingFields.map((field) => labels[field]).join(", ")}.`;
+  return `Got it. I just need ${draft.missingFields.map((field) => labels[field]).join(", ")}.`;
 }
