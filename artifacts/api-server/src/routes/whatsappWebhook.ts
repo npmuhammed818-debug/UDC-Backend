@@ -638,7 +638,7 @@ async function handleDealWhatsAppMessage(
             providerMessageId: delivery.messageId,
             dealId: deal.id,
             recipientUserId: receiverUserId,
-            kind: `mediated_${effectiveIntent}`,
+            kind: `mediated_${effectiveIntent}:${event.id}`,
           })
           .onConflictDoNothing();
       }
@@ -650,7 +650,7 @@ async function handleDealWhatsAppMessage(
     deliveredToCounterparty,
     dealId: deal.id,
     recipientUserId: sender.id,
-    contextKind: `mediator_reply_${effectiveIntent}`,
+    contextKind: `mediator_reply_${effectiveIntent}:${event.id}`,
   };
 }
 
