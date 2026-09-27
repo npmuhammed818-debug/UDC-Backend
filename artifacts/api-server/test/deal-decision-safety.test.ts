@@ -309,7 +309,7 @@ test("mixed internal diagnostics and another trade can never reach the active de
 
   assert.ok(decision);
   assert.doesNotMatch(decision.replyToSender, /buyer clarified|seller said|502|extraction|frozen chicken/i);
-  assert.match(decision.replyToSender, /this deal/i);
+  assert.match(decision.replyToSender, /with you|do you want to do next/i);
 });
 
 test("internal extraction failures are blocked even without buyer seller narration", () => {
