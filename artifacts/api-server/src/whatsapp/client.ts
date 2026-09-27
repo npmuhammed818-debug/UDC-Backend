@@ -92,6 +92,12 @@ export async function sendWhatsAppText(to: string, body: string) {
     const error = await providerError(response);
     throw new Error(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
   }
-  await response.body?.cancel();
-  return { delivered: true as const };
+
+  const payload = await response.json().catch(() => null) as {
+    messages?: Array<{ id?: unknown }>;
+  } | null;
+  const rawMessageId = payload?.messages?.[0]?.id;
+  const messageId = typeof rawMessageId === "string" ? rawMessageId : undefined;
+
+  return { delivered: true as const, messageId };
 }
