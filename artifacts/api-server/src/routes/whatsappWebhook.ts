@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { and, eq } from "drizzle-orm";
-import { db, dealParticipantsTable, dealsTable, messagesTable, usersTable, whatsappMessageContextsTable } from "@workspace/db";
+import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -33,22 +33,31 @@ async function deliverWhatsAppReply(to: string | undefined, body: string) {
   }
 }
 
-function classifyNegotiationIntent(text: string) {
+type ConversationIntent =
+  | "acceptance"
+  | "rejection"
+  | "counteroffer"
+  | "document_request"
+  | "meeting_request"
+  | "counterparty_question"
+  | "casual";
+
+function classifyConversationIntent(text: string): ConversationIntent | null {
   const normalized = text.trim().toLowerCase();
 
   if ([
     /\b(?:i|we)\s+(?:will|would|want to)\s+(?:buy|take|proceed)\b/,
     /\b(?:i|we)\s+(?:agree|accept|confirm|approve)\b/,
-    /\b(?:accepted|agreed|confirmed|go ahead|proceed with (?:it|the deal)|buy from them)\b/,
+    /\b(?:accepted|agreed|confirmed|go ahead|proceed with (?:it|the deal)|buy from them|buy this)\b/,
   ].some((pattern) => pattern.test(normalized))) {
-    return "acceptance" as const;
+    return "acceptance";
   }
 
   if ([
     /\b(?:i|we)\s+(?:reject|decline|do not accept|don't accept|will not buy|won't buy)\b/,
     /\b(?:reject|rejected|decline|declined|not interested|cancel the deal)\b/,
   ].some((pattern) => pattern.test(normalized))) {
-    return "rejection" as const;
+    return "rejection";
   }
 
   if ([
@@ -56,10 +65,99 @@ function classifyNegotiationIntent(text: string) {
     /\b(?:usd|aed|inr|eur)\s*\d[\d,.]*/i,
     /\b\d[\d,.]*\s*(?:usd|aed|inr|eur)\b/i,
   ].some((pattern) => pattern.test(normalized))) {
-    return "counteroffer" as const;
+    return "counteroffer";
+  }
+
+  if (/\b(?:send|share|provide|upload|need|require)\b.*\b(?:document|documents|coa|coi|sgs|bl|bill of lading|icpo|loi|fco|sco|spa|proof|certificate)\b/i.test(normalized)) {
+    return "document_request";
+  }
+
+  if (/\b(?:meet|meeting|call|video call|zoom|teams|appointment)\b/i.test(normalized)) {
+    return "meeting_request";
+  }
+
+  if (
+    /\?$/.test(normalized)
+    || /^(?:can|could|will|would|does|do|is|are|when|where|what|how|why)\b/.test(normalized)
+  ) {
+    return "counterparty_question";
+  }
+
+  if (/^(?:ok|okay|fine|sure|yes|no|thanks|thank you|got it|understood|alright|cool|wait|later)[.! ]*$/i.test(normalized)) {
+    return "casual";
   }
 
   return null;
+}
+
+function looksLikeNewTradeIntake(text: string) {
+  const normalized = text.toLowerCase();
+  return /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b/.test(normalized)
+    && /\b(?:need|want|buy|supply|sell|offer|deliver|delivered|from|to)\b/.test(normalized);
+}
+
+function mediatorCopy(role: string, intent: ConversationIntent, text: string) {
+  const party = role === "buyer" ? "buyer" : "seller";
+
+  switch (intent) {
+    case "acceptance":
+      return role === "buyer"
+        ? {
+            toSender: "Got it. I’ve recorded that you want to proceed. I’ll confirm the seller’s side and come back to you.",
+            toOther: "The buyer has confirmed they want to proceed. I’ll coordinate the next step and let you know what I need from your side.",
+            relay: true,
+          }
+        : {
+            toSender: "Got it. I’ve recorded that you’re ready to proceed. I’ll coordinate the next step with the buyer.",
+            toOther: "The seller has confirmed they’re ready to proceed. I’ll coordinate the next step and keep you updated.",
+            relay: true,
+          };
+    case "rejection":
+      return {
+        toSender: "Understood. I’ve recorded that you don’t want to proceed on the current terms. I’ll handle the next step from here.",
+        toOther: `The ${party} has decided not to proceed on the current terms. I’ll keep this with UDC and let you know if revised terms are proposed.`,
+        relay: true,
+      };
+    case "counteroffer":
+      return {
+        toSender: "Got it. I’ve recorded your revised term and I’ll take it to the other side. I’ll come back with their response.",
+        toOther: `The ${party} wants to revise the terms: ${text.trim()} Please confirm whether that works, or send your counter.`,
+        relay: true,
+      };
+    case "document_request":
+      return {
+        toSender: "I’ve noted the document request. I’ll get the relevant document or confirmation from the other side.",
+        toOther: `The ${party} needs this for the deal: ${text.trim()} Please send only the relevant document or details when ready.`,
+        relay: true,
+      };
+    case "meeting_request":
+      return {
+        toSender: "I’ll coordinate the meeting request and come back with the other side’s availability.",
+        toOther: `The ${party} would like to arrange a meeting: ${text.trim()} Let me know your available time and I’ll coordinate it.`,
+        relay: true,
+      };
+    case "counterparty_question":
+      return {
+        toSender: "I’ve got your question. I’ll involve the other side only if their answer is actually needed.",
+        toOther: `The ${party} asked: ${text.trim()} Please reply with the information needed for the deal.`,
+        relay: true,
+      };
+    case "casual":
+      return {
+        toSender: "Got it. I’ve noted that.",
+        toOther: null,
+        relay: false,
+      };
+  }
+}
+
+async function setActiveDealContext(userId: string, dealId: string) {
+  await db.insert(whatsappUserContextsTable)
+    .values({ userId, activeDealId: dealId, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: whatsappUserContextsTable.userId,
+      set: { activeDealId: dealId, updatedAt: new Date() },
+    });
 }
 
 async function handleDealWhatsAppMessage(
@@ -68,7 +166,7 @@ async function handleDealWhatsAppMessage(
   replyToProviderMessageId?: string,
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
-  const naturalIntent = classifyNegotiationIntent(text);
+  const intent = classifyConversationIntent(text);
 
   const [sender] = await db
     .select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
@@ -77,19 +175,24 @@ async function handleDealWhatsAppMessage(
     .limit(1);
 
   if (!sender) {
-    return explicitMatch || naturalIntent || replyToProviderMessageId
-      ? { reply: "UDC could not link this WhatsApp number to a trade account.", deliveredToCounterparty: false }
+    return explicitMatch || intent || replyToProviderMessageId
+      ? { reply: "I couldn’t link this WhatsApp number to a UDC trade account.", deliveredToCounterparty: false }
       : null;
   }
 
   if (sender.status !== "verified") {
-    return explicitMatch || naturalIntent || replyToProviderMessageId
-      ? { reply: "Your UDC account must be verified before deal negotiation.", deliveredToCounterparty: false }
+    return explicitMatch || intent || replyToProviderMessageId
+      ? { reply: "Your UDC account needs to be verified before I can handle deal negotiation.", deliveredToCounterparty: false }
       : null;
   }
 
+  // A strong new buyer/seller requirement should stay an intake unless the user
+  // explicitly replied to a deal message or named the deal.
+  if (!replyToProviderMessageId && !explicitMatch && looksLikeNewTradeIntake(text)) {
+    return null;
+  }
+
   let resolvedDealId: string | null = null;
-  let explicitDealNumber: string | null = null;
   let messageBody = text.trim();
 
   if (replyToProviderMessageId) {
@@ -105,29 +208,43 @@ async function handleDealWhatsAppMessage(
   }
 
   if (!resolvedDealId && explicitMatch) {
-    explicitDealNumber = explicitMatch[1]!.toUpperCase();
+    const dealNumber = explicitMatch[1]!.toUpperCase();
     messageBody = explicitMatch[2]!.trim();
     const [explicitDeal] = await db
       .select({ id: dealsTable.id })
       .from(dealsTable)
-      .where(eq(dealsTable.dealNumber, explicitDealNumber))
+      .where(eq(dealsTable.dealNumber, dealNumber))
       .limit(1);
 
     if (!explicitDeal) {
       return {
-        reply: `UDC could not find deal ${explicitDealNumber}. Check the deal number and try again.`,
+        reply: "I couldn’t find that UDC deal. Check the deal number and send it again.",
         deliveredToCounterparty: false,
       };
     }
     resolvedDealId = explicitDeal.id;
   }
 
-  if (!resolvedDealId && naturalIntent) {
+  if (!resolvedDealId && intent) {
+    const [savedContext] = await db
+      .select({ activeDealId: whatsappUserContextsTable.activeDealId })
+      .from(whatsappUserContextsTable)
+      .where(eq(whatsappUserContextsTable.userId, sender.id))
+      .limit(1);
+
+    if (savedContext) {
+      const [savedDeal] = await db
+        .select({ id: dealsTable.id, status: dealsTable.status })
+        .from(dealsTable)
+        .where(eq(dealsTable.id, savedContext.activeDealId))
+        .limit(1);
+      if (savedDeal?.status === "negotiation") resolvedDealId = savedDeal.id;
+    }
+  }
+
+  if (!resolvedDealId && intent) {
     const activeDeals = await db
-      .select({
-        id: dealsTable.id,
-        dealNumber: dealsTable.dealNumber,
-      })
+      .select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
       .from(dealParticipantsTable)
       .innerJoin(dealsTable, eq(dealParticipantsTable.dealId, dealsTable.id))
       .where(and(
@@ -139,9 +256,8 @@ async function handleDealWhatsAppMessage(
     if (activeDeals.length === 0) return null;
 
     if (activeDeals.length > 1) {
-      const dealNumbers = activeDeals.slice(0, 5).map((deal) => deal.dealNumber).join(", ");
       return {
-        reply: `You have multiple active negotiations. Reply to the specific UDC message or write the deal number. Active deals: ${dealNumbers}.`,
+        reply: "You have more than one active negotiation. Reply to the specific UDC deal message so I know which one you mean.",
         deliveredToCounterparty: false,
       };
     }
@@ -149,12 +265,11 @@ async function handleDealWhatsAppMessage(
     resolvedDealId = activeDeals[0]!.id;
   }
 
-  if (!resolvedDealId) return null;
+  if (!resolvedDealId || !intent) return null;
 
   const [deal] = await db
     .select({
       id: dealsTable.id,
-      dealNumber: dealsTable.dealNumber,
       status: dealsTable.status,
       buyerUserId: dealsTable.buyerUserId,
       sellerUserId: dealsTable.sellerUserId,
@@ -163,14 +278,14 @@ async function handleDealWhatsAppMessage(
     .where(eq(dealsTable.id, resolvedDealId))
     .limit(1);
 
-  if (!deal) {
-    return { reply: "UDC could not find that deal.", deliveredToCounterparty: false };
-  }
+  if (!deal) return null;
 
   if (deal.status !== "negotiation") {
     return {
-      reply: `Deal ${deal.dealNumber} is currently ${deal.status}, so negotiation messages are not open.`,
+      reply: `This deal is currently at the ${deal.status} stage. I’ll keep this conversation tied to that stage.`,
       deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
     };
   }
 
@@ -185,7 +300,7 @@ async function handleDealWhatsAppMessage(
     .limit(1);
 
   if (!participant) {
-    return { reply: "This WhatsApp account is not an active participant in that UDC deal.", deliveredToCounterparty: false };
+    return { reply: "This WhatsApp account isn’t an active participant in that deal.", deliveredToCounterparty: false };
   }
 
   const receiverUserId = sender.id === deal.buyerUserId
@@ -194,40 +309,58 @@ async function handleDealWhatsAppMessage(
       ? deal.buyerUserId
       : null;
 
-  if (!receiverUserId) {
-    return { reply: "This WhatsApp account is not a buyer or seller on that UDC deal.", deliveredToCounterparty: false };
-  }
+  if (!receiverUserId) return null;
 
-  const [receiver] = await db
-    .select({ phone: usersTable.phone })
-    .from(usersTable)
-    .where(eq(usersTable.id, receiverUserId))
-    .limit(1);
+  await setActiveDealContext(sender.id, deal.id);
+  await setActiveDealContext(receiverUserId, deal.id);
 
-  const intent = classifyNegotiationIntent(messageBody) ?? "message";
-
-  await db.insert(messagesTable).values({
+  const copy = mediatorCopy(sender.role, intent, messageBody);
+  const [event] = await db.insert(dealConversationEventsTable).values({
     dealId: deal.id,
-    senderUserId: sender.id,
-    receiverUserId,
-    message: messageBody,
-  });
+    userId: sender.id,
+    participantRole: sender.role,
+    intent,
+    originalText: messageBody,
+    relayText: copy.toOther,
+    relayed: false,
+  }).returning({ id: dealConversationEventsTable.id });
 
   let deliveredToCounterparty = false;
-  if (receiver?.phone) {
-    const delivery = await deliverWhatsAppReply(
-      receiver.phone,
-      `UDC deal ${deal.dealNumber} — ${sender.role} ${intent}: ${messageBody}`,
-    );
-    deliveredToCounterparty = delivery.delivered;
+  if (copy.relay && copy.toOther) {
+    const [receiver] = await db
+      .select({ phone: usersTable.phone })
+      .from(usersTable)
+      .where(eq(usersTable.id, receiverUserId))
+      .limit(1);
+
+    if (receiver?.phone) {
+      const delivery = await deliverWhatsAppReply(receiver.phone, copy.toOther);
+      deliveredToCounterparty = delivery.delivered;
+
+      if (delivery.delivered) {
+        await db.update(dealConversationEventsTable)
+          .set({ relayed: true })
+          .where(eq(dealConversationEventsTable.id, event.id));
+      }
+
+      if (delivery.delivered && delivery.messageId) {
+        await db.insert(whatsappMessageContextsTable)
+          .values({
+            providerMessageId: delivery.messageId,
+            dealId: deal.id,
+            recipientUserId: receiverUserId,
+            kind: `mediated_${intent}`,
+          })
+          .onConflictDoNothing();
+      }
+    }
   }
 
-  const intentLabel = intent === "message" ? "negotiation message" : intent;
   return {
-    reply: deliveredToCounterparty
-      ? `UDC understood this as your ${intentLabel} for ${deal.dealNumber}, recorded it, and sent it to the other party.`
-      : `UDC understood this as your ${intentLabel} for ${deal.dealNumber} and recorded it. Counterparty WhatsApp delivery could not be confirmed.`,
+    reply: copy.toSender,
     deliveredToCounterparty,
+    dealId: deal.id,
+    recipientUserId: sender.id,
   };
 }
 
@@ -303,9 +436,19 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               "UDC could not send deal negotiation acknowledgement",
             );
           } else {
+            if (delivery.messageId && dealMessage.dealId && dealMessage.recipientUserId) {
+              await db.insert(whatsappMessageContextsTable)
+                .values({
+                  providerMessageId: delivery.messageId,
+                  dealId: dealMessage.dealId,
+                  recipientUserId: dealMessage.recipientUserId,
+                  kind: "mediator_reply",
+                })
+                .onConflictDoNothing();
+            }
             req.log.info(
               { flow: "deal_negotiation", counterpartyDelivered: dealMessage.deliveredToCounterparty },
-              "UDC processed WhatsApp deal negotiation message",
+              "UDC processed mediated WhatsApp deal conversation",
             );
           }
           continue;
