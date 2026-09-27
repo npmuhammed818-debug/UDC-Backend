@@ -223,6 +223,20 @@ async function notifyDealCounterparties(
     { userId: deal.buyerUserId, type, title, body, link },
     { userId: deal.sellerUserId, type, title, body, link },
   ]);
+
+  const counterparties = await db
+    .select({ id: usersTable.id, phone: usersTable.phone })
+    .from(usersTable)
+    .where(inArray(usersTable.id, [deal.buyerUserId, deal.sellerUserId]));
+
+  await Promise.all(counterparties.map(async (counterparty) => {
+    if (!counterparty.phone) return;
+    try {
+      await sendWhatsAppText(counterparty.phone, `${title}: ${body}`);
+    } catch {
+      // WhatsApp delivery failure must not roll back the underlying trade workflow.
+    }
+  }));
 }
 
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
@@ -613,10 +627,13 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       metadata: { previousStatus: existingDeal.status, newStatus: deal.status },
     });
     if (existingDeal.status !== deal.status) {
-      await db.insert(notificationsTable).values([
-        { userId: deal.buyerUserId, type: "deal_status_updated", title: "Deal status updated", body: `Deal ${deal.dealNumber} is now ${deal.status}.`, link: `/deals/${deal.id}` },
-        { userId: deal.sellerUserId, type: "deal_status_updated", title: "Deal status updated", body: `Deal ${deal.dealNumber} is now ${deal.status}.`, link: `/deals/${deal.id}` },
-      ]);
+      await notifyDealCounterparties(
+        deal.id,
+        "deal_status_updated",
+        "Deal status updated",
+        `Deal ${deal.dealNumber} is now ${deal.status}.`,
+        `/deals/${deal.id}`,
+      );
     }
     res.json({ deal });
   } catch (error) {
