@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { runHermesChat } from "./intelligence/hermesClient";
+import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
 
 const fields = z.object({
@@ -26,7 +26,7 @@ export async function interpretIntakeConversation(input: {
   memory: Record<string, unknown> | null;
 }) {
   try {
-    const { content } = await runHermesChat(
+    const { content } = await runConversationChat(
       JSON.stringify(input),
       [
         "You are UDC's trade coordinator on WhatsApp. Write a short natural reply, usually one or two sentences, without markdown, menus, decorative punctuation or deal numbers.",
