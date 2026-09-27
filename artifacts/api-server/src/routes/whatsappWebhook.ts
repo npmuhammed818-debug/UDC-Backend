@@ -104,38 +104,38 @@ function mediatorCopy(_role: string, intent: ConversationIntent, text: string) {
   switch (intent) {
     case "acceptance":
       return {
-        toSender: "Got it. I’ve recorded that you want to proceed. I’ll coordinate the next step.",
-        toOther: "The current terms can move forward. Please confirm you’re ready for the next step.",
+        toSender: "Perfect. I’ll move it forward from here.",
+        toOther: "Perfect, we’re aligned on those terms. I’ll move this to the next step.",
         relay: true,
       };
     case "rejection":
       return {
-        toSender: "Understood. I’ve recorded that you don’t accept the current terms.",
-        toOther: "The current terms weren’t accepted. Send revised terms if you want me to keep negotiating.",
+        toSender: "No problem. Send me what would work for you and I’ll take it from there.",
+        toOther: "That won’t work as it stands. What’s your best revised offer?",
         relay: true,
       };
     case "counteroffer":
       return {
-        toSender: "Got it. I’ve recorded the revised terms and I’ll come back with the response.",
-        toOther: `Can you work with these revised terms: ${text.trim()} Please confirm or send your counter.`,
+        toSender: "Got it. I’ll check that and come back to you.",
+        toOther: `${text.trim()} If that doesn’t work, send me your best.`,
         relay: true,
       };
     case "document_request":
       return {
-        toSender: "I’ve noted the document request. I’ll handle the document from this deal.",
-        toOther: `Please provide this for the deal: ${text.trim()}`,
+        toSender: "Sure, I’ll sort that.",
+        toOther: `Can you send this over: ${text.trim()}`,
         relay: true,
       };
     case "meeting_request":
       return {
-        toSender: "I’ll coordinate the meeting and come back with availability.",
-        toOther: `Can we arrange this meeting: ${text.trim()} Send your availability and I’ll coordinate it.`,
+        toSender: "Sure. I’ll set it up and get back to you.",
+        toOther: `${text.trim()} What time works for you?`,
         relay: true,
       };
     case "counterparty_question":
       return {
-        toSender: "I’ve got your question. I’ll get the information needed and come back to you.",
-        toOther: `Can you clarify this for the deal: ${text.trim()}`,
+        toSender: "I’ll check and come back to you.",
+        toOther: `${text.trim()} Can you clarify that for me?`,
         relay: true,
       };
     case "casual":
@@ -793,13 +793,13 @@ async function handleDealWhatsAppMessage(
   const copy = exactCounteroffer
     ? effectiveIntent === "acceptance"
       ? {
-          toSender: "Confirmed. I recorded your acceptance of the exact counteroffer you replied to.",
-          toOther: `Your counteroffer has been accepted exactly as sent: ${exactCounteroffer.originalText.trim()} I’ll keep the next step tied to those terms.`,
+          toSender: "Perfect.",
+          toOther: `Perfect, those terms work: ${exactCounteroffer.originalText.trim()} I’ll move us to the next step.`,
           relay: true,
         }
       : {
-          toSender: "Understood. I recorded that you rejected the exact counteroffer you replied to.",
-          toOther: `That counteroffer wasn’t accepted: ${exactCounteroffer.originalText.trim()} Send revised terms if you want me to keep negotiating.`,
+          toSender: "No problem.",
+          toOther: `That one won’t work: ${exactCounteroffer.originalText.trim()} What’s your best revised offer?`,
           relay: true,
         }
     : {
