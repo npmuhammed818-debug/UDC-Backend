@@ -1,7 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsTable } from "@workspace/db";
 import { runHermesChat } from "./intelligence/hermesClient";
-import { refreshDealIntelligenceSnapshot } from "./documentIntelligence";
 
 export type DealConversationDecision = {
   intent: string;
@@ -182,6 +181,7 @@ export async function interpretActiveDealConversation(input: {
   dealId: string;
   participantRole: string;
   message: string;
+  replyContextKind?: string;
 }): Promise<DealConversationDecision | null> {
   const [deal] = await db
     .select({
@@ -200,8 +200,6 @@ export async function interpretActiveDealConversation(input: {
 
   if (!deal) return null;
 
-  await refreshDealIntelligenceSnapshot(input.dealId).catch(() => undefined);
-
   const [history, snapshotRows] = await Promise.all([
     db.select({
       participantRole: dealConversationEventsTable.participantRole,
@@ -214,7 +212,7 @@ export async function interpretActiveDealConversation(input: {
       .from(dealConversationEventsTable)
       .where(eq(dealConversationEventsTable.dealId, input.dealId))
       .orderBy(desc(dealConversationEventsTable.createdAt))
-      .limit(12),
+      .limit(8),
     db.select({ snapshot: dealIntelligenceSnapshotsTable.snapshot })
       .from(dealIntelligenceSnapshotsTable)
       .where(eq(dealIntelligenceSnapshotsTable.dealId, input.dealId))
@@ -233,6 +231,9 @@ export async function interpretActiveDealConversation(input: {
     "Do not invent deal facts, company verification, documents, banking status, inspection results, shipment status, or legal conclusions.",
     "Do not execute or claim to execute payments, banking instruments, legal commitments, or document approvals.",
     "If the user proposes or accepts a commercial term, you may record/relay their stated position, but never invent acceptance by the other party.",
+    "A short reply such as yes/no/ok must be interpreted only against replyContextKind when it is present. Never treat a bare yes/no as acceptance of price, quantity, payment, or other deal terms unless the replied-to context is explicitly a commercial offer or acceptance request.",
+    "Keep buyer and seller roles separate. Never attribute a buyer statement to the seller or a seller statement to the buyer.",
+    "Never expose internal storage:// paths, database UUIDs, service URLs, or backend implementation details in WhatsApp replies.",
     "If this is clearly a separate new buyer requirement or seller offer unrelated to the current deal, set newTradeIntake=true.",
     "Your ENTIRE response must be exactly one valid JSON object beginning with { and ending with }. No markdown, preface, explanation, or text outside the JSON.",
   ].join(" ");
@@ -258,6 +259,7 @@ export async function interpretActiveDealConversation(input: {
       relaySummary: event.relayText,
     })),
     incomingMessage: input.message,
+    replyContextKind: input.replyContextKind ?? null,
     requiredOutput: {
       intent: "one of acceptance, rejection, counteroffer, document_request, document_submission, meeting_request, counterparty_question, deal_question, status_question, casual, clarification, new_trade_intake, other",
       replyToSender: "natural concise WhatsApp reply from UDC to this sender",
@@ -268,7 +270,7 @@ export async function interpretActiveDealConversation(input: {
   });
 
   try {
-    const { content } = await runHermesChat(user, system, 25_000);
+    const { content } = await runHermesChat(user, system, 15_000);
     const json = cleanJson(content);
 
     if (!json) {
