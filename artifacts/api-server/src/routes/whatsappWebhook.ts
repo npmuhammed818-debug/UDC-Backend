@@ -265,7 +265,17 @@ async function handleDealWhatsAppMessage(
     resolvedDealId = activeDeals[0]!.id;
   }
 
-  if (!resolvedDealId) return null;\n\n  if (!intent) {\n    await setActiveDealContext(sender.id, resolvedDealId);\n    return {\n      reply: "I am following this deal with you. I am not fully sure what you mean. Are you saying proceed on the current terms, change a term, or just acknowledging my last message?",\n      deliveredToCounterparty: false,\n      dealId: resolvedDealId,\n      recipientUserId: sender.id,\n    };\n  }
+  if (!resolvedDealId) return null;
+
+  if (!intent) {
+    await setActiveDealContext(sender.id, resolvedDealId);
+    return {
+      reply: "I am following this deal with you. I am not fully sure what you mean. Are you saying proceed on the current terms, change a term, or just acknowledging my last message?",
+      deliveredToCounterparty: false,
+      dealId: resolvedDealId,
+      recipientUserId: sender.id,
+    };
+  }
 
   const [deal] = await db
     .select({
