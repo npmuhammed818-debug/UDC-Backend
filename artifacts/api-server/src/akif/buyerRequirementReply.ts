@@ -8,8 +8,8 @@ const labels: Record<BuyerRequirementDraft["missingFields"][number], string> = {
 
 export function buyerRequirementReply(draft: BuyerRequirementDraft) {
   if (draft.missingFields.length === 0) {
-    return "Thanks. UDC recorded your requirement and a trade administrator will review it before any seller contact.";
+    return "Got it. I’ve got the requirement. I’ll take it from here and come back once it’s ready to move.";
   }
   const requested = draft.missingFields.map((field) => labels[field]).join(", ");
-  return `Thanks. To prepare your requirement, please share: ${requested}.`;
+  return `Got it. I just need ${requested}.`;
 };
