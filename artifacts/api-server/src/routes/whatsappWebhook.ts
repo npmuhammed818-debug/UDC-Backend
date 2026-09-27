@@ -1080,6 +1080,18 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           continue;
         }
 
+        if (isUdcPaymentPolicyMessage(message.text.body)) {
+          const delivery = await deliverWhatsAppReply(
+            message.from,
+            "We use DLC with release after SGS at destination.",
+          );
+          req.log.info(
+            { whatsappMessageId: message.id, flow: "udc_payment_policy", delivered: delivery.delivered },
+            "UDC answered the fixed payment route",
+          );
+          continue;
+        }
+
         const research = await queueWhatsAppResearch(message.from, message.text.body);
         if (research) {
           const reply =
@@ -1100,32 +1112,152 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         }
       }
 
-      const sellerMessage = isSellerOffer(message.text.body);
-      const buyerDraft = sellerMessage ? null : triageBuyerRequirement(message.text.body);
-      const sellerDraft = sellerMessage ? triageSellerOffer(message.text.body) : null;
+      const savedIntake = message.from
+        ? await loadWhatsAppIntakeDraft(message.from)
+        : null;
+
+      if (
+        message.id
+        && savedIntake?.lastProviderMessageId
+        && savedIntake.lastProviderMessageId === message.id
+      ) {
+        req.log.info(
+          { whatsappMessageId: message.id, flow: "trade_intake" },
+          "UDC ignored duplicate WhatsApp intake message",
+        );
+        continue;
+      }
+
+      const hasSavedDraft = Boolean(
+        savedIntake
+        && !savedIntake.stale
+        && Object.keys(savedIntake.draft ?? {}).length > 0,
+      );
+      const explicitSellerMessage = isSellerOffer(message.text.body);
+      const intakeRole = explicitSellerMessage
+        ? "seller"
+        : hasSavedDraft
+          ? savedIntake!.role as "buyer" | "seller"
+          : "buyer";
+
+      const contactName =
+        fullName?.trim()
+        || savedIntake?.fullName?.trim()
+        || "WhatsApp User";
+
+      const buyerDraft = intakeRole === "buyer"
+        ? mergeBuyerRequirementDraft(
+            hasSavedDraft && savedIntake?.role === "buyer"
+              ? savedIntake.draft
+              : null,
+            triageBuyerRequirement(message.text.body),
+            message.text.body,
+          )
+        : null;
+
+      const sellerDraft = intakeRole === "seller"
+        ? mergeSellerOfferDraft(
+            hasSavedDraft && savedIntake?.role === "seller"
+              ? savedIntake.draft
+              : null,
+            triageSellerOffer(message.text.body),
+          )
+        : null;
+
+      const isGreeting = /^(?:hi|hy|hello|hey|yo|sup)[.! ]*$/i.test(message.text.body.trim());
+      const noBuyerFacts = buyerDraft
+        ? !buyerDraft.product
+          && !buyerDraft.quantity
+          && !buyerDraft.targetPrice
+          && !buyerDraft.destination
+        : false;
+      const noSellerFacts = sellerDraft
+        ? !sellerDraft.product
+          && !sellerDraft.quantity
+          && !sellerDraft.price
+        : false;
+
+      if (isGreeting && !hasSavedDraft && (noBuyerFacts || noSellerFacts)) {
+        const delivery = await deliverWhatsAppReply(message.from, "Hey, what’s up?");
+        req.log.info(
+          { whatsappMessageId: message.id, flow: "trade_intake_greeting", delivered: delivery.delivered },
+          "UDC answered WhatsApp greeting",
+        );
+        continue;
+      }
+
       const record = sellerDraft
-        ? sellerDraft.missingFields.length === 0 && message.from && fullName
+        ? sellerDraft.missingFields.length === 0 && message.from
           ? await recordPendingSellerOffer({
-              phone: message.from, fullName, product: sellerDraft.product!, quantity: sellerDraft.quantity!,
-              unit: sellerDraft.unit ?? "MT", price: sellerDraft.price!, currency: sellerDraft.currency ?? "USD",
-              originCountry: sellerDraft.originCountry, destination: sellerDraft.destination, incoterm: sellerDraft.incoterm,
+              phone: message.from,
+              fullName: contactName,
+              product: sellerDraft.product!,
+              quantity: sellerDraft.quantity!,
+              unit: sellerDraft.unit ?? "MT",
+              price: sellerDraft.price!,
+              currency: sellerDraft.currency ?? "USD",
+              originCountry: sellerDraft.originCountry,
+              destination: sellerDraft.destination,
+              incoterm: sellerDraft.incoterm,
             })
           : null
-        : buyerDraft && buyerDraft.missingFields.length === 0 && message.from && fullName
+        : buyerDraft && buyerDraft.missingFields.length === 0 && message.from
           ? await recordPendingBuyerRequirement({
-              phone: message.from, fullName, product: buyerDraft.product!, quantity: buyerDraft.quantity!,
-              unit: buyerDraft.unit ?? "MT", targetPrice: buyerDraft.targetPrice, currency: buyerDraft.currency ?? "USD",
-              destination: buyerDraft.destination!, incoterm: buyerDraft.incoterm,
+              phone: message.from,
+              fullName: contactName,
+              product: buyerDraft.product!,
+              quantity: buyerDraft.quantity!,
+              unit: buyerDraft.unit ?? "MT",
+              targetPrice: buyerDraft.targetPrice,
+              currency: buyerDraft.currency ?? "USD",
+              destination: buyerDraft.destination!,
+              incoterm: buyerDraft.incoterm,
             })
           : null;
 
-      const reply = record
-        ? sellerDraft ? "Thanks. UDC recorded your offer for administrator review." : "Thanks. UDC recorded your requirement for administrator review."
-        : sellerDraft
-          ? sellerOfferReply(sellerDraft)
-          : buyerDraft && buyerDraft.missingFields.length === 3
-            ? "Hi, I'm AKIF, UDC's trade assistant. I can help with buyer requirements, seller offers, or buyer/seller research. Send a request like: Find buyers for copper cathode in India. To submit a buyer requirement, include product, quantity, and destination."
-            : buyerRequirementReply(buyerDraft!);
+      if (message.from) {
+        const draftForStorage = sellerDraft
+          ? {
+              product: sellerDraft.product,
+              quantity: sellerDraft.quantity,
+              unit: sellerDraft.unit,
+              price: sellerDraft.price,
+              currency: sellerDraft.currency,
+              originCountry: sellerDraft.originCountry,
+              destination: sellerDraft.destination,
+              incoterm: sellerDraft.incoterm,
+            }
+          : {
+              product: buyerDraft?.product,
+              quantity: buyerDraft?.quantity,
+              unit: buyerDraft?.unit,
+              targetPrice: buyerDraft?.targetPrice,
+              currency: buyerDraft?.currency,
+              destination: buyerDraft?.destination,
+              incoterm: buyerDraft?.incoterm,
+            };
+
+        if (record) {
+          await clearWhatsAppIntakeDraft({
+            phone: message.from,
+            role: intakeRole,
+            fullName: contactName,
+            providerMessageId: message.id,
+          });
+        } else {
+          await saveWhatsAppIntakeDraft({
+            phone: message.from,
+            role: intakeRole,
+            fullName: contactName,
+            draft: draftForStorage,
+            providerMessageId: message.id,
+          });
+        }
+      }
+
+      const reply = sellerDraft
+        ? sellerOfferReply(sellerDraft)
+        : buyerRequirementReply(buyerDraft!);
       const delivery = await deliverWhatsAppReply(message.from, reply);
 
       if (!delivery.delivered) {
