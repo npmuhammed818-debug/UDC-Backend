@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
+import { checkWhatsAppConnection } from "./whatsapp/client";
 
 const rawPort = process.env["PORT"];
 
@@ -24,4 +25,8 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startAkifResearchQueueRunner();
+  void checkWhatsAppConnection().then((whatsapp) => {
+    if (whatsapp.ok) logger.info({ whatsapp }, "WhatsApp credential check completed; delivery still requires a message test");
+    else logger.error({ whatsapp }, "WhatsApp credential check failed");
+  });
 });

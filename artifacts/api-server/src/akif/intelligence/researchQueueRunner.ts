@@ -26,7 +26,10 @@ async function deliverResearchStatus(
   if (!phone) return;
 
   try {
-    await sendWhatsAppText(phone, message);
+    const delivery = await sendWhatsAppText(phone, message);
+    if (!delivery.delivered) {
+      logger.error({ researchRunId: run.id, reason: delivery.reason }, "AKIF could not deliver research status to WhatsApp");
+    }
   } catch (error) {
     logger.warn(
       { err: error, researchRunId: run.id },
