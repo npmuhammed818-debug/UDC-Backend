@@ -8,6 +8,7 @@ import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer, triageSellerOffer } from "../akif/sellerOfferTriage";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { sendWhatsAppText } from "../whatsapp/client";
+import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
 
@@ -16,6 +17,28 @@ function isEqual(left: string, right: string) {
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
+
+router.get(
+  "/admin/whatsapp/status",
+  requireRole("admin"),
+  (_req, res) => {
+    const config = {
+      appSecretConfigured: Boolean(process.env.WHATSAPP_APP_SECRET),
+      webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
+      accessTokenConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
+      phoneNumberIdConfigured: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
+    };
+    const inboundReady = config.appSecretConfigured && config.webhookVerifyTokenConfigured;
+    const outboundReady = config.accessTokenConfigured && config.phoneNumberIdConfigured;
+
+    res.json({
+      inboundReady,
+      outboundReady,
+      config,
+      webhookPath: "/api/webhooks/whatsapp",
+    });
+  },
+);
 
 router.get("/webhooks/whatsapp", (req, res) => {
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
@@ -63,15 +86,17 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           const reply =
             `AKIF queued your ${research.intent.direction} research for ${research.intent.product} in ${research.intent.targetCountry}. UDC will keep the research result separate from verification and deal approval.`;
           const delivery = await sendWhatsAppText(message.from, reply);
-          req.log.info(
-            {
-              whatsappMessageId: message.id,
-              flow: "akif_research",
-              researchRunId: research.run.id,
-              delivery,
-            },
-            "AKIF queued WhatsApp research request",
-          );
+          if (!delivery.delivered) {
+            req.log.error(
+              { whatsappMessageId: message.id, flow: "akif_research", reason: delivery.reason },
+              "AKIF could not send the WhatsApp acknowledgement; check admin WhatsApp configuration",
+            );
+          } else {
+            req.log.info(
+              { whatsappMessageId: message.id, flow: "akif_research", researchRunId: research.run.id },
+              "AKIF queued WhatsApp research request",
+            );
+          }
           continue;
         }
       }
@@ -97,14 +122,30 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
       const reply = record
         ? sellerDraft ? "Thanks. UDC recorded your offer for administrator review." : "Thanks. UDC recorded your requirement for administrator review."
-        : sellerDraft ? sellerOfferReply(sellerDraft) : buyerRequirementReply(buyerDraft!);
+        : sellerDraft
+          ? sellerOfferReply(sellerDraft)
+          : buyerDraft && buyerDraft.missingFields.length === 3
+            ? "Hi, I'm AKIF, UDC's trade assistant. I can help with buyer requirements, seller offers, or buyer/seller research. Send a request like: Find buyers for copper cathode in India. To submit a buyer requirement, include product, quantity, and destination."
+            : buyerRequirementReply(buyerDraft!);
       const delivery = message.from
         ? await sendWhatsAppText(message.from, reply)
         : { delivered: false as const, reason: "missing_sender" as const };
-      req.log.info(
-        { whatsappMessageId: message.id, flow: sellerDraft ? "seller_offer" : "buyer_requirement", recordId: record?.id, missingFields: sellerDraft?.missingFields ?? buyerDraft?.missingFields, delivery },
-        "AKIF processed verified WhatsApp trade message",
-      );
+
+      if (!delivery.delivered) {
+        req.log.error(
+          {
+            whatsappMessageId: message.id,
+            flow: sellerDraft ? "seller_offer" : "buyer_requirement",
+            reason: delivery.reason,
+          },
+          "AKIF could not send the WhatsApp reply; check admin WhatsApp configuration",
+        );
+      } else {
+        req.log.info(
+          { whatsappMessageId: message.id, flow: sellerDraft ? "seller_offer" : "buyer_requirement", recordId: record?.id, missingFields: sellerDraft?.missingFields ?? buyerDraft?.missingFields },
+          "AKIF processed verified WhatsApp trade message",
+        );
+      }
     }
   }
 
