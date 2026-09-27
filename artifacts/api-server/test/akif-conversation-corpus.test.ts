@@ -304,7 +304,8 @@ test("full scripted buyer-seller conversation keeps roles and relay boundaries",
   assert.ok(buyerOffer);
   assert.equal(buyerOffer.intent, "counteroffer");
   assert.equal(buyerOffer.relay, true);
-  assert.match(buyerOffer.relayToCounterparty ?? "", /buyer/i);
+  assert.match(buyerOffer.relayToCounterparty ?? "", /can you work/i);
+  assert.doesNotMatch(buyerOffer.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
 
   const sellerAccepts = normalizeModelDecision({
     content: wrongModel({ intent: "casual", relay: false, relayToCounterparty: null }),
@@ -316,7 +317,8 @@ test("full scripted buyer-seller conversation keeps roles and relay boundaries",
   assert.ok(sellerAccepts);
   assert.equal(sellerAccepts.intent, "acceptance");
   assert.equal(sellerAccepts.relay, true);
-  assert.match(sellerAccepts.relayToCounterparty ?? "", /seller/i);
+  assert.match(sellerAccepts.relayToCounterparty ?? "", /counteroffer has been accepted/i);
+  assert.doesNotMatch(sellerAccepts.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
 
   const buyerAsksDlc = normalizeModelDecision({
     content: wrongModel({
@@ -425,4 +427,23 @@ test("explicit product requirement can become a new trade intake", () => {
   assert.ok(requirement);
   assert.equal(requirement.intent, "new_trade_intake");
   assert.equal(requirement.newTradeIntake, true);
+});
+
+
+test("UDC intermediary voice does not narrate buyer or seller handoffs", () => {
+  const cases = [
+    ["buyer", "can seller do $5,900?", "counteroffer"],
+    ["seller", "I accept the current terms", "acceptance"],
+    ["buyer", "I reject the current terms", "rejection"],
+    ["buyer", "can we arrange a video call tomorrow?", "meeting_request"],
+  ] as const;
+
+  for (const [participantRole, incomingMessage, expectedIntent] of cases) {
+    const decision = preflightDealDecision({ participantRole, incomingMessage });
+    assert.ok(decision, incomingMessage);
+    assert.equal(decision.intent, expectedIntent, incomingMessage);
+    assert.equal(decision.relay, true, incomingMessage);
+    assert.doesNotMatch(decision.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i, incomingMessage);
+    assert.doesNotMatch(decision.relayToCounterparty ?? "", /\b(?:buyer|seller)\s+(?:said|says|asked|requested|wants|confirmed|accepted|rejected|proposed)\b/i, incomingMessage);
+  }
 });
