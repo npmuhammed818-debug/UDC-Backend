@@ -427,8 +427,10 @@ export function normalizeModelDecision(input: {
     };
   }
 
-  if (newTradeIntakeRequested && !newTradeIntake) {
-    intent = "other";
+  if (newTradeIntakeRequested && !newTradeIntake && intent === "new_trade_intake") {
+    intent = deterministicIntent && deterministicIntent !== "new_trade_intake"
+      ? deterministicIntent
+      : "other";
   }
 
   const deterministic = deterministicCopy(intent, input.participantRole, input.incomingMessage);
