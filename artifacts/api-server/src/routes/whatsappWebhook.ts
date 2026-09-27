@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { and, eq } from "drizzle-orm";
-import { db, dealParticipantsTable, dealsTable, messagesTable, usersTable } from "@workspace/db";
+import { db, dealParticipantsTable, dealsTable, messagesTable, usersTable, whatsappMessageContextsTable } from "@workspace/db";
 import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -33,22 +33,123 @@ async function deliverWhatsAppReply(to: string | undefined, body: string) {
   }
 }
 
-async function handleDealWhatsAppMessage(from: string, text: string) {
-  const match = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
-  if (!match) return null;
+function classifyNegotiationIntent(text: string) {
+  const normalized = text.trim().toLowerCase();
 
-  const dealNumber = match[1]!.toUpperCase();
-  const messageBody = match[2]!.trim();
+  if ([
+    /\b(?:i|we)\s+(?:will|would|want to)\s+(?:buy|take|proceed)\b/,
+    /\b(?:i|we)\s+(?:agree|accept|confirm|approve)\b/,
+    /\b(?:accepted|agreed|confirmed|go ahead|proceed with (?:it|the deal)|buy from them)\b/,
+  ].some((pattern) => pattern.test(normalized))) {
+    return "acceptance" as const;
+  }
+
+  if ([
+    /\b(?:i|we)\s+(?:reject|decline|do not accept|don't accept|will not buy|won't buy)\b/,
+    /\b(?:reject|rejected|decline|declined|not interested|cancel the deal)\b/,
+  ].some((pattern) => pattern.test(normalized))) {
+    return "rejection" as const;
+  }
+
+  if ([
+    /\b(?:counter|counteroffer|counter offer|make it|lower the price|too expensive|price is too high|can you do)\b/,
+    /\b(?:usd|aed|inr|eur)\s*\d[\d,.]*/i,
+    /\b\d[\d,.]*\s*(?:usd|aed|inr|eur)\b/i,
+  ].some((pattern) => pattern.test(normalized))) {
+    return "counteroffer" as const;
+  }
+
+  return null;
+}
+
+async function handleDealWhatsAppMessage(
+  from: string,
+  text: string,
+  replyToProviderMessageId?: string,
+) {
+  const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
+  const naturalIntent = classifyNegotiationIntent(text);
 
   const [sender] = await db
-    .select({ id: usersTable.id, role: usersTable.role })
+    .select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
     .from(usersTable)
     .where(eq(usersTable.phone, from))
     .limit(1);
 
   if (!sender) {
-    return { reply: "UDC could not link this WhatsApp number to a verified trade account.", deliveredToCounterparty: false };
+    return explicitMatch || naturalIntent || replyToProviderMessageId
+      ? { reply: "UDC could not link this WhatsApp number to a trade account.", deliveredToCounterparty: false }
+      : null;
   }
+
+  if (sender.status !== "verified") {
+    return explicitMatch || naturalIntent || replyToProviderMessageId
+      ? { reply: "Your UDC account must be verified before deal negotiation.", deliveredToCounterparty: false }
+      : null;
+  }
+
+  let resolvedDealId: string | null = null;
+  let explicitDealNumber: string | null = null;
+  let messageBody = text.trim();
+
+  if (replyToProviderMessageId) {
+    const [context] = await db
+      .select({ dealId: whatsappMessageContextsTable.dealId })
+      .from(whatsappMessageContextsTable)
+      .where(and(
+        eq(whatsappMessageContextsTable.providerMessageId, replyToProviderMessageId),
+        eq(whatsappMessageContextsTable.recipientUserId, sender.id),
+      ))
+      .limit(1);
+    if (context) resolvedDealId = context.dealId;
+  }
+
+  if (!resolvedDealId && explicitMatch) {
+    explicitDealNumber = explicitMatch[1]!.toUpperCase();
+    messageBody = explicitMatch[2]!.trim();
+    const [explicitDeal] = await db
+      .select({ id: dealsTable.id })
+      .from(dealsTable)
+      .where(eq(dealsTable.dealNumber, explicitDealNumber))
+      .limit(1);
+
+    if (!explicitDeal) {
+      return {
+        reply: `UDC could not find deal ${explicitDealNumber}. Check the deal number and try again.`,
+        deliveredToCounterparty: false,
+      };
+    }
+    resolvedDealId = explicitDeal.id;
+  }
+
+  if (!resolvedDealId && naturalIntent) {
+    const activeDeals = await db
+      .select({
+        id: dealsTable.id,
+        dealNumber: dealsTable.dealNumber,
+      })
+      .from(dealParticipantsTable)
+      .innerJoin(dealsTable, eq(dealParticipantsTable.dealId, dealsTable.id))
+      .where(and(
+        eq(dealParticipantsTable.userId, sender.id),
+        eq(dealParticipantsTable.status, "active"),
+        eq(dealsTable.status, "negotiation"),
+      ));
+
+    if (activeDeals.length === 0) return null;
+
+    if (activeDeals.length > 1) {
+      const dealNumbers = activeDeals.slice(0, 5).map((deal) => deal.dealNumber).join(", ");
+      return {
+        reply: `You have multiple active negotiations. Reply to the specific UDC message or write the deal number. Active deals: ${dealNumbers}.`,
+        deliveredToCounterparty: false,
+      };
+    }
+
+    resolvedDealId = activeDeals[0]!.id;
+  }
+
+  if (!resolvedDealId) return null;
 
   const [deal] = await db
     .select({
@@ -59,15 +160,18 @@ async function handleDealWhatsAppMessage(from: string, text: string) {
       sellerUserId: dealsTable.sellerUserId,
     })
     .from(dealsTable)
-    .where(eq(dealsTable.dealNumber, dealNumber))
+    .where(eq(dealsTable.id, resolvedDealId))
     .limit(1);
 
   if (!deal) {
-    return { reply: `UDC could not find deal ${dealNumber}. Check the deal number and try again.`, deliveredToCounterparty: false };
+    return { reply: "UDC could not find that deal.", deliveredToCounterparty: false };
   }
 
   if (deal.status !== "negotiation") {
-    return { reply: `Deal ${deal.dealNumber} is currently ${deal.status}, so negotiation messages are not open.`, deliveredToCounterparty: false };
+    return {
+      reply: `Deal ${deal.dealNumber} is currently ${deal.status}, so negotiation messages are not open.`,
+      deliveredToCounterparty: false,
+    };
   }
 
   const [participant] = await db
@@ -100,6 +204,8 @@ async function handleDealWhatsAppMessage(from: string, text: string) {
     .where(eq(usersTable.id, receiverUserId))
     .limit(1);
 
+  const intent = classifyNegotiationIntent(messageBody) ?? "message";
+
   await db.insert(messagesTable).values({
     dealId: deal.id,
     senderUserId: sender.id,
@@ -111,15 +217,16 @@ async function handleDealWhatsAppMessage(from: string, text: string) {
   if (receiver?.phone) {
     const delivery = await deliverWhatsAppReply(
       receiver.phone,
-      `UDC deal ${deal.dealNumber} negotiation message from ${sender.role}: ${messageBody}`,
+      `UDC deal ${deal.dealNumber} — ${sender.role} ${intent}: ${messageBody}`,
     );
     deliveredToCounterparty = delivery.delivered;
   }
 
+  const intentLabel = intent === "message" ? "negotiation message" : intent;
   return {
     reply: deliveredToCounterparty
-      ? `UDC recorded your negotiation message for ${deal.dealNumber} and sent it to the other party.`
-      : `UDC recorded your negotiation message for ${deal.dealNumber}. Counterparty WhatsApp delivery could not be confirmed.`,
+      ? `UDC understood this as your ${intentLabel} for ${deal.dealNumber}, recorded it, and sent it to the other party.`
+      : `UDC understood this as your ${intentLabel} for ${deal.dealNumber} and recorded it. Counterparty WhatsApp delivery could not be confirmed.`,
     deliveredToCounterparty,
   };
 }
@@ -177,7 +284,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; text?: { body?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
@@ -187,7 +294,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if (typeof message.text?.body !== "string") continue;
 
       if (message.from) {
-        const dealMessage = await handleDealWhatsAppMessage(message.from, message.text.body);
+        const dealMessage = await handleDealWhatsAppMessage(message.from, message.text.body, message.context?.id);
         if (dealMessage) {
           const delivery = await deliverWhatsAppReply(message.from, dealMessage.reply);
           if (!delivery.delivered) {
