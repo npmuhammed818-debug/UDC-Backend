@@ -689,23 +689,29 @@ async function handleDealWhatsAppMessage(
   }
 
   const effectiveIntent = aiDecision.intent;
-  const exactCounteroffer = effectiveIntent === "acceptance"
+  const exactCounteroffer = ["acceptance", "rejection"].includes(effectiveIntent)
     ? await exactCounterofferForReply(deal.id, replyContextKind)
     : null;
 
   const copy = exactCounteroffer
-    ? {
-        toSender: "Confirmed. I recorded your acceptance of the exact counteroffer you replied to.",
-        toOther: `The ${sender.role === "buyer" ? "buyer" : "seller"} accepted your counteroffer: ${exactCounteroffer.originalText.trim()}`,
-        relay: true,
-      }
+    ? effectiveIntent === "acceptance"
+      ? {
+          toSender: "Confirmed. I recorded your acceptance of the exact counteroffer you replied to.",
+          toOther: `The ${sender.role === "buyer" ? "buyer" : "seller"} accepted your counteroffer: ${exactCounteroffer.originalText.trim()}`,
+          relay: true,
+        }
+      : {
+          toSender: "Understood. I recorded that you rejected the exact counteroffer you replied to.",
+          toOther: `The ${sender.role === "buyer" ? "buyer" : "seller"} rejected your counteroffer: ${exactCounteroffer.originalText.trim()}`,
+          relay: true,
+        }
     : {
         toSender: aiDecision.replyToSender,
         toOther: aiDecision.relayToCounterparty,
         relay: aiDecision.relay,
       };
 
-  if (exactCounteroffer) {
+  if (exactCounteroffer && effectiveIntent === "acceptance") {
     await applyAcceptedCounterofferToDeal(
       deal.id,
       [exactCounteroffer.originalText, exactCounteroffer.relayText ?? ""].join("\n"),
