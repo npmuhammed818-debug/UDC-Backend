@@ -324,7 +324,8 @@ export function normalizeModelDecision(input: {
     intent = "casual";
   }
 
-  const newTradeIntake = parsed.newTradeIntake === true || intent === "new_trade_intake";
+  const newTradeIntakeRequested = parsed.newTradeIntake === true || intent === "new_trade_intake";
+  const newTradeIntake = newTradeIntakeRequested && looksLikeNewTradeIntake(input.incomingMessage);
   if (newTradeIntake) {
     return {
       intent: "new_trade_intake",
@@ -333,6 +334,10 @@ export function normalizeModelDecision(input: {
       relayToCounterparty: null,
       newTradeIntake: true,
     };
+  }
+
+  if (newTradeIntakeRequested && !newTradeIntake) {
+    intent = "other";
   }
 
   const rawReply = typeof parsed.replyToSender === "string"
