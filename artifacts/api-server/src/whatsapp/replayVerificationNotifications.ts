@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { db, dealsTable, notificationsTable, usersTable } from "@workspace/db";
+import { db, dealsTable, notificationsTable, productsTable, usersTable } from "@workspace/db";
 import { sendWhatsAppText } from "./client";
 
 export async function replayVerificationWhatsAppNotifications() {
@@ -141,6 +141,104 @@ export async function replayDealStatusWhatsAppNotification() {
           link: `/deals/${deal.id}`,
         },
       ]);
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  return { configured: true as const, sent, failed, skipped };
+}
+
+
+export async function replayDealSummaryWhatsAppNotification() {
+  const dealId = process.env.WHATSAPP_DEAL_SUMMARY_REPLAY_ID?.trim();
+  if (!dealId) return { configured: false as const, sent: 0, failed: 0, skipped: 0 };
+
+  const [deal] = await db
+    .select({
+      id: dealsTable.id,
+      dealNumber: dealsTable.dealNumber,
+      productId: dealsTable.productId,
+      quantity: dealsTable.quantity,
+      unit: dealsTable.unit,
+      agreedPrice: dealsTable.agreedPrice,
+      currency: dealsTable.currency,
+      destination: dealsTable.destination,
+      dealValue: dealsTable.dealValue,
+      status: dealsTable.status,
+      buyerUserId: dealsTable.buyerUserId,
+      sellerUserId: dealsTable.sellerUserId,
+    })
+    .from(dealsTable)
+    .where(eq(dealsTable.id, dealId))
+    .limit(1);
+
+  if (!deal) return { configured: true as const, sent: 0, failed: 0, skipped: 1 };
+
+  const [product] = await db
+    .select({ name: productsTable.name })
+    .from(productsTable)
+    .where(eq(productsTable.id, deal.productId))
+    .limit(1);
+
+  const counterparties = await db
+    .select({ id: usersTable.id, phone: usersTable.phone })
+    .from(usersTable)
+    .where(eq(usersTable.status, "verified"));
+
+  const targets = counterparties.filter(
+    (user) => user.id === deal.buyerUserId || user.id === deal.sellerUserId,
+  );
+
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+  const markerType = `deal_summary_whatsapp_sent_${deal.id}`;
+  const productName = product?.name ?? "Product";
+  const message =
+    `UDC Deal ${deal.dealNumber}\n` +
+    `Product: ${productName}\n` +
+    `Quantity: ${deal.quantity} ${deal.unit}\n` +
+    `Price: ${deal.currency} ${deal.agreedPrice} per ${deal.unit}\n` +
+    `Total: ${deal.currency} ${deal.dealValue ?? "not calculated"}\n` +
+    `Destination: ${deal.destination ?? "not specified"}\n` +
+    `Status: ${deal.status}`;
+
+  for (const user of targets) {
+    if (!user.phone) {
+      skipped += 1;
+      continue;
+    }
+
+    const [alreadySent] = await db
+      .select({ id: notificationsTable.id })
+      .from(notificationsTable)
+      .where(and(
+        eq(notificationsTable.userId, user.id),
+        eq(notificationsTable.type, markerType),
+      ))
+      .limit(1);
+
+    if (alreadySent) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const delivery = await sendWhatsAppText(user.phone, message);
+      if (!delivery.delivered) {
+        failed += 1;
+        continue;
+      }
+
+      await db.insert(notificationsTable).values({
+        userId: user.id,
+        type: markerType,
+        title: "WhatsApp deal summary sent",
+        body: `Deal summary sent for ${deal.dealNumber}.`,
+        link: `/deals/${deal.id}`,
+      });
       sent += 1;
     } catch {
       failed += 1;
