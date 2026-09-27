@@ -11,6 +11,7 @@ import { isSellerOffer, triageSellerOffer } from "../akif/sellerOfferTriage";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
+import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 
 const router: IRouter = Router();
 
@@ -166,7 +167,7 @@ async function handleDealWhatsAppMessage(
   replyToProviderMessageId?: string,
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
-  const intent = classifyConversationIntent(text);
+  const ruleIntent = classifyConversationIntent(text);
 
   const [sender] = await db
     .select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
@@ -175,21 +176,15 @@ async function handleDealWhatsAppMessage(
     .limit(1);
 
   if (!sender) {
-    return explicitMatch || intent || replyToProviderMessageId
+    return explicitMatch || ruleIntent || replyToProviderMessageId
       ? { reply: "I couldn’t link this WhatsApp number to a UDC trade account.", deliveredToCounterparty: false }
       : null;
   }
 
   if (sender.status !== "verified") {
-    return explicitMatch || intent || replyToProviderMessageId
+    return explicitMatch || ruleIntent || replyToProviderMessageId
       ? { reply: "Your UDC account needs to be verified before I can handle deal negotiation.", deliveredToCounterparty: false }
       : null;
-  }
-
-  // A strong new buyer/seller requirement should stay an intake unless the user
-  // explicitly replied to a deal message or named the deal.
-  if (!replyToProviderMessageId && !explicitMatch && looksLikeNewTradeIntake(text)) {
-    return null;
   }
 
   let resolvedDealId: string | null = null;
@@ -267,16 +262,6 @@ async function handleDealWhatsAppMessage(
 
   if (!resolvedDealId) return null;
 
-  if (!intent) {
-    await setActiveDealContext(sender.id, resolvedDealId);
-    return {
-      reply: "I am following this deal with you. I am not fully sure what you mean. Are you saying proceed on the current terms, change a term, or just acknowledging my last message?",
-      deliveredToCounterparty: false,
-      dealId: resolvedDealId,
-      recipientUserId: sender.id,
-    };
-  }
-
   const [deal] = await db
     .select({
       id: dealsTable.id,
@@ -324,12 +309,39 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
-  const copy = mediatorCopy(sender.role, intent, messageBody);
+  const aiDecision = await interpretActiveDealConversation({
+    dealId: deal.id,
+    participantRole: sender.role,
+    message: messageBody,
+  });
+
+  if (aiDecision?.newTradeIntake) {
+    return null;
+  }
+
+  const effectiveIntent = aiDecision?.intent ?? ruleIntent;
+  if (!effectiveIntent) {
+    return {
+      reply: "I’m following this deal with you, but I’m not fully sure what you mean. Tell me naturally what you want me to do next and I’ll handle it.",
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+    };
+  }
+
+  const copy = aiDecision
+    ? {
+        toSender: aiDecision.replyToSender,
+        toOther: aiDecision.relayToCounterparty,
+        relay: aiDecision.relay,
+      }
+    : mediatorCopy(sender.role, ruleIntent!, messageBody);
+
   const [event] = await db.insert(dealConversationEventsTable).values({
     dealId: deal.id,
     userId: sender.id,
     participantRole: sender.role,
-    intent,
+    intent: effectiveIntent,
     originalText: messageBody,
     relayText: copy.toOther,
     relayed: false,
@@ -359,7 +371,7 @@ async function handleDealWhatsAppMessage(
             providerMessageId: delivery.messageId,
             dealId: deal.id,
             recipientUserId: receiverUserId,
-            kind: `mediated_${intent}`,
+            kind: `mediated_${effectiveIntent}`,
           })
           .onConflictDoNothing();
       }
