@@ -179,7 +179,7 @@ const shipmentStatusSchema = z.object({
 
 const createFinancialInstrumentSchema = z.object({
   dealId: z.string().uuid(),
-  instrumentType: z.literal("DLC"),
+  instrumentType: z.literal("DLC").default("DLC"),
   amount: z.coerce.number().positive().optional(),
   currency: z.string().length(3).optional(),
   reference: z.string().max(160).optional(),
@@ -504,7 +504,7 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       deal.id,
       "deal_created",
       "New UDC deal created",
-      `Deal ${deal.dealNumber}: ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice} per ${deal.unit}, total ${deal.currency} ${deal.dealValue}, destination ${deal.destination ?? "not specified"}. Status: ${deal.status}.`,
+      `We’ve opened the deal. ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit} to ${deal.destination ?? "the agreed destination"}. We’re at ${deal.status} now.`,
       `/deals/${deal.id}`,
     );
     res.status(201).json({ deal });
@@ -631,7 +631,7 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
         deal.id,
         "deal_status_updated",
         "Deal status updated",
-        `Deal ${deal.dealNumber} is now ${deal.status}.`,
+        `We’re at ${deal.status} now.`,
         `/deals/${deal.id}`,
       );
     }
@@ -670,7 +670,7 @@ router.post("/admin/deals/:dealId/issues", requireRole("admin"), async (req: Aut
       deal.id,
       "deal_issue_recorded",
       "Deal requires attention",
-      `Your deal is now ${input.status}. UDC will contact you with the next step.`,
+      `This deal is ${input.status} right now. I’ll keep you posted on the next step.`,
       `/deals/${deal.id}`,
     );
     res.json({ deal });
@@ -872,7 +872,7 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
         document.dealId,
         "document_reviewed",
         "Document review completed",
-        `A deal document was ${document.status} by UDC.`,
+        `The document is ${document.status}.`,
         "/documents",
       );
     }
@@ -1157,7 +1157,7 @@ router.patch("/admin/inspections/:inspectionId", requireRole("admin"), async (re
         inspection.dealId,
         "inspection_status_updated",
         "Inspection status updated",
-        `Inspection for your deal is now ${inspection.status}.`,
+        `Inspection is ${inspection.status}.`,
         `/deals/${inspection.dealId}/tracking`,
       );
     }
@@ -1233,7 +1233,7 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
         shipment.dealId,
         "shipment_status_updated",
         "Shipment status updated",
-        `Shipment for your deal is now ${shipment.status}.`,
+        `Shipment is ${shipment.status}.`,
         `/deals/${shipment.dealId}/tracking`,
       );
     }
@@ -1313,7 +1313,7 @@ router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"),
         instrument.dealId,
         "payment_status_updated",
         "Payment status updated",
-        `${instrument.instrumentType} for your deal is now ${instrument.status}.`,
+        `DLC is ${instrument.status}.`,
         `/deals/${instrument.dealId}/payment-status`,
       );
     }
