@@ -14,7 +14,7 @@ const deal = {
 
 test("answers current deal facts locally", () => {
   assert.match(directDealFactReply("what is the current deal status?", deal) ?? "", /negotiation/i);
-  assert.match(directDealFactReply("what is the current price?", deal) ?? "", /USD 7000/);
+  assert.match(directDealFactReply("what is the current price?", deal) ?? "", /\$7,000/);
   assert.match(directDealFactReply("confirmed qty?", deal) ?? "", /50 MT/);
   assert.match(directDealFactReply("where is the confirmed destination?", deal) ?? "", /Jebel Ali/);
   assert.match(directDealFactReply("what is the current incoterm?", deal) ?? "", /CIF/);
@@ -34,7 +34,7 @@ test("does not hijack negotiation questions", () => {
 });
 
 test("handles common typo-style fact questions", () => {
-  assert.match(directDealFactReply("wht is current price?", deal) ?? "", /USD 7000/);
+  assert.match(directDealFactReply("wht is current price?", deal) ?? "", /\$7,000/);
   assert.match(directDealFactReply("whr is confirmed destination?", deal) ?? "", /Jebel Ali/);
 });
 
