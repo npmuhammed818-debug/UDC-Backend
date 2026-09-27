@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
@@ -9,11 +9,11 @@ import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer, triageSellerOffer } from "../akif/sellerOfferTriage";
 import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
-import { downloadWhatsAppMedia, sendWhatsAppText } from "../whatsapp/client";
+import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
-import { uploadDocumentBytes } from "../supabase/storage";
+import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 
 const router: IRouter = Router();
 
@@ -179,6 +179,58 @@ function inferDocumentType(filename?: string, caption?: string) {
   if (/certificate of origin|\bco\b/.test(value)) return "CO";
   if (/coa|assay/.test(value)) return "COA";
   return "trade_document";
+}
+
+function requestedStoredDocumentType(text: string, replyContextKind?: string) {
+  const normalized = text.trim().toLowerCase();
+  const explicit = [
+    ["LOI", /\bloi\b|letter of intent/],
+    ["ICPO", /\bicpo\b/],
+    ["FCO", /\bfco\b/],
+    ["SCO", /\bsco\b/],
+    ["SPA", /\bspa\b|sales purchase agreement/],
+    ["NCNDA", /\bncnda\b/],
+    ["SGS", /\bsgs\b/],
+    ["BL", /bill of lading|\bbl\b/],
+    ["COA", /\bcoa\b|assay/],
+    ["CO", /certificate of origin/],
+  ] as const;
+
+  const requested = explicit.find(([, pattern]) => pattern.test(normalized))?.[0];
+  if (requested && /\b(?:send|share|show|get|where|whr)\b/.test(normalized)) {
+    return requested;
+  }
+
+  if (
+    replyContextKind?.includes("document_request")
+    && /^(?:send(?: it)?(?: to me)?|share it|show me|where is it|whr is it)[.! ]*$/i.test(normalized)
+  ) {
+    return "LATEST";
+  }
+
+  return null;
+}
+
+async function latestStoredDealDocument(dealId: string, documentType: string) {
+  const condition = documentType === "LATEST"
+    ? eq(documentsTable.dealId, dealId)
+    : and(
+        eq(documentsTable.dealId, dealId),
+        eq(documentsTable.documentType, documentType),
+      );
+
+  const [document] = await db
+    .select({
+      documentType: documentsTable.documentType,
+      fileUrl: documentsTable.fileUrl,
+      createdAt: documentsTable.createdAt,
+    })
+    .from(documentsTable)
+    .where(condition)
+    .orderBy(desc(documentsTable.createdAt))
+    .limit(1);
+
+  return document ?? null;
 }
 
 async function resolveActiveDealForUser(userId: string) {
@@ -480,6 +532,29 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
+  const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
+  if (requestedDocument) {
+    const storedDocument = await latestStoredDealDocument(deal.id, requestedDocument);
+    if (storedDocument) {
+      const storageObjectPath = parseStoragePath(storedDocument.fileUrl);
+      if (storageObjectPath) {
+        const extension = storageObjectPath.match(/\.([a-z0-9]{1,8})$/i)?.[1] ?? "pdf";
+        return {
+          reply: `I found the latest ${storedDocument.documentType}. I’m sending it here now.`,
+          deliveredToCounterparty: false,
+          dealId: deal.id,
+          recipientUserId: sender.id,
+          contextKind: "mediator_reply_document_delivery",
+          documentToSender: {
+            documentType: storedDocument.documentType,
+            storageObjectPath,
+            fileName: `${storedDocument.documentType}.${extension}`,
+          },
+        };
+      }
+    }
+  }
+
   if (!replyToProviderMessageId && /^(?:hi|hy|hello|hey)[.! ]*$/i.test(messageBody)) {
     return {
       reply: "Hi. I’m here with this deal. Tell me what you need and I’ll handle the next step.",
@@ -683,6 +758,53 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             req.log.info(
               { whatsappMessageId: message.id, flow: "deal_negotiation" },
               "UDC ignored duplicate WhatsApp deal message",
+            );
+            continue;
+          }
+
+          if ("documentToSender" in dealMessage && dealMessage.documentToSender) {
+            let documentDelivered = false;
+            let documentMessageId: string | undefined;
+
+            try {
+              const signedUrl = await createSignedDownloadUrl(dealMessage.documentToSender.storageObjectPath);
+              const documentDelivery = await sendWhatsAppDocument(
+                message.from,
+                signedUrl,
+                dealMessage.documentToSender.fileName,
+                `UDC ${dealMessage.documentToSender.documentType} document`,
+              );
+              documentDelivered = documentDelivery.delivered;
+              documentMessageId = "messageId" in documentDelivery
+                ? documentDelivery.messageId
+                : undefined;
+            } catch {
+              documentDelivered = false;
+            }
+
+            const replyBody = documentDelivered
+              ? `Sent the latest ${dealMessage.documentToSender.documentType} here.`
+              : `I found the ${dealMessage.documentToSender.documentType}, but WhatsApp could not send the file right now. The document is still safely attached to this deal.`;
+            const delivery = await deliverWhatsAppReply(message.from, replyBody);
+
+            if (documentDelivered && documentMessageId && dealMessage.dealId && dealMessage.recipientUserId) {
+              await db.insert(whatsappMessageContextsTable)
+                .values({
+                  providerMessageId: documentMessageId,
+                  dealId: dealMessage.dealId,
+                  recipientUserId: dealMessage.recipientUserId,
+                  kind: `deal_document_${dealMessage.documentToSender.documentType.toLowerCase()}`,
+                })
+                .onConflictDoNothing();
+            }
+
+            req.log.info(
+              {
+                flow: "deal_document_delivery",
+                delivered: documentDelivered,
+                acknowledgementDelivered: delivery.delivered,
+              },
+              "UDC handled stored WhatsApp deal document request",
             );
             continue;
           }
