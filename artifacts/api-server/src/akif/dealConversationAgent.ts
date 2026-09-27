@@ -128,9 +128,12 @@ export async function interpretActiveDealConversation(input: {
   });
 
   try {
-    const { content } = await runHermesChat(user, system, 10_000);
+    const { content } = await runHermesChat(user, system, 25_000);
     const json = cleanJson(content);
-    if (!json) return null;
+    if (!json) {
+      console.warn("AKIF deal conversation returned non-JSON output");
+      return null;
+    }
 
     const parsed = JSON.parse(json) as Partial<DealConversationDecision>;
     const intent = typeof parsed.intent === "string" && allowedIntents.has(parsed.intent)
@@ -156,7 +159,10 @@ export async function interpretActiveDealConversation(input: {
       };
     }
 
-    if (!replyToSender) return null;
+    if (!replyToSender) {
+      console.warn("AKIF deal conversation returned no sender reply");
+      return null;
+    }
 
     return {
       intent,
@@ -165,7 +171,15 @@ export async function interpretActiveDealConversation(input: {
       relayToCounterparty,
       newTradeIntake: false,
     };
-  } catch {
+  } catch (error) {
+    // Keep commercial content and provider bodies out of logs.
+    console.warn("AKIF deal conversation failed", {
+      reason: error instanceof Error && error.name === "AbortError"
+        ? "timeout"
+        : error instanceof SyntaxError
+          ? "invalid_json"
+          : "model_request_failed",
+    });
     return null;
   }
 }
