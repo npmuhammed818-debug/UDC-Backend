@@ -263,7 +263,7 @@ function deterministicCopy(intent: string, participantRole: string, message: str
       return {
         replyToSender: "Sure, I’ll sort that.",
         relay: true,
-        relayToCounterparty: `Can you send this over: ${recipientFramed}`,
+        relayToCounterparty: "Can you send that document over?",
       };
     case "meeting_request":
       return {
@@ -538,7 +538,7 @@ function plainLanguageFallback(input: {
       intent: "document_request",
       replyToSender: reply,
       relay: true,
-      relayToCounterparty: `Can you send this over: ${input.incomingMessage.trim().slice(0, 900)}`,
+      relayToCounterparty: "Can you send that document over?",
       newTradeIntake: false,
     };
   }
