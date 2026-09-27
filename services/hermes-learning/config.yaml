@@ -40,8 +40,8 @@ tool_loop_guardrails:
 # OpenAI is AKIF Hermes' primary conversational intelligence provider.
 # The secret is injected only by Render as OPENAI_API_KEY.
 model:
-  provider: openai
-  default: gpt-6-luna
+  provider: openrouter
+  default: nvidia/nemotron-3-ultra-550b-a55b:free
   base_url: ""
   api_mode: chat_completions
 
@@ -49,8 +49,8 @@ model:
 # Hermes can still attempt the already-configured OpenRouter route for the
 # current turn instead of making WhatsApp completely silent.
 fallback_providers:
-  - provider: openrouter
-    model: nvidia/nemotron-3-ultra-550b-a55b:free
+  - provider: openai
+    model: gpt-6-luna
 
 # Auxiliary tasks may use the active provider. The previous free-only gate
 # rejected valid fallback routing and caused title-generation warnings.
