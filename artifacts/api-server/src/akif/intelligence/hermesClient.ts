@@ -18,6 +18,66 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 
 
 type OpenAIChatResponse = HermesChatResponse;
+type AkifBrainChatResponse = HermesChatResponse;
+
+function akifBrainConfig() {
+  const rawUrl = process.env.AKIF_BRAIN_URL?.trim();
+  if (!rawUrl) return null;
+  return {
+    baseUrl: rawUrl.replace(/\/$/, ""),
+    apiKey: process.env.AKIF_BRAIN_API_KEY?.trim() || null,
+    model: process.env.AKIF_BRAIN_MODEL?.trim() || "qwen3:8b",
+  };
+}
+
+export function isAkifBrainConfigured() {
+  return akifBrainConfig() !== null;
+}
+
+export async function runAkifBrainChat(
+  message: string,
+  system?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<{ content: string; raw: AkifBrainChatResponse }> {
+  const config = akifBrainConfig();
+  if (!config) throw new Error("AKIF brain URL is not configured");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
+          { role: "user", content: message },
+        ],
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`AKIF brain returned HTTP ${response.status}`);
+    }
+
+    const raw = await response.json() as AkifBrainChatResponse;
+    const content = raw.choices?.[0]?.message?.content;
+    if (typeof content !== "string" || !content.trim()) {
+      throw new Error("AKIF brain returned no text response");
+    }
+
+    return { content, raw };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function openAIConfig() {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
@@ -84,25 +144,41 @@ export async function runConversationChat(
   system?: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<{ content: string; raw: HermesChatResponse }> {
-  if (!isOpenAIConfigured()) {
-    console.warn("Direct OpenAI conversation skipped", { reason: "not_configured" });
-    return runHermesChat(message, system, timeoutMs);
+  if (isAkifBrainConfigured()) {
+    try {
+      return await runAkifBrainChat(message, system, timeoutMs);
+    } catch (error) {
+      const statusMatch = error instanceof Error
+        ? error.message.match(/AKIF brain returned HTTP (\d{3})/)
+        : null;
+      console.warn("Self-hosted AKIF brain failed; trying managed fallback", {
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : "provider_request_failed",
+        ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+      });
+    }
   }
 
-  try {
-    return await runOpenAIChat(message, system, timeoutMs);
-  } catch (error) {
-    const statusMatch = error instanceof Error
-      ? error.message.match(/OpenAI returned HTTP (\d{3})/)
-      : null;
-    console.warn("Direct OpenAI conversation failed; falling back to Hermes", {
-      reason: error instanceof Error && error.name === "AbortError"
-        ? "timeout"
-        : "provider_request_failed",
-      ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
-    });
-    return runHermesChat(message, system, timeoutMs);
+  if (isOpenAIConfigured()) {
+    try {
+      return await runOpenAIChat(message, system, timeoutMs);
+    } catch (error) {
+      const statusMatch = error instanceof Error
+        ? error.message.match(/OpenAI returned HTTP (\d{3})/)
+        : null;
+      console.warn("Direct OpenAI conversation failed; falling back to Hermes", {
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : "provider_request_failed",
+        ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+      });
+    }
+  } else {
+    console.warn("Direct OpenAI conversation skipped", { reason: "not_configured" });
   }
+
+  return runHermesChat(message, system, timeoutMs);
 }
 
 function hermesConfig() {
