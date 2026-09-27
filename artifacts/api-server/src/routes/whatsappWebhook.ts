@@ -157,6 +157,97 @@ function mediatorCopy(role: string, intent: ConversationIntent, text: string) {
   }
 }
 
+function parseExplicitCommercialTerms(text: string) {
+  const quantityMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(MT|TONS?|KG|KGS?|CONTAINERS?)\b/i);
+  const usdPriceMatch = text.match(/(?:\$|USD\s*)([\d,]+(?:\.\d+)?)\s*(?:\/\s*(?:MT|TON|KG)|PER\s+(?:MT|TON|KG))?/i);
+  const otherPriceMatch = text.match(/\b(AED|INR|EUR)\s*([\d,]+(?:\.\d+)?)\b/i);
+
+  const quantity = quantityMatch ? Number(quantityMatch[1]) : undefined;
+  const rawUnit = quantityMatch?.[2]?.toUpperCase();
+  const unit = rawUnit
+    ? /^(?:MT|TON|TONS)$/.test(rawUnit)
+      ? "MT"
+      : /^(?:KG|KGS)$/.test(rawUnit)
+        ? "KG"
+        : "container"
+    : undefined;
+
+  const price = usdPriceMatch
+    ? Number(usdPriceMatch[1]!.replace(/,/g, ""))
+    : otherPriceMatch
+      ? Number(otherPriceMatch[2]!.replace(/,/g, ""))
+      : undefined;
+  const currency = usdPriceMatch
+    ? "USD"
+    : otherPriceMatch?.[1]?.toUpperCase();
+
+  return {
+    quantity: Number.isFinite(quantity) ? quantity : undefined,
+    unit,
+    price: Number.isFinite(price) ? price : undefined,
+    currency,
+  };
+}
+
+async function exactCounterofferForReply(dealId: string, replyContextKind?: string) {
+  const prefix = "mediated_counteroffer:";
+  if (!replyContextKind?.startsWith(prefix)) return null;
+
+  const eventId = replyContextKind.slice(prefix.length);
+  if (!/^[0-9a-f-]{36}$/i.test(eventId)) return null;
+
+  const [event] = await db
+    .select({
+      id: dealConversationEventsTable.id,
+      participantRole: dealConversationEventsTable.participantRole,
+      originalText: dealConversationEventsTable.originalText,
+      relayText: dealConversationEventsTable.relayText,
+      relayed: dealConversationEventsTable.relayed,
+    })
+    .from(dealConversationEventsTable)
+    .where(and(
+      eq(dealConversationEventsTable.id, eventId),
+      eq(dealConversationEventsTable.dealId, dealId),
+      eq(dealConversationEventsTable.intent, "counteroffer"),
+      eq(dealConversationEventsTable.relayed, true),
+    ))
+    .limit(1);
+
+  return event ?? null;
+}
+
+async function applyAcceptedCounterofferToDeal(dealId: string, eventText: string) {
+  const terms = parseExplicitCommercialTerms(eventText);
+  if (terms.quantity === undefined && terms.price === undefined) return;
+
+  const [current] = await db
+    .select({
+      quantity: dealsTable.quantity,
+      unit: dealsTable.unit,
+      agreedPrice: dealsTable.agreedPrice,
+      currency: dealsTable.currency,
+    })
+    .from(dealsTable)
+    .where(eq(dealsTable.id, dealId))
+    .limit(1);
+  if (!current) return;
+
+  const quantity = terms.quantity ?? Number(current.quantity);
+  const price = terms.price ?? Number(current.agreedPrice);
+  const currency = terms.currency ?? current.currency;
+
+  await db.update(dealsTable)
+    .set({
+      ...(terms.quantity !== undefined ? { quantity: String(terms.quantity), unit: terms.unit ?? current.unit } : {}),
+      ...(terms.price !== undefined ? { agreedPrice: String(terms.price), currency } : {}),
+      dealValue: Number.isFinite(quantity) && Number.isFinite(price)
+        ? String(quantity * price)
+        : undefined,
+      updatedAt: new Date(),
+    })
+    .where(eq(dealsTable.id, dealId));
+}
+
 async function setActiveDealContext(userId: string, dealId: string) {
   await db.insert(whatsappUserContextsTable)
     .values({ userId, activeDealId: dealId, updatedAt: new Date() })
@@ -598,11 +689,28 @@ async function handleDealWhatsAppMessage(
   }
 
   const effectiveIntent = aiDecision.intent;
-  const copy = {
-    toSender: aiDecision.replyToSender,
-    toOther: aiDecision.relayToCounterparty,
-    relay: aiDecision.relay,
-  };
+  const exactCounteroffer = effectiveIntent === "acceptance"
+    ? await exactCounterofferForReply(deal.id, replyContextKind)
+    : null;
+
+  const copy = exactCounteroffer
+    ? {
+        toSender: "Confirmed. I recorded your acceptance of the exact counteroffer you replied to.",
+        toOther: `The ${sender.role === "buyer" ? "buyer" : "seller"} accepted your counteroffer: ${exactCounteroffer.originalText.trim()}`,
+        relay: true,
+      }
+    : {
+        toSender: aiDecision.replyToSender,
+        toOther: aiDecision.relayToCounterparty,
+        relay: aiDecision.relay,
+      };
+
+  if (exactCounteroffer) {
+    await applyAcceptedCounterofferToDeal(
+      deal.id,
+      [exactCounteroffer.originalText, exactCounteroffer.relayText ?? ""].join("\n"),
+    );
+  }
 
   const [event] = await db.insert(dealConversationEventsTable).values({
     dealId: deal.id,
