@@ -100,55 +100,47 @@ function classifyConversationIntent(text: string): ConversationIntent | null {
 }
 
 
-function mediatorCopy(role: string, intent: ConversationIntent, text: string) {
-  const party = role === "buyer" ? "buyer" : "seller";
-
+function mediatorCopy(_role: string, intent: ConversationIntent, text: string) {
   switch (intent) {
     case "acceptance":
-      return role === "buyer"
-        ? {
-            toSender: "Got it. I’ve recorded that you want to proceed. I’ll confirm the seller’s side and come back to you.",
-            toOther: "The buyer has confirmed they want to proceed. I’ll coordinate the next step and let you know what I need from your side.",
-            relay: true,
-          }
-        : {
-            toSender: "Got it. I’ve recorded that you’re ready to proceed. I’ll coordinate the next step with the buyer.",
-            toOther: "The seller has confirmed they’re ready to proceed. I’ll coordinate the next step and keep you updated.",
-            relay: true,
-          };
+      return {
+        toSender: "Got it. I’ve recorded that you want to proceed. I’ll coordinate the next step.",
+        toOther: "The current terms can move forward. Please confirm you’re ready for the next step.",
+        relay: true,
+      };
     case "rejection":
       return {
-        toSender: "Understood. I’ve recorded that you don’t want to proceed on the current terms. I’ll handle the next step from here.",
-        toOther: `The ${party} has decided not to proceed on the current terms. I’ll keep this with UDC and let you know if revised terms are proposed.`,
+        toSender: "Understood. I’ve recorded that you don’t accept the current terms.",
+        toOther: "The current terms weren’t accepted. Send revised terms if you want me to keep negotiating.",
         relay: true,
       };
     case "counteroffer":
       return {
-        toSender: "Got it. I’ve recorded your revised term and I’ll take it to the other side. I’ll come back with their response.",
-        toOther: `The ${party} wants to revise the terms: ${text.trim()} Please confirm whether that works, or send your counter.`,
+        toSender: "Got it. I’ve recorded the revised terms and I’ll come back with the response.",
+        toOther: `Can you work with these revised terms: ${text.trim()} Please confirm or send your counter.`,
         relay: true,
       };
     case "document_request":
       return {
-        toSender: "I’ve noted the document request. I’ll get the relevant document or confirmation from the other side.",
-        toOther: `The ${party} needs this for the deal: ${text.trim()} Please send only the relevant document or details when ready.`,
+        toSender: "I’ve noted the document request. I’ll handle the document from this deal.",
+        toOther: `Please provide this for the deal: ${text.trim()}`,
         relay: true,
       };
     case "meeting_request":
       return {
-        toSender: "I’ll coordinate the meeting request and come back with the other side’s availability.",
-        toOther: `The ${party} would like to arrange a meeting: ${text.trim()} Let me know your available time and I’ll coordinate it.`,
+        toSender: "I’ll coordinate the meeting and come back with availability.",
+        toOther: `Can we arrange this meeting: ${text.trim()} Send your availability and I’ll coordinate it.`,
         relay: true,
       };
     case "counterparty_question":
       return {
-        toSender: "I’ve got your question. I’ll involve the other side only if their answer is actually needed.",
-        toOther: `The ${party} asked: ${text.trim()} Please reply with the information needed for the deal.`,
+        toSender: "I’ve got your question. I’ll get the information needed and come back to you.",
+        toOther: `Can you clarify this for the deal: ${text.trim()}`,
         relay: true,
       };
     case "casual":
       return {
-        toSender: "Got it. I’ve noted that.",
+        toSender: "Got it.",
         toOther: null,
         relay: false,
       };
@@ -292,7 +284,7 @@ function requestedStoredDocumentType(text: string, replyContextKind?: string) {
 
   if (
     replyContextKind?.includes("document_request")
-    && /^(?:send(?: it)?(?: to me)?|share it|show me|where is it|whr is it)[.! ]*$/i.test(normalized)
+    && /^(?:send(?: it)?(?: to me)?|share it|show me|where is it|whr is it|(?:to|for)\s+(?:the\s+)?(?:buyer|seller|him|her|them|other side|other party))[.! ]*$/i.test(normalized)
   ) {
     return "LATEST";
   }
