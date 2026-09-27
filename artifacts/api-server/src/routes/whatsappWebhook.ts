@@ -700,7 +700,9 @@ router.post("/webhooks/whatsapp", async (req, res) => {
                   providerMessageId: delivery.messageId,
                   dealId: dealMessage.dealId,
                   recipientUserId: dealMessage.recipientUserId,
-                  kind: dealMessage.contextKind ?? "mediator_reply",
+                  kind: "contextKind" in dealMessage && typeof dealMessage.contextKind === "string"
+                    ? dealMessage.contextKind
+                    : "mediator_reply",
                 })
                 .onConflictDoNothing();
             }
