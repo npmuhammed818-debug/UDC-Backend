@@ -990,7 +990,43 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
       if (typeof message.text?.body !== "string") continue;
 
-      if (message.from) {
+      const pendingIntake = message.from
+        ? await loadWhatsAppIntakeDraft(message.from)
+        : null;
+      const hasPendingIntake = Boolean(
+        pendingIntake
+        && !pendingIntake.stale
+        && Object.keys(pendingIntake.draft ?? {}).length > 0,
+      );
+
+      if (message.from && isUdcPaymentPolicyMessage(message.text.body)) {
+        const delivery = await deliverWhatsAppReply(
+          message.from,
+          "We use DLC with release after SGS at destination.",
+        );
+        req.log.info(
+          { whatsappMessageId: message.id, flow: "udc_payment_policy", delivered: delivery.delivered },
+          "UDC answered the fixed payment route",
+        );
+        continue;
+      }
+
+      if (
+        message.from
+        && hasPendingIntake
+        && /^(?:cancel|cancel it|forget it|leave it|drop it|back to (?:the )?deal)[.! ]*$/i.test(message.text.body.trim())
+      ) {
+        await clearWhatsAppIntakeDraft({
+          phone: message.from,
+          role: pendingIntake!.role as "buyer" | "seller",
+          fullName: pendingIntake?.fullName ?? undefined,
+          providerMessageId: message.id,
+        });
+        await deliverWhatsAppReply(message.from, "Sure. I dropped that request.");
+        continue;
+      }
+
+      if (message.from && !hasPendingIntake) {
         const dealMessage = await handleDealWhatsAppMessage(
           message.from,
           message.text.body,
@@ -1080,18 +1116,6 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           continue;
         }
 
-        if (isUdcPaymentPolicyMessage(message.text.body)) {
-          const delivery = await deliverWhatsAppReply(
-            message.from,
-            "We use DLC with release after SGS at destination.",
-          );
-          req.log.info(
-            { whatsappMessageId: message.id, flow: "udc_payment_policy", delivered: delivery.delivered },
-            "UDC answered the fixed payment route",
-          );
-          continue;
-        }
-
         const research = await queueWhatsAppResearch(message.from, message.text.body);
         if (research) {
           const reply =
@@ -1112,9 +1136,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         }
       }
 
-      const savedIntake = message.from
-        ? await loadWhatsAppIntakeDraft(message.from)
-        : null;
+      const savedIntake = pendingIntake;
 
       if (
         message.id
