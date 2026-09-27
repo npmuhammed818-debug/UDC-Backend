@@ -2,19 +2,16 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
-import { buyerRequirementReply } from "../akif/buyerRequirementReply";
+import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
-import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
-import { isSellerOffer, triageSellerOffer } from "../akif/sellerOfferTriage";
-import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
+import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
-import { directDealFactReply } from "../akif/dealFactReply";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
@@ -41,11 +38,6 @@ function cleanHumanWhatsAppText(body: string) {
     .replace(/([!?.,])\1{1,}/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-function isUdcPaymentPolicyMessage(text: string) {
-  const value = text.trim().toLowerCase();
-  return /\b(?:payment terms?|payment method|what payment|which payment|how (?:do|will|should) (?:i|we|you) pay|how is payment|tt|t\/t|mt103|sblc|standby letter of credit|lc|letter of credit|bg|bank guarantee|cash on delivery|cod|escrow|bank transfer|wire transfer)\b/i.test(value);
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string) {
@@ -551,7 +543,7 @@ async function handleDealWhatsAppMessage(
         .from(dealsTable)
         .where(eq(dealsTable.id, savedContext.activeDealId))
         .limit(1);
-      if (savedDeal?.status === "negotiation") resolvedDealId = savedDeal.id;
+      if (savedDeal) resolvedDealId = savedDeal.id;
     }
   }
 
@@ -563,7 +555,6 @@ async function handleDealWhatsAppMessage(
       .where(and(
         eq(dealParticipantsTable.userId, sender.id),
         eq(dealParticipantsTable.status, "active"),
-        eq(dealsTable.status, "negotiation"),
       ));
 
     if (activeDeals.length === 0) return null;
@@ -598,15 +589,6 @@ async function handleDealWhatsAppMessage(
     .limit(1);
 
   if (!deal) return null;
-
-  if (deal.status !== "negotiation") {
-    return {
-      reply: `We’re at ${deal.status} on this one.`,
-      deliveredToCounterparty: false,
-      dealId: deal.id,
-      recipientUserId: sender.id,
-    };
-  }
 
   const [participant] = await db
     .select({ id: dealParticipantsTable.id })
@@ -657,17 +639,6 @@ async function handleDealWhatsAppMessage(
 
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
-
-  const directFact = directDealFactReply(messageBody, deal);
-  if (directFact) {
-    return {
-      reply: directFact,
-      deliveredToCounterparty: false,
-      dealId: deal.id,
-      recipientUserId: sender.id,
-      contextKind: "mediator_reply_deal_fact",
-    };
-  }
 
   const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
   if (requestedDocument) {
@@ -765,16 +736,6 @@ async function handleDealWhatsAppMessage(
     }
   }
 
-  if (!replyToProviderMessageId && /^(?:hi|hy|hello|hey)[.! ]*$/i.test(messageBody)) {
-    return {
-      reply: "Hey, what’s up?",
-      deliveredToCounterparty: false,
-      dealId: deal.id,
-      recipientUserId: sender.id,
-      contextKind: "mediator_reply_casual",
-    };
-  }
-
   const aiDecision = await interpretActiveDealConversation({
     dealId: deal.id,
     participantRole: sender.role,
@@ -812,28 +773,16 @@ async function handleDealWhatsAppMessage(
     ? await exactCounterofferForReply(deal.id, replyContextKind)
     : null;
 
-  const copy = exactCounteroffer
-    ? effectiveIntent === "acceptance"
-      ? {
-          toSender: "Perfect.",
-          toOther: `Perfect. Those terms work. ${exactCounteroffer.originalText.trim()} I’ll move us to the next step.`,
-          relay: true,
-        }
-      : {
-          toSender: "No problem.",
-          toOther: `That one won’t work. ${exactCounteroffer.originalText.trim()} What’s your best revised offer?`,
-          relay: true,
-        }
-    : {
-        toSender: aiDecision.replyToSender,
-        toOther: aiDecision.relayToCounterparty,
-        relay: aiDecision.relay,
-      };
+  const copy = {
+    toSender: aiDecision.replyToSender,
+    toOther: aiDecision.relayToCounterparty,
+    relay: aiDecision.relay,
+  };
 
-  if (exactCounteroffer && effectiveIntent === "acceptance") {
+  if (deal.status === "negotiation" && exactCounteroffer && effectiveIntent === "acceptance") {
     await applyAcceptedCounterofferToDeal(
       deal.id,
-      [exactCounteroffer.originalText, exactCounteroffer.relayText ?? ""].join("\n"),
+      exactCounteroffer.relayText ?? "",
     );
   }
 
@@ -996,20 +945,9 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       const hasPendingIntake = Boolean(
         pendingIntake
         && !pendingIntake.stale
-        && Object.keys(pendingIntake.draft ?? {}).length > 0,
+        && !pendingIntake.draft.submittedRecordId
+        && Boolean(pendingIntake.draft.product || pendingIntake.draft.quantity),
       );
-
-      if (message.from && isUdcPaymentPolicyMessage(message.text.body)) {
-        const delivery = await deliverWhatsAppReply(
-          message.from,
-          "We use DLC with release after SGS at destination.",
-        );
-        req.log.info(
-          { whatsappMessageId: message.id, flow: "udc_payment_policy", delivered: delivery.delivered },
-          "UDC answered the fixed payment route",
-        );
-        continue;
-      }
 
       if (
         message.from
@@ -1096,6 +1034,16 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               "UDC could not send deal negotiation acknowledgement",
             );
           } else {
+            if (dealMessage.dealId && dealMessage.recipientUserId) {
+              await db.insert(dealConversationEventsTable).values({
+                dealId: dealMessage.dealId,
+                userId: dealMessage.recipientUserId,
+                participantRole: "udc",
+                intent: "coordinator_reply",
+                originalText: dealMessage.reply,
+                relayed: false,
+              });
+            }
             if (delivery.messageId && dealMessage.dealId && dealMessage.recipientUserId) {
               await db.insert(whatsappMessageContextsTable)
                 .values({
@@ -1155,12 +1103,18 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         && !savedIntake.stale
         && Object.keys(savedIntake.draft ?? {}).length > 0,
       );
-      const explicitSellerMessage = isSellerOffer(message.text.body);
-      const intakeRole = explicitSellerMessage
-        ? "seller"
-        : hasSavedDraft
-          ? savedIntake!.role as "buyer" | "seller"
-          : "buyer";
+      const intakeDecision = await interpretIntakeConversation({
+        message: message.text.body,
+        role: isSellerOffer(message.text.body) ? "seller" : savedIntake?.role === "seller" ? "seller" : "buyer",
+        memory: hasSavedDraft ? savedIntake!.draft : null,
+      });
+      if (!intakeDecision) {
+        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
+        continue;
+      }
+      const intakeRole = intakeDecision.role;
+      const previousDraft = !intakeDecision.newIntake && savedIntake?.role === intakeRole
+        ? savedIntake.draft : null;
 
       const contactName =
         fullName?.trim()
@@ -1168,47 +1122,13 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         || "WhatsApp User";
 
       const buyerDraft = intakeRole === "buyer"
-        ? mergeBuyerRequirementDraft(
-            hasSavedDraft && savedIntake?.role === "buyer"
-              ? savedIntake.draft
-              : null,
-            triageBuyerRequirement(message.text.body),
-            message.text.body,
-          )
+        ? mergeBuyerRequirementDraft(previousDraft, { ...intakeDecision.fields, missingFields: [] }, "")
         : null;
-
       const sellerDraft = intakeRole === "seller"
-        ? mergeSellerOfferDraft(
-            hasSavedDraft && savedIntake?.role === "seller"
-              ? savedIntake.draft
-              : null,
-            triageSellerOffer(message.text.body),
-          )
+        ? mergeSellerOfferDraft(previousDraft, { ...intakeDecision.fields, missingFields: [] })
         : null;
 
-      const isGreeting = /^(?:hi|hy|hello|hey|yo|sup)[.! ]*$/i.test(message.text.body.trim());
-      const noBuyerFacts = buyerDraft
-        ? !buyerDraft.product
-          && !buyerDraft.quantity
-          && !buyerDraft.targetPrice
-          && !buyerDraft.destination
-        : false;
-      const noSellerFacts = sellerDraft
-        ? !sellerDraft.product
-          && !sellerDraft.quantity
-          && !sellerDraft.price
-        : false;
-
-      if (isGreeting && !hasSavedDraft && (noBuyerFacts || noSellerFacts)) {
-        const delivery = await deliverWhatsAppReply(message.from, "Hey, what’s up?");
-        req.log.info(
-          { whatsappMessageId: message.id, flow: "trade_intake_greeting", delivered: delivery.delivered },
-          "UDC answered WhatsApp greeting",
-        );
-        continue;
-      }
-
-      const record = sellerDraft
+      const record = previousDraft?.submittedRecordId ? null : sellerDraft
         ? sellerDraft.missingFields.length === 0 && message.from
           ? await recordPendingSellerOffer({
               phone: message.from,
@@ -1259,27 +1179,22 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               incoterm: buyerDraft?.incoterm,
             };
 
-        if (record) {
-          await clearWhatsAppIntakeDraft({
-            phone: message.from,
-            role: intakeRole,
-            fullName: contactName,
-            providerMessageId: message.id,
-          });
-        } else {
-          await saveWhatsAppIntakeDraft({
-            phone: message.from,
-            role: intakeRole,
-            fullName: contactName,
-            draft: draftForStorage,
-            providerMessageId: message.id,
-          });
-        }
+        await saveWhatsAppIntakeDraft({
+          phone: message.from,
+          role: intakeRole,
+          fullName: contactName,
+          draft: {
+            ...draftForStorage,
+            submittedRecordId: record?.id ?? previousDraft?.submittedRecordId,
+            conversation: [...(previousDraft?.conversation ?? []), {
+              message: message.text.body, reply: intakeDecision.reply,
+            }].slice(-12),
+          },
+          providerMessageId: message.id,
+        });
       }
 
-      const reply = sellerDraft
-        ? sellerOfferReply(sellerDraft)
-        : buyerRequirementReply(buyerDraft!);
+      const reply = intakeDecision.reply;
       const delivery = await deliverWhatsAppReply(message.from, reply);
 
       if (!delivery.delivered) {

@@ -7,6 +7,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 export type WhatsAppIntakeDraftPayload = {
+  submittedRecordId?: string;
+  conversation?: Array<{ message: string; reply: string }>;
   product?: string;
   quantity?: number;
   unit?: string;

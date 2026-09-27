@@ -12,15 +12,6 @@ export async function loadWhatsAppIntakeDraft(phone: string) {
 
   if (!row) return null;
 
-  const stale = Date.now() - row.updatedAt.getTime() > 72 * 60 * 60 * 1000;
-  if (stale) {
-    return {
-      ...row,
-      draft: {} as WhatsAppIntakeDraftPayload,
-      stale: true,
-    };
-  }
-
   return { ...row, stale: false };
 }
 
