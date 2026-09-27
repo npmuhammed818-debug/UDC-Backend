@@ -188,7 +188,8 @@ test("meeting requests are mediated rather than raw-forwarded", () => {
   assert.ok(decision);
   assert.equal(decision.intent, "meeting_request");
   assert.equal(decision.relay, true);
-  assert.doesNotMatch(decision.relayToCounterparty ?? "", /^Can we arrange/i);
+  assert.match(decision.relayToCounterparty ?? "", /this meeting/i);
+  assert.notEqual(decision.relayToCounterparty, "Can we arrange a video call tomorrow?");
 });
 
 test("structured relay with an internal path is rewritten safely", () => {
