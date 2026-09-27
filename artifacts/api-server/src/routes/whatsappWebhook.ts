@@ -45,7 +45,7 @@ function cleanHumanWhatsAppText(body: string) {
 
 function isUdcPaymentPolicyMessage(text: string) {
   const value = text.trim().toLowerCase();
-  return /\b(?:payment terms?|payment method|what payment|which payment|how (?:do|will|should) (?:i|we|you) pay|how is payment|tt|t\/t|mt103|sblc|standby letter of credit|cash on delivery|cod|escrow|bank transfer|wire transfer)\b/i.test(value);
+  return /\b(?:payment terms?|payment method|what payment|which payment|how (?:do|will|should) (?:i|we|you) pay|how is payment|tt|t\/t|mt103|sblc|standby letter of credit|lc|letter of credit|bg|bank guarantee|cash on delivery|cod|escrow|bank transfer|wire transfer)\b/i.test(value);
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string) {
