@@ -22,7 +22,7 @@ test("asks only for the missing trade fields", () => {
   const draft = triageBuyerRequirement("We need Copper Cathode, CIF.");
 
   assert.equal(draft.product, "Copper Cathode");
-  assert.deepEqual(draft.missingFields, ["quantity", "destination"]);
+  assert.deepEqual(draft.missingFields, ["quantity", "targetPrice", "destination"]);
 });
 
 test("recognizes a natural seller offer and captures its commercial terms", () => {
