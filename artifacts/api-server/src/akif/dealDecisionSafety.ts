@@ -84,7 +84,19 @@ function narratesCounterparty(text: string) {
 }
 
 function containsInternalLeak(text: string) {
-  return /storage:\/\//i.test(text)
+  const value = text.toLowerCase();
+  const internalTerms = [
+    "hermes agent",
+    "agent docs",
+    "nousresearch",
+    "feature question",
+    "internal feature",
+    "model provider",
+    "backend service",
+  ].some((term) => value.includes(term));
+
+  return internalTerms
+    || /storage:\/\//i.test(text)
     || /\/opt\/render\//i.test(text)
     || /supabase\.co\/storage\//i.test(text)
     || /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i.test(text);
