@@ -282,6 +282,17 @@ export function normalizeModelDecision(input: {
   replyContextKind?: string;
   deal: DealStateForReply;
 }): DealConversationDecision | null {
+  const normalizedIncoming = input.incomingMessage.trim().toLowerCase();
+  const shortReply = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|no|nope|nah|done|go ahead|proceed)[.! ]*$/i.test(normalizedIncoming);
+  const affirmativeShortReply = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|done|go ahead|proceed)[.! ]*$/i.test(normalizedIncoming);
+  const negativeShortReply = /^(?:no|nope|nah)[.! ]*$/i.test(normalizedIncoming);
+  const explicitCommercialReply = Boolean(input.replyContextKind?.startsWith("mediated_counteroffer:"));
+  const explicitDocumentReply = Boolean(input.replyContextKind?.includes("document"));
+  const greeting = /^(?:hi|hy|hello|hey|yo|sup|gm|good morning|good afternoon|good evening)[.! ]*$/i.test(normalizedIncoming);
+  const tradeKnowledgeQuestion =
+    /\b(?:what|wht)\s+(?:is|are|does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming)
+    || /\b(?:explain|meaning of|what does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming);
+
   const json = extractJson(input.content);
   if (!json) return plainLanguageFallback(input);
 
@@ -298,9 +309,20 @@ export function normalizeModelDecision(input: {
     };
   }
 
-  const intent = typeof parsed.intent === "string" && allowedIntents.has(parsed.intent)
+  let intent = typeof parsed.intent === "string" && allowedIntents.has(parsed.intent)
     ? parsed.intent
     : "other";
+
+  // Never trust the model to turn an unanchored one-word reply into a commercial
+  // commitment. WhatsApp reply context is the authority for yes/no/ok.
+  if (shortReply) {
+    if (explicitCommercialReply && affirmativeShortReply) intent = "acceptance";
+    else if (explicitCommercialReply && negativeShortReply) intent = "rejection";
+    else if (explicitDocumentReply) intent = "document_request";
+    else intent = "casual";
+  } else if (greeting) {
+    intent = "casual";
+  }
 
   const newTradeIntake = parsed.newTradeIntake === true || intent === "new_trade_intake";
   if (newTradeIntake) {
@@ -317,16 +339,32 @@ export function normalizeModelDecision(input: {
     ? parsed.replyToSender.trim().slice(0, 1200)
     : "";
 
-  const replyToSender = rawReply && !containsInternalLeak(rawReply)
+  const replyToSender = rawReply
+    && !containsInternalLeak(rawReply)
+    && !looksLikeProviderDiagnostic(rawReply)
     ? rawReply
     : structuredReplyFallback(intent, input.deal);
 
-  const relayRequested = parsed.relay === true;
+  let relayRequested = parsed.relay === true;
+
+  // Greetings, general trade-term questions, status checks, and unanchored short
+  // replies never need the counterparty. This blocks unnecessary forwarding even
+  // if the model incorrectly asks to relay.
+  if (
+    greeting
+    || tradeKnowledgeQuestion
+    || intent === "status_question"
+    || (shortReply && !explicitCommercialReply)
+  ) {
+    relayRequested = false;
+  }
   const rawRelay = relayRequested && typeof parsed.relayToCounterparty === "string"
     ? parsed.relayToCounterparty.trim().slice(0, 1200)
     : "";
 
-  const relayToCounterparty = rawRelay && !containsInternalLeak(rawRelay)
+  const relayToCounterparty = rawRelay
+    && !containsInternalLeak(rawRelay)
+    && !looksLikeProviderDiagnostic(rawRelay)
     ? rawRelay
     : null;
 
