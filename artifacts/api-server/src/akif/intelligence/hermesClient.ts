@@ -154,3 +154,38 @@ export function runHermesSkillReviewCommand(
     "Execute only the requested Hermes skills-review command. Do not create, edit, or delete any other skill.",
   );
 }
+
+
+export async function runHermesMultimodal(
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+  >,
+  system?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<{ content: string; raw: HermesChatResponse }> {
+  const payload = {
+    model: "akif-hermes",
+    messages: [
+      ...(system ? [{ role: "system", content: system }] : []),
+      { role: "user", content },
+    ],
+    stream: false,
+  };
+
+  const raw = await hermesFetch<HermesChatResponse>(
+    "/v1/chat/completions",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  );
+
+  const responseContent = raw.choices?.[0]?.message?.content;
+  if (typeof responseContent !== "string" || !responseContent.trim()) {
+    throw new Error("Hermes returned no multimodal text response");
+  }
+
+  return { content: responseContent, raw };
+}
