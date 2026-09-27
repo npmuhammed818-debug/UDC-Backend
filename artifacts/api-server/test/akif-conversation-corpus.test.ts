@@ -111,7 +111,7 @@ test("conversation corpus: obvious counteroffers override a confused model", () 
     assert.ok(decision, message);
     assert.equal(decision.intent, "counteroffer", message);
     assert.equal(decision.relay, true, message);
-    assert.match(decision.relayToCounterparty ?? "", /can you work/i, message);
+    assert.match(decision.relayToCounterparty ?? "", /can you|send me your best/i, message);
   }
 });
 
@@ -304,7 +304,7 @@ test("full scripted buyer-seller conversation keeps roles and relay boundaries",
   assert.ok(buyerOffer);
   assert.equal(buyerOffer.intent, "counteroffer");
   assert.equal(buyerOffer.relay, true);
-  assert.match(buyerOffer.relayToCounterparty ?? "", /can you work/i);
+  assert.match(buyerOffer.relayToCounterparty ?? "", /can you|send me your best/i);
   assert.doesNotMatch(buyerOffer.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
 
   const sellerAccepts = normalizeModelDecision({
@@ -317,7 +317,7 @@ test("full scripted buyer-seller conversation keeps roles and relay boundaries",
   assert.ok(sellerAccepts);
   assert.equal(sellerAccepts.intent, "acceptance");
   assert.equal(sellerAccepts.relay, true);
-  assert.match(sellerAccepts.relayToCounterparty ?? "", /current terms can move forward|counteroffer has been accepted/i);
+  assert.match(sellerAccepts.relayToCounterparty ?? "", /those terms work|aligned on those terms/i);
   assert.doesNotMatch(sellerAccepts.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
 
   const buyerAsksDlc = normalizeModelDecision({
@@ -445,5 +445,25 @@ test("UDC intermediary voice does not narrate buyer or seller handoffs", () => {
     assert.equal(decision.relay, true, incomingMessage);
     assert.doesNotMatch(decision.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i, incomingMessage);
     assert.doesNotMatch(decision.relayToCounterparty ?? "", /\b(?:buyer|seller)\s+(?:said|says|asked|requested|wants|confirmed|accepted|rejected|proposed)\b/i, incomingMessage);
+  }
+});
+
+
+test("human tone: fast-path replies avoid robotic workflow language", () => {
+  const cases = [
+    preflightDealDecision({ participantRole: "buyer", incomingMessage: "can seller do $5,900?" }),
+    preflightDealDecision({ participantRole: "seller", incomingMessage: "I accept the current terms" }),
+    preflightDealDecision({ participantRole: "buyer", incomingMessage: "I reject the current terms" }),
+    preflightDealDecision({ participantRole: "buyer", incomingMessage: "can we arrange a video call tomorrow?" }),
+    preflightDealDecision({ participantRole: "buyer", incomingMessage: "hello" }),
+  ];
+
+  for (const decision of cases) {
+    assert.ok(decision);
+    const text = [decision.replyToSender, decision.relayToCounterparty ?? ""].join(" ");
+    assert.doesNotMatch(
+      text,
+      /\b(?:I recorded|I’ve recorded|I've recorded|I’ve noted|I've noted|confirmed terms in UDC|current terms can move forward|please confirm your side|tell me naturally|keep it inside this deal|coordinate the next step)\b/i,
+    );
   }
 });
