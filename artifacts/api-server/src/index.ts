@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
 import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
+import { startWhatsAppWebhookInboxRunner } from "./whatsapp/webhookInboxRunner";
 
 const rawPort = process.env["PORT"];
 
@@ -26,6 +27,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startAkifResearchQueueRunner();
+  startWhatsAppWebhookInboxRunner();
   void Promise.all([
     checkWhatsAppConnection(),
     ensureWhatsAppWebhookSubscription(),
