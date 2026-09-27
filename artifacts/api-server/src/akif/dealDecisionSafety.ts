@@ -205,6 +205,29 @@ function highConfidenceIntent(text: string) {
   return null;
 }
 
+function isFixedPaymentPolicyMessage(text: string) {
+  const normalized = text.trim().toLowerCase();
+
+  const asksPayment =
+    /\b(?:payment terms?|payment method|how (?:do|will|should) (?:i|we|you) pay|how is payment|how does payment work|what payment|which payment)\b/i.test(normalized);
+
+  const alternativeInstrument =
+    /\b(?:tt|t\/t|mt103|sblc|standby letter of credit|lc|letter of credit|cash on delivery|cod|escrow|bank transfer|wire transfer)\b/i.test(normalized)
+    && !/\bdlc\b/i.test(normalized);
+
+  return asksPayment || alternativeInstrument;
+}
+
+function fixedPaymentPolicyDecision(): DealConversationDecision {
+  return {
+    intent: "deal_question",
+    replyToSender: "We use DLC with release after SGS at destination.",
+    relay: false,
+    relayToCounterparty: null,
+    newTradeIntake: false,
+  };
+}
+
 function deterministicCopy(intent: string, participantRole: string, message: string) {
   const clean = message.trim().slice(0, 900);
   const recipientFramed = participantRole === "buyer"
@@ -264,6 +287,10 @@ export function preflightDealDecision(input: {
   const negative = /^(?:no|nope|nah)[.! ]*$/i.test(normalized);
   const exactCounteroffer = Boolean(input.replyContextKind?.startsWith("mediated_counteroffer:"));
   const documentContext = Boolean(input.replyContextKind?.includes("document"));
+
+  if (isFixedPaymentPolicyMessage(input.incomingMessage)) {
+    return fixedPaymentPolicyDecision();
+  }
 
   if (shortReply) {
     if (exactCounteroffer && affirmative) {
@@ -556,6 +583,10 @@ export function normalizeModelDecision(input: {
     /\b(?:what|wht)\s+(?:is|are|does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming)
     || /\b(?:explain|meaning of|what does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming);
   const deterministicIntent = highConfidenceIntent(input.incomingMessage);
+
+  if (isFixedPaymentPolicyMessage(input.incomingMessage)) {
+    return fixedPaymentPolicyDecision();
+  }
 
   const json = extractJson(input.content);
   if (!json) return plainLanguageFallback(input);
