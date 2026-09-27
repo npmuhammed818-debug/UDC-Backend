@@ -35,7 +35,19 @@ export function triageSellerOffer(text: string): SellerOfferDraft {
   const destinationMatch = normalized.match(
     /\b(?:to|destination(?:\s+is)?)\s+([A-Za-z][A-Za-z .'-]{1,80}?)(?=\s+(?:at|@|CIF|FOB|CFR|EXW|DAP|DDP)\b|$)/i,
   );
-  const product = /\bcopper(?:\s+(?:scrap|millberry|cathode|wire))?\b/i.exec(normalized)?.[0];
+  const specificProduct = /\b(?:copper(?:\s+(?:scrap|millberry|cathode|wire))?|millberry(?:\s+copper)?|copper wire scrap)\b/i.exec(normalized)?.[0];
+  const productBeforeQuantity = normalized.match(
+    /\b(?:sell|selling|offer|offering|supply|supplying)\s+([A-Za-z][A-Za-z0-9 .'-]{1,80}?)\s+(?=[\d,.]+\s*(?:MT|metric tons?|tonnes?))/i,
+  )?.[1]?.trim();
+  const productAfterQuantity = normalized.match(
+    /\b[\d,.]+\s*(?:MT|metric tons?|tonnes?)\s+([A-Za-z][A-Za-z0-9 .'-]{1,80}?)(?=\s+(?:from|to|for|at|@|CIF|FOB|CFR|EXW|DAP|DDP|USD|\$)\b|[,.;]|$)/i,
+  )?.[1]?.trim();
+  const productCandidate = specificProduct ?? productBeforeQuantity ?? productAfterQuantity;
+  const product = productCandidate
+    ? /^millberry/i.test(productCandidate)
+      ? "Copper Millberry"
+      : productCandidate
+    : undefined;
   const incoterm = incoterms.find((value) => new RegExp(`\\b${value}\\b`, "i").test(normalized));
 
   const draft: SellerOfferDraft = {
