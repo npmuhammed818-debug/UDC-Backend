@@ -43,7 +43,7 @@ tool_loop_guardrails:
 # The secret is injected only by Render as OPENAI_API_KEY.
 model:
   provider: openrouter
-  default: nvidia/nemotron-3-ultra-550b-a55b:free
+  default: google/gemma-4-26b-a4b-it:free
   base_url: ""
   api_mode: chat_completions
 
