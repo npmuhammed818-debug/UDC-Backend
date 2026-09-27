@@ -36,6 +36,36 @@ export async function checkWhatsAppConnection() {
   }
 }
 
+export async function ensureWhatsAppWebhookSubscription() {
+  const config = getConfig();
+  const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID?.trim();
+  if (!config) return { ok: false, reason: "not_configured" };
+  if (!businessAccountId) return { ok: false, reason: "waba_not_configured" };
+
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(businessAccountId)}/subscribed_apps`,
+      {
+        method: "POST",
+        signal: AbortSignal.timeout(10_000),
+        headers: {
+          authorization: `Bearer ${config.accessToken}`,
+          "content-type": "application/json",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      return { ok: false, reason: "meta_waba_subscription_failed", ...await providerError(response) };
+    }
+
+    await response.body?.cancel();
+    return { ok: true, scope: "waba_subscribed_apps" };
+  } catch {
+    return { ok: false, reason: "meta_unreachable_or_timeout" };
+  }
+}
+
 export async function sendWhatsAppText(to: string, body: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
