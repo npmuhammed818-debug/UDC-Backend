@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { normalizeModelDecision } from "../src/akif/dealDecisionSafety.ts";
+import { normalizeModelDecision, preflightDealDecision } from "../src/akif/dealDecisionSafety.ts";
 
 const deal = {
   status: "negotiation",
@@ -380,4 +380,49 @@ test("conversation corpus: internal/provider output never reaches either party",
     assert.equal(decision.relay, false, bad);
     assert.equal(decision.relayToCounterparty, null, bad);
   }
+});
+
+
+test("fast path handles clear trade actions without waiting for a model", () => {
+  const cases = [
+    ["buyer", "can seller do $5,900?", undefined, "counteroffer", true],
+    ["seller", "send the LOI", undefined, "document_request", true],
+    ["buyer", "can we arrange a meeting tomorrow?", undefined, "meeting_request", true],
+    ["buyer", "I accept the current terms", undefined, "acceptance", true],
+    ["seller", "I reject the current terms", undefined, "rejection", true],
+    ["seller", "Yes", "mediated_counteroffer:123e4567-e89b-42d3-a456-426614174000", "acceptance", true],
+    ["seller", "No", "mediated_counteroffer:123e4567-e89b-42d3-a456-426614174000", "rejection", true],
+    ["buyer", "ok", undefined, "casual", false],
+  ] as const;
+
+  for (const [participantRole, incomingMessage, replyContextKind, intent, relay] of cases) {
+    const decision = preflightDealDecision({
+      participantRole,
+      incomingMessage,
+      replyContextKind,
+    });
+    assert.ok(decision, incomingMessage);
+    assert.equal(decision.intent, intent, incomingMessage);
+    assert.equal(decision.relay, relay, incomingMessage);
+  }
+});
+
+test("active-deal quantity revision is not automatically treated as a new deal", () => {
+  const revision = preflightDealDecision({
+    participantRole: "buyer",
+    incomingMessage: "I want 100 MT at $5,900",
+  });
+  assert.ok(revision);
+  assert.equal(revision.intent, "counteroffer");
+  assert.equal(revision.newTradeIntake, false);
+});
+
+test("explicit product requirement can become a new trade intake", () => {
+  const requirement = preflightDealDecision({
+    participantRole: "buyer",
+    incomingMessage: "I need 100 MT copper scrap delivered to Dubai",
+  });
+  assert.ok(requirement);
+  assert.equal(requirement.intent, "new_trade_intake");
+  assert.equal(requirement.newTradeIntake, true);
 });
