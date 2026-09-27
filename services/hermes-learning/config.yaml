@@ -15,15 +15,14 @@ display:
 # tool surface intentionally narrow even though the service itself is
 # protected by bearer authentication.
 platform_toolsets:
-  api_server:
-    - skills
-    - memory
-    - session_search
+  api_server: []
 
 agent:
   # GPT-6 Luna supports function calling on Chat Completions with reasoning
   # effort set to none. AKIF's trade policy/decision logic stays in UDC.
   reasoning_effort: none
+  api_max_retries: 0
+  auto_recovery_cycles: 0
   disabled_toolsets:
     - terminal
     - browser
@@ -33,6 +32,9 @@ agent:
     - cronjob
     - computer_use
     - web
+    - skills
+    - memory
+    - session_search
 
 tool_loop_guardrails:
   non_interactive_hard_stop_enabled: true
