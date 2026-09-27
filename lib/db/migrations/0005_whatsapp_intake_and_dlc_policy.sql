@@ -38,3 +38,6 @@ ALTER TABLE public.deal_financials
 
 ALTER TABLE public.deal_financials
   ALTER COLUMN terms SET DEFAULT 'Release after SGS inspection at destination';
+
+ALTER TABLE public.deal_financials
+  ALTER COLUMN instrument_type SET DEFAULT 'DLC';
