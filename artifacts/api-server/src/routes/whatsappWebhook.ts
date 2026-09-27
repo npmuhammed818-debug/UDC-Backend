@@ -327,18 +327,25 @@ async function handleDealWhatsAppMessage(
   }
 
   let resolvedDealId: string | null = null;
+  let replyContextKind: string | undefined;
   let messageBody = text.trim();
 
   if (replyToProviderMessageId) {
     const [context] = await db
-      .select({ dealId: whatsappMessageContextsTable.dealId })
+      .select({
+        dealId: whatsappMessageContextsTable.dealId,
+        kind: whatsappMessageContextsTable.kind,
+      })
       .from(whatsappMessageContextsTable)
       .where(and(
         eq(whatsappMessageContextsTable.providerMessageId, replyToProviderMessageId),
         eq(whatsappMessageContextsTable.recipientUserId, sender.id),
       ))
       .limit(1);
-    if (context) resolvedDealId = context.dealId;
+    if (context) {
+      resolvedDealId = context.dealId;
+      replyContextKind = context.kind;
+    }
   }
 
   if (!resolvedDealId && explicitMatch) {
@@ -473,10 +480,21 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
+  if (!replyToProviderMessageId && /^(?:hi|hy|hello|hey)[.! ]*$/i.test(messageBody)) {
+    return {
+      reply: "Hi. I’m here with this deal. Tell me what you need and I’ll handle the next step.",
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_casual",
+    };
+  }
+
   const aiDecision = await interpretActiveDealConversation({
     dealId: deal.id,
     participantRole: sender.role,
     message: messageBody,
+    replyContextKind,
   });
 
   if (aiDecision?.newTradeIntake && looksLikeNewTradeIntake(messageBody)) {
@@ -500,6 +518,7 @@ async function handleDealWhatsAppMessage(
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,
+      contextKind: "mediator_reply_unprocessed",
     };
   }
 
@@ -556,6 +575,7 @@ async function handleDealWhatsAppMessage(
     deliveredToCounterparty,
     dealId: deal.id,
     recipientUserId: sender.id,
+    contextKind: `mediator_reply_${effectiveIntent}`,
   };
 }
 
@@ -680,7 +700,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
                   providerMessageId: delivery.messageId,
                   dealId: dealMessage.dealId,
                   recipientUserId: dealMessage.recipientUserId,
-                  kind: "mediator_reply",
+                  kind: dealMessage.contextKind ?? "mediator_reply",
                 })
                 .onConflictDoNothing();
             }
