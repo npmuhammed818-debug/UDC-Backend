@@ -4,6 +4,11 @@ export type DocumentExtractionResult = {
   extraction_method: string;
   warnings: string[];
   metadata: Record<string, unknown>;
+  vision_pages?: Array<{
+    page_number: number;
+    mime_type: string;
+    base64: string;
+  }>;
 };
 
 function config() {
