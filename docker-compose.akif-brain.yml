@@ -1,0 +1,11 @@
+services:
+  akif-brain:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - akif-brain-models:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+
+volumes:
+  akif-brain-models:
