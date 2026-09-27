@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsTable } from "@workspace/db";
-import { normalizeModelDecision, type DealConversationDecision } from "./dealDecisionSafety";
+import { normalizeModelDecision, preflightDealDecision, type DealConversationDecision } from "./dealDecisionSafety";
 import { runHermesChat } from "./intelligence/hermesClient";
 
 export async function interpretActiveDealConversation(input: {
@@ -9,6 +9,13 @@ export async function interpretActiveDealConversation(input: {
   message: string;
   replyContextKind?: string;
 }): Promise<DealConversationDecision | null> {
+  const preflight = preflightDealDecision({
+    participantRole: input.participantRole,
+    incomingMessage: input.message,
+    replyContextKind: input.replyContextKind,
+  });
+  if (preflight) return preflight;
+
   const [deal] = await db
     .select({
       dealNumber: dealsTable.dealNumber,
