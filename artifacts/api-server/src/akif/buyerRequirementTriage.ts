@@ -15,7 +15,11 @@ export function triageBuyerRequirement(text: string): BuyerRequirementDraft {
   const normalized = text.trim();
   const quantityMatch = normalized.match(/\b([\d,.]+)\s*(MT|metric tons?|tonnes?)\b/i);
   const priceMatch = normalized.match(/(?:USD|\$)\s*([\d,.]+)(?:\s*\/?\s*(?:MT|tonne))?/i);
-  const destinationMatch = normalized.match(/\b(?:to|for|delivered to|destination)\s+([A-Za-z][A-Za-z .\'-]{1,80})/i);
+  // Buyers commonly state the destination directly after a destination-side
+  // Incoterm (for example, "CIF Jebel Ali") rather than using "to".
+  const destinationMatch = normalized.match(
+    /\b(?:to|for|delivered to|destination(?:\s+is)?|CIF|DAP|DDP)\s+([A-Za-z][A-Za-z .'-]{1,80}?)(?=\s*(?:,|;|\.|(?:maximum|max|target|at|USD|\$)\b)|$)/i,
+  );
   const product = /\bcopper(?:\s+(?:scrap|millberry|cathode|wire))?\b/i.exec(normalized)?.[0];
   const incoterm = incoterms.find((value) => new RegExp(`\\b${value}\\b`, "i").test(normalized));
 

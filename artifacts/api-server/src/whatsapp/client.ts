@@ -99,7 +99,9 @@ export async function sendWhatsAppText(to: string, body: string) {
   const rawMessageId = payload?.messages?.[0]?.id;
   const messageId = typeof rawMessageId === "string" ? rawMessageId : undefined;
 
-  return { delivered: true as const, messageId };
+  return messageId
+    ? { delivered: true as const, messageId }
+    : { delivered: true as const };
 }
 
 

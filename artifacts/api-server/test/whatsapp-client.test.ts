@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { checkWhatsAppConnection, sendWhatsAppText } from "../src/whatsapp/client";
+import { checkWhatsAppConnection, sendWhatsAppText } from "../src/whatsapp/client.ts";
 
 const originalFetch = globalThis.fetch;
 const token = process.env.WHATSAPP_ACCESS_TOKEN;
