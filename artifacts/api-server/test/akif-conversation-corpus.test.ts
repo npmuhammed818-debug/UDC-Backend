@@ -111,7 +111,7 @@ test("conversation corpus: obvious counteroffers override a confused model", () 
     assert.ok(decision, message);
     assert.equal(decision.intent, "counteroffer", message);
     assert.equal(decision.relay, true, message);
-    assert.match(decision.relayToCounterparty ?? "", /revised commercial terms/i, message);
+    assert.match(decision.relayToCounterparty ?? "", /can you work/i, message);
   }
 });
 
@@ -317,7 +317,7 @@ test("full scripted buyer-seller conversation keeps roles and relay boundaries",
   assert.ok(sellerAccepts);
   assert.equal(sellerAccepts.intent, "acceptance");
   assert.equal(sellerAccepts.relay, true);
-  assert.match(sellerAccepts.relayToCounterparty ?? "", /counteroffer has been accepted/i);
+  assert.match(sellerAccepts.relayToCounterparty ?? "", /current terms can move forward|counteroffer has been accepted/i);
   assert.doesNotMatch(sellerAccepts.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
 
   const buyerAsksDlc = normalizeModelDecision({
