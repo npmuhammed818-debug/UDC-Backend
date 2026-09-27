@@ -46,7 +46,10 @@ export function directDealFactReply(text: string, deal: DealFacts) {
   }
 
   const asksIncoterm =
-    /^(?:what|wht|which|tell me).*\b(?:current|confirmed|agreed)?\s*(?:incoterm|cif|fob|cfr|exw)\b.*\??$/i.test(normalized)
+    (
+      /\b(?:current|confirmed|agreed)\s+(?:deal\s+)?incoterm\b/i.test(normalized)
+      || /^(?:what|wht|which|tell me).*\b(?:the\s+)?incoterm\b.*\??$/i.test(normalized)
+    )
     && !/\b(?:can|could|will|would)\b/.test(normalized);
 
   if (asksIncoterm) {
