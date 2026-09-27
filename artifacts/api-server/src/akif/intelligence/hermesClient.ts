@@ -16,6 +16,89 @@ type HermesCapabilities = {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+
+type OpenAIChatResponse = HermesChatResponse;
+
+function openAIConfig() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    model: process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-6-luna",
+    baseUrl: (process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/$/, ""),
+  };
+}
+
+export function isOpenAIConfigured() {
+  return openAIConfig() !== null;
+}
+
+export async function runOpenAIChat(
+  message: string,
+  system?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<{ content: string; raw: OpenAIChatResponse }> {
+  const config = openAIConfig();
+  if (!config) throw new Error("OpenAI API key is not configured");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        reasoning_effort: "none",
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
+          { role: "user", content: message },
+        ],
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI returned HTTP ${response.status}`);
+    }
+
+    const raw = await response.json() as OpenAIChatResponse;
+    const content = raw.choices?.[0]?.message?.content;
+    if (typeof content !== "string" || !content.trim()) {
+      throw new Error("OpenAI returned no text response");
+    }
+
+    return { content, raw };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function runConversationChat(
+  message: string,
+  system?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<{ content: string; raw: HermesChatResponse }> {
+  if (isOpenAIConfigured()) {
+    try {
+      return await runOpenAIChat(message, system, timeoutMs);
+    } catch (error) {
+      console.warn("Direct OpenAI conversation failed; falling back to Hermes", {
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : "provider_request_failed",
+      });
+    }
+  }
+
+  return runHermesChat(message, system, timeoutMs);
+}
+
 function hermesConfig() {
   const rawUrl = process.env.HERMES_AKIF_URL?.trim();
   const apiKey = process.env.HERMES_AKIF_API_KEY?.trim();

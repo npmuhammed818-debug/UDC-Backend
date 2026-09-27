@@ -1,7 +1,7 @@
 import { getAkifDealContext } from "./intelligence/dealContext";
 import { normalizeModelDecision, type DealConversationDecision } from "./dealDecisionSafety";
 import { conversationSafeDealMemory } from "./dealConversationMemory";
-import { runHermesChat } from "./intelligence/hermesClient";
+import { runConversationChat } from "./intelligence/hermesClient";
 
 function formatTradeNumber(value: string | number, max = 6) {
   const numeric = typeof value === "number" ? value : Number(value);
@@ -84,7 +84,7 @@ export async function interpretActiveDealConversation(input: {
   });
 
   try {
-    const { content } = await runHermesChat(user, system, 15_000);
+    const { content } = await runConversationChat(user, system, 15_000);
     return normalizeModelDecision({
       content,
       participantRole: input.participantRole,
