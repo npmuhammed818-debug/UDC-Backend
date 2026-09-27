@@ -12,9 +12,7 @@ const deal = {
 
 test("never leaks internal JSON when replyToSender has wrong type", () => {
   const decision = normalizeModelDecision({
-    content: ````json
-{"intent":"status_question","replyToSender":true,"relay":false,"relayToCounterparty":null,"newTradeIntake":false}
-````,
+    content: "\`\`\`json\n{\"intent\":\"status_question\",\"replyToSender\":true,\"relay\":false,\"relayToCounterparty\":null,\"newTradeIntake\":false}\n\`\`\`",
     participantRole: "buyer",
     incomingMessage: "what is the status?",
     deal,
