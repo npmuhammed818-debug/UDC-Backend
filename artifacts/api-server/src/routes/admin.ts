@@ -491,22 +491,13 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       actorUserId: req.authUser!.id, action: "deal_created", entityType: "deal", entityId: deal.id,
       metadata: { dealNumber: deal.dealNumber, buyerUserId: deal.buyerUserId, sellerUserId: deal.sellerUserId },
     });
-    await db.insert(notificationsTable).values([
-      {
-        userId: deal.buyerUserId,
-        type: "deal_created",
-        title: "New deal created",
-        body: `UDC created deal ${deal.dealNumber}. It is now under admin-managed execution.`,
-        link: `/deals/${deal.id}`,
-      },
-      {
-        userId: deal.sellerUserId,
-        type: "deal_created",
-        title: "New deal created",
-        body: `UDC created deal ${deal.dealNumber}. It is now under admin-managed execution.`,
-        link: `/deals/${deal.id}`,
-      },
-    ]);
+    await notifyDealCounterparties(
+      deal.id,
+      "deal_created",
+      "New UDC deal created",
+      `Deal ${deal.dealNumber}: ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice} per ${deal.unit}, total ${deal.currency} ${deal.dealValue}, destination ${deal.destination ?? "not specified"}. Status: ${deal.status}.`,
+      `/deals/${deal.id}`,
+    );
     res.status(201).json({ deal });
   } catch (error) {
     if (error instanceof z.ZodError) {
