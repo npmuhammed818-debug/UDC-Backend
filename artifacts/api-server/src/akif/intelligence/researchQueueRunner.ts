@@ -80,8 +80,8 @@ async function processRun(run: typeof akifResearchRunsTable.$inferSelect) {
     const status = typeof result.status === "string" ? result.status : "completed";
     const message =
       status === "needs_input"
-        ? `AKIF needs more information to finish research for ${claimed.product} in ${claimed.targetCountry}. Please review the research request in UDC.`
-        : `AKIF completed market research for ${claimed.product} in ${claimed.targetCountry}. The result includes sourced trade evidence and opportunity analysis. Company discovery and verification remain separate checks.`;
+        ? `I need a bit more information to finish the search for ${claimed.product} in ${claimed.targetCountry}. Send me what you want to narrow down and I’ll continue.`
+        : `Done. I finished the search for ${claimed.product} in ${claimed.targetCountry}. I kept company verification separate so nothing is treated as verified yet.`;
 
     await deliverResearchStatus(claimed, message);
   } catch (error) {
@@ -91,7 +91,7 @@ async function processRun(run: typeof akifResearchRunsTable.$inferSelect) {
     );
     await deliverResearchStatus(
       claimed,
-      `AKIF could not complete the research for ${claimed.product} in ${claimed.targetCountry}. The request has been kept for administrator review.`,
+      `I couldn’t finish the search for ${claimed.product} in ${claimed.targetCountry} right now. I kept the request and we can try again.`,
     );
   }
 }
