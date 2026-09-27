@@ -18,6 +18,19 @@ function isEqual(left: string, right: string) {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+async function deliverWhatsAppReply(to: string | undefined, body: string) {
+  if (!to) return { delivered: false as const, reason: "missing_sender" as const };
+
+  try {
+    return await sendWhatsAppText(to, body);
+  } catch (error) {
+    return {
+      delivered: false as const,
+      reason: error instanceof Error ? error.message : "whatsapp_delivery_failed",
+    };
+  }
+}
+
 router.get(
   "/admin/whatsapp/status",
   requireRole("admin"),
@@ -85,7 +98,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         if (research) {
           const reply =
             `AKIF queued your ${research.intent.direction} research for ${research.intent.product} in ${research.intent.targetCountry}. UDC will keep the research result separate from verification and deal approval.`;
-          const delivery = await sendWhatsAppText(message.from, reply);
+          const delivery = await deliverWhatsAppReply(message.from, reply);
           if (!delivery.delivered) {
             req.log.error(
               { whatsappMessageId: message.id, flow: "akif_research", reason: delivery.reason },
@@ -127,9 +140,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           : buyerDraft && buyerDraft.missingFields.length === 3
             ? "Hi, I'm AKIF, UDC's trade assistant. I can help with buyer requirements, seller offers, or buyer/seller research. Send a request like: Find buyers for copper cathode in India. To submit a buyer requirement, include product, quantity, and destination."
             : buyerRequirementReply(buyerDraft!);
-      const delivery = message.from
-        ? await sendWhatsAppText(message.from, reply)
-        : { delivered: false as const, reason: "missing_sender" as const };
+      const delivery = await deliverWhatsAppReply(message.from, reply);
 
       if (!delivery.delivered) {
         req.log.error(
