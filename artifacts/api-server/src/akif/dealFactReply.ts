@@ -16,7 +16,7 @@ export function directDealFactReply(text: string, deal: DealFacts) {
     || /\b(?:current deal status|deal status|deal stage|where are we with (?:this|the) deal|where is (?:this|the) deal)\b/.test(normalized);
 
   if (asksStatus) {
-    return `The deal is currently in ${deal.status}. Confirmed terms in UDC are ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}${deal.incoterm ? `, ${deal.incoterm}` : ""}${deal.destination ? ` to ${deal.destination}` : ""}.`;
+    return `We’re in ${deal.status}. Right now it’s ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}${deal.incoterm ? `, ${deal.incoterm}` : ""}${deal.destination ? ` to ${deal.destination}` : ""}.`;
   }
 
   const asksConfirmedPrice =
@@ -24,7 +24,7 @@ export function directDealFactReply(text: string, deal: DealFacts) {
     || /\b(?:current|confirmed|agreed)\s+(?:deal\s+)?(?:price|rate)\b/.test(normalized);
 
   if (asksConfirmedPrice) {
-    return `The confirmed price in UDC is ${deal.currency} ${deal.agreedPrice} per ${deal.unit}.`;
+    return `${deal.currency} ${deal.agreedPrice}/${deal.unit} right now.`;
   }
 
   const asksConfirmedQuantity =
@@ -32,7 +32,7 @@ export function directDealFactReply(text: string, deal: DealFacts) {
     || /\b(?:current|confirmed|agreed)\s+(?:deal\s+)?(?:quantity|qty|volume)\b/.test(normalized);
 
   if (asksConfirmedQuantity) {
-    return `The confirmed quantity in UDC is ${deal.quantity} ${deal.unit}.`;
+    return `${deal.quantity} ${deal.unit} right now.`;
   }
 
   const asksDestination =
@@ -41,8 +41,8 @@ export function directDealFactReply(text: string, deal: DealFacts) {
 
   if (asksDestination) {
     return deal.destination
-      ? `The confirmed destination in UDC is ${deal.destination}.`
-      : "UDC does not have a confirmed destination recorded for this deal yet.";
+      ? `${deal.destination}.`
+      : "Destination isn’t confirmed yet.";
   }
 
   const asksIncoterm =
@@ -54,8 +54,8 @@ export function directDealFactReply(text: string, deal: DealFacts) {
 
   if (asksIncoterm) {
     return deal.incoterm
-      ? `The confirmed Incoterm in UDC is ${deal.incoterm}.`
-      : "UDC does not have a confirmed Incoterm recorded for this deal yet.";
+      ? `${deal.incoterm}.`
+      : "Incoterm isn’t confirmed yet.";
   }
 
   return null;
