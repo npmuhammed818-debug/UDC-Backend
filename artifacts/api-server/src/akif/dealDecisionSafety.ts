@@ -52,7 +52,7 @@ function looksStructured(raw: string) {
 
 function looksLikeProviderDiagnostic(text: string) {
   const value = text.toLowerCase();
-  return [
+  const knownDiagnostic = [
     "api key",
     "insufficient_quota",
     "billing",
@@ -63,7 +63,24 @@ function looksLikeProviderDiagnostic(text: string) {
     "model unavailable",
     "authentication failed",
     "unauthorized",
+    "extraction failed",
+    "extractions failed",
+    "document extraction failed",
+    "full extraction failed",
+    "extractor error",
+    "bad gateway",
+    "upstream error",
   ].some((needle) => value.includes(needle));
+
+  const technical5xx =
+    /\b(?:extract(?:ion|or)?|provider|model|service|gateway|http|status|error)\b[^.\n]{0,40}\b5\d\d\b/i.test(text)
+    || /\b5\d\d\b[^.\n]{0,40}\b(?:extract(?:ion|or)?|provider|model|service|gateway|http|status|error)\b/i.test(text);
+
+  return knownDiagnostic || technical5xx;
+}
+
+function narratesCounterparty(text: string) {
+  return /\b(?:the\s+)?(?:buyer|seller)\s+(?:said|says|asked|requested|clarified|confirmed|accepted|rejected|proposed|wants|needs|provided|uploaded|agreed)\b/i.test(text);
 }
 
 function containsInternalLeak(text: string) {
@@ -315,7 +332,7 @@ function structuredReplyFallback(intent: string, deal: DealStateForReply) {
     return "I understand the question. I’ll answer from the deal record if UDC already knows it; otherwise I’ll ask the other party only if their input is actually needed.";
   }
 
-  return "I understood your message, but the AI reply format was invalid. I kept it inside this deal and did not forward anything incorrectly. Please send the request again.";
+  return "I’m following this deal. Tell me naturally what you want me to do next and I’ll keep it inside this deal.";
 }
 
 function plainLanguageFallback(input: {
@@ -327,7 +344,7 @@ function plainLanguageFallback(input: {
 }): DealConversationDecision | null {
   const reply = input.content.trim().slice(0, 1200);
   if (!reply || looksLikeProviderDiagnostic(reply)) return null;
-  if (looksStructured(reply) || containsInternalLeak(reply)) {
+  if (looksStructured(reply) || containsInternalLeak(reply) || narratesCounterparty(reply)) {
     return {
       intent: "other",
       replyToSender: structuredReplyFallback("other", input.deal),
@@ -563,6 +580,7 @@ export function normalizeModelDecision(input: {
     ?? (rawReply
       && !containsInternalLeak(rawReply)
       && !looksLikeProviderDiagnostic(rawReply)
+      && !narratesCounterparty(rawReply)
       ? rawReply
       : structuredReplyFallback(intent, input.deal));
 
@@ -587,6 +605,7 @@ export function normalizeModelDecision(input: {
   const relayToCounterparty = rawRelay
     && !containsInternalLeak(rawRelay)
     && !looksLikeProviderDiagnostic(rawRelay)
+    && !narratesCounterparty(rawRelay)
     ? rawRelay
     : null;
 
