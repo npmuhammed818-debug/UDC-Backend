@@ -71,6 +71,7 @@ export function getHermesCapabilities() {
 export async function runHermesChat(
   message: string,
   system?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<{ content: string; raw: HermesChatResponse }> {
   const payload = {
     model: "akif-hermes",
@@ -87,6 +88,7 @@ export async function runHermesChat(
       method: "POST",
       body: JSON.stringify(payload),
     },
+    timeoutMs,
   );
 
   const content = raw.choices?.[0]?.message?.content;
