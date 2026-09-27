@@ -188,7 +188,7 @@ test("meeting requests are mediated rather than raw-forwarded", () => {
   assert.ok(decision);
   assert.equal(decision.intent, "meeting_request");
   assert.equal(decision.relay, true);
-  assert.match(decision.relayToCounterparty ?? "", /this meeting/i);
+  assert.match(decision.relayToCounterparty ?? "", /video call|time works/i);
   assert.notEqual(decision.relayToCounterparty, "Can we arrange a video call tomorrow?");
 });
 
@@ -208,7 +208,7 @@ test("structured relay with an internal path is rewritten safely", () => {
 
   assert.ok(decision);
   assert.equal(decision.relay, true);
-  assert.match(decision.relayToCounterparty ?? "", /provide this for the deal/i);
+  assert.match(decision.relayToCounterparty ?? "", /send this over/i);
   assert.doesNotMatch(decision.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
   assert.doesNotMatch(decision.relayToCounterparty ?? "", /storage:\/\//i);
 });
@@ -328,4 +328,26 @@ test("internal extraction failures are blocked even without buyer seller narrati
 
   assert.ok(decision);
   assert.doesNotMatch(decision.replyToSender, /502|http|extraction failed/i);
+});
+
+
+test("human tone fallback avoids bot-like wording", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "status_question",
+      replyToSender: true,
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    }),
+    participantRole: "buyer",
+    incomingMessage: "status?",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.doesNotMatch(
+    decision.replyToSender,
+    /confirmed terms in UDC|tell me naturally|I understand|I recorded|I’ve noted/i,
+  );
 });
