@@ -179,10 +179,9 @@ const shipmentStatusSchema = z.object({
 
 const createFinancialInstrumentSchema = z.object({
   dealId: z.string().uuid(),
-  instrumentType: z.enum(["LC", "DLC", "SBLC", "BG", "TT", "OTHER"]),
+  instrumentType: z.literal("DLC"),
   amount: z.coerce.number().positive().optional(),
   currency: z.string().length(3).optional(),
-  terms: z.string().max(2000).optional(),
   reference: z.string().max(160).optional(),
   provider: z.string().max(160).optional(),
 });
@@ -191,7 +190,6 @@ const financialInstrumentStatusSchema = z.object({
   status: z.enum(["not_started", "requested", "pending", "received", "confirmed", "rejected", "cancelled"]),
   reference: z.string().max(160).optional(),
   provider: z.string().max(160).optional(),
-  terms: z.string().max(2000).optional(),
 });
 
 async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
@@ -233,7 +231,7 @@ async function notifyDealCounterparties(
   await Promise.all(counterparties.map(async (counterparty) => {
     if (!counterparty.phone) return;
     try {
-      const delivery = await sendWhatsAppText(counterparty.phone, `${title}: ${body}`);
+      const delivery = await sendWhatsAppText(counterparty.phone, body);
       if (delivery.messageId) {
         await db.insert(whatsappMessageContextsTable)
           .values({
@@ -1268,7 +1266,8 @@ router.post("/admin/financial-instruments", requireRole("admin"), async (req: Au
     const [instrument] = await db.insert(dealFinancialsTable).values({
       dealId: deal.id, instrumentType: input.instrumentType, status: "not_started",
       amount: input.amount === undefined ? undefined : String(input.amount),
-      currency: (input.currency ?? deal.currency).toUpperCase(), terms: input.terms,
+      currency: (input.currency ?? deal.currency).toUpperCase(),
+      terms: "Release after SGS inspection at destination",
       reference: input.reference, provider: input.provider,
     }).returning();
     await db.insert(auditLogsTable).values({
@@ -1302,7 +1301,7 @@ router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"),
     const [instrument] = await db.update(dealFinancialsTable).set({
       status: input.status, ...(input.reference === undefined ? {} : { reference: input.reference }),
       ...(input.provider === undefined ? {} : { provider: input.provider }),
-      ...(input.terms === undefined ? {} : { terms: input.terms }), updatedAt: new Date(),
+      updatedAt: new Date(),
     }).where(eq(dealFinancialsTable.id, instrumentId)).returning();
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser.id, action: "financial_instrument_status_updated",
