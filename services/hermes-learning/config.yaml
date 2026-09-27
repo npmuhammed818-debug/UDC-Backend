@@ -21,6 +21,9 @@ platform_toolsets:
     - session_search
 
 agent:
+  # GPT-6 Luna supports function calling on Chat Completions with reasoning
+  # effort set to none. AKIF's trade policy/decision logic stays in UDC.
+  reasoning_effort: none
   disabled_toolsets:
     - terminal
     - browser
@@ -34,17 +37,25 @@ agent:
 tool_loop_guardrails:
   non_interactive_hard_stop_enabled: true
 
-# Route development requests across compatible free models so one upstream
-# model's shared-pool rate limit does not halt all conversation. The API key is supplied only through Render as
-# OPENROUTER_API_KEY and is never committed to the repository.
+# OpenAI is AKIF Hermes' primary conversational intelligence provider.
+# The secret is injected only by Render as OPENAI_API_KEY.
 model:
-  provider: openrouter
-  default: openrouter/free
+  provider: openai
+  default: gpt-6-luna
   base_url: ""
   api_mode: chat_completions
 
+# If OpenAI is temporarily unavailable or the account is out of API credit,
+# Hermes can still attempt the already-configured OpenRouter route for the
+# current turn instead of making WhatsApp completely silent.
+fallback_providers:
+  - provider: openrouter
+    model: openrouter/free
+
+# Auxiliary tasks may use the active provider. The previous free-only gate
+# rejected valid fallback routing and caused title-generation warnings.
 auxiliary:
-  free_only: true
+  free_only: false
 
 gateway:
   api_server:
