@@ -348,8 +348,6 @@ function plainLanguageFallback(input: {
   }
 
   const normalized = input.incomingMessage.trim().toLowerCase();
-  const party = input.participantRole === "buyer" ? "buyer" : "seller";
-
   if (/^(?:hi|hy|hello|hey|yo|sup|gm|good morning|good afternoon|good evening)[.! ]*$/i.test(normalized)) {
     return {
       intent: "casual",
@@ -372,7 +370,7 @@ function plainLanguageFallback(input: {
         intent: "acceptance",
         replyToSender: reply,
         relay: true,
-        relayToCounterparty: `The ${party} accepted the exact counteroffer they replied to.`,
+        relayToCounterparty: "Your counteroffer has been accepted. I’ll keep the next step tied to those exact terms.",
         newTradeIntake: false,
       };
     }
@@ -382,7 +380,7 @@ function plainLanguageFallback(input: {
         intent: "rejection",
         replyToSender: reply,
         relay: true,
-        relayToCounterparty: `The ${party} rejected the exact counteroffer they replied to.`,
+        relayToCounterparty: "That counteroffer wasn’t accepted. Send revised terms if you want me to keep negotiating.",
         newTradeIntake: false,
       };
     }
