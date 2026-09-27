@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
+import { and, eq } from "drizzle-orm";
+import { db, dealParticipantsTable, dealsTable, messagesTable, usersTable } from "@workspace/db";
 import { buyerRequirementReply } from "../akif/buyerRequirementReply";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -29,6 +31,97 @@ async function deliverWhatsAppReply(to: string | undefined, body: string) {
       reason: error instanceof Error ? error.message : "whatsapp_delivery_failed",
     };
   }
+}
+
+async function handleDealWhatsAppMessage(from: string, text: string) {
+  const match = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
+  if (!match) return null;
+
+  const dealNumber = match[1]!.toUpperCase();
+  const messageBody = match[2]!.trim();
+
+  const [sender] = await db
+    .select({ id: usersTable.id, role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.phone, from))
+    .limit(1);
+
+  if (!sender) {
+    return { reply: "UDC could not link this WhatsApp number to a verified trade account.", deliveredToCounterparty: false };
+  }
+
+  const [deal] = await db
+    .select({
+      id: dealsTable.id,
+      dealNumber: dealsTable.dealNumber,
+      status: dealsTable.status,
+      buyerUserId: dealsTable.buyerUserId,
+      sellerUserId: dealsTable.sellerUserId,
+    })
+    .from(dealsTable)
+    .where(eq(dealsTable.dealNumber, dealNumber))
+    .limit(1);
+
+  if (!deal) {
+    return { reply: `UDC could not find deal ${dealNumber}. Check the deal number and try again.`, deliveredToCounterparty: false };
+  }
+
+  if (deal.status !== "negotiation") {
+    return { reply: `Deal ${deal.dealNumber} is currently ${deal.status}, so negotiation messages are not open.`, deliveredToCounterparty: false };
+  }
+
+  const [participant] = await db
+    .select({ id: dealParticipantsTable.id })
+    .from(dealParticipantsTable)
+    .where(and(
+      eq(dealParticipantsTable.dealId, deal.id),
+      eq(dealParticipantsTable.userId, sender.id),
+      eq(dealParticipantsTable.status, "active"),
+    ))
+    .limit(1);
+
+  if (!participant) {
+    return { reply: "This WhatsApp account is not an active participant in that UDC deal.", deliveredToCounterparty: false };
+  }
+
+  const receiverUserId = sender.id === deal.buyerUserId
+    ? deal.sellerUserId
+    : sender.id === deal.sellerUserId
+      ? deal.buyerUserId
+      : null;
+
+  if (!receiverUserId) {
+    return { reply: "This WhatsApp account is not a buyer or seller on that UDC deal.", deliveredToCounterparty: false };
+  }
+
+  const [receiver] = await db
+    .select({ phone: usersTable.phone })
+    .from(usersTable)
+    .where(eq(usersTable.id, receiverUserId))
+    .limit(1);
+
+  await db.insert(messagesTable).values({
+    dealId: deal.id,
+    senderUserId: sender.id,
+    receiverUserId,
+    message: messageBody,
+  });
+
+  let deliveredToCounterparty = false;
+  if (receiver?.phone) {
+    const delivery = await deliverWhatsAppReply(
+      receiver.phone,
+      `UDC deal ${deal.dealNumber} negotiation message from ${sender.role}: ${messageBody}`,
+    );
+    deliveredToCounterparty = delivery.delivered;
+  }
+
+  return {
+    reply: deliveredToCounterparty
+      ? `UDC recorded your negotiation message for ${deal.dealNumber} and sent it to the other party.`
+      : `UDC recorded your negotiation message for ${deal.dealNumber}. Counterparty WhatsApp delivery could not be confirmed.`,
+    deliveredToCounterparty,
+  };
 }
 
 router.get(
@@ -94,6 +187,23 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if (typeof message.text?.body !== "string") continue;
 
       if (message.from) {
+        const dealMessage = await handleDealWhatsAppMessage(message.from, message.text.body);
+        if (dealMessage) {
+          const delivery = await deliverWhatsAppReply(message.from, dealMessage.reply);
+          if (!delivery.delivered) {
+            req.log.error(
+              { flow: "deal_negotiation", reason: delivery.reason },
+              "UDC could not send deal negotiation acknowledgement",
+            );
+          } else {
+            req.log.info(
+              { flow: "deal_negotiation", counterpartyDelivered: dealMessage.deliveredToCounterparty },
+              "UDC processed WhatsApp deal negotiation message",
+            );
+          }
+          continue;
+        }
+
         const research = await queueWhatsAppResearch(message.from, message.text.body);
         if (research) {
           const reply =
