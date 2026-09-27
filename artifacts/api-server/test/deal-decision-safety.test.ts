@@ -191,7 +191,7 @@ test("meeting requests are mediated rather than raw-forwarded", () => {
   assert.doesNotMatch(decision.relayToCounterparty ?? "", /^Can we arrange/i);
 });
 
-test("structured relay with an internal path is blocked", () => {
+test("structured relay with an internal path is rewritten safely", () => {
   const decision = normalizeModelDecision({
     content: JSON.stringify({
       intent: "document_request",
@@ -206,8 +206,9 @@ test("structured relay with an internal path is blocked", () => {
   });
 
   assert.ok(decision);
-  assert.equal(decision.relay, false);
-  assert.equal(decision.relayToCounterparty, null);
+  assert.equal(decision.relay, true);
+  assert.match(decision.relayToCounterparty ?? "", /buyer requested/i);
+  assert.doesNotMatch(decision.relayToCounterparty ?? "", /storage:\/\//i);
 });
 
 
