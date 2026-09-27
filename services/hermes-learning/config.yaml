@@ -43,21 +43,21 @@ tool_loop_guardrails:
 # The secret is injected only by Render as OPENAI_API_KEY.
 model:
   provider: openrouter
-  default: google/gemma-4-26b-a4b-it:free
+  default: openrouter/free
   base_url: ""
   api_mode: chat_completions
 
 # If OpenAI is temporarily unavailable or the account is out of API credit,
 # Hermes can still attempt the already-configured OpenRouter route for the
 # current turn instead of making WhatsApp completely silent.
-fallback_providers:
-  - provider: openai
-    model: gpt-6-luna
+fallback_providers: []
 
 # Auxiliary tasks may use the active provider. The previous free-only gate
 # rejected valid fallback routing and caused title-generation warnings.
 auxiliary:
-  free_only: false
+  free_only: true
+  title_generation:
+    enabled: false
 
 gateway:
   api_server:
