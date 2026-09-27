@@ -545,13 +545,39 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
+      if (message.from && typeof message.document?.id === "string") {
+        try {
+          const documentResult = await handleWhatsAppDealDocument(message.from, {
+            id: message.document.id,
+            filename: message.document.filename,
+            mime_type: message.document.mime_type,
+            caption: message.document.caption,
+          });
+          const delivery = await deliverWhatsAppReply(message.from, documentResult.reply);
+          req.log.info(
+            { flow: "deal_document", delivered: delivery.delivered },
+            "UDC processed WhatsApp deal document",
+          );
+        } catch (error) {
+          req.log.error(
+            { flow: "deal_document", reason: error instanceof Error ? error.message : "document_processing_failed" },
+            "UDC could not process WhatsApp deal document",
+          );
+          await deliverWhatsAppReply(
+            message.from,
+            "I received the document, but I couldn’t attach it to the deal safely. Please try again in a moment.",
+          );
+        }
+        continue;
+      }
+
       if (typeof message.text?.body !== "string") continue;
 
       if (message.from) {
