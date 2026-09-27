@@ -17,6 +17,8 @@ import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { directDealFactReply } from "../akif/dealFactReply";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
+import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 const router: IRouter = Router();
 
@@ -26,11 +28,31 @@ function isEqual(left: string, right: string) {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+function cleanHumanWhatsAppText(body: string) {
+  return body
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/[`*_~]/g, "")
+    .replace(/_{2,}/g, " ")
+    .replace(/;{1,}/g, ".")
+    .replace(/"{2,}/g, "")
+    .replace(/'{3,}/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.!?])/g, "$1")
+    .replace(/([!?.,])\1{1,}/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function isUdcPaymentPolicyMessage(text: string) {
+  const value = text.trim().toLowerCase();
+  return /\b(?:payment terms?|payment method|what payment|which payment|how (?:do|will|should) (?:i|we|you) pay|how is payment|tt|t\/t|mt103|sblc|standby letter of credit|cash on delivery|cod|escrow|bank transfer|wire transfer)\b/i.test(value);
+}
+
 async function deliverWhatsAppReply(to: string | undefined, body: string) {
   if (!to) return { delivered: false as const, reason: "missing_sender" as const };
 
   try {
-    return await sendWhatsAppText(to, body);
+    return await sendWhatsAppText(to, cleanHumanWhatsAppText(body));
   } catch {
     return {
       delivered: false as const,
@@ -745,7 +767,7 @@ async function handleDealWhatsAppMessage(
 
   if (!replyToProviderMessageId && /^(?:hi|hy|hello|hey)[.! ]*$/i.test(messageBody)) {
     return {
-      reply: "Hi. I’m here with this deal. Tell me what you need and I’ll handle the next step.",
+      reply: "Hey, what’s up?",
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,
@@ -777,7 +799,7 @@ async function handleDealWhatsAppMessage(
       relayed: false,
     });
     return {
-      reply: "I received your message, but my conversation service is temporarily unavailable. I haven't passed it to the other party. Please try again shortly, or ask a UDC team member to follow up.",
+      reply: "I didn’t pass that on. Send it again and I’ll sort it.",
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,
