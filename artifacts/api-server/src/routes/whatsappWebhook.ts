@@ -12,6 +12,7 @@ import { triageBuyerRequirement } from "../akif/buyerRequirementTriage";
 import { downloadWhatsAppMedia, sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
+import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { uploadDocumentBytes } from "../supabase/storage";
 
 const router: IRouter = Router();
@@ -241,13 +242,41 @@ async function handleWhatsAppDealDocument(
   const fileUrl = await uploadDocumentBytes(objectPath, media.bytes, media.mimeType);
   const documentType = inferDocumentType(document.filename, document.caption);
 
-  await db.insert(documentsTable).values({
+  const [savedDocument] = await db.insert(documentsTable).values({
     dealId,
     uploadedBy: sender.id,
     documentType,
     fileUrl,
     status: "pending",
-  });
+  }).returning({ id: documentsTable.id });
+
+  if (!savedDocument) {
+    throw new Error("document_record_not_created");
+  }
+
+  void processDocumentIntelligence({
+    documentId: savedDocument.id,
+    dealId,
+    documentType,
+    bytes: media.bytes,
+    fileName: document.filename ?? "document",
+    mimeType: media.mimeType,
+  })
+    .then(async (result) => {
+      const warning = result.status === "needs_review"
+        ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
+        : "";
+      await sendWhatsAppText(
+        from,
+        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}`,
+      ).catch(() => undefined);
+    })
+    .catch(async () => {
+      await sendWhatsAppText(
+        from,
+        `I attached the ${documentType} to the deal, but full extraction failed. UDC kept the original file for review and retry.`,
+      ).catch(() => undefined);
+    });
 
   await setActiveDealContext(sender.id, dealId);
   await db.insert(dealConversationEventsTable).values({
