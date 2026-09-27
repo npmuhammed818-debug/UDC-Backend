@@ -1,14 +1,17 @@
 import type { SellerOfferDraft } from "./sellerOfferTriage";
 
-const labels: Record<SellerOfferDraft["missingFields"][number], string> = {
-  product: "product and specification",
-  quantity: "available quantity in MT",
-  price: "offer price per MT in USD",
-};
+function formatPrice(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+}
 
 export function sellerOfferReply(draft: SellerOfferDraft) {
-  if (draft.missingFields.length === 0) {
-    return "Got it. I’ve got the offer. I’ll take it from here and come back once it’s ready to move.";
+  const next = draft.missingFields[0];
+
+  if (!next) {
+    return `Perfect. ${draft.quantity} ${draft.unit ?? "MT"} ${draft.product} at $${formatPrice(draft.price!)}/${draft.unit ?? "MT"}. I’ll take it from here.`;
   }
-  return `Got it. I just need ${draft.missingFields.map((field) => labels[field]).join(", ")}.`;
+
+  if (next === "product") return "What are you offering?";
+  if (next === "quantity") return "How much can you supply?";
+  return "What’s your best price?";
 }
