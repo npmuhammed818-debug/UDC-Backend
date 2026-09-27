@@ -73,10 +73,34 @@ function containsInternalLeak(text: string) {
     || /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i.test(text);
 }
 
-function looksLikeNewTradeIntake(text: string) {
-  const normalized = text.toLowerCase();
-  return /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b/.test(normalized)
-    && /\b(?:need|want|buy|supply|sell|offer|deliver|delivered|from|to)\b/.test(normalized);
+export function looksLikeNewTradeIntake(text: string) {
+  const normalized = text.trim().toLowerCase();
+  const quantity = /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b/i;
+  if (!quantity.test(normalized)) return false;
+
+  if (/\b(?:new|another|separate|different|also)\s+(?:requirement|deal|order|trade|shipment)\b/.test(normalized)) {
+    return true;
+  }
+
+  if (!/\b(?:need|want|buy|supply|sell|offer|deliver|delivered)\b/.test(normalized)) {
+    return false;
+  }
+
+  const match = normalized.match(/\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b\s+([^$\d][^$]{0,80})/i);
+  if (!match?.[1]) return false;
+
+  const tail = match[1]
+    .split(/\b(?:at|for|with|payment|price|usd|aed|inr|eur|after|before)\b/i)[0]
+    ?.trim() ?? "";
+
+  const productWords = tail
+    .replace(/\b(?:delivered|delivery|to|from|cif|fob|cfr|exw)\b/gi, " ")
+    .replace(/[^a-z]+/gi, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length >= 2);
+
+  return productWords.length > 0;
 }
 
 function highConfidenceIntent(text: string) {
@@ -165,6 +189,98 @@ function deterministicCopy(intent: string, participantRole: string, message: str
     default:
       return null;
   }
+}
+
+export function preflightDealDecision(input: {
+  participantRole: string;
+  incomingMessage: string;
+  replyContextKind?: string;
+}): DealConversationDecision | null {
+  const normalized = input.incomingMessage.trim().toLowerCase();
+  const party = input.participantRole === "buyer" ? "buyer" : "seller";
+  const shortReply = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|no|nope|nah|done|go ahead|proceed)[.! ]*$/i.test(normalized);
+  const affirmative = /^(?:yes|yep|yeah|yup|ok|okay|sure|fine|done|go ahead|proceed)[.! ]*$/i.test(normalized);
+  const negative = /^(?:no|nope|nah)[.! ]*$/i.test(normalized);
+  const exactCounteroffer = Boolean(input.replyContextKind?.startsWith("mediated_counteroffer:"));
+  const documentContext = Boolean(input.replyContextKind?.includes("document"));
+
+  if (shortReply) {
+    if (exactCounteroffer && affirmative) {
+      return {
+        intent: "acceptance",
+        replyToSender: "Confirmed. I recorded your reply to that exact counteroffer.",
+        relay: true,
+        relayToCounterparty: `The ${party} accepted the exact counteroffer they replied to.`,
+        newTradeIntake: false,
+      };
+    }
+
+    if (exactCounteroffer && negative) {
+      return {
+        intent: "rejection",
+        replyToSender: "Understood. I recorded your rejection of that exact counteroffer.",
+        relay: true,
+        relayToCounterparty: `The ${party} rejected the exact counteroffer they replied to.`,
+        newTradeIntake: false,
+      };
+    }
+
+    if (documentContext) {
+      return {
+        intent: "document_request",
+        replyToSender: "Got it. I’ll keep this reply tied to the document request.",
+        relay: false,
+        relayToCounterparty: null,
+        newTradeIntake: false,
+      };
+    }
+
+    return {
+      intent: "casual",
+      replyToSender: "Got it.",
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    };
+  }
+
+  const intent = highConfidenceIntent(input.incomingMessage);
+  if (!intent) return null;
+
+  if (intent === "new_trade_intake") {
+    return {
+      intent,
+      replyToSender: "",
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: true,
+    };
+  }
+
+  if (intent === "casual") {
+    return {
+      intent,
+      replyToSender: "Hi. I’m here with this deal. Tell me what you need.",
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    };
+  }
+
+  if (intent === "status_question") {
+    return null;
+  }
+
+  const deterministic = deterministicCopy(intent, input.participantRole, input.incomingMessage);
+  return deterministic
+    ? {
+        intent,
+        replyToSender: deterministic.replyToSender,
+        relay: deterministic.relay,
+        relayToCounterparty: deterministic.relayToCounterparty,
+        newTradeIntake: false,
+      }
+    : null;
 }
 
 function structuredReplyFallback(intent: string, deal: DealStateForReply) {
