@@ -209,3 +209,80 @@ test("structured relay with an internal path is blocked", () => {
   assert.equal(decision.relay, false);
   assert.equal(decision.relayToCounterparty, null);
 });
+
+
+test("structured model cannot turn bare yes into acceptance without reply context", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "acceptance",
+      replyToSender: "Confirmed.",
+      relay: true,
+      relayToCounterparty: "The seller accepted the deal.",
+      newTradeIntake: false,
+    }),
+    participantRole: "seller",
+    incomingMessage: "Yes",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.equal(decision.intent, "casual");
+  assert.equal(decision.relay, false);
+});
+
+test("structured status questions are never forwarded to the other party", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "status_question",
+      replyToSender: "The deal is still negotiating.",
+      relay: true,
+      relayToCounterparty: "Buyer asked for status.",
+      newTradeIntake: false,
+    }),
+    participantRole: "buyer",
+    incomingMessage: "what is the current status?",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.equal(decision.relay, false);
+});
+
+test("general trade-term questions like DLC stay between user and AKIF", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "counterparty_question",
+      replyToSender: "DLC means Documentary Letter of Credit.",
+      relay: true,
+      relayToCounterparty: "The buyer asked what DLC means.",
+      newTradeIntake: false,
+    }),
+    participantRole: "buyer",
+    incomingMessage: "wht is dlc?",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.match(decision.replyToSender, /Documentary Letter of Credit/i);
+  assert.equal(decision.relay, false);
+});
+
+test("structured provider diagnostics are never shown or relayed", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "status_question",
+      replyToSender: "Rate limit exceeded for provider openrouter.",
+      relay: true,
+      relayToCounterparty: "API key failed.",
+      newTradeIntake: false,
+    }),
+    participantRole: "buyer",
+    incomingMessage: "status?",
+    deal,
+  });
+
+  assert.ok(decision);
+  assert.doesNotMatch(decision.replyToSender, /rate limit|provider|api key/i);
+  assert.equal(decision.relay, false);
+  assert.equal(decision.relayToCounterparty, null);
+});
