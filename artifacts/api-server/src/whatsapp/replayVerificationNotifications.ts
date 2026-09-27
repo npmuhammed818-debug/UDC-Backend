@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { db, notificationsTable, usersTable } from "@workspace/db";
+import { db, dealsTable, notificationsTable, usersTable } from "@workspace/db";
 import { sendWhatsAppText } from "./client";
 
 export async function replayVerificationWhatsAppNotifications() {
@@ -55,6 +55,92 @@ export async function replayVerificationWhatsAppNotifications() {
         body: "WhatsApp verification update sent for status verified.",
         link: "/profile",
       });
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  return { configured: true as const, sent, failed, skipped };
+}
+
+
+export async function replayDealStatusWhatsAppNotification() {
+  const dealId = process.env.WHATSAPP_DEAL_STATUS_REPLAY_ID?.trim();
+  if (!dealId) return { configured: false as const, sent: 0, failed: 0, skipped: 0 };
+
+  const [deal] = await db
+    .select({
+      id: dealsTable.id,
+      dealNumber: dealsTable.dealNumber,
+      status: dealsTable.status,
+      buyerUserId: dealsTable.buyerUserId,
+      sellerUserId: dealsTable.sellerUserId,
+    })
+    .from(dealsTable)
+    .where(eq(dealsTable.id, dealId))
+    .limit(1);
+
+  if (!deal) return { configured: true as const, sent: 0, failed: 0, skipped: 1 };
+
+  const counterparties = await db
+    .select({ id: usersTable.id, phone: usersTable.phone })
+    .from(usersTable)
+    .where(eq(usersTable.status, "verified"));
+
+  const targets = counterparties.filter(
+    (user) => user.id === deal.buyerUserId || user.id === deal.sellerUserId,
+  );
+
+  let sent = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  for (const user of targets) {
+    if (!user.phone) {
+      skipped += 1;
+      continue;
+    }
+
+    const markerType = `deal_status_whatsapp_sent_${deal.id}_${deal.status}`;
+    const [alreadySent] = await db
+      .select({ id: notificationsTable.id })
+      .from(notificationsTable)
+      .where(and(
+        eq(notificationsTable.userId, user.id),
+        eq(notificationsTable.type, markerType),
+      ))
+      .limit(1);
+
+    if (alreadySent) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const message = `Deal status updated: Deal ${deal.dealNumber} is now ${deal.status}.`;
+      const delivery = await sendWhatsAppText(user.phone, message);
+      if (!delivery.delivered) {
+        failed += 1;
+        continue;
+      }
+
+      await db.insert(notificationsTable).values([
+        {
+          userId: user.id,
+          type: "deal_status_updated",
+          title: "Deal status updated",
+          body: `Deal ${deal.dealNumber} is now ${deal.status}.`,
+          link: `/deals/${deal.id}`,
+        },
+        {
+          userId: user.id,
+          type: markerType,
+          title: "WhatsApp deal status sent",
+          body: `WhatsApp deal status sent for ${deal.status}.`,
+          link: `/deals/${deal.id}`,
+        },
+      ]);
       sent += 1;
     } catch {
       failed += 1;
