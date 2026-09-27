@@ -303,6 +303,7 @@ async function handleDealWhatsAppMessage(
   from: string,
   text: string,
   replyToProviderMessageId?: string,
+  inboundProviderMessageId?: string,
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
   const ruleIntent = classifyConversationIntent(text);
@@ -443,6 +444,31 @@ async function handleDealWhatsAppMessage(
       : null;
 
   if (!receiverUserId) return null;
+
+  // Meta can retry the same webhook when an AI turn is slow. Claim the inbound
+  // provider message id before any model call so the same commercial message
+  // cannot be interpreted or relayed twice.
+  if (inboundProviderMessageId) {
+    const [claim] = await db.insert(whatsappMessageContextsTable)
+      .values({
+        providerMessageId: inboundProviderMessageId,
+        dealId: deal.id,
+        recipientUserId: sender.id,
+        kind: "inbound_processing",
+      })
+      .onConflictDoNothing()
+      .returning({ id: whatsappMessageContextsTable.id });
+
+    if (!claim) {
+      return {
+        duplicate: true,
+        reply: "",
+        deliveredToCounterparty: false,
+        dealId: deal.id,
+        recipientUserId: sender.id,
+      };
+    }
+  }
 
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
@@ -626,8 +652,21 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if (typeof message.text?.body !== "string") continue;
 
       if (message.from) {
-        const dealMessage = await handleDealWhatsAppMessage(message.from, message.text.body, message.context?.id);
+        const dealMessage = await handleDealWhatsAppMessage(
+          message.from,
+          message.text.body,
+          message.context?.id,
+          message.id,
+        );
         if (dealMessage) {
+          if ("duplicate" in dealMessage && dealMessage.duplicate) {
+            req.log.info(
+              { whatsappMessageId: message.id, flow: "deal_negotiation" },
+              "UDC ignored duplicate WhatsApp deal message",
+            );
+            continue;
+          }
+
           const delivery = await deliverWhatsAppReply(message.from, dealMessage.reply);
           if (!delivery.delivered) {
             req.log.error(
