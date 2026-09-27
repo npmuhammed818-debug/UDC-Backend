@@ -351,3 +351,52 @@ test("human tone fallback avoids bot-like wording", () => {
     /confirmed terms in UDC|tell me naturally|I understand|I recorded|I’ve noted/i,
   );
 });
+
+
+test("precision chatter and internal Hermes docs never reach WhatsApp", () => {
+  const badReply = "Sorry — 100.000 MT / $5,900.00 USD is just full precision, not more units. Did you mean the quantity or the price decimals? And yes, we do SPA next, FCO for review. What's the feature question specifically — Hermes agent docs at https://hermes-agent.nousresearch.com/docs if that's it.";
+
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "other",
+      replyToSender: badReply,
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    }),
+    participantRole: "seller",
+    incomingMessage: "what next?",
+    deal: {
+      ...deal,
+      quantity: "100.000000",
+      agreedPrice: "5900.00",
+    },
+  });
+
+  assert.ok(decision);
+  assert.doesNotMatch(decision.replyToSender, /full precision|price decimals|quantity decimals|hermes|nousresearch|feature question|100\.000/i);
+});
+
+test("fallback trade values remove meaningless trailing zeros", () => {
+  const decision = normalizeModelDecision({
+    content: JSON.stringify({
+      intent: "status_question",
+      replyToSender: true,
+      relay: false,
+      relayToCounterparty: null,
+      newTradeIntake: false,
+    }),
+    participantRole: "buyer",
+    incomingMessage: "status?",
+    deal: {
+      ...deal,
+      quantity: "100.000000",
+      agreedPrice: "5900.00",
+    },
+  });
+
+  assert.ok(decision);
+  assert.match(decision.replyToSender, /100 MT/);
+  assert.match(decision.replyToSender, /\$5,900\/MT/);
+  assert.doesNotMatch(decision.replyToSender, /100\.000|5,900\.00/);
+});
