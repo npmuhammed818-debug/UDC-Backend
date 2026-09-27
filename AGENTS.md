@@ -255,24 +255,17 @@ Later AKIF can extract information, compare documents to stored terms, identify 
 Do not treat automated document analysis as final legal or authenticity verification.
 
 ## 11. Payment and Banking Workflow
-Deals may use agreed methods/instruments such as:
-- LC
-- DLC
-- SBLC
-- BG
-- TT
+UDC's transaction workflow uses DLC only.
 
-Relevant banking/SWIFT messages or evidence may include, where applicable:
-- MT700
-- MT705
-- MT799
-- MT103
+Platform policy:
+- Instrument type: DLC
+- Release condition: after SGS inspection at destination
+- Do not offer or create TT, MT103, SBLC, BG, escrow, cash-on-delivery, or another payment route as an alternative UDC workflow
+- Do not ask buyers or sellers to choose a payment method
 
-Do not hard-code one payment structure for every transaction.
+Store the DLC status and relevant evidence for each deal.
 
-Store the terms actually agreed for each deal and relevant evidence/status.
-
-UDC/AKIF is not a bank and must not imply otherwise.
+The fixed UDC workflow does not make UDC a bank, issuer, confirming bank, escrow provider, inspector, or legal authority. Actual DLC wording, bank acceptance, compliant presentation, SGS evidence, and release remain subject to the issuing/handling banks, transaction documents, and applicable law.
 
 ## 12. Inspection and Shipment
 Track, where relevant:
