@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsTable } from "@workspace/db";
-import { normalizeModelDecision, preflightDealDecision, type DealConversationDecision } from "./dealDecisionSafety";
+import { looksLikeNewTradeIntake, normalizeModelDecision, preflightDealDecision, type DealConversationDecision } from "./dealDecisionSafety";
+import { conversationSafeDealMemory } from "./dealConversationMemory";
 import { runHermesChat } from "./intelligence/hermesClient";
 
 export async function interpretActiveDealConversation(input: {
@@ -53,7 +54,7 @@ export async function interpretActiveDealConversation(input: {
       .limit(1),
   ]);
 
-  const dealMemory = snapshotRows[0]?.snapshot ?? null;
+  const dealMemory = conversationSafeDealMemory(snapshotRows[0]?.snapshot ?? null);
 
   const system = [
     "You are AKIF, the human-like trade coordinator inside UDC.",
@@ -63,6 +64,9 @@ export async function interpretActiveDealConversation(input: {
     "Answer the sender directly when UDC already has enough context.",
     "Only involve the counterparty when their input or awareness is actually needed.",
     "Speak as UDC itself, in first-person coordinator voice. Do not narrate handoffs with phrases like 'the buyer said', 'the seller said', 'buyer asked', or 'seller requested'.",
+    "Never mention internal extraction failures, HTTP/status codes, model/provider errors, storage paths, retries, backend services, or implementation details. If a document could not be analyzed automatically, simply treat the uploaded original as available for human review without exposing the technical reason.",
+    "Keep this conversation strictly inside the current deal. Do not bring up another product, another requirement, or a separate intake unless the incoming message itself clearly asks to switch. If the incoming message is a separate new trade request, set newTradeIntake=true and do not mix it into the current deal reply.",
+    "Do not ask the user to reconfirm facts that are already clearly confirmed in the structured deal or current conversation. When one next action is clear, state that single next action instead of offering a menu of unrelated choices.",
     "When talking to either side, turn the information into a natural UDC message for that recipient, for example 'Can you do $5,900/MT after SGS?' or 'Here is the FCO for review.'",
     "Never blindly forward the sender's raw message. If relay is needed, rewrite it from UDC's own voice and preserve only the commercial facts or action needed.",
     "Do not invent deal facts, company verification, documents, banking status, inspection results, shipment status, or legal conclusions.",
@@ -91,14 +95,17 @@ export async function interpretActiveDealConversation(input: {
       destination: deal.destination,
     },
     dealMemory,
-    recentConversation: history.reverse().map((event) => ({
-      eventId: event.id,
-      role: event.participantRole,
-      intent: event.intent,
-      text: event.originalText,
-      relayed: event.relayed,
-      relaySummary: event.relayText,
-    })),
+    recentConversation: history
+      .reverse()
+      .filter((event) => !looksLikeNewTradeIntake(event.originalText))
+      .map((event) => ({
+        eventId: event.id,
+        role: event.participantRole,
+        intent: event.intent,
+        text: event.originalText,
+        relayed: event.relayed,
+        relaySummary: event.relayText,
+      })),
     incomingMessage: input.message,
     replyContextKind: input.replyContextKind ?? null,
     requiredOutput: {
