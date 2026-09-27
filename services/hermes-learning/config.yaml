@@ -34,12 +34,12 @@ agent:
 tool_loop_guardrails:
   non_interactive_hard_stop_enabled: true
 
-# Use OpenRouter's free router for the AKIF Hermes learning layer during
+# Use the fixed Qwen3.8 27B free endpoint for consistent AKIF conversation behavior during
 # development. The API key is supplied only through Render as
 # OPENROUTER_API_KEY and is never committed to the repository.
 model:
   provider: openrouter
-  default: openrouter/free
+  default: qwen/qwen3.8-27b:free
   base_url: ""
   api_mode: chat_completions
 
