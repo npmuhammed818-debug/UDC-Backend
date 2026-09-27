@@ -3,6 +3,7 @@ import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsT
 import { looksLikeNewTradeIntake, normalizeModelDecision, preflightDealDecision, type DealConversationDecision } from "./dealDecisionSafety";
 import { conversationSafeDealMemory } from "./dealConversationMemory";
 import { runHermesChat } from "./intelligence/hermesClient";
+import { formatTradeMoney, formatTradeQuantity } from "./tradeDisplay";
 
 export async function interpretActiveDealConversation(input: {
   dealId: string;
@@ -80,7 +81,8 @@ export async function interpretActiveDealConversation(input: {
     "A short reply such as yes, no, ok, sure, done, or proceed must be interpreted only against replyContextKind when it is present. Never treat a bare short reply as acceptance of price, quantity, payment, or other deal terms unless the replied-to context is explicitly the exact commercial offer.",
     "When replyContextKind contains an event id after a colon, match it to recentConversation.eventId and confirm only the terms that were actually present in that exact relayed message. Never add quantity, price, payment, or document terms from a different message.",
     "Keep buyer and seller roles separate. Never attribute a buyer statement to the seller or a seller statement to the buyer.",
-    "Never expose internal storage paths, database UUIDs, service URLs, provider diagnostics, JSON control objects, or backend implementation details in WhatsApp replies.",
+    "Never expose internal storage paths, database UUIDs, service URLs, provider diagnostics, JSON control objects, backend implementation details, Hermes/agent documentation, model names, engineering links, or internal feature discussions in buyer/seller WhatsApp replies.",
+    "Do not explain database precision or decimal formatting. Present trade values the way a human broker would: 100 MT, $5,900/MT, not 100.000000 MT or 5900.00 unless decimals are commercially meaningful.",
     "If this is clearly a separate new buyer requirement or seller offer unrelated to the current deal, set newTradeIntake=true.",
     "Your ENTIRE response must be exactly one valid JSON object beginning with { and ending with }. No markdown, preface, explanation, or text outside the JSON.",
     "replyToSender MUST always be a JSON string containing the actual natural WhatsApp sentence. NEVER use true, false, null, an object, or an array for replyToSender.",
@@ -92,9 +94,9 @@ export async function interpretActiveDealConversation(input: {
     deal: {
       dealNumber: deal.dealNumber,
       status: deal.status,
-      quantity: deal.quantity,
+      quantity: formatTradeQuantity(deal.quantity),
       unit: deal.unit,
-      agreedPrice: deal.agreedPrice,
+      agreedPrice: formatTradeMoney(deal.currency, deal.agreedPrice),
       currency: deal.currency,
       incoterm: deal.incoterm,
       destination: deal.destination,
