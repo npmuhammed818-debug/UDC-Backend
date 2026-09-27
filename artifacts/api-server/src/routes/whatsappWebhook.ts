@@ -760,7 +760,7 @@ async function handleDealWhatsAppMessage(
       relayed: false,
     });
     return {
-      reply: "I didn’t pass that on. Send it again and I’ll sort it.",
+      reply: "I couldn’t process that properly, so I haven’t passed anything on.",
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,

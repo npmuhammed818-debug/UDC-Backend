@@ -84,19 +84,25 @@ export async function runConversationChat(
   system?: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<{ content: string; raw: HermesChatResponse }> {
-  if (isOpenAIConfigured()) {
-    try {
-      return await runOpenAIChat(message, system, timeoutMs);
-    } catch (error) {
-      console.warn("Direct OpenAI conversation failed; falling back to Hermes", {
-        reason: error instanceof Error && error.name === "AbortError"
-          ? "timeout"
-          : "provider_request_failed",
-      });
-    }
+  if (!isOpenAIConfigured()) {
+    console.warn("Direct OpenAI conversation skipped", { reason: "not_configured" });
+    return runHermesChat(message, system, timeoutMs);
   }
 
-  return runHermesChat(message, system, timeoutMs);
+  try {
+    return await runOpenAIChat(message, system, timeoutMs);
+  } catch (error) {
+    const statusMatch = error instanceof Error
+      ? error.message.match(/OpenAI returned HTTP (\d{3})/)
+      : null;
+    console.warn("Direct OpenAI conversation failed; falling back to Hermes", {
+      reason: error instanceof Error && error.name === "AbortError"
+        ? "timeout"
+        : "provider_request_failed",
+      ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+    });
+    return runHermesChat(message, system, timeoutMs);
+  }
 }
 
 function hermesConfig() {
