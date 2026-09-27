@@ -207,7 +207,8 @@ test("structured relay with an internal path is rewritten safely", () => {
 
   assert.ok(decision);
   assert.equal(decision.relay, true);
-  assert.match(decision.relayToCounterparty ?? "", /buyer requested/i);
+  assert.match(decision.relayToCounterparty ?? "", /provide this for the deal/i);
+  assert.doesNotMatch(decision.relayToCounterparty ?? "", /^\s*the\s+(?:buyer|seller)\b/i);
   assert.doesNotMatch(decision.relayToCounterparty ?? "", /storage:\/\//i);
 });
 
