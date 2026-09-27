@@ -15,6 +15,7 @@ import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { directDealFactReply } from "../akif/dealFactReply";
+import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 
 const router: IRouter = Router();
@@ -656,11 +657,73 @@ async function handleDealWhatsAppMessage(
 
   const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
   if (requestedDocument) {
+    const deliveryTarget = requestedDealDocumentDeliveryTarget(messageBody, sender.role);
     const storedDocument = await latestStoredDealDocument(deal.id, requestedDocument);
+
     if (storedDocument) {
       const storageObjectPath = parseStoragePath(storedDocument.fileUrl);
       if (storageObjectPath) {
         const extension = storageObjectPath.match(/\.([a-z0-9]{1,8})$/i)?.[1] ?? "pdf";
+
+        if (deliveryTarget === "counterparty") {
+          const [receiver] = await db
+            .select({ phone: usersTable.phone })
+            .from(usersTable)
+            .where(eq(usersTable.id, receiverUserId))
+            .limit(1);
+
+          if (!receiver?.phone) {
+            return {
+              reply: `I found the latest ${storedDocument.documentType}, but I can’t deliver it to the other side right now.`,
+              deliveredToCounterparty: false,
+              dealId: deal.id,
+              recipientUserId: sender.id,
+              contextKind: "mediator_reply_document_delivery_failed",
+            };
+          }
+
+          let documentDelivered = false;
+          let documentMessageId: string | undefined;
+          try {
+            const signedUrl = await createSignedDownloadUrl(storageObjectPath);
+            const documentDelivery = await sendWhatsAppDocument(
+              receiver.phone,
+              signedUrl,
+              `${storedDocument.documentType}.${extension}`,
+              `Latest ${storedDocument.documentType} for this deal. Please review it and reply here with the next step.`,
+            );
+            documentDelivered = documentDelivery.delivered;
+            documentMessageId = "messageId" in documentDelivery
+              ? documentDelivery.messageId
+              : undefined;
+          } catch {
+            documentDelivered = false;
+          }
+
+          if (documentDelivered && documentMessageId) {
+            await db.insert(whatsappMessageContextsTable)
+              .values({
+                providerMessageId: documentMessageId,
+                dealId: deal.id,
+                recipientUserId: receiverUserId,
+                kind: `deal_document_${storedDocument.documentType.toLowerCase()}`,
+              })
+              .onConflictDoNothing();
+          }
+
+          return {
+            reply: documentDelivered
+              ? `Done. I sent the latest ${storedDocument.documentType} for review. I’ll keep the response in this deal.`
+              : `I found the latest ${storedDocument.documentType}, but WhatsApp could not deliver the file right now. I kept it attached to this deal.`,
+            deliveredToCounterparty: documentDelivered,
+            dealId: deal.id,
+            recipientUserId: sender.id,
+            contextKind: documentDelivered
+              ? "mediator_reply_document_forwarded"
+              : "mediator_reply_document_delivery_failed",
+          };
+        }
+
         return {
           reply: `I found the latest ${storedDocument.documentType}. I’m sending it here now.`,
           deliveredToCounterparty: false,
@@ -674,6 +737,17 @@ async function handleDealWhatsAppMessage(
           },
         };
       }
+    }
+
+    if (deliveryTarget === "counterparty") {
+      const label = requestedDocument === "LATEST" ? "requested document" : requestedDocument;
+      return {
+        reply: `I don’t have the ${label} attached to this deal yet. Upload it here and I’ll send it for review.`,
+        deliveredToCounterparty: false,
+        dealId: deal.id,
+        recipientUserId: sender.id,
+        contextKind: "mediator_reply_document_missing",
+      };
     }
   }
 
@@ -728,12 +802,12 @@ async function handleDealWhatsAppMessage(
     ? effectiveIntent === "acceptance"
       ? {
           toSender: "Confirmed. I recorded your acceptance of the exact counteroffer you replied to.",
-          toOther: `The ${sender.role === "buyer" ? "buyer" : "seller"} accepted your counteroffer: ${exactCounteroffer.originalText.trim()}`,
+          toOther: `Your counteroffer has been accepted exactly as sent: ${exactCounteroffer.originalText.trim()} I’ll keep the next step tied to those terms.`,
           relay: true,
         }
       : {
           toSender: "Understood. I recorded that you rejected the exact counteroffer you replied to.",
-          toOther: `The ${sender.role === "buyer" ? "buyer" : "seller"} rejected your counteroffer: ${exactCounteroffer.originalText.trim()}`,
+          toOther: `That counteroffer wasn’t accepted: ${exactCounteroffer.originalText.trim()} Send revised terms if you want me to keep negotiating.`,
           relay: true,
         }
     : {
