@@ -44,3 +44,14 @@ test("trade-term education is not mistaken for the current deal Incoterm", () =>
   assert.equal(directDealFactReply("what is FOB?", deal), null);
   assert.match(directDealFactReply("what is the incoterm?", deal) ?? "", /CIF/);
 });
+
+
+test("instant deal facts sound like a person, not a database", () => {
+  const messages = [
+    directDealFactReply("what is the current deal status?", deal),
+    directDealFactReply("what is the current price?", deal),
+    directDealFactReply("confirmed qty?", deal),
+  ].filter(Boolean).join(" ");
+
+  assert.doesNotMatch(messages, /confirmed terms in UDC|confirmed price in UDC|confirmed quantity in UDC|recorded for this deal/i);
+});
