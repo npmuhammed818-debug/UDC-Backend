@@ -2,7 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
-import { replayDealStatusWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
+import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
 
 const rawPort = process.env["PORT"];
 
@@ -45,6 +45,11 @@ app.listen(port, (err) => {
       const dealStatusReplay = await replayDealStatusWhatsAppNotification();
       if (dealStatusReplay.configured) {
         logger.info({ replay: dealStatusReplay }, "WhatsApp deal status replay completed");
+      }
+
+      const dealSummaryReplay = await replayDealSummaryWhatsAppNotification();
+      if (dealSummaryReplay.configured) {
+        logger.info({ replay: dealSummaryReplay }, "WhatsApp deal summary replay completed");
       }
     } else logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
   });
