@@ -15,3 +15,5 @@ export * from "./sellerListings";
 export * from "./users";
 export * from "./workflow";
 export * from "./whatsappMessageContexts";
+
+export * from "./dealConversation";
