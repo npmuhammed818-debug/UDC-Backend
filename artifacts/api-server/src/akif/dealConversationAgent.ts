@@ -3,7 +3,7 @@ import { db, dealConversationEventsTable, dealIntelligenceSnapshotsTable, dealsT
 import { looksLikeNewTradeIntake, normalizeModelDecision, preflightDealDecision, type DealConversationDecision } from "./dealDecisionSafety";
 import { conversationSafeDealMemory } from "./dealConversationMemory";
 import { runHermesChat } from "./intelligence/hermesClient";
-import { formatTradeMoney, formatTradeQuantity } from "./tradeDisplay";
+import { formatTradeMoney, formatTradeQuantity } from "./tradeDisplay.ts";
 
 export async function interpretActiveDealConversation(input: {
   dealId: string;
