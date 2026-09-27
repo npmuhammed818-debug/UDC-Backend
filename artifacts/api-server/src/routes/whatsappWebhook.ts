@@ -46,9 +46,9 @@ function classifyConversationIntent(text: string): ConversationIntent | null {
   const normalized = text.trim().toLowerCase();
 
   if ([
-    /\b(?:i|we)\s+(?:will|would|want to)\s+(?:buy|take|proceed)\b/,
+    /\b(?:i|we)\s+(?:will|would|want to)\s+(?:buy|take|proceed|continue|move ahead|move forward|go forward)\b/,
     /\b(?:i|we)\s+(?:agree|accept|confirm|approve)\b/,
-    /\b(?:accepted|agreed|confirmed|go ahead|proceed with (?:it|the deal)|buy from them|buy this)\b/,
+    /\b(?:accepted|agreed|confirmed|go ahead|go forward|move ahead|move forward|continue|proceed|proceed with (?:it|the deal)|buy from them|buy this|lets go forward)\b/,
   ].some((pattern) => pattern.test(normalized))) {
     return "acceptance";
   }
@@ -225,7 +225,7 @@ async function handleDealWhatsAppMessage(
     resolvedDealId = explicitDeal.id;
   }
 
-  if (!resolvedDealId && intent) {
+  if (!resolvedDealId) {
     const [savedContext] = await db
       .select({ activeDealId: whatsappUserContextsTable.activeDealId })
       .from(whatsappUserContextsTable)
@@ -242,7 +242,7 @@ async function handleDealWhatsAppMessage(
     }
   }
 
-  if (!resolvedDealId && intent) {
+  if (!resolvedDealId) {
     const activeDeals = await db
       .select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
       .from(dealParticipantsTable)
@@ -265,7 +265,7 @@ async function handleDealWhatsAppMessage(
     resolvedDealId = activeDeals[0]!.id;
   }
 
-  if (!resolvedDealId || !intent) return null;
+  if (!resolvedDealId) return null;\n\n  if (!intent) {\n    await setActiveDealContext(sender.id, resolvedDealId);\n    return {\n      reply: "I am following this deal with you. I am not fully sure what you mean. Are you saying proceed on the current terms, change a term, or just acknowledging my last message?",\n      deliveredToCounterparty: false,\n      dealId: resolvedDealId,\n      recipientUserId: sender.id,\n    };\n  }
 
   const [deal] = await db
     .select({
