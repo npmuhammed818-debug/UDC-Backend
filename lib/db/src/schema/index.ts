@@ -21,3 +21,5 @@ export * from "./dealConversation";
 export * from "./documentIntelligence";
 
 export * from "./whatsappWebhookInbox";
+
+export * from "./whatsappIntakeDrafts";
