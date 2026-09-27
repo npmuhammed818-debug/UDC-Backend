@@ -891,6 +891,7 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       id: usersTable.id,
       role: usersTable.role,
       status: usersTable.status,
+      phone: usersTable.phone,
     })
       .from(usersTable)
       .where(eq(usersTable.id, userId))
@@ -922,6 +923,33 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
         body: `Your UDC verification status is now ${user.status}.`,
         link: "/profile",
       });
+
+      if (existingUser.phone) {
+        try {
+          const delivery = await sendWhatsAppText(
+            existingUser.phone,
+            `UDC verification update: your account is now ${user.status}.`,
+          );
+          if (delivery.delivered) {
+            await db.insert(notificationsTable).values({
+              userId: user.id,
+              type: "verification_whatsapp_sent",
+              title: "WhatsApp verification update sent",
+              body: `WhatsApp verification update sent for status ${user.status}.`,
+              link: "/profile",
+            });
+          }
+        } catch (error) {
+          req.log.error(
+            {
+              userId: user.id,
+              status: user.status,
+              reason: error instanceof Error ? error.message : "whatsapp_delivery_failed",
+            },
+            "UDC could not send verification WhatsApp notification",
+          );
+        }
+      }
     }
     res.json({ user });
   } catch (error) {
