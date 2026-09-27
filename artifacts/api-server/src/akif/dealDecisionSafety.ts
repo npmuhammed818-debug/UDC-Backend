@@ -1,4 +1,4 @@
-import { formatTradeMoney, formatTradeQuantity } from "./tradeDisplay";
+import { formatTradeMoney, formatTradeQuantity } from "./tradeDisplay.ts";
 export type DealConversationDecision = {
   intent: string;
   replyToSender: string;
