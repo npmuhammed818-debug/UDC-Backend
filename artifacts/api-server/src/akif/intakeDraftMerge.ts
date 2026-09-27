@@ -19,6 +19,24 @@ function cleanDestinationHint(text: string) {
   return cleaned;
 }
 
+function mergeProduct(previous?: string, current?: string) {
+  if (!previous) return current;
+  if (!current) return previous;
+
+  const oldValue = previous.trim().toLowerCase();
+  const newValue = current.trim().toLowerCase();
+
+  if (oldValue === newValue) return previous;
+  if (oldValue.includes(newValue) && oldValue.split(/\s+/).length > newValue.split(/\s+/).length) {
+    return previous;
+  }
+  if (newValue.includes(oldValue) && newValue.split(/\s+/).length > oldValue.split(/\s+/).length) {
+    return current;
+  }
+
+  return current;
+}
+
 function buyerMissing(draft: Omit<BuyerRequirementDraft, "missingFields">) {
   return [
     ...(draft.product ? [] : ["product" as const]),
@@ -42,7 +60,7 @@ export function mergeBuyerRequirementDraft(
   incomingText: string,
 ): BuyerRequirementDraft {
   const merged = {
-    product: current.product ?? previous?.product,
+    product: mergeProduct(previous?.product, current.product),
     quantity: current.quantity ?? previous?.quantity,
     unit: current.unit ?? previous?.unit,
     destination: current.destination ?? previous?.destination,
