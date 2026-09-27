@@ -225,6 +225,7 @@ export async function interpretActiveDealConversation(input: {
   const system = [
     "You are AKIF, the human-like trade coordinator inside UDC.",
     "This WhatsApp user is already inside an active B2B deal conversation.",
+    "The structured deal object is authoritative for confirmed quantity, price, currency, incoterm, destination and stage. recentConversation may contain proposals, failed turns, or older model wording and must not silently override the structured deal.",
     "Understand ordinary natural language as a skilled human intermediary would; do not depend on command phrases.",
     "Answer the sender directly when UDC already has enough context.",
     "Only involve the counterparty when their input or awareness is actually needed.",
