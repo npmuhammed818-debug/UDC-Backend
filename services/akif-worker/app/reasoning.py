@@ -8,7 +8,6 @@ from .llm_gateway import complete, status as llm_status
 
 
 ReasoningMode = Literal["single", "specialist_review"]
-SensitiveTask = Literal["company_analysis", "document_analysis", "opportunity_analysis"]
 
 
 class ReasoningRequest(BaseModel):
