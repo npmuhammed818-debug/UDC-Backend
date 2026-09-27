@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { createSignedUploadUrl, storagePath } from "../supabase/storage";
@@ -232,7 +232,17 @@ async function notifyDealCounterparties(
   await Promise.all(counterparties.map(async (counterparty) => {
     if (!counterparty.phone) return;
     try {
-      await sendWhatsAppText(counterparty.phone, `${title}: ${body}`);
+      const delivery = await sendWhatsAppText(counterparty.phone, `${title}: ${body}`);
+      if (delivery.messageId) {
+        await db.insert(whatsappMessageContextsTable)
+          .values({
+            providerMessageId: delivery.messageId,
+            dealId,
+            recipientUserId: counterparty.id,
+            kind: type,
+          })
+          .onConflictDoNothing();
+      }
     } catch {
       // WhatsApp delivery failure must not roll back the underlying trade workflow.
     }
