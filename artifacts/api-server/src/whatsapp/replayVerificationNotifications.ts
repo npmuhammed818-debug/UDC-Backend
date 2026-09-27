@@ -40,7 +40,7 @@ export async function replayVerificationWhatsAppNotifications() {
     try {
       const delivery = await sendWhatsAppText(
         user.phone,
-        "UDC verification complete: your test account is now verified.",
+        "Your UDC account is verified.",
       );
 
       if (!delivery.delivered) {
@@ -118,7 +118,7 @@ export async function replayDealStatusWhatsAppNotification() {
     }
 
     try {
-      const message = `Deal status updated: Deal ${deal.dealNumber} is now ${deal.status}.`;
+      const message = `We’re at ${deal.status} now.`;
       const delivery = await sendWhatsAppText(user.phone, message);
       if (!delivery.delivered) {
         failed += 1;
@@ -197,13 +197,8 @@ export async function replayDealSummaryWhatsAppNotification() {
   const markerType = `deal_summary_whatsapp_sent_${deal.id}`;
   const productName = product?.name ?? "Product";
   const message =
-    `UDC Deal ${deal.dealNumber}\n` +
-    `Product: ${productName}\n` +
-    `Quantity: ${deal.quantity} ${deal.unit}\n` +
-    `Price: ${deal.currency} ${deal.agreedPrice} per ${deal.unit}\n` +
-    `Total: ${deal.currency} ${deal.dealValue ?? "not calculated"}\n` +
-    `Destination: ${deal.destination ?? "not specified"}\n` +
-    `Status: ${deal.status}`;
+    `${productName}. ${deal.quantity} ${deal.unit} at ${deal.currency} ${deal.agreedPrice}/${deal.unit}. ` +
+    `Destination ${deal.destination ?? "not confirmed yet"}. We’re at ${deal.status} now.`;
 
   for (const user of targets) {
     if (!user.phone) {
