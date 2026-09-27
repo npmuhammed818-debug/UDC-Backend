@@ -26,15 +26,16 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startAkifResearchQueueRunner();
-  void checkWhatsAppConnection().then(async (whatsapp) => {
-    if (!whatsapp.ok) {
-      logger.error({ whatsapp }, "WhatsApp credential check failed");
-      return;
+  void Promise.all([
+    checkWhatsAppConnection(),
+    ensureWhatsAppWebhookSubscription(),
+  ]).then(async ([whatsapp, subscription]) => {
+    if (whatsapp.ok) {
+      logger.info({ whatsapp }, "WhatsApp phone access check completed; delivery still requires a message test");
+    } else {
+      logger.warn({ whatsapp }, "WhatsApp phone management read check failed; continuing with webhook subscription check");
     }
 
-    logger.info({ whatsapp }, "WhatsApp credential check completed; delivery still requires a message test");
-
-    const subscription = await ensureWhatsAppWebhookSubscription();
     if (subscription.ok) {
       logger.info({ subscription }, "WhatsApp WABA webhook subscription confirmed");
       const replay = await replayVerificationWhatsAppNotifications();
@@ -51,6 +52,8 @@ app.listen(port, (err) => {
       if (dealSummaryReplay.configured) {
         logger.info({ replay: dealSummaryReplay }, "WhatsApp deal summary replay completed");
       }
-    } else logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
+    } else {
+      logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
+    }
   });
 });
