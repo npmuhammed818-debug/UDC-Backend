@@ -43,6 +43,9 @@ model:
   base_url: ""
   api_mode: chat_completions
 
+auxiliary:
+  free_only: true
+
 gateway:
   api_server:
     enabled: true
