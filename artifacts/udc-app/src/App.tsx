@@ -341,6 +341,7 @@ function Admin() {
   const allowed = ['admin', 'administrator'].includes(me.data?.user?.role || '');
   const documents = useQuery({ queryKey: ['admin-documents'], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>('/api/admin/documents'), enabled: allowed });
   const users = useQuery({ queryKey: ['admin-pending-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users/pending-verification'), enabled: allowed });
+  const companies = useQuery({ queryKey: ['admin-pending-companies'], queryFn: () => loadAgentRecords<{ companies: AnyRecord[] }>('/api/admin/companies/pending-verification'), enabled: allowed });
   const buyers = useQuery({ queryKey: ['admin-pending-buyers'], queryFn: () => loadAgentRecords<{ requirements: AnyRecord[] }>('/api/admin/buyer-requests'), enabled: allowed });
   const sellers = useQuery({ queryKey: ['admin-pending-sellers'], queryFn: () => loadAgentRecords<{ offers: AnyRecord[] }>('/api/admin/seller-offers'), enabled: allowed });
   const qc = useQueryClient();
@@ -355,7 +356,18 @@ function Admin() {
       await qc.invalidateQueries({ queryKey: ['admin-pending-users'] });
       await qc.invalidateQueries({ queryKey: ['admin-pending-buyers'] });
       await qc.invalidateQueries({ queryKey: ['admin-pending-sellers'] });
+      await qc.invalidateQueries({ queryKey: ['admin-pending-companies'] });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Review failed'); }
+    finally { setBusy(''); }
+  };
+  const reviewCompany = async (companyId: string, verification_status: string) => {
+    const path = `/api/admin/companies/${companyId}/verification`;
+    setBusy(path); setError('');
+    try {
+      const response = await fetch(path, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verification_status }) });
+      if (!response.ok) throw new Error('Company verification could not be saved. Check the record and try again.');
+      await qc.invalidateQueries({ queryKey: ['admin-pending-companies'] });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Company review failed'); }
     finally { setBusy(''); }
   };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
@@ -363,6 +375,9 @@ function Admin() {
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">DOCUMENTS</div><h2>Pending document review</h2></div></div>
       {documents.isError ? <Failure retry={() => documents.refetch()} /> : documents.isLoading ? <LoadingRows /> : !documents.data?.documents.some((item) => item.status === 'pending') ? <EmptyState title="No documents waiting" body="Deal uploads appear here for inspection." /> : <div className="data-list">{documents.data.documents.filter((item) => item.status === 'pending').map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Deal {item.dealId}</span></div><a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-link">Open PDF</a><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'rejected')}>Reject</Button></div>)}</div>}
+    </div>
+    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">BUSINESS VERIFICATION</div><h2>Company review</h2></div></div>
+      {companies.isError ? <Failure retry={() => companies.refetch()} /> : companies.isLoading ? <LoadingRows /> : !companies.data?.companies.length ? <EmptyState title="No companies waiting" body="Submitted company profiles appear here for manual review." /> : <div className="data-list">{companies.data.companies.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.companyName}</strong><span>{item.ownerName} · {item.ownerRole} · {item.ownerEmail}</span><span>{[item.registrationNumber, item.country, item.address, item.website].filter(Boolean).join(" · ") || "Registration details not provided"}</span></div><StatusPill status={item.verificationStatus} /><Button size="sm" variant="outline" disabled={!!busy} onClick={() => reviewCompany(item.id, 'under_review')}>Review</Button><Button size="sm" disabled={!!busy} onClick={() => reviewCompany(item.id, 'verified')}>Verify</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => reviewCompany(item.id, 'rejected')}>Reject</Button></div>)}</div>}
     </div>
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">VERIFICATION</div><h2>Buyers and sellers</h2></div></div>
       {users.isError ? <Failure retry={() => users.refetch()} /> : users.isLoading ? <LoadingRows /> : !users.data?.users.length ? <EmptyState title="No participants waiting" body="New and in-review participants appear here." /> : <div className="data-list">{users.data.users.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.fullName}</strong><span>{item.email} · {item.role}</span></div><StatusPill status={item.status} /><Button size="sm" variant="outline" disabled={!!busy} onClick={() => review(`/api/admin/users/${item.id}/verification`, 'under_review')}>Review</Button><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/users/${item.id}/verification`, 'verified')}>Verify</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/users/${item.id}/verification`, 'rejected')}>Reject</Button></div>)}</div>}
