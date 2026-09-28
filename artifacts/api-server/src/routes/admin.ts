@@ -136,7 +136,7 @@ const createReferralSchema = z.object({
 });
 
 const referralStatusSchema = z.object({
-  status: z.enum(["pending", "approved", "rejected", "cancelled"]),
+  status: z.enum(["pending", "qualified", "cancelled"]),
 });
 
 const addAgentParticipantSchema = z.object({
