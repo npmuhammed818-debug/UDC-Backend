@@ -5,7 +5,7 @@ import { db } from "@workspace/db";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
-import { createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
+import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 
 const router: IRouter = Router();
@@ -834,7 +834,12 @@ router.get("/admin/documents", requireRole("admin"), async (req, res) => {
   const documents = typeof dealId === "string"
     ? await db.select().from(documentsTable).where(eq(documentsTable.dealId, dealId)).orderBy(desc(documentsTable.createdAt))
     : await db.select().from(documentsTable).orderBy(desc(documentsTable.createdAt));
-  res.json({ documents });
+  try {
+    res.json({ documents: await Promise.all(documents.map(async (item) => {
+      const path = parseStoragePath(item.fileUrl);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+    })) });
+  } catch { res.status(503).json({ error: "document_storage_unavailable" }); }
 });
 
 router.post("/admin/documents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
@@ -886,6 +891,14 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(documentsTable.id, documentId))
       .returning();
+    if (input.status === "approved") {
+      const [deal] = await db.select({ buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
+        .from(dealsTable).where(eq(dealsTable.id, document.dealId)).limit(1);
+      if (deal) await db.insert(documentAccessTable).values([
+        { documentId: document.id, userId: deal.buyerUserId, accessRole: "viewer" },
+        { documentId: document.id, userId: deal.sellerUserId, accessRole: "viewer" },
+      ]).onConflictDoNothing();
+    }
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
       action: "document_reviewed",
