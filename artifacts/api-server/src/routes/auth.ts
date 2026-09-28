@@ -98,7 +98,7 @@ router.post("/auth/register", async (req, res) => {
         phone: input.phone,
         passwordHash,
         role: input.role,
-        status: "active",
+        status: input.role === "agent" ? "active" : "pending",
       })
       .returning({ id: usersTable.id });
 
