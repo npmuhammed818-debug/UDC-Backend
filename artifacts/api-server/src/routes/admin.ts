@@ -101,7 +101,11 @@ router.get("/admin/company-verification-documents", requireRole("admin"), async 
 });
 
 router.patch("/admin/company-verification-documents/:documentId/status", requireRole("admin"), async (req, res) => {
-  const schema = z.object({ status: z.enum(["approved", "rejected"]), reviewNote: z.string().trim().max(1000).optional() });
+  const schema = z.object({ status: z.enum(["approved", "rejected"]), reviewNote: z.string().trim().max(1000).optional() }).superRefine((input, context) => {
+    if (input.status === "rejected" && !input.reviewNote) {
+      context.addIssue({ code: "custom", path: ["reviewNote"], message: "A reason is required when rejecting company evidence." });
+    }
+  });
   try {
     const input = schema.parse(req.body);
     const documentId = z.string().uuid().parse(req.params["documentId"]);
@@ -114,7 +118,7 @@ router.patch("/admin/company-verification-documents/:documentId/status", require
     if (!existing) { res.status(404).json({ error: "company_document_not_found" }); return; }
     const [document] = await db.update(companyVerificationDocumentsTable).set({
       status: input.status,
-      reviewNote: input.reviewNote ?? null,
+      reviewNote: input.reviewNote || null,
       reviewedBy: req.authUser!.id,
       reviewedAt: new Date(),
       updatedAt: new Date(),
