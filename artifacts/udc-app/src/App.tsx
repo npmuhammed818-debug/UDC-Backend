@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDownToLine, ArrowRight, BarChart3, Bell, Boxes, BriefcaseBusiness, Check, ChevronRight,
   CircleAlert, CircleCheck, CircleUserRound, ClipboardList, FileText, Globe2, Inbox, LayoutDashboard,
@@ -370,11 +370,14 @@ function Admin() {
   const sellers = useQuery({ queryKey: ['admin-pending-sellers'], queryFn: () => loadAgentRecords<{ offers: AnyRecord[] }>('/api/admin/seller-offers'), enabled: allowed });
   const [auditSearch, setAuditSearch] = useState('');
   const [auditEntityType, setAuditEntityType] = useState('');
-  const auditLog = useQuery({
+  const auditLog = useInfiniteQuery({
     queryKey: ['admin-audit-log', auditSearch, auditEntityType],
-    queryFn: () => loadAgentRecords<{ logs: AnyRecord[]; hasMore: boolean }>(`/api/admin/audit-log?${new URLSearchParams({ limit: '50', ...(auditSearch.trim() ? { q: auditSearch.trim() } : {}), ...(auditEntityType ? { entityType: auditEntityType } : {}) })}`),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => loadAgentRecords<{ logs: AnyRecord[]; hasMore: boolean; nextOffset: number | null }>(`/api/admin/audit-log?${new URLSearchParams({ limit: '50', offset: String(pageParam), ...(auditSearch.trim() ? { q: auditSearch.trim() } : {}), ...(auditEntityType ? { entityType: auditEntityType } : {}) })}`),
+    getNextPageParam: (lastPage) => lastPage.hasMore ? lastPage.nextOffset ?? undefined : undefined,
     enabled: allowed,
   });
+  const auditRows = auditLog.data?.pages.flatMap((page) => page.logs) ?? [];
   const qc = useQueryClient();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -431,9 +434,9 @@ function Admin() {
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">SUPPLY</div><h2>Seller offers</h2></div></div>
       {sellers.isError ? <Failure retry={() => sellers.refetch()} /> : sellers.isLoading ? <LoadingRows /> : !sellers.data?.offers.length ? <EmptyState title="No offers waiting" body="Submitted seller offers appear here." /> : <div className="data-list">{sellers.data.offers.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.quantity} {item.unit} · {item.originCountry || 'Origin pending'}</strong><span>Product {item.productId} · {item.currency} {item.price}/{item.unit}</span></div><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/seller-offers/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/seller-offers/${item.id}/status`, 'rejected')}>Reject</Button></div>)}</div>}
     </div>
-    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">OPERATIONS / TRACEABILITY</div><h2>Recent audit activity</h2></div><span className="status-pill status-warn">Latest 50 events</span></div>
+    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">OPERATIONS / TRACEABILITY</div><h2>Recent audit activity</h2></div><span className="status-pill status-warn">{auditRows.length} events loaded</span></div>
       <div className="form-two"><Field label="Search action, record, or administrator"><Input value={auditSearch} onChange={(e) => setAuditSearch(e.target.value)} placeholder="e.g. verification, deal, name, email" data-testid="input-audit-search" /></Field><Field label="Record type"><select className="select" value={auditEntityType} onChange={(e) => setAuditEntityType(e.target.value)} data-testid="select-audit-entity"><option value="">All records</option><option value="company">Company</option><option value="company_verification_document">Company evidence</option><option value="deal">Deal</option><option value="document">Deal document</option><option value="user">User</option><option value="buyer_request">Buyer requirement</option><option value="seller_listing">Seller offer</option></select></Field></div>
-      {auditLog.isError ? <Failure retry={() => auditLog.refetch()} /> : auditLog.isLoading ? <LoadingRows /> : !auditLog.data?.logs.length ? <EmptyState title="No matching activity" body="Audit events will appear here as administrators and users update records." /> : <div className="data-list mt-4">{auditLog.data.logs.map((item) => <article className="data-row" key={item.id}><div className="row-main"><strong>{formatStatus(item.action)}</strong><span>{item.actorName || 'System'}{item.actorEmail ? ` · ${item.actorEmail}` : ''} · {formatStatus(item.entityType)}{item.entityId ? ` · ${item.entityId}` : ''}</span><span>{new Date(item.createdAt).toLocaleString()}</span>{item.metadata && <details className="mt-1"><summary className="text-link cursor-pointer">Event details</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-3 text-xs">{JSON.stringify(item.metadata, null, 2)}</pre></details>}</div></article>)}</div>}
+      {auditLog.isError ? <Failure retry={() => auditLog.refetch()} /> : auditLog.isLoading ? <LoadingRows /> : !auditRows.length ? <EmptyState title="No matching activity" body="Audit events will appear here as administrators and users update records." /> : <><div className="data-list mt-4">{auditRows.map((item) => <article className="data-row" key={item.id}><div className="row-main"><strong>{formatStatus(item.action)}</strong><span>{item.actorName || 'System'}{item.actorEmail ? ` · ${item.actorEmail}` : ''} · {formatStatus(item.entityType)}{item.entityId ? ` · ${item.entityId}` : ''}</span><span>{new Date(item.createdAt).toLocaleString()}</span>{item.metadata && <details className="mt-1"><summary className="text-link cursor-pointer">Event details</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-3 text-xs">{JSON.stringify(item.metadata, null, 2)}</pre></details>}</div></article>)}</div>{auditLog.hasNextPage && <div className="mt-4 text-center"><Button variant="outline" disabled={auditLog.isFetchingNextPage} onClick={() => auditLog.fetchNextPage()}>{auditLog.isFetchingNextPage ? 'Loading more…' : 'Load older activity'}</Button></div>}</>}
     </div>
   </>;
 }
