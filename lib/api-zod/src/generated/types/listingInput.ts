@@ -18,5 +18,17 @@ export interface ListingInput {
   incoterm?: string;
   origin_country?: string;
   destination?: string;
+  /** @maxLength 2000 */
+  specification?: string;
+  /** @exclusiveMinimum 0 */
+  monthly_capacity?: number;
+  /** @exclusiveMinimum 0 */
+  minimum_order_quantity?: number;
+  /** @maxLength 2000 */
+  payment_terms?: string;
+  /** @maxLength 2000 */
+  inspection_terms?: string;
+  /** @maxLength 160 */
+  availability?: string;
   status?: ListingInputStatus;
 }
