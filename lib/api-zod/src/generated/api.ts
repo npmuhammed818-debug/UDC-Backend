@@ -171,7 +171,16 @@ export const ListSellerListingsResponse = zod.object({
   "unit": zod.string(),
   "price": zod.string(),
   "currency": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "incoterm": zod.string().nullish(),
+  "originCountry": zod.string().nullish(),
+  "destination": zod.string().nullish(),
+  "specification": zod.string().nullish(),
+  "monthlyCapacity": zod.string().nullish(),
+  "minimumOrderQuantity": zod.string().nullish(),
+  "paymentTerms": zod.string().nullish(),
+  "inspectionTerms": zod.string().nullish(),
+  "availability": zod.string().nullish()
 }))
 })
 
@@ -179,6 +188,18 @@ export const ListSellerListingsResponse = zod.object({
 export const createSellerListingBodyQuantityExclusiveMin = 0;
 
 export const createSellerListingBodyPriceMin = 0;
+
+export const createSellerListingBodySpecificationMax = 2000;
+
+export const createSellerListingBodyMonthlyCapacityExclusiveMin = 0;
+
+export const createSellerListingBodyMinimumOrderQuantityExclusiveMin = 0;
+
+export const createSellerListingBodyPaymentTermsMax = 2000;
+
+export const createSellerListingBodyInspectionTermsMax = 2000;
+
+export const createSellerListingBodyAvailabilityMax = 160;
 
 
 
@@ -191,6 +212,12 @@ export const CreateSellerListingBody = zod.object({
   "incoterm": zod.string().optional(),
   "origin_country": zod.string().optional(),
   "destination": zod.string().optional(),
+  "specification": zod.string().max(createSellerListingBodySpecificationMax).optional(),
+  "monthly_capacity": zod.number().gt(createSellerListingBodyMonthlyCapacityExclusiveMin).optional(),
+  "minimum_order_quantity": zod.number().gt(createSellerListingBodyMinimumOrderQuantityExclusiveMin).optional(),
+  "payment_terms": zod.string().max(createSellerListingBodyPaymentTermsMax).optional(),
+  "inspection_terms": zod.string().max(createSellerListingBodyInspectionTermsMax).optional(),
+  "availability": zod.string().max(createSellerListingBodyAvailabilityMax).optional(),
   "status": zod.enum(['draft', 'pending_verification', 'active', 'paused', 'sold', 'cancelled']).optional()
 })
 
@@ -202,7 +229,16 @@ export const CreateSellerListingResponse = zod.object({
   "unit": zod.string(),
   "price": zod.string(),
   "currency": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "incoterm": zod.string().nullish(),
+  "originCountry": zod.string().nullish(),
+  "destination": zod.string().nullish(),
+  "specification": zod.string().nullish(),
+  "monthlyCapacity": zod.string().nullish(),
+  "minimumOrderQuantity": zod.string().nullish(),
+  "paymentTerms": zod.string().nullish(),
+  "inspectionTerms": zod.string().nullish(),
+  "availability": zod.string().nullish()
 })
 })
 
@@ -214,7 +250,15 @@ export const ListBuyerRequestsResponse = zod.object({
   "quantity": zod.string(),
   "unit": zod.string(),
   "destination": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "targetPrice": zod.string().nullish(),
+  "currency": zod.string().optional(),
+  "preferredIncoterm": zod.string().nullish(),
+  "specification": zod.string().nullish(),
+  "contractDuration": zod.string().nullish(),
+  "paymentTerms": zod.string().nullish(),
+  "inspectionRequirements": zod.string().nullish(),
+  "additionalConditions": zod.string().nullish()
 }))
 })
 
@@ -222,6 +266,16 @@ export const ListBuyerRequestsResponse = zod.object({
 export const createBuyerRequestBodyQuantityExclusiveMin = 0;
 
 export const createBuyerRequestBodyTargetPriceMin = 0;
+
+export const createBuyerRequestBodySpecificationMax = 2000;
+
+export const createBuyerRequestBodyContractDurationMax = 160;
+
+export const createBuyerRequestBodyPaymentTermsMax = 2000;
+
+export const createBuyerRequestBodyInspectionRequirementsMax = 2000;
+
+export const createBuyerRequestBodyAdditionalConditionsMax = 2000;
 
 
 
@@ -233,6 +287,11 @@ export const CreateBuyerRequestBody = zod.object({
   "currency": zod.string().optional(),
   "destination": zod.string(),
   "preferred_incoterm": zod.string().optional(),
+  "specification": zod.string().max(createBuyerRequestBodySpecificationMax).optional(),
+  "contract_duration": zod.string().max(createBuyerRequestBodyContractDurationMax).optional(),
+  "payment_terms": zod.string().max(createBuyerRequestBodyPaymentTermsMax).optional(),
+  "inspection_requirements": zod.string().max(createBuyerRequestBodyInspectionRequirementsMax).optional(),
+  "additional_conditions": zod.string().max(createBuyerRequestBodyAdditionalConditionsMax).optional(),
   "status": zod.enum(['open', 'matched', 'negotiating', 'converted', 'cancelled']).optional()
 })
 
@@ -243,7 +302,15 @@ export const CreateBuyerRequestResponse = zod.object({
   "quantity": zod.string(),
   "unit": zod.string(),
   "destination": zod.string(),
-  "status": zod.string()
+  "status": zod.string(),
+  "targetPrice": zod.string().nullish(),
+  "currency": zod.string().optional(),
+  "preferredIncoterm": zod.string().nullish(),
+  "specification": zod.string().nullish(),
+  "contractDuration": zod.string().nullish(),
+  "paymentTerms": zod.string().nullish(),
+  "inspectionRequirements": zod.string().nullish(),
+  "additionalConditions": zod.string().nullish()
 })
 })
 
