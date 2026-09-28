@@ -96,6 +96,11 @@ test("a question about proceeding cannot become a confirmed acceptance", () => {
   assert.equal(decision?.replyToSender, "I'll check with the seller before we move ahead.");
   assert.equal(decision?.relayToCounterparty, "Are you ready to proceed with this deal?");
   assert.doesNotMatch(decision?.replyToSender ?? "", /confirmed|SPA/);
+  assert.equal(decide("Can we proceed?", model({
+    intent: "deal_question",
+    replyToSender: "Both sides agreed. We can proceed.",
+    relay: false,
+  }))?.replyToSender, "I'll check with the seller before we move ahead.");
 });
 test("invalid or leaking model replies fail closed", () => {
   for (const content of [
