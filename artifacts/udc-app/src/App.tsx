@@ -230,7 +230,24 @@ function DealDetail({ user }: { user: AnyRecord }) {
 function DealTabs({ dealId, user }: { dealId: string; user: AnyRecord }) {
   const docs = useListDealDocuments(dealId, { query: { queryKey: getListDealDocumentsQueryKey(dealId), enabled: !!dealId } });
   const messages = useListDealMessages(dealId, { query: { queryKey: getListDealMessagesQueryKey(dealId), enabled: !!dealId } });
-  return <section className="panel detail-tabs"><div className="tabs-label"><MessageSquare size={16} /> Deal record</div><div className="room-grid"><div><div className="eyebrow mb-3">APPROVED DOCUMENTS</div>{docs.isError ? <Failure retry={() => docs.refetch()} /> : docs.isLoading ? <LoadingRows count={2} /> : docs.data?.documents.length ? <div className="mini-list">{docs.data.documents.map((d: AnyRecord) => <a href={d.fileUrl} target="_blank" rel="noreferrer" key={d.id} className="mini-row"><FileText size={15} /><span className="flex-1">{d.documentType}</span><StatusPill status={d.status} /></a>)}</div> : <div className="subtle-empty">No approved documents shared yet.</div>}</div><div><div className="eyebrow mb-3">YOUR NEGOTIATION RECORD</div><div className="handoff-note" data-testid="deal-communication-handoff"><strong>Use {communicationBoundary.channelLabel} for live conversation.</strong><span>{communicationBoundary.udcDescription}</span></div>{messages.isError ? <Failure retry={() => messages.refetch()} /> : messages.isLoading ? <LoadingRows count={2} /> : messages.data?.messages.length ? <div className="message-list">{messages.data.messages.map((m: AnyRecord) => <div className={`message-bubble ${m.senderUserId === user.id ? 'message-own' : ''}`} key={m.id}><span>{m.message}</span><small>{m.senderUserId === user.id ? 'You' : 'UDC'}</small></div>)}</div> : <div className="subtle-empty">No recorded messages for you yet.</div>}</div></div></section>;
+  const qc = useQueryClient();
+  const [file, setFile] = useState<File | null>(null);
+  const [type, setType] = useState('trade_document');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const upload = async (event: FormEvent) => {
+    event.preventDefault(); if (!file) return;
+    setUploadError(''); setUploading(true);
+    try {
+      if (file.type !== 'application/pdf' || file.size > 5 * 1024 * 1024) throw new Error('Choose a PDF under 5 MB.');
+      const response = await fetch(`/api/deals/${dealId}/documents/upload?documentType=${encodeURIComponent(type)}`, { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: file });
+      if (!response.ok) throw new Error('Upload failed. Check the document and try again.');
+      setFile(null); await qc.invalidateQueries({ queryKey: getListDealDocumentsQueryKey(dealId) });
+    } catch (cause) { setUploadError(cause instanceof Error ? cause.message : 'Upload failed'); }
+    finally { setUploading(false); }
+  };
+  return <section className="panel detail-tabs"><div className="tabs-label"><MessageSquare size={16} /> Deal record</div><div className="room-grid"><div><div className="eyebrow mb-3">DOCUMENTS</div>{docs.isError ? <Failure retry={() => docs.refetch()} /> : docs.isLoading ? <LoadingRows count={2} /> : docs.data?.documents.length ? <div className="mini-list">{docs.data.documents.map((d: AnyRecord) => <a href={d.fileUrl} target="_blank" rel="noreferrer" key={d.id} className="mini-row"><FileText size={15} /><span className="flex-1">{d.documentType}</span><StatusPill status={d.status} /></a>)}</div> : <div className="subtle-empty">No documents shared yet.</div>}
+  {['buyer', 'seller'].includes(user.role) && <form onSubmit={upload} className="mini-form mt-4"><select className="select" value={type} onChange={(e) => setType(e.target.value)}><option value="trade_document">Trade document</option><option value="LOI">LOI</option><option value="ICPO">ICPO</option><option value="FCO">FCO</option><option value="SPA">SPA</option><option value="SGS">SGS</option><option value="BL">Bill of lading</option><option value="COA">COA</option></select><Input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /><Button size="sm" type="submit" disabled={!file || uploading}>{uploading ? 'Uploading…' : 'Upload PDF'}</Button></form>}{uploadError && <div className="error-banner mt-3">{uploadError}</div>}<p className="text-xs mt-2">UDC reviews documents before sharing them with the other party.</p></div><div><div className="eyebrow mb-3">YOUR NEGOTIATION RECORD</div><div className="handoff-note" data-testid="deal-communication-handoff"><strong>Use {communicationBoundary.channelLabel} for live conversation.</strong><span>{communicationBoundary.udcDescription}</span></div>{messages.isError ? <Failure retry={() => messages.refetch()} /> : messages.isLoading ? <LoadingRows count={2} /> : messages.data?.messages.length ? <div className="message-list">{messages.data.messages.map((m: AnyRecord) => <div className={`message-bubble ${m.senderUserId === user.id ? 'message-own' : ''}`} key={m.id}><span>{m.message}</span><small>{m.senderUserId === user.id ? 'You' : 'UDC'}</small></div>)}</div> : <div className="subtle-empty">No recorded messages for you yet.</div>}</div></div></section>;
 }
 
 function AkifAside({ status }: { status: string }) {
@@ -256,6 +273,7 @@ function Profile({ user }: { user: AnyRecord }) { const company = useGetCompany(
 function Admin() {
   const me = useGetCurrentUser();
   const allowed = ['admin', 'administrator'].includes(me.data?.user?.role || '');
+  const documents = useQuery({ queryKey: ['admin-documents'], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>('/api/admin/documents'), enabled: allowed });
   const users = useQuery({ queryKey: ['admin-pending-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users/pending-verification'), enabled: allowed });
   const buyers = useQuery({ queryKey: ['admin-pending-buyers'], queryFn: () => loadAgentRecords<{ requirements: AnyRecord[] }>('/api/admin/buyer-requests'), enabled: allowed });
   const sellers = useQuery({ queryKey: ['admin-pending-sellers'], queryFn: () => loadAgentRecords<{ offers: AnyRecord[] }>('/api/admin/seller-offers'), enabled: allowed });
@@ -267,6 +285,7 @@ function Admin() {
     try {
       const response = await fetch(path, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
       if (!response.ok) throw new Error('The review could not be saved. Check the record and try again.');
+      await qc.invalidateQueries({ queryKey: ['admin-documents'] });
       await qc.invalidateQueries({ queryKey: ['admin-pending-users'] });
       await qc.invalidateQueries({ queryKey: ['admin-pending-buyers'] });
       await qc.invalidateQueries({ queryKey: ['admin-pending-sellers'] });
@@ -276,6 +295,9 @@ function Admin() {
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
   return <><PageHeader eyebrow="UDC / ADMIN" title="Review queue" body="Review company evidence and trade terms before approving a participant, requirement, or offer." />
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
+    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">DOCUMENTS</div><h2>Pending document review</h2></div></div>
+      {documents.isError ? <Failure retry={() => documents.refetch()} /> : documents.isLoading ? <LoadingRows /> : !documents.data?.documents.some((item) => item.status === 'pending') ? <EmptyState title="No documents waiting" body="Deal uploads appear here for inspection." /> : <div className="data-list">{documents.data.documents.filter((item) => item.status === 'pending').map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Deal {item.dealId}</span></div><a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-link">Open PDF</a><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'rejected')}>Reject</Button></div>)}</div>}
+    </div>
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">VERIFICATION</div><h2>Buyers and sellers</h2></div></div>
       {users.isError ? <Failure retry={() => users.refetch()} /> : users.isLoading ? <LoadingRows /> : !users.data?.users.length ? <EmptyState title="No participants waiting" body="New and in-review participants appear here." /> : <div className="data-list">{users.data.users.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.fullName}</strong><span>{item.email} · {item.role}</span></div><StatusPill status={item.status} /><Button size="sm" variant="outline" disabled={!!busy} onClick={() => review(`/api/admin/users/${item.id}/verification`, 'under_review')}>Review</Button><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/users/${item.id}/verification`, 'verified')}>Verify</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/users/${item.id}/verification`, 'rejected')}>Reject</Button></div>)}</div>}
     </div>
