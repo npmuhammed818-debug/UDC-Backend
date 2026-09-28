@@ -1,12 +1,13 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { auditLogsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, inspectionsTable, shipmentsTable } from "@workspace/db";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { auditLogsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, shipmentsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { createSignedDownloadUrl, parseStoragePath } from "../supabase/storage";
 
 const router: IRouter = Router();
 
-function dealAccess(userId: string) {
-  return or(
+function dealAccess(userId: string, role: string) {
+  return role === "admin" ? sql`true` : or(
     eq(dealsTable.buyerUserId, userId),
     eq(dealsTable.sellerUserId, userId),
     inArray(
@@ -21,6 +22,43 @@ function dealAccess(userId: string) {
     ),
   );
 }
+
+router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
+  try {
+    const dealId = String(req.params["dealId"] ?? "");
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const documents = await db.select({
+      id: documentsTable.id, dealId: documentsTable.dealId,
+      documentType: documentsTable.documentType, fileUrl: documentsTable.fileUrl,
+      status: documentsTable.status, createdAt: documentsTable.createdAt,
+    }).from(documentsTable)
+      .innerJoin(documentAccessTable, eq(documentAccessTable.documentId, documentsTable.id))
+      .where(and(
+        eq(documentsTable.dealId, deal.id), eq(documentsTable.status, "approved"),
+        eq(documentAccessTable.userId, req.authUser!.id),
+      )).orderBy(desc(documentsTable.createdAt));
+    res.json({ documents: await Promise.all(documents.map(async (item) => {
+      const path = parseStoragePath(item.fileUrl);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+    })) });
+  } catch { res.status(500).json({ error: "deal_documents_fetch_failed" }); }
+});
+
+router.get("/deals/:dealId/messages", requireAuth, async (req, res) => {
+  try {
+    const dealId = String(req.params["dealId"] ?? "");
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const messages = await db.select().from(messagesTable).where(and(
+      eq(messagesTable.dealId, deal.id),
+      or(eq(messagesTable.senderUserId, req.authUser!.id), eq(messagesTable.receiverUserId, req.authUser!.id)),
+    )).orderBy(desc(messagesTable.createdAt));
+    res.json({ messages });
+  } catch { res.status(500).json({ error: "deal_messages_fetch_failed" }); }
+});
 
 router.get("/deals", requireAuth, async (req, res) => {
   try {
@@ -40,7 +78,7 @@ router.get("/deals", requireAuth, async (req, res) => {
         updatedAt: dealsTable.updatedAt,
       })
       .from(dealsTable)
-      .where(dealAccess(req.authUser!.id))
+      .where(dealAccess(req.authUser!.id, req.authUser!.role))
       .orderBy(desc(dealsTable.updatedAt));
 
     res.json({ deals });
@@ -73,7 +111,7 @@ router.get("/deals/:dealId", requireAuth, async (req, res) => {
         updatedAt: dealsTable.updatedAt,
       })
       .from(dealsTable)
-      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id)))
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role)))
       .limit(1);
 
     if (!deal) {
@@ -98,7 +136,7 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
     const [deal] = await db
       .select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber, status: dealsTable.status })
       .from(dealsTable)
-      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id)))
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role)))
       .limit(1);
 
     if (!deal) {
@@ -153,7 +191,7 @@ router.get("/deals/:dealId/payment-status", requireAuth, async (req, res) => {
     const [deal] = await db
       .select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber, status: dealsTable.status })
       .from(dealsTable)
-      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id)))
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role)))
       .limit(1);
 
     if (!deal) {
@@ -184,7 +222,7 @@ router.get("/deals/:dealId/timeline", requireAuth, async (req, res) => {
   try {
     const dealId = String(req.params["dealId"] ?? "");
     const [deal] = await db.select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
-      .from(dealsTable).where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id))).limit(1);
+      .from(dealsTable).where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
     if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
     const events = await db.select({
       action: auditLogsTable.action,
