@@ -31,6 +31,12 @@ export const sellerListingsTable = pgTable(
     incoterm: text("incoterm"),
     originCountry: text("origin_country"),
     destination: text("destination"),
+    specification: text("specification"),
+    monthlyCapacity: numeric("monthly_capacity", { precision: 20, scale: 6 }),
+    minimumOrderQuantity: numeric("minimum_order_quantity", { precision: 20, scale: 6 }),
+    paymentTerms: text("payment_terms"),
+    inspectionTerms: text("inspection_terms"),
+    availability: text("availability"),
     status: text("status").notNull().default("draft"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
