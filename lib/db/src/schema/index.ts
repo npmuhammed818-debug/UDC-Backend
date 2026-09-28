@@ -4,6 +4,7 @@ export * from "./akifResearch";
 export * from "./authSessions";
 export * from "./buyerRequests";
 export * from "./companies";
+export * from "./companyVerificationDocuments";
 export * from "./commissions";
 export * from "./deals";
 export * from "./documents";
