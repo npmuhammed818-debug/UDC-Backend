@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowDownToLine, ArrowRight, BarChart3, Bell, Boxes, BriefcaseBusiness, Check, ChevronRight,
   CircleAlert, CircleCheck, CircleUserRound, ClipboardList, FileText, Globe2, Inbox, LayoutDashboard,
@@ -37,6 +37,7 @@ const nav = [
   { href: '/requirements', label: 'Buyer demand', icon: ClipboardList, roles: ['buyer', 'agent', 'admin'] },
   { href: '/matches', label: 'Matching desk', icon: Zap },
   { href: '/deals', label: 'Deal pipeline', icon: BriefcaseBusiness },
+  { href: '/referrals', label: 'Referral & earn', icon: CircleUserRound, roles: ['agent'] },
   { href: '/documents', label: 'Documents', icon: FileText },
   { href: '/messages', label: 'Negotiation records', icon: MessageSquare },
 ];
@@ -134,6 +135,27 @@ function Dashboard({ user }: { user: AnyRecord }) {
   </>;
 }
 
+async function loadAgentRecords<T>(path: string): Promise<T> {
+  const response = await fetch(path, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`Could not load ${path}`);
+  return response.json() as Promise<T>;
+}
+
+function Referrals({ user }: { user: AnyRecord }) {
+  const allowed = user?.role === 'agent';
+  const referrals = useQuery({ queryKey: ['agent-referrals'], queryFn: () => loadAgentRecords<{ referrals: AnyRecord[] }>('/api/referrals'), enabled: allowed });
+  const commissions = useQuery({ queryKey: ['agent-commissions'], queryFn: () => loadAgentRecords<{ commissions: AnyRecord[] }>('/api/commissions'), enabled: allowed });
+  if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Referral & earn" /><div className="panel"><EmptyState title="Agent access required" body="This view is for registered UDC agents." /></div></>;
+  return <><PageHeader eyebrow="AGENT / REFERRAL & EARN" title="Your introductions" body="Track people you introduced and commissions recorded against your deals. UDC reviews each introduction and approves payouts." />
+    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">INTRODUCTIONS</div><h2>Referred participants</h2></div></div>
+      {referrals.isError ? <Failure retry={() => referrals.refetch()} /> : referrals.isLoading ? <LoadingRows /> : !referrals.data?.referrals.length ? <EmptyState icon={CircleUserRound} title="No introductions recorded" body="Ask the UDC team to record your buyer or seller introduction and agreed referral terms." /> : <div className="data-list">{referrals.data.referrals.map((item) => <div className="data-row" key={item.id}><div className="row-leading"><CircleUserRound size={17} /></div><div className="row-main"><strong>{item.referredName}</strong><span>{formatStatus(item.referredRole)} · Code {item.referralCode}</span></div><StatusPill status={item.status} /></div>)}</div>}
+    </div>
+    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">DEAL REWARDS</div><h2>Commissions</h2></div></div>
+      {commissions.isError ? <Failure retry={() => commissions.refetch()} /> : commissions.isLoading ? <LoadingRows /> : !commissions.data?.commissions.length ? <EmptyState icon={BriefcaseBusiness} title="No commission recorded yet" body="A referral becomes eligible only through an agreed deal and UDC's review." /> : <div className="data-list">{commissions.data.commissions.map((item) => <div className="data-row" key={item.id}><div className="row-leading"><BriefcaseBusiness size={17} /></div><div className="row-main"><strong>{item.dealNumber}</strong><span>{item.currency} {item.amount} · {item.commissionType ? formatStatus(item.commissionType) : 'Agreed reward'}</span></div><StatusPill status={item.status} /></div>)}</div>}
+    </div>
+  </>;
+}
+
 function Products() {
   const products = useListProducts(); const create = useCreateProduct(); const qc = useQueryClient(); const [open, setOpen] = useState(false); const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', category: '', hs_code: '', description: '' });
@@ -208,6 +230,6 @@ function FormCard({ title, onSubmit, onCancel, pending, children }: { title: str
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 
-function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/register"><Auth mode="register" /></Route><Route path="/dashboard"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route path="/products"><Protected>{() => <Products />}</Protected></Route><Route path="/seller"><Protected>{() => <Seller />}</Protected></Route><Route path="/requirements"><Protected>{() => <Requirements />}</Protected></Route><Route path="/matches"><Protected>{() => <Matches />}</Protected></Route><Route path="/deals/:id"><Protected>{(u) => <DealDetail user={u} />}</Protected></Route><Route path="/deals"><Protected>{() => <Deals />}</Protected></Route><Route path="/documents"><Protected>{() => <Documents />}</Protected></Route><Route path="/messages"><Protected>{(u) => <Messages user={u} />}</Protected></Route><Route path="/notifications"><Protected>{() => <Notifications />}</Protected></Route><Route path="/profile"><Protected>{(u) => <Profile user={u} />}</Protected></Route><Route path="/admin"><Protected>{() => <Admin />}</Protected></Route><Route path="/"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route component={NotFound} /></Switch></ErrorBoundary>; }
+function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/register"><Auth mode="register" /></Route><Route path="/dashboard"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route path="/referrals"><Protected>{(u) => <Referrals user={u} />}</Protected></Route><Route path="/products"><Protected>{() => <Products />}</Protected></Route><Route path="/seller"><Protected>{() => <Seller />}</Protected></Route><Route path="/requirements"><Protected>{() => <Requirements />}</Protected></Route><Route path="/matches"><Protected>{() => <Matches />}</Protected></Route><Route path="/deals/:id"><Protected>{(u) => <DealDetail user={u} />}</Protected></Route><Route path="/deals"><Protected>{() => <Deals />}</Protected></Route><Route path="/documents"><Protected>{() => <Documents />}</Protected></Route><Route path="/messages"><Protected>{(u) => <Messages user={u} />}</Protected></Route><Route path="/notifications"><Protected>{() => <Notifications />}</Protected></Route><Route path="/profile"><Protected>{(u) => <Profile user={u} />}</Protected></Route><Route path="/admin"><Protected>{() => <Admin />}</Protected></Route><Route path="/"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route component={NotFound} /></Switch></ErrorBoundary>; }
 
 export default function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
