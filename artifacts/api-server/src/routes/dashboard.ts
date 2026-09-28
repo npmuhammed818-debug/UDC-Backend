@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { buyerRequestsTable, db, dealParticipantsTable, dealsTable, notificationsTable, sellerListingsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 
@@ -10,11 +10,11 @@ router.get("/dashboard", requireAuth, async (req, res) => {
     const userId = req.authUser!.id;
     const [requirements, listings, deals, unread] = await Promise.all([
       db.select({ status: buyerRequestsTable.status }).from(buyerRequestsTable)
-        .where(eq(buyerRequestsTable.buyerUserId, userId)),
+        .where(req.authUser!.role === "admin" ? sql`true` : eq(buyerRequestsTable.buyerUserId, userId)),
       db.select({ status: sellerListingsTable.status }).from(sellerListingsTable)
-        .where(eq(sellerListingsTable.sellerUserId, userId)),
+        .where(req.authUser!.role === "admin" ? sql`true` : eq(sellerListingsTable.sellerUserId, userId)),
       db.select({ status: dealsTable.status }).from(dealsTable)
-        .where(or(
+        .where(req.authUser!.role === "admin" ? sql`true` : or(
           eq(dealsTable.buyerUserId, userId), eq(dealsTable.sellerUserId, userId),
           inArray(dealsTable.id, db.select({ dealId: dealParticipantsTable.dealId })
             .from(dealParticipantsTable).where(and(
