@@ -508,6 +508,15 @@ components:
         price: { type: string }
         currency: { type: string }
         status: { type: string }
+        incoterm: { type: [string, "null"] }
+        originCountry: { type: [string, "null"] }
+        destination: { type: [string, "null"] }
+        specification: { type: [string, "null"] }
+        monthlyCapacity: { type: [string, "null"] }
+        minimumOrderQuantity: { type: [string, "null"] }
+        paymentTerms: { type: [string, "null"] }
+        inspectionTerms: { type: [string, "null"] }
+        availability: { type: [string, "null"] }
     Requirement:
       type: object
       additionalProperties: true
@@ -519,6 +528,14 @@ components:
         unit: { type: string }
         destination: { type: string }
         status: { type: string }
+        targetPrice: { type: [string, "null"] }
+        currency: { type: string }
+        preferredIncoterm: { type: [string, "null"] }
+        specification: { type: [string, "null"] }
+        contractDuration: { type: [string, "null"] }
+        paymentTerms: { type: [string, "null"] }
+        inspectionRequirements: { type: [string, "null"] }
+        additionalConditions: { type: [string, "null"] }
     Match:
       type: object
       additionalProperties: true
@@ -624,6 +641,12 @@ components:
         incoterm: { type: string }
         origin_country: { type: string }
         destination: { type: string }
+        specification: { type: string, maxLength: 2000 }
+        monthly_capacity: { type: number, exclusiveMinimum: 0 }
+        minimum_order_quantity: { type: number, exclusiveMinimum: 0 }
+        payment_terms: { type: string, maxLength: 2000 }
+        inspection_terms: { type: string, maxLength: 2000 }
+        availability: { type: string, maxLength: 160 }
         status: { type: string, enum: [draft, pending_verification, active, paused, sold, cancelled] }
     RequirementInput:
       type: object
@@ -636,6 +659,11 @@ components:
         currency: { type: string }
         destination: { type: string }
         preferred_incoterm: { type: string }
+        specification: { type: string, maxLength: 2000 }
+        contract_duration: { type: string, maxLength: 160 }
+        payment_terms: { type: string, maxLength: 2000 }
+        inspection_requirements: { type: string, maxLength: 2000 }
+        additional_conditions: { type: string, maxLength: 2000 }
         status: { type: string, enum: [open, matched, negotiating, converted, cancelled] }
     MatchRunInput:
       type: object

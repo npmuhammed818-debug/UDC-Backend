@@ -50,6 +50,24 @@ export interface Listing {
   price: string;
   currency: string;
   status: string;
+  /** @nullable */
+  incoterm?: string | null;
+  /** @nullable */
+  originCountry?: string | null;
+  /** @nullable */
+  destination?: string | null;
+  /** @nullable */
+  specification?: string | null;
+  /** @nullable */
+  monthlyCapacity?: string | null;
+  /** @nullable */
+  minimumOrderQuantity?: string | null;
+  /** @nullable */
+  paymentTerms?: string | null;
+  /** @nullable */
+  inspectionTerms?: string | null;
+  /** @nullable */
+  availability?: string | null;
   [key: string]: unknown;
  }
 
@@ -60,6 +78,21 @@ export interface Requirement {
   unit: string;
   destination: string;
   status: string;
+  /** @nullable */
+  targetPrice?: string | null;
+  currency?: string;
+  /** @nullable */
+  preferredIncoterm?: string | null;
+  /** @nullable */
+  specification?: string | null;
+  /** @nullable */
+  contractDuration?: string | null;
+  /** @nullable */
+  paymentTerms?: string | null;
+  /** @nullable */
+  inspectionRequirements?: string | null;
+  /** @nullable */
+  additionalConditions?: string | null;
   [key: string]: unknown;
  }
 
@@ -183,6 +216,18 @@ export interface ListingInput {
   incoterm?: string;
   origin_country?: string;
   destination?: string;
+  /** @maxLength 2000 */
+  specification?: string;
+  /** @exclusiveMinimum 0 */
+  monthly_capacity?: number;
+  /** @exclusiveMinimum 0 */
+  minimum_order_quantity?: number;
+  /** @maxLength 2000 */
+  payment_terms?: string;
+  /** @maxLength 2000 */
+  inspection_terms?: string;
+  /** @maxLength 160 */
+  availability?: string;
   status?: ListingInputStatus;
 }
 
@@ -207,6 +252,16 @@ export interface RequirementInput {
   currency?: string;
   destination: string;
   preferred_incoterm?: string;
+  /** @maxLength 2000 */
+  specification?: string;
+  /** @maxLength 160 */
+  contract_duration?: string;
+  /** @maxLength 2000 */
+  payment_terms?: string;
+  /** @maxLength 2000 */
+  inspection_requirements?: string;
+  /** @maxLength 2000 */
+  additional_conditions?: string;
   status?: RequirementInputStatus;
 }
 

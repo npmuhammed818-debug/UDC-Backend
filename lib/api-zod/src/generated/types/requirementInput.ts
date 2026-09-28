@@ -17,5 +17,15 @@ export interface RequirementInput {
   currency?: string;
   destination: string;
   preferred_incoterm?: string;
+  /** @maxLength 2000 */
+  specification?: string;
+  /** @maxLength 160 */
+  contract_duration?: string;
+  /** @maxLength 2000 */
+  payment_terms?: string;
+  /** @maxLength 2000 */
+  inspection_requirements?: string;
+  /** @maxLength 2000 */
+  additional_conditions?: string;
   status?: RequirementInputStatus;
 }

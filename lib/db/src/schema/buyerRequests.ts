@@ -29,6 +29,11 @@ export const buyerRequestsTable = pgTable(
     unit: text("unit").notNull(),
     destination: text("destination").notNull(),
     preferredIncoterm: text("preferred_incoterm"),
+    specification: text("specification"),
+    contractDuration: text("contract_duration"),
+    paymentTerms: text("payment_terms"),
+    inspectionRequirements: text("inspection_requirements"),
+    additionalConditions: text("additional_conditions"),
     status: text("status").notNull().default("open"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

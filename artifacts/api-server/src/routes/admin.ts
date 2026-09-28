@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
+import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 
@@ -1139,20 +1140,7 @@ router.get("/admin/buyer-requests/:requirementId/match-recommendations", require
 
   for (const offer of offers) {
     if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, offer.sellerUserId)) continue;
-    const buyerQuantity = Number(buyerRequest.quantity);
-    const availableQuantity = Number(offer.quantity);
-    const targetPrice = buyerRequest.targetPrice ? Number(buyerRequest.targetPrice) : undefined;
-    const offerPrice = Number(offer.price);
-    const reasons = ["same approved product", "both counterparties verified"];
-    let score = 50;
-    if (availableQuantity >= buyerQuantity) {
-      score += 25;
-      reasons.push("available quantity covers the request");
-    }
-    if (targetPrice !== undefined && offer.currency === buyerRequest.currency && offerPrice <= targetPrice) {
-      score += 25;
-      reasons.push("offer price is within the buyer target");
-    }
+    const { score, reasons } = scoreTradeMatch(buyerRequest, offer);
     recommendations.push({ sellerOffer: offer, score, reasons });
   }
 

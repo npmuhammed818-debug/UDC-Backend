@@ -14,5 +14,23 @@ export interface Listing {
   price: string;
   currency: string;
   status: string;
+  /** @nullable */
+  incoterm?: string | null;
+  /** @nullable */
+  originCountry?: string | null;
+  /** @nullable */
+  destination?: string | null;
+  /** @nullable */
+  specification?: string | null;
+  /** @nullable */
+  monthlyCapacity?: string | null;
+  /** @nullable */
+  minimumOrderQuantity?: string | null;
+  /** @nullable */
+  paymentTerms?: string | null;
+  /** @nullable */
+  inspectionTerms?: string | null;
+  /** @nullable */
+  availability?: string | null;
   [key: string]: unknown;
  }

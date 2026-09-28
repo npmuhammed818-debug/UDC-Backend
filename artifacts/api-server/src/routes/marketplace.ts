@@ -10,6 +10,7 @@ const money = z.number().finite().nonnegative();
 const quantity = z.number().finite().positive();
 const text = z.string().trim().min(1).max(160);
 const optionalText = z.string().trim().max(160).transform((value) => value || undefined).optional();
+const optionalDetails = z.string().trim().max(2000).transform((value) => value || undefined).optional();
 
 const productInput = z.object({
   name: text,
@@ -28,6 +29,12 @@ const listingInput = z.object({
   incoterm: optionalText,
   origin_country: optionalText,
   destination: optionalText,
+  specification: optionalDetails,
+  monthly_capacity: quantity.optional(),
+  minimum_order_quantity: quantity.optional(),
+  payment_terms: optionalDetails,
+  inspection_terms: optionalDetails,
+  availability: optionalText,
 }).strict();
 
 const requirementInput = z.object({
@@ -38,6 +45,11 @@ const requirementInput = z.object({
   currency: z.string().length(3).default("USD"),
   destination: text,
   preferred_incoterm: optionalText,
+  specification: optionalDetails,
+  contract_duration: optionalText,
+  payment_terms: optionalDetails,
+  inspection_requirements: optionalDetails,
+  additional_conditions: optionalDetails,
 }).strict();
 
 function failed(res: import("express").Response, error: unknown, code: string) {
@@ -81,6 +93,11 @@ router.post("/seller-listings", requireRole("seller"), async (req, res) => {
       quantity: String(input.quantity), unit: input.unit, price: String(input.price),
       currency: input.currency.toUpperCase(), incoterm: input.incoterm,
       originCountry: input.origin_country, destination: input.destination,
+      specification: input.specification,
+      monthlyCapacity: input.monthly_capacity === undefined ? undefined : String(input.monthly_capacity),
+      minimumOrderQuantity: input.minimum_order_quantity === undefined ? undefined : String(input.minimum_order_quantity),
+      paymentTerms: input.payment_terms, inspectionTerms: input.inspection_terms,
+      availability: input.availability,
       status: "pending_admin_review",
     }).returning();
     res.status(201).json({ listing });
@@ -108,6 +125,11 @@ router.post("/buyer-requests", requireRole("buyer"), async (req, res) => {
       targetPrice: input.target_price === undefined ? undefined : String(input.target_price),
       currency: input.currency.toUpperCase(), destination: input.destination,
       preferredIncoterm: input.preferred_incoterm,
+      specification: input.specification,
+      contractDuration: input.contract_duration,
+      paymentTerms: input.payment_terms,
+      inspectionRequirements: input.inspection_requirements,
+      additionalConditions: input.additional_conditions,
       status: "pending_admin_review",
     }).returning();
     res.status(201).json({ requirement });
