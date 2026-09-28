@@ -399,8 +399,14 @@ function Admin() {
     setBusy(path); setError('');
     try {
       const response = await fetch(path, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verification_status }) });
-      if (!response.ok) throw new Error('Company verification could not be saved. Check the record and try again.');
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error === 'approved_company_document_required'
+          ? 'Approve at least one company evidence document before verifying this company.'
+          : 'Company verification could not be saved. Check the record and try again.');
+      }
       await qc.invalidateQueries({ queryKey: ['admin-pending-companies'] });
+      await qc.invalidateQueries({ queryKey: ['admin-audit-log'] });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Company review failed'); }
     finally { setBusy(''); }
   };
