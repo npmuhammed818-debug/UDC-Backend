@@ -527,6 +527,14 @@ router.get("/admin/referrals", requireRole("admin"), async (_req, res) => {
   res.json({ referrals });
 });
 
+router.get("/admin/users", requireRole("admin"), async (_req, res) => {
+  const users = await db.select({
+    id: usersTable.id, fullName: usersTable.fullName, email: usersTable.email,
+    role: usersTable.role, status: usersTable.status,
+  }).from(usersTable).orderBy(desc(usersTable.createdAt)).limit(500);
+  res.json({ users });
+});
+
 router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createReferralSchema.parse(req.body);
@@ -702,7 +710,7 @@ router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
   res.json({ commissions });
 });
 
-router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
+router.post("/admin/commissions", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createCommissionSchema.parse(req.body);
     const [deal] = await db.select({ id: dealsTable.id, currency: dealsTable.currency }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
@@ -723,6 +731,13 @@ router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
         res.status(409).json({ error: "agent_must_be_assigned_to_deal" });
         return;
       }
+      const [existingReward] = await db.select({ id: commissionsTable.id }).from(commissionsTable)
+        .where(and(eq(commissionsTable.dealId, deal.id), eq(commissionsTable.beneficiaryUserId, beneficiary.id)))
+        .limit(1);
+      if (existingReward) {
+        res.status(409).json({ error: "agent_commission_already_recorded" });
+        return;
+      }
     }
 
     const [commission] = await db.insert(commissionsTable).values({
@@ -735,6 +750,11 @@ router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
       commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
       commissionAmount: String(input.amount),
     }).returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id, action: "commission_created",
+      entityType: "commission", entityId: commission.id,
+      metadata: { dealId: deal.id, beneficiaryUserId: beneficiary.id, amount: commission.amount, currency: commission.currency },
+    });
     await db.insert(notificationsTable).values({
       userId: commission.beneficiaryUserId,
       type: "commission_created",
