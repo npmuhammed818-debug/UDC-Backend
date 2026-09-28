@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -39,6 +39,76 @@ router.get("/admin/companies/pending-verification", requireRole("admin"), async 
   }
 });
 
+router.get("/admin/company-verification-documents", requireRole("admin"), async (_req, res) => {
+  try {
+    const rows = await db.select({
+      id: companyVerificationDocumentsTable.id,
+      companyId: companyVerificationDocumentsTable.companyId,
+      companyName: companiesTable.companyName,
+      ownerName: usersTable.fullName,
+      ownerEmail: usersTable.email,
+      documentType: companyVerificationDocumentsTable.documentType,
+      fileUrl: companyVerificationDocumentsTable.fileUrl,
+      status: companyVerificationDocumentsTable.status,
+      reviewNote: companyVerificationDocumentsTable.reviewNote,
+      createdAt: companyVerificationDocumentsTable.createdAt,
+    }).from(companyVerificationDocumentsTable)
+      .innerJoin(companiesTable, eq(companyVerificationDocumentsTable.companyId, companiesTable.id))
+      .innerJoin(usersTable, eq(companiesTable.ownerUserId, usersTable.id))
+      .orderBy(desc(companyVerificationDocumentsTable.createdAt));
+    res.json({ documents: await Promise.all(rows.map(async (item) => {
+      const path = parseStoragePath(item.fileUrl);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : null };
+    })) });
+  } catch { res.status(500).json({ error: "company_verification_documents_fetch_failed" }); }
+});
+
+router.patch("/admin/company-verification-documents/:documentId/status", requireRole("admin"), async (req, res) => {
+  const schema = z.object({ status: z.enum(["approved", "rejected"]), reviewNote: z.string().trim().max(1000).optional() });
+  try {
+    const input = schema.parse(req.body);
+    const documentId = z.string().uuid().parse(req.params["documentId"]);
+    const [existing] = await db.select({
+      id: companyVerificationDocumentsTable.id,
+      companyId: companyVerificationDocumentsTable.companyId,
+      status: companyVerificationDocumentsTable.status,
+    }).from(companyVerificationDocumentsTable)
+      .where(eq(companyVerificationDocumentsTable.id, documentId)).limit(1);
+    if (!existing) { res.status(404).json({ error: "company_document_not_found" }); return; }
+    const [document] = await db.update(companyVerificationDocumentsTable).set({
+      status: input.status,
+      reviewNote: input.reviewNote ?? null,
+      reviewedBy: req.authUser!.id,
+      reviewedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(companyVerificationDocumentsTable.id, documentId)).returning({
+      id: companyVerificationDocumentsTable.id,
+      companyId: companyVerificationDocumentsTable.companyId,
+      status: companyVerificationDocumentsTable.status,
+      reviewNote: companyVerificationDocumentsTable.reviewNote,
+    });
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "company_verification_document_reviewed",
+      entityType: "company_verification_document",
+      entityId: document.id,
+      metadata: { companyId: document.companyId, previousStatus: existing.status, newStatus: document.status, reviewNote: document.reviewNote },
+    });
+    const [company] = await db.select({ ownerUserId: companiesTable.ownerUserId }).from(companiesTable).where(eq(companiesTable.id, document.companyId)).limit(1);
+    if (company) await db.insert(notificationsTable).values({
+      userId: company.ownerUserId,
+      type: "company_verification_document_reviewed",
+      title: "Company evidence reviewed",
+      body: `Your ${document.status === "approved" ? "company evidence was approved" : "company evidence needs attention"}.${document.reviewNote ? ` Note: ${document.reviewNote}` : ""}`,
+      link: "/profile",
+    });
+    res.json({ document });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error", details: error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })) }); return; }
+    res.status(500).json({ error: "company_document_review_failed" });
+  }
+});
+
 router.patch(
   "/admin/companies/:companyId/verification",
   requireRole("admin"),
@@ -58,6 +128,16 @@ router.patch(
       if (!existing) {
         res.status(404).json({ error: "company_not_found" });
         return;
+      }
+      if (verification_status === "verified") {
+        const [approvedDocument] = await db.select({ id: companyVerificationDocumentsTable.id })
+          .from(companyVerificationDocumentsTable)
+          .where(and(eq(companyVerificationDocumentsTable.companyId, companyId), eq(companyVerificationDocumentsTable.status, "approved")))
+          .limit(1);
+        if (!approvedDocument) {
+          res.status(409).json({ error: "approved_company_document_required" });
+          return;
+        }
       }
       const [company] = await db
         .update(companiesTable)
