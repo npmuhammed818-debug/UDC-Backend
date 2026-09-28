@@ -13,5 +13,20 @@ export interface Requirement {
   unit: string;
   destination: string;
   status: string;
+  /** @nullable */
+  targetPrice?: string | null;
+  currency?: string;
+  /** @nullable */
+  preferredIncoterm?: string | null;
+  /** @nullable */
+  specification?: string | null;
+  /** @nullable */
+  contractDuration?: string | null;
+  /** @nullable */
+  paymentTerms?: string | null;
+  /** @nullable */
+  inspectionRequirements?: string | null;
+  /** @nullable */
+  additionalConditions?: string | null;
   [key: string]: unknown;
  }
