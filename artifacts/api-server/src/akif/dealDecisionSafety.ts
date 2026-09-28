@@ -160,6 +160,7 @@ export function normalizeModelDecision(input: {
   const tradeKnowledgeQuestion =
     /\b(?:what|wht)\s+(?:is|are|does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming)
     || /\b(?:explain|meaning of|what does)\b.*\b(?:dlc|lc|sblc|sgs|cif|fob|pb|performance bond|icpo|loi|fco|sco|spa|ncnda|bcl|pof|pop|mt103|bill of lading|bl)\b/i.test(normalizedIncoming);
+  const asksToProceed = /^(?:can|could|should|shall|may)\s+(?:we|i)\s+(?:proceed|move (?:ahead|forward)|go ahead)\b/i.test(normalizedIncoming);
 
   const json = extractJson(input.content);
   if (!json) return null;
@@ -217,6 +218,24 @@ export function normalizeModelDecision(input: {
       ? rawReply
       : null;
   if (!replyToSender) return null;
+
+  // A question about proceeding is not the sender's acceptance. A model can
+  // otherwise assert mutual agreement and pass that assertion to the other side.
+  const assertsMutualAgreement = /\b(?:all (?:terms|details) (?:are|have been) confirmed|both sides (?:confirmed|agreed)|we (?:can|are ready to) proceed)\b/i;
+  if (asksToProceed && input.deal.status === "negotiation" && (
+    intent === "acceptance"
+    || assertsMutualAgreement.test(replyToSender)
+    || (typeof parsed.relayToCounterparty === "string" && assertsMutualAgreement.test(parsed.relayToCounterparty))
+  )) {
+    const otherSide = input.participantRole === "seller" ? "buyer" : "seller";
+    return {
+      intent: "deal_question",
+      replyToSender: `I'll check with the ${otherSide} before we move ahead.`,
+      relay: true,
+      relayToCounterparty: "Are you ready to proceed with this deal?",
+      newTradeIntake: false,
+    };
+  }
 
   let relayRequested = parsed.relay === true;
 

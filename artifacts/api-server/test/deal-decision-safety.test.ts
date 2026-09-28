@@ -86,6 +86,22 @@ test("exact offer reply preserves generated text without inventing a relay", () 
   );
   assert.equal(decide("Yes", model({ relay: false }), context)?.relay, false);
 });
+test("a question about proceeding cannot become a confirmed acceptance", () => {
+  const decision = decide("Can we proceed with the copper deal?", model({
+    intent: "acceptance",
+    replyToSender: "Yes, all terms are confirmed. Send the SPA.",
+    relayToCounterparty: "All terms are confirmed. Send the SPA.",
+  }));
+  assert.equal(decision?.intent, "deal_question");
+  assert.equal(decision?.replyToSender, "I'll check with the seller before we move ahead.");
+  assert.equal(decision?.relayToCounterparty, "Are you ready to proceed with this deal?");
+  assert.doesNotMatch(decision?.replyToSender ?? "", /confirmed|SPA/);
+  assert.equal(decide("Can we proceed?", model({
+    intent: "deal_question",
+    replyToSender: "Both sides agreed. We can proceed.",
+    relay: false,
+  }))?.replyToSender, "I'll check with the seller before we move ahead.");
+});
 test("invalid or leaking model replies fail closed", () => {
   for (const content of [
     "Accepted.",
