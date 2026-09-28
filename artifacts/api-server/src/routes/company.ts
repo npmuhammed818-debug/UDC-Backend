@@ -1,8 +1,8 @@
 import { Router, raw, type IRouter, type Response } from "express";
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
-import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, db } from "@workspace/db";
+import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, db, notificationsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 
@@ -147,9 +147,29 @@ router.put("/company", requireAuth, async (req, res) => {
       return;
     }
 
-    const [company] = await db
-      .update(companiesTable)
-      .set({
+    const nextIdentity = {
+      companyName: input.company_name ?? existing.companyName,
+      registrationNumber: input.registration_number === undefined ? existing.registrationNumber : input.registration_number,
+      country: input.country === undefined ? existing.country : input.country,
+      address: input.address === undefined ? existing.address : input.address,
+      website: input.website === undefined ? existing.website : input.website,
+    };
+    const changedFields = (Object.keys(nextIdentity) as Array<keyof typeof nextIdentity>)
+      .filter((field) => nextIdentity[field] !== existing[field]);
+    const identityChanged = changedFields.length > 0;
+    if (!identityChanged) {
+      res.json({ company: existing });
+      return;
+    }
+    const previousVerificationStatus = existing.verificationStatus;
+    const nextVerificationStatus = identityChanged && previousVerificationStatus !== "pending"
+      ? "pending"
+      : previousVerificationStatus;
+
+    const company = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(companiesTable)
+        .set({
         ...(input.company_name === undefined
           ? {}
           : { companyName: input.company_name }),
@@ -159,10 +179,53 @@ router.put("/company", requireAuth, async (req, res) => {
         ...(input.country === undefined ? {} : { country: input.country }),
         ...(input.address === undefined ? {} : { address: input.address }),
         ...(input.website === undefined ? {} : { website: input.website }),
+        ...(nextVerificationStatus === previousVerificationStatus
+          ? {}
+          : { verificationStatus: nextVerificationStatus }),
         updatedAt: new Date(),
-      })
-      .where(eq(companiesTable.id, existing.id))
-      .returning(companySelection);
+        })
+        .where(eq(companiesTable.id, existing.id))
+        .returning(companySelection);
+
+      let invalidatedDocuments = 0;
+      if (identityChanged) {
+        const invalidated = await tx.update(companyVerificationDocumentsTable).set({
+          status: "rejected",
+          reviewNote: "Company details changed. Upload current supporting evidence for review.",
+          reviewedBy: null,
+          reviewedAt: null,
+          updatedAt: new Date(),
+        }).where(and(
+          eq(companyVerificationDocumentsTable.companyId, existing.id),
+          inArray(companyVerificationDocumentsTable.status, ["pending", "approved"]),
+        )).returning({ id: companyVerificationDocumentsTable.id });
+        invalidatedDocuments = invalidated.length;
+      }
+
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "company_profile_updated",
+        entityType: "company",
+        entityId: existing.id,
+        metadata: {
+          changedFields,
+          previousVerificationStatus,
+          newVerificationStatus: nextVerificationStatus,
+          invalidatedDocumentCount: invalidatedDocuments,
+        },
+      });
+
+      if (identityChanged && (previousVerificationStatus !== "pending" || invalidatedDocuments > 0)) {
+        await tx.insert(notificationsTable).values({
+          userId: req.authUser!.id,
+          type: "company_verification_reset",
+          title: "Company evidence needs re-review",
+          body: "Your company details changed. Verification has been reset and current supporting documents must be reviewed again.",
+          link: "/profile",
+        });
+      }
+      return updated;
+    });
 
     res.json({ company });
   } catch (error) {
