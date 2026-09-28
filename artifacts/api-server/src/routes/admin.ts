@@ -5,7 +5,7 @@ import { db } from "@workspace/db";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
-import { createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
+import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 
 const router: IRouter = Router();
@@ -136,7 +136,7 @@ const createReferralSchema = z.object({
 });
 
 const referralStatusSchema = z.object({
-  status: z.enum(["pending", "approved", "rejected", "cancelled"]),
+  status: z.enum(["pending", "qualified", "cancelled"]),
 });
 
 const addAgentParticipantSchema = z.object({
@@ -374,6 +374,11 @@ router.get("/admin/match-candidates", requireRole("admin"), async (_req, res) =>
   res.json({ buyerRequests, sellerOffers });
 });
 
+router.get("/admin/matches", requireRole("admin"), async (_req, res) => {
+  const matches = await db.select().from(matchesTable).orderBy(desc(matchesTable.updatedAt));
+  res.json({ matches });
+});
+
 router.post("/admin/matches", requireRole("admin"), async (req, res) => {
   try {
     const input = createMatchSchema.parse(req.body);
@@ -522,6 +527,14 @@ router.get("/admin/referrals", requireRole("admin"), async (_req, res) => {
   res.json({ referrals });
 });
 
+router.get("/admin/users", requireRole("admin"), async (_req, res) => {
+  const users = await db.select({
+    id: usersTable.id, fullName: usersTable.fullName, email: usersTable.email,
+    role: usersTable.role, status: usersTable.status,
+  }).from(usersTable).orderBy(desc(usersTable.createdAt)).limit(500);
+  res.json({ users });
+});
+
 router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createReferralSchema.parse(req.body);
@@ -529,7 +542,7 @@ router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedR
       db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.agentUserId)).limit(1),
       db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
     ]);
-    if (agent?.role !== "agent" || !referred) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
+    if (agent?.role !== "agent" || !referred || agent.id === referred.id) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
     const [referral] = await db.insert(referralsTable).values({
       agentUserId: agent.id,
       referredUserId: referred.id,
@@ -697,14 +710,34 @@ router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
   res.json({ commissions });
 });
 
-router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
+router.post("/admin/commissions", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createCommissionSchema.parse(req.body);
     const [deal] = await db.select({ id: dealsTable.id, currency: dealsTable.currency }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
-    const [beneficiary] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
+    const [beneficiary] = await db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
     if (!deal || !beneficiary) {
       res.status(404).json({ error: "commission_record_not_found" });
       return;
+    }
+    if (beneficiary.role === "agent") {
+      const [assignment] = await db.select({ id: dealParticipantsTable.id }).from(dealParticipantsTable)
+        .where(and(
+          eq(dealParticipantsTable.dealId, deal.id),
+          eq(dealParticipantsTable.userId, beneficiary.id),
+          eq(dealParticipantsTable.participantRole, "agent"),
+          eq(dealParticipantsTable.status, "active"),
+        )).limit(1);
+      if (!assignment) {
+        res.status(409).json({ error: "agent_must_be_assigned_to_deal" });
+        return;
+      }
+      const [existingReward] = await db.select({ id: commissionsTable.id }).from(commissionsTable)
+        .where(and(eq(commissionsTable.dealId, deal.id), eq(commissionsTable.beneficiaryUserId, beneficiary.id)))
+        .limit(1);
+      if (existingReward) {
+        res.status(409).json({ error: "agent_commission_already_recorded" });
+        return;
+      }
     }
 
     const [commission] = await db.insert(commissionsTable).values({
@@ -717,6 +750,11 @@ router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
       commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
       commissionAmount: String(input.amount),
     }).returning();
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id, action: "commission_created",
+      entityType: "commission", entityId: commission.id,
+      metadata: { dealId: deal.id, beneficiaryUserId: beneficiary.id, amount: commission.amount, currency: commission.currency },
+    });
     await db.insert(notificationsTable).values({
       userId: commission.beneficiaryUserId,
       type: "commission_created",
@@ -748,6 +786,14 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
     if (!existing) {
       res.status(404).json({ error: "commission_not_found" });
       return;
+    }
+    if (input.status === "paid" && existing.status !== "paid") {
+      const [deal] = await db.select({ status: dealsTable.status }).from(dealsTable)
+        .where(eq(dealsTable.id, existing.dealId)).limit(1);
+      if (deal?.status !== "completed") {
+        res.status(409).json({ error: "commission_requires_completed_deal" });
+        return;
+      }
     }
     const [commission] = await db.update(commissionsTable)
       .set({ status: input.status, paidAt: input.status === "paid" ? new Date() : null, updatedAt: new Date() })
@@ -808,7 +854,12 @@ router.get("/admin/documents", requireRole("admin"), async (req, res) => {
   const documents = typeof dealId === "string"
     ? await db.select().from(documentsTable).where(eq(documentsTable.dealId, dealId)).orderBy(desc(documentsTable.createdAt))
     : await db.select().from(documentsTable).orderBy(desc(documentsTable.createdAt));
-  res.json({ documents });
+  try {
+    res.json({ documents: await Promise.all(documents.map(async (item) => {
+      const path = parseStoragePath(item.fileUrl);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+    })) });
+  } catch { res.status(503).json({ error: "document_storage_unavailable" }); }
 });
 
 router.post("/admin/documents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
@@ -860,6 +911,14 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(documentsTable.id, documentId))
       .returning();
+    if (input.status === "approved") {
+      const [deal] = await db.select({ buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
+        .from(dealsTable).where(eq(dealsTable.id, document.dealId)).limit(1);
+      if (deal) await db.insert(documentAccessTable).values([
+        { documentId: document.id, userId: deal.buyerUserId, accessRole: "viewer" },
+        { documentId: document.id, userId: deal.sellerUserId, accessRole: "viewer" },
+      ]).onConflictDoNothing();
+    }
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
       action: "document_reviewed",
@@ -887,10 +946,18 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
 });
 
 router.get("/admin/users/pending-verification", requireRole("admin"), async (_req, res) => {
-  const users = await db.select().from(usersTable)
+  const users = await db.select({
+    id: usersTable.id,
+    fullName: usersTable.fullName,
+    email: usersTable.email,
+    role: usersTable.role,
+    status: usersTable.status,
+    createdAt: usersTable.createdAt,
+    updatedAt: usersTable.updatedAt,
+  }).from(usersTable)
     .where(and(
       inArray(usersTable.role, ["buyer", "seller"]),
-      inArray(usersTable.status, ["pending", "under_review"]),
+      inArray(usersTable.status, ["active", "pending", "under_review"]),
     ))
     .orderBy(desc(usersTable.updatedAt));
   res.json({ users });
