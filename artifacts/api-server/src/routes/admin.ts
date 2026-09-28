@@ -374,6 +374,11 @@ router.get("/admin/match-candidates", requireRole("admin"), async (_req, res) =>
   res.json({ buyerRequests, sellerOffers });
 });
 
+router.get("/admin/matches", requireRole("admin"), async (_req, res) => {
+  const matches = await db.select().from(matchesTable).orderBy(desc(matchesTable.updatedAt));
+  res.json({ matches });
+});
+
 router.post("/admin/matches", requireRole("admin"), async (req, res) => {
   try {
     const input = createMatchSchema.parse(req.body);
