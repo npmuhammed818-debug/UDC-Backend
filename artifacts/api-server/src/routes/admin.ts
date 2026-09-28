@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
@@ -10,6 +10,43 @@ import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, 
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 
 const router: IRouter = Router();
+
+router.get("/admin/audit-log", requireRole("admin"), async (req, res) => {
+  const querySchema = z.object({
+    q: z.string().trim().max(100).optional(),
+    entityType: z.string().trim().min(1).max(80).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    offset: z.coerce.number().int().min(0).max(5000).default(0),
+  });
+  try {
+    const { q, entityType, limit, offset } = querySchema.parse(req.query);
+    const conditions = [
+      entityType ? eq(auditLogsTable.entityType, entityType) : undefined,
+      q ? or(ilike(auditLogsTable.action, `%${q}%`), ilike(auditLogsTable.entityType, `%${q}%`), ilike(usersTable.fullName, `%${q}%`), ilike(usersTable.email, `%${q}%`)) : undefined,
+    ].filter((condition): condition is NonNullable<typeof condition> => condition !== undefined);
+    const rows = await db.select({
+      id: auditLogsTable.id,
+      actorUserId: auditLogsTable.actorUserId,
+      actorName: usersTable.fullName,
+      actorEmail: usersTable.email,
+      action: auditLogsTable.action,
+      entityType: auditLogsTable.entityType,
+      entityId: auditLogsTable.entityId,
+      metadata: auditLogsTable.metadata,
+      createdAt: auditLogsTable.createdAt,
+    }).from(auditLogsTable)
+      .leftJoin(usersTable, eq(auditLogsTable.actorUserId, usersTable.id))
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(auditLogsTable.createdAt), desc(auditLogsTable.id))
+      .limit(limit + 1)
+      .offset(offset);
+    const hasMore = rows.length > limit;
+    res.json({ logs: rows.slice(0, limit), hasMore, nextOffset: hasMore ? offset + limit : null });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "audit_log_fetch_failed" });
+  }
+});
 
 const verificationSchema = z.object({
   verification_status: z.enum(["pending", "verified", "rejected"]),
