@@ -529,7 +529,7 @@ router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedR
       db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.agentUserId)).limit(1),
       db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
     ]);
-    if (agent?.role !== "agent" || !referred) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
+    if (agent?.role !== "agent" || !referred || agent.id === referred.id) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
     const [referral] = await db.insert(referralsTable).values({
       agentUserId: agent.id,
       referredUserId: referred.id,
@@ -701,10 +701,23 @@ router.post("/admin/commissions", requireRole("admin"), async (req, res) => {
   try {
     const input = createCommissionSchema.parse(req.body);
     const [deal] = await db.select({ id: dealsTable.id, currency: dealsTable.currency }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
-    const [beneficiary] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
+    const [beneficiary] = await db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
     if (!deal || !beneficiary) {
       res.status(404).json({ error: "commission_record_not_found" });
       return;
+    }
+    if (beneficiary.role === "agent") {
+      const [assignment] = await db.select({ id: dealParticipantsTable.id }).from(dealParticipantsTable)
+        .where(and(
+          eq(dealParticipantsTable.dealId, deal.id),
+          eq(dealParticipantsTable.userId, beneficiary.id),
+          eq(dealParticipantsTable.participantRole, "agent"),
+          eq(dealParticipantsTable.status, "active"),
+        )).limit(1);
+      if (!assignment) {
+        res.status(409).json({ error: "agent_must_be_assigned_to_deal" });
+        return;
+      }
     }
 
     const [commission] = await db.insert(commissionsTable).values({
@@ -748,6 +761,14 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
     if (!existing) {
       res.status(404).json({ error: "commission_not_found" });
       return;
+    }
+    if (input.status === "paid" && existing.status !== "paid") {
+      const [deal] = await db.select({ status: dealsTable.status }).from(dealsTable)
+        .where(eq(dealsTable.id, existing.dealId)).limit(1);
+      if (deal?.status !== "completed") {
+        res.status(409).json({ error: "commission_requires_completed_deal" });
+        return;
+      }
     }
     const [commission] = await db.update(commissionsTable)
       .set({ status: input.status, paidAt: input.status === "paid" ? new Date() : null, updatedAt: new Date() })
