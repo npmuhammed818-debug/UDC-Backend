@@ -15,6 +15,30 @@ const verificationSchema = z.object({
   verification_status: z.enum(["pending", "verified", "rejected"]),
 });
 
+router.get("/admin/companies/pending-verification", requireRole("admin"), async (_req, res) => {
+  try {
+    const companies = await db.select({
+      id: companiesTable.id,
+      ownerUserId: companiesTable.ownerUserId,
+      companyName: companiesTable.companyName,
+      registrationNumber: companiesTable.registrationNumber,
+      country: companiesTable.country,
+      address: companiesTable.address,
+      website: companiesTable.website,
+      verificationStatus: companiesTable.verificationStatus,
+      ownerName: usersTable.fullName,
+      ownerEmail: usersTable.email,
+      ownerRole: usersTable.role,
+    }).from(companiesTable)
+      .innerJoin(usersTable, eq(companiesTable.ownerUserId, usersTable.id))
+      .where(inArray(companiesTable.verificationStatus, ["pending", "under_review"]))
+      .orderBy(desc(companiesTable.updatedAt));
+    res.json({ companies });
+  } catch {
+    res.status(500).json({ error: "pending_companies_fetch_failed" });
+  }
+});
+
 router.patch(
   "/admin/companies/:companyId/verification",
   requireRole("admin"),
