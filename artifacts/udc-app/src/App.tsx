@@ -267,6 +267,10 @@ function DealTabs({ dealId, user }: { dealId: string; user: AnyRecord }) {
   const [type, setType] = useState('trade_document');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [spaConfirmed, setSpaConfirmed] = useState(false);
+  const [spaBusy, setSpaBusy] = useState(false);
+  const [spaError, setSpaError] = useState('');
+  const [spaDraft, setSpaDraft] = useState('');
   const upload = async (event: FormEvent) => {
     event.preventDefault(); if (!file) return;
     setUploadError(''); setUploading(true);
@@ -278,8 +282,27 @@ function DealTabs({ dealId, user }: { dealId: string; user: AnyRecord }) {
     } catch (cause) { setUploadError(cause instanceof Error ? cause.message : 'Upload failed'); }
     finally { setUploading(false); }
   };
+  const generateSpaDraft = async () => {
+    setSpaBusy(true); setSpaError('');
+    try {
+      const response = await fetch(`/api/deals/${dealId}/spa-draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ confirmTerms: true }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The SPA draft could not be prepared.');
+      setSpaDraft(result.draft);
+    } catch (cause) { setSpaError(cause instanceof Error ? cause.message : 'The SPA draft could not be prepared.'); }
+    finally { setSpaBusy(false); }
+  };
+  const downloadSpaDraft = () => {
+    const blob = new Blob([spaDraft], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `UDC-${dealId.slice(0, 8)}-SPA-draft.txt`; link.click();
+    URL.revokeObjectURL(url);
+  };
   return <section className="panel detail-tabs"><div className="tabs-label"><MessageSquare size={16} /> Deal record</div><div className="room-grid"><div><div className="eyebrow mb-3">DOCUMENTS</div>{docs.isError ? <Failure retry={() => docs.refetch()} /> : docs.isLoading ? <LoadingRows count={2} /> : docs.data?.documents.length ? <div className="mini-list">{docs.data.documents.map((d: AnyRecord) => <a href={d.fileUrl} target="_blank" rel="noreferrer" key={d.id} className="mini-row"><FileText size={15} /><span className="flex-1">{d.documentType}</span><StatusPill status={d.status} /></a>)}</div> : <div className="subtle-empty">No documents shared yet.</div>}
-  {['buyer', 'seller'].includes(user.role) && <form onSubmit={upload} className="mini-form mt-4"><select className="select" value={type} onChange={(e) => setType(e.target.value)}><option value="trade_document">Trade document</option><option value="LOI">LOI</option><option value="ICPO">ICPO</option><option value="FCO">FCO</option><option value="SPA">SPA</option><option value="SGS">SGS</option><option value="BL">Bill of lading</option><option value="COA">COA</option></select><Input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /><Button size="sm" type="submit" disabled={!file || uploading}>{uploading ? 'Uploading…' : 'Upload PDF'}</Button></form>}{uploadError && <div className="error-banner mt-3">{uploadError}</div>}<p className="text-xs mt-2">UDC reviews documents before sharing them with the other party.</p></div><div><div className="eyebrow mb-3">YOUR NEGOTIATION RECORD</div><div className="handoff-note" data-testid="deal-communication-handoff"><strong>Use {communicationBoundary.channelLabel} for live conversation.</strong><span>{communicationBoundary.udcDescription}</span></div>{messages.isError ? <Failure retry={() => messages.refetch()} /> : messages.isLoading ? <LoadingRows count={2} /> : messages.data?.messages.length ? <div className="message-list">{messages.data.messages.map((m: AnyRecord) => <div className={`message-bubble ${m.senderUserId === user.id ? 'message-own' : ''}`} key={m.id}><span>{m.message}</span><small>{m.senderUserId === user.id ? 'You' : 'UDC'}</small></div>)}</div> : <div className="subtle-empty">No recorded messages for you yet.</div>}</div></div></section>;
+  {['buyer', 'seller'].includes(user.role) && <form onSubmit={upload} className="mini-form mt-4"><select className="select" value={type} onChange={(e) => setType(e.target.value)}><option value="trade_document">Trade document</option><option value="LOI">LOI</option><option value="ICPO">ICPO</option><option value="FCO">FCO</option><option value="SPA">SPA</option><option value="SGS">SGS</option><option value="BL">Bill of lading</option><option value="COA">COA</option></select><Input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /><Button size="sm" type="submit" disabled={!file || uploading}>{uploading ? 'Uploading…' : 'Upload PDF'}</Button></form>}{uploadError && <div className="error-banner mt-3">{uploadError}</div>}<p className="text-xs mt-2">UDC reviews documents before sharing them with the other party.</p></div><div><div className="eyebrow mb-3">YOUR NEGOTIATION RECORD</div><div className="handoff-note" data-testid="deal-communication-handoff"><strong>Use {communicationBoundary.channelLabel} for live conversation.</strong><span>{communicationBoundary.udcDescription}</span></div>{messages.isError ? <Failure retry={() => messages.refetch()} /> : messages.isLoading ? <LoadingRows count={2} /> : messages.data?.messages.length ? <div className="message-list">{messages.data.messages.map((m: AnyRecord) => <div className={`message-bubble ${m.senderUserId === user.id ? 'message-own' : ''}`} key={m.id}><span>{m.message}</span><small>{m.senderUserId === user.id ? 'You' : 'UDC'}</small></div>)}</div> : <div className="subtle-empty">No recorded messages for you yet.</div>}</div></div>
+  {['buyer', 'seller'].includes(user.role) && <div className="mt-6 border-t border-border pt-5"><div className="eyebrow">CONTRACT / SPA</div><h3 className="mt-1 text-base font-semibold">Prepare an SPA draft</h3><p className="mt-1 text-sm text-muted-foreground">Build a discussion draft from the deal terms recorded in UDC. Review every clause and complete missing legal details before sharing or signing.</p><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" checked={spaConfirmed} onChange={(event) => setSpaConfirmed(event.target.checked)} /><span>I confirm the quantity, price and delivery details shown in this deal are the terms to use for a draft.</span></label><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={!spaConfirmed || spaBusy} onClick={() => void generateSpaDraft()}>{spaBusy ? 'Preparing…' : spaDraft ? 'Regenerate draft' : 'Prepare draft'}</Button>{spaDraft && <Button size="sm" onClick={downloadSpaDraft}><ArrowDownToLine size={14} /> Download editable text</Button>}</div>{spaError && <div className="error-banner mt-3">{spaError}</div>}{spaDraft && <><div className="handoff-note mt-3"><strong>Draft only. It is not an offer, accepted contract, legal advice, or signature-ready.</strong><span>Have both parties and independent counsel complete the missing terms before signing. UDC does not issue the DLC or book SGS.</span></div><textarea className="textarea mt-3 min-h-80 font-mono text-xs" aria-label="Editable SPA draft" value={spaDraft} onChange={(event) => setSpaDraft(event.target.value)} /></>}</div>}
+  </section>;
 }
 
 function AkifAside({ status }: { status: string }) {
