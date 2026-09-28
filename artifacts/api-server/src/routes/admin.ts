@@ -908,10 +908,18 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
 });
 
 router.get("/admin/users/pending-verification", requireRole("admin"), async (_req, res) => {
-  const users = await db.select().from(usersTable)
+  const users = await db.select({
+    id: usersTable.id,
+    fullName: usersTable.fullName,
+    email: usersTable.email,
+    role: usersTable.role,
+    status: usersTable.status,
+    createdAt: usersTable.createdAt,
+    updatedAt: usersTable.updatedAt,
+  }).from(usersTable)
     .where(and(
       inArray(usersTable.role, ["buyer", "seller"]),
-      inArray(usersTable.status, ["pending", "under_review"]),
+      inArray(usersTable.status, ["active", "pending", "under_review"]),
     ))
     .orderBy(desc(usersTable.updatedAt));
   res.json({ users });
