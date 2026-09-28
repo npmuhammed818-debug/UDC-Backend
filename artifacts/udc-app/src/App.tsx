@@ -226,7 +226,37 @@ function Deals() {
 function DealDetail({ user }: { user: AnyRecord }) {
   const { id = '' } = useParams<{ id: string }>(); const deal = useGetDeal(id, { query: { queryKey: getGetDealQueryKey(id), enabled: !!id } }); const detail = deal.data?.deal as AnyRecord | undefined; const next = ['initiated', 'negotiation', 'verification', 'contract', 'banking', 'shipment', 'inspection', 'payment', 'completed']; const current = next.indexOf(detail?.status || '');
   if (deal.isLoading) return <><PageHeader eyebrow="DEAL / LOADING" title="Opening trade file" /><LoadingRows /></>; if (deal.isError || !detail) return <><PageHeader eyebrow="DEAL / ERROR" title="Trade file unavailable" /><Failure retry={() => deal.refetch()} /></>;
-  return <><PageHeader eyebrow={`DEAL / ${detail.dealNumber}`} title={detail.dealNumber} body="Execution room for a verified cross-border opportunity." action={<StatusPill status={detail.status} />} /><div className="detail-grid"><section className="panel"><div className="section-heading"><div><div className="eyebrow">EXECUTION STATUS</div><h2>Move the shipment forward</h2></div></div><div className="deal-timeline">{next.map((stage, i) => <div className={`timeline-step ${i <= current ? 'timeline-done' : ''}`} key={stage}><div className="timeline-dot">{i < current ? <Check size={12} /> : i === current ? <span /> : null}</div><span>{formatStatus(stage)}</span></div>)}</div><div className="deal-facts"><Fact label="Product" value={detail.productId} /><Fact label="Quantity" value={`${detail.quantity} ${detail.unit}`} /><Fact label="Agreed price" value={`${detail.currency} ${detail.agreedPrice}`} /><Fact label="Buyer" value={detail.buyerUserId} /><Fact label="Seller" value={detail.sellerUserId} /></div></section><AkifAside status={detail.status} /><DealTabs dealId={id} user={user} /></div></>;
+  return <><PageHeader eyebrow={`DEAL / ${detail.dealNumber}`} title={detail.dealNumber} body="Execution room for a verified cross-border opportunity." action={<StatusPill status={detail.status} />} /><div className="detail-grid"><section className="panel"><div className="section-heading"><div><div className="eyebrow">EXECUTION STATUS</div><h2>Move the shipment forward</h2></div></div><div className="deal-timeline">{next.map((stage, i) => <div className={`timeline-step ${i <= current ? 'timeline-done' : ''}`} key={stage}><div className="timeline-dot">{i < current ? <Check size={12} /> : i === current ? <span /> : null}</div><span>{formatStatus(stage)}</span></div>)}</div><div className="deal-facts"><Fact label="Product" value={detail.productId} /><Fact label="Quantity" value={`${detail.quantity} ${detail.unit}`} /><Fact label="Agreed price" value={`${detail.currency} ${detail.agreedPrice}`} /><Fact label="Buyer" value={detail.buyerUserId} /><Fact label="Seller" value={detail.sellerUserId} /></div></section><AkifAside status={detail.status} /><DealTabs dealId={id} user={user} />{user.role === 'admin' && <DealIntelligencePanel dealId={id} />}</div></>;
+}
+
+function DealIntelligencePanel({ dealId }: { dealId: string }) {
+  const queryClient = useQueryClient();
+  const queryKey = ['deal-intelligence', dealId];
+  const intelligence = useQuery({
+    queryKey,
+    queryFn: () => loadAgentRecords<{ snapshot: AnyRecord }>(`/api/admin/deals/${dealId}/intelligence`),
+    refetchInterval: (query) => query.state.data?.snapshot?.documentExtractions?.some((item: AnyRecord) => item.status === 'processing') ? 3_000 : false,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const snapshot = intelligence.data?.snapshot;
+  const extractions: AnyRecord[] = snapshot?.documentExtractions || [];
+  const rebuild = async () => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const response = await fetch(`/api/admin/deals/${dealId}/intelligence/rebuild`, { method: 'POST', credentials: 'same-origin' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Extraction retry could not be started.');
+      setNotice(`Queued ${result.queued} document extraction${result.queued === 1 ? '' : 's'}; ${result.skipped} could not be loaded from private storage.`);
+      window.setTimeout(() => { void queryClient.invalidateQueries({ queryKey }); }, 2_000);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Extraction retry could not be started.'); }
+    finally { setBusy(false); }
+  };
+  return <section className="panel detail-tabs"><div className="section-heading"><div><div className="eyebrow">AKIF / DOCUMENT INTELLIGENCE</div><h2>Extraction status</h2></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={intelligence.isFetching} onClick={() => intelligence.refetch()}>Refresh</Button><Button size="sm" disabled={busy || !snapshot?.documents?.length} onClick={() => void rebuild()}>{busy ? 'Queuing…' : 'Rebuild extractions'}</Button></div></div>
+    {error && <div className="error-banner"><CircleAlert size={15} /> {error}</div>}{notice && <div className="success-banner"><CircleCheck size={15} /> {notice}</div>}
+    {intelligence.isError ? <Failure retry={() => intelligence.refetch()} /> : intelligence.isLoading ? <LoadingRows count={2} /> : !extractions.length ? <EmptyState icon={FileText} title="No extraction records yet" body="Document uploads will show their extraction status here." /> : <div className="data-list">{extractions.map((item) => <article className="data-row" key={item.id}><div className="row-main"><strong>{item.fileName || item.documentType || 'Trade document'}</strong><span>{item.extractor || 'Extractor pending'} · {item.pageCount ?? 'Page count unavailable'} pages · {item.confidence ? `Confidence ${Math.round(Number(item.confidence) * 100)}%` : 'Confidence unavailable'}</span>{item.errorCode && <span className="text-destructive">{item.errorCode}</span>}{item.warnings?.length > 0 && <span>{item.warnings.join(' · ')}</span>}{item.structuredData && <details className="mt-1"><summary className="text-link cursor-pointer">Structured terms</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-3 text-xs">{JSON.stringify(item.structuredData, null, 2)}</pre></details>}</div><StatusPill status={item.status} /></article>)}</div>}
+  </section>;
 }
 
 function DealTabs({ dealId, user }: { dealId: string; user: AnyRecord }) {
