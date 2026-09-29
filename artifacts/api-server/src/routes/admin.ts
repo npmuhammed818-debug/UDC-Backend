@@ -1,8 +1,8 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -10,6 +10,30 @@ import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, 
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 
 const router: IRouter = Router();
+
+router.get("/admin/analytics", requireRole("admin"), async (_req, res) => {
+  try {
+    const [stages, completedValues, products] = await Promise.all([
+      db.select({ status: dealsTable.status, count: sql<number>`count(*)::int` })
+        .from(dealsTable).groupBy(dealsTable.status),
+      db.select({
+        currency: dealsTable.currency,
+        dealCount: sql<number>`count(*)::int`,
+        value: sql<string>`sum(${dealsTable.quantity} * ${dealsTable.agreedPrice})::text`,
+      }).from(dealsTable).where(eq(dealsTable.status, "completed"))
+        .groupBy(dealsTable.currency),
+      db.select({
+        product: productsTable.name,
+        dealCount: sql<number>`count(*)::int`,
+      }).from(dealsTable).innerJoin(productsTable, eq(dealsTable.productId, productsTable.id))
+        .groupBy(productsTable.id, productsTable.name)
+        .orderBy(desc(sql`count(*)`)).limit(10),
+    ]);
+    res.json({ stages, completedValues, products });
+  } catch {
+    res.status(500).json({ error: "analytics_fetch_failed" });
+  }
+});
 
 const announcementInput = z.object({
   audience: z.enum(["buyer", "seller", "agent"]),
