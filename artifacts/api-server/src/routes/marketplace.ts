@@ -11,6 +11,7 @@ const quantity = z.number().finite().positive();
 const text = z.string().trim().min(1).max(160);
 const optionalText = z.string().trim().max(160).transform((value) => value || undefined).optional();
 const optionalDetails = z.string().trim().max(2000).transform((value) => value || undefined).optional();
+const udcPaymentTerms = "DLC issued directly to the seller; payment after SGS inspection at destination";
 
 const productInput = z.object({
   name: text,
@@ -32,7 +33,7 @@ const listingInput = z.object({
   specification: optionalDetails,
   monthly_capacity: quantity.optional(),
   minimum_order_quantity: quantity.optional(),
-  payment_terms: optionalDetails,
+  payment_terms: z.string().trim().max(2000).optional(),
   inspection_terms: optionalDetails,
   availability: optionalText,
 }).strict();
@@ -47,7 +48,7 @@ const requirementInput = z.object({
   preferred_incoterm: optionalText,
   specification: optionalDetails,
   contract_duration: optionalText,
-  payment_terms: optionalDetails,
+  payment_terms: z.string().trim().max(2000).optional(),
   inspection_requirements: optionalDetails,
   additional_conditions: optionalDetails,
 }).strict();
@@ -55,6 +56,10 @@ const requirementInput = z.object({
 function failed(res: import("express").Response, error: unknown, code: string) {
   if (error instanceof z.ZodError) res.status(400).json({ error: "validation_error", details: error.issues });
   else res.status(500).json({ error: code });
+}
+
+function hasConflictingPaymentTerms(value: string | undefined) {
+  return Boolean(value?.trim() && value.trim() !== udcPaymentTerms);
 }
 
 router.get("/products", requireAuth, async (_req, res) => {
@@ -85,6 +90,9 @@ router.get("/seller-listings", requireAuth, async (req, res) => {
 router.post("/seller-listings", requireRole("seller"), async (req, res) => {
   try {
     const input = listingInput.parse(req.body);
+    if (hasConflictingPaymentTerms(input.payment_terms)) {
+      res.status(400).json({ error: "udc_dlc_payment_terms_required" }); return;
+    }
     const [product] = await db.select({ id: productsTable.id }).from(productsTable)
       .where(eq(productsTable.id, input.product_id)).limit(1);
     if (!product) { res.status(404).json({ error: "product_not_found" }); return; }
@@ -96,7 +104,7 @@ router.post("/seller-listings", requireRole("seller"), async (req, res) => {
       specification: input.specification,
       monthlyCapacity: input.monthly_capacity === undefined ? undefined : String(input.monthly_capacity),
       minimumOrderQuantity: input.minimum_order_quantity === undefined ? undefined : String(input.minimum_order_quantity),
-      paymentTerms: input.payment_terms, inspectionTerms: input.inspection_terms,
+      paymentTerms: udcPaymentTerms, inspectionTerms: input.inspection_terms,
       availability: input.availability,
       status: "pending_admin_review",
     }).returning();
@@ -116,6 +124,9 @@ router.get("/buyer-requests", requireAuth, async (req, res) => {
 router.post("/buyer-requests", requireRole("buyer"), async (req, res) => {
   try {
     const input = requirementInput.parse(req.body);
+    if (hasConflictingPaymentTerms(input.payment_terms)) {
+      res.status(400).json({ error: "udc_dlc_payment_terms_required" }); return;
+    }
     const [product] = await db.select({ id: productsTable.id }).from(productsTable)
       .where(eq(productsTable.id, input.product_id)).limit(1);
     if (!product) { res.status(404).json({ error: "product_not_found" }); return; }
@@ -127,7 +138,7 @@ router.post("/buyer-requests", requireRole("buyer"), async (req, res) => {
       preferredIncoterm: input.preferred_incoterm,
       specification: input.specification,
       contractDuration: input.contract_duration,
-      paymentTerms: input.payment_terms,
+      paymentTerms: udcPaymentTerms,
       inspectionRequirements: input.inspection_requirements,
       additionalConditions: input.additional_conditions,
       status: "pending_admin_review",
