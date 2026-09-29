@@ -492,21 +492,50 @@ function DealOperations({ user }: { user: AnyRecord }) {
   const deals = useQuery({ queryKey: ['admin-deals'], queryFn: () => loadAgentRecords<{ deals: AnyRecord[] }>('/api/admin/deals'), enabled: allowed });
   const meetings = useQuery({ queryKey: ['admin-meeting-requests'], queryFn: () => loadAgentRecords<{ requests: AnyRecord[] }>('/api/admin/meeting-requests'), enabled: allowed });
   const [dealId, setDealId] = useState('');
+  const [nextStage, setNextStage] = useState('');
+  const [confirmDestinationSgs, setConfirmDestinationSgs] = useState(false);
+  const [stageBusy, setStageBusy] = useState(false);
+  const [stageError, setStageError] = useState('');
+  const qc = useQueryClient();
   const selected = deals.data?.deals.find((deal) => deal.id === dealId);
   const instruments = useQuery({ queryKey: ['admin-financials', dealId], queryFn: () => loadAgentRecords<{ instruments: AnyRecord[] }>(`/api/admin/financial-instruments?dealId=${dealId}`), enabled: allowed && !!dealId });
   const inspections = useQuery({ queryKey: ['admin-inspections', dealId], queryFn: () => loadAgentRecords<{ inspections: AnyRecord[] }>(`/api/admin/inspections?dealId=${dealId}`), enabled: allowed && !!dealId });
   const shipments = useQuery({ queryKey: ['admin-shipments', dealId], queryFn: () => loadAgentRecords<{ shipments: AnyRecord[] }>(`/api/admin/shipments?dealId=${dealId}`), enabled: allowed && !!dealId });
   const documents = useQuery({ queryKey: ['admin-documents', dealId], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>(`/api/admin/documents?dealId=${dealId}`), enabled: allowed && !!dealId });
+  const paymentStages = ['payment', 'commission', 'completed'];
+  const stageOptions = ['initiated', 'negotiation', 'verification', 'loi', 'icpo', 'fco_sco', 'contract', 'banking', 'inspection', 'loading', 'shipment', 'delivery', 'payment', 'commission', 'completed', 'on_hold', 'cancelled', 'rejected', 'disputed'];
+  const saveStage = async () => {
+    if (!dealId || !nextStage) return;
+    setStageBusy(true); setStageError('');
+    try {
+      const response = await fetch(`/api/admin/deals/${dealId}/status`, {
+        method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStage, confirmDestinationSgs }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        const labels: Record<string, string> = { confirmed_dlc_required: 'confirmed DLC record', passed_inspection_required: 'passed inspection record', approved_sgs_document_required: 'approved SGS document', destination_sgs_confirmation_required: 'destination SGS confirmation' };
+        throw new Error(result.error === 'payment_evidence_required' ? `Before this stage, record: ${(result.missing || []).map((key: string) => labels[key] || key).join(', ')}.` : 'The stage could not be updated.');
+      }
+      setNextStage(''); setConfirmDestinationSgs(false);
+      await qc.invalidateQueries({ queryKey: ['admin-deals'] });
+    } catch (cause) { setStageError(cause instanceof Error ? cause.message : 'Stage update failed.'); }
+    finally { setStageBusy(false); }
+  };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Deal operations" /><EmptyState title="Admin access required" body="UDC administrators review transaction milestones." /></>;
   const latest = (items?: AnyRecord[]) => items?.[0]?.status || 'not recorded';
   const approvedSgs = documents.data?.documents.some((item) => item.documentType === 'SGS' && item.status === 'approved');
   return <><PageHeader eyebrow="UDC / EXECUTION" title="Deal operations" body="Review the deal, its documents, inspection, shipment, and DLC record together before changing its stage." />
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">ACTIVE FILE</div><h2>Choose a deal</h2></div></div>
-      {deals.isError ? <Failure retry={() => deals.refetch()} /> : deals.isLoading ? <LoadingRows /> : <select className="select" value={dealId} onChange={(e) => setDealId(e.target.value)}><option value="">Select deal</option>{deals.data?.deals.map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.status}</option>)}</select>}
+      {deals.isError ? <Failure retry={() => deals.refetch()} /> : deals.isLoading ? <LoadingRows /> : <select className="select" value={dealId} onChange={(e) => { setDealId(e.target.value); setNextStage(''); setConfirmDestinationSgs(false); setStageError(''); }}><option value="">Select deal</option>{deals.data?.deals.map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.status}</option>)}</select>}
       {selected && <div className="mt-4"><div className="data-row"><div className="row-main"><strong>{selected.dealNumber}</strong><span>{selected.quantity} {selected.unit} · {selected.currency} {selected.agreedPrice}/{selected.unit} · {selected.destination || 'Destination pending'}</span></div><StatusPill status={selected.status} /><Link href={`/deals/${selected.id}`} className="text-link">Open deal</Link></div>
         <p className="text-sm mt-4">DLC: {latest(instruments.data?.instruments)} · Inspection: {latest(inspections.data?.inspections)} · Shipment: {latest(shipments.data?.shipments)} · Approved SGS document: {approvedSgs ? 'yes' : 'not recorded'}</p>
         <div className="data-list mt-4">{documents.data?.documents.map((item) => <a href={item.fileUrl} target="_blank" rel="noreferrer" className="data-row data-row-link" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Document for {selected.dealNumber}</span></div><StatusPill status={item.status} /><ArrowDownToLine size={16} /></a>)}</div>
         <p className="text-xs mt-4">UDC's DLC is issued directly to the seller. Payment release follows SGS inspection at destination, subject to bank and contract requirements. Confirm the evidence with the responsible parties before marking milestones complete.</p>
+        <div className="mt-4 border-t border-border pt-4"><Field label="Update deal stage"><select className="select" value={nextStage || selected.status} onChange={(event) => { setNextStage(event.target.value); setStageError(''); setConfirmDestinationSgs(false); }}>{stageOptions.map((stage) => <option key={stage} value={stage}>{formatStatus(stage)}</option>)}</select></Field>
+          {paymentStages.includes(nextStage) && nextStage !== selected.status && <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmDestinationSgs} onChange={(event) => setConfirmDestinationSgs(event.target.checked)} /><span>I reviewed the confirmed DLC, passed inspection and approved SGS document, and confirm the SGS inspection was at destination. This records my review; UDC does not certify the inspection or release bank payment.</span></label>}
+          <Button className="mt-3" size="sm" disabled={stageBusy || !nextStage || nextStage === selected.status || (paymentStages.includes(nextStage) && !confirmDestinationSgs)} onClick={() => void saveStage()}>{stageBusy ? 'Saving…' : 'Save stage'}</Button>{stageError && <div className="error-banner mt-3">{stageError}</div>}
+        </div>
       </div>}
     </div>
     <section className="panel mt-5" data-testid="admin-meeting-requests">
