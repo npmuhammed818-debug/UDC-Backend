@@ -1289,6 +1289,10 @@ router.get("/admin/buyer-requests/:requirementId/match-recommendations", require
     recommendations.push({ sellerOffer: offer, score, reasons });
   }
 
+  // Show the strongest compatible offers first while keeping admin approval
+  // as the only way to turn a recommendation into a match.
+  recommendations.sort((a, b) => b.score - a.score);
+
   res.json({ buyerRequest, recommendations });
 });
 
