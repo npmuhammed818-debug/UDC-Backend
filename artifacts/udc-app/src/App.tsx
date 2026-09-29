@@ -213,8 +213,13 @@ function BuyerApprovedOffers({ requirements, products }: { requirements: AnyReco
       : <div className="data-list">{approved.data.offers.map((offer) => {
         const request = requirements.find((item) => item.id === offer.buyerRequestId);
         const product = products.find((item) => item.id === request?.productId);
+        const comparable = request?.targetPrice != null
+          && request.currency === offer.currency && request.unit === offer.unit;
+        const priceFit = comparable
+          ? Number(offer.price) <= Number(request.targetPrice) ? 'Within your target price' : 'Above your target price'
+          : 'Price comparison unavailable';
         return <div className="data-row" key={offer.matchId}>
-          <div className="row-main"><strong>{product?.name || 'Matching offer'}</strong><span>{offer.quantity} {offer.unit} · {offer.currency} {offer.price}/{offer.unit}</span></div>
+          <div className="row-main"><strong>{product?.name || 'Matching offer'} · {request?.destination || 'Destination pending'}</strong><span>Offer: {offer.quantity} {offer.unit} · {offer.currency} {offer.price}/{offer.unit}</span><span>Requested: {request?.quantity || '—'} {request?.unit || ''} · {priceFit}</span></div>
           <div className="row-description">{[offer.specification, offer.originCountry && `Origin ${offer.originCountry}`, offer.incoterm, offer.destination, offer.availability].filter(Boolean).join(' · ') || 'Ask UDC for further details'}</div>
           <StatusPill status="approved" />
         </div>;
