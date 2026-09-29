@@ -318,6 +318,9 @@ function DealTabs({ dealId, user }: { dealId: string; user: AnyRecord }) {
   const [spaBusy, setSpaBusy] = useState(false);
   const [spaError, setSpaError] = useState('');
   const [spaDraft, setSpaDraft] = useState('');
+  const [loiDraft, setLoiDraft] = useState('');
+  const [loiBusy, setLoiBusy] = useState(false);
+  const [loiError, setLoiError] = useState('');
   const upload = async (event: FormEvent) => {
     event.preventDefault(); if (!file) return;
     setUploadError(''); setUploading(true);
@@ -346,9 +349,26 @@ function DealTabs({ dealId, user }: { dealId: string; user: AnyRecord }) {
     link.href = url; link.download = `UDC-${dealId.slice(0, 8)}-SPA-draft.txt`; link.click();
     URL.revokeObjectURL(url);
   };
+  const generateLoiDraft = async () => {
+    setLoiBusy(true); setLoiError('');
+    try {
+      const response = await fetch(`/api/deals/${dealId}/loi-draft`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ confirmTerms: true }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'The LOI draft could not be prepared.');
+      setLoiDraft(result.draft);
+    } catch (cause) { setLoiError(cause instanceof Error ? cause.message : 'The LOI draft could not be prepared.'); }
+    finally { setLoiBusy(false); }
+  };
+  const downloadLoiDraft = () => {
+    const url = URL.createObjectURL(new Blob([loiDraft], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = `UDC-${dealId.slice(0, 8)}-LOI-draft.txt`; link.click();
+    URL.revokeObjectURL(url);
+  };
   return <section className="panel detail-tabs"><div className="tabs-label"><MessageSquare size={16} /> Deal record</div><div className="room-grid"><div><div className="eyebrow mb-3">DOCUMENTS</div>{docs.isError ? <Failure retry={() => docs.refetch()} /> : docs.isLoading ? <LoadingRows count={2} /> : docs.data?.documents.length ? <div className="mini-list">{docs.data.documents.map((d: AnyRecord) => <a href={d.fileUrl} target="_blank" rel="noreferrer" key={d.id} className="mini-row"><FileText size={15} /><span className="flex-1">{d.documentType}</span><StatusPill status={d.status} /></a>)}</div> : <div className="subtle-empty">No documents shared yet.</div>}
   {['buyer', 'seller'].includes(user.role) && <form onSubmit={upload} className="mini-form mt-4"><select className="select" value={type} onChange={(e) => setType(e.target.value)}><option value="trade_document">Trade document</option><option value="LOI">LOI</option><option value="ICPO">ICPO</option><option value="FCO">FCO</option><option value="SPA">SPA</option><option value="SGS">SGS</option><option value="BL">Bill of lading</option><option value="COA">COA</option></select><Input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /><Button size="sm" type="submit" disabled={!file || uploading}>{uploading ? 'Uploading…' : 'Upload PDF'}</Button></form>}{uploadError && <div className="error-banner mt-3">{uploadError}</div>}<p className="text-xs mt-2">UDC reviews documents before sharing them with the other party.</p></div><div><div className="eyebrow mb-3">YOUR NEGOTIATION RECORD</div><div className="handoff-note" data-testid="deal-communication-handoff"><strong>Use {communicationBoundary.channelLabel} for live conversation.</strong><span>{communicationBoundary.udcDescription}</span></div>{messages.isError ? <Failure retry={() => messages.refetch()} /> : messages.isLoading ? <LoadingRows count={2} /> : messages.data?.messages.length ? <div className="message-list">{messages.data.messages.map((m: AnyRecord) => <div className={`message-bubble ${m.senderUserId === user.id ? 'message-own' : ''}`} key={m.id}><span>{m.message}</span><small>{m.senderUserId === user.id ? 'You' : 'UDC'}</small></div>)}</div> : <div className="subtle-empty">No recorded messages for you yet.</div>}</div></div>
   {['buyer', 'seller'].includes(user.role) && <div className="mt-6 border-t border-border pt-5"><div className="eyebrow">CONTRACT / SPA</div><h3 className="mt-1 text-base font-semibold">Prepare an SPA draft</h3><p className="mt-1 text-sm text-muted-foreground">Build a discussion draft from the deal terms recorded in UDC. Review every clause and complete missing legal details before sharing or signing.</p><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" checked={spaConfirmed} onChange={(event) => setSpaConfirmed(event.target.checked)} /><span>I confirm the quantity, price and delivery details shown in this deal are the terms to use for a draft.</span></label><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={!spaConfirmed || spaBusy} onClick={() => void generateSpaDraft()}>{spaBusy ? 'Preparing…' : spaDraft ? 'Regenerate draft' : 'Prepare draft'}</Button>{spaDraft && <Button size="sm" onClick={downloadSpaDraft}><ArrowDownToLine size={14} /> Download editable text</Button>}</div>{spaError && <div className="error-banner mt-3">{spaError}</div>}{spaDraft && <><div className="handoff-note mt-3"><strong>Draft only. It is not an offer, accepted contract, legal advice, or signature-ready.</strong><span>Have both parties and independent counsel complete the missing terms before signing. UDC does not issue the DLC or book SGS.</span></div><textarea className="textarea mt-3 min-h-80 font-mono text-xs" aria-label="Editable SPA draft" value={spaDraft} onChange={(event) => setSpaDraft(event.target.value)} /></>}</div>}
+  {user.role === 'buyer' && <div className="mt-6 border-t border-border pt-5"><div className="eyebrow">BUYER / LOI</div><h3 className="mt-1 text-base font-semibold">Prepare an LOI draft</h3><p className="mt-1 text-sm text-muted-foreground">A non-binding discussion draft from the recorded deal terms. Complete and review it before sharing.</p><Button className="mt-3" size="sm" variant="outline" disabled={!spaConfirmed || loiBusy} onClick={() => void generateLoiDraft()}>{loiBusy ? 'Preparing…' : 'Prepare LOI draft'}</Button><p className="text-xs mt-2">Confirm the deal terms using the checkbox above first.</p>{loiError && <div className="error-banner mt-3">{loiError}</div>}{loiDraft && <><Button size="sm" className="mt-3" onClick={downloadLoiDraft}><ArrowDownToLine size={14} /> Download editable text</Button><textarea className="textarea mt-3 min-h-80 font-mono text-xs" aria-label="Editable LOI draft" value={loiDraft} onChange={(event) => setLoiDraft(event.target.value)} /></>}</div>}
   </section>;
 }
 
@@ -473,7 +493,6 @@ function AgentAdmin({ user }: { user: AnyRecord }) {
 function Admin() {
   const me = useGetCurrentUser();
   const allowed = ['admin', 'administrator'].includes(me.data?.user?.role || '');
-  const analytics = useQuery({ queryKey: ['admin-analytics'], queryFn: () => loadAgentRecords<{ stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[] }>('/api/admin/analytics'), enabled: allowed });
   const documents = useQuery({ queryKey: ['admin-documents'], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>('/api/admin/documents'), enabled: allowed });
   const users = useQuery({ queryKey: ['admin-pending-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users/pending-verification'), enabled: allowed });
   const companies = useQuery({ queryKey: ['admin-pending-companies'], queryFn: () => loadAgentRecords<{ companies: AnyRecord[] }>('/api/admin/companies/pending-verification'), enabled: allowed });
@@ -545,14 +564,6 @@ function Admin() {
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
   return <><PageHeader eyebrow="UDC / ADMIN" title="Review queue" body="Review company evidence and trade terms before approving a participant, requirement, or offer." />
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
-    <section className="panel mt-5" data-testid="admin-trade-analytics">
-      <div className="section-heading"><div><div className="eyebrow">REPORTS</div><h2>Trade activity</h2></div></div>
-      {analytics.isError ? <Failure retry={() => analytics.refetch()} /> : analytics.isLoading ? <LoadingRows /> : <div className="form-three">
-        <div><strong>Deal stages</strong><div className="data-list">{analytics.data?.stages.map((item) => <div className="data-row" key={item.status}><span>{formatStatus(item.status)}</span><strong>{item.count}</strong></div>)}</div></div>
-        <div><strong>Completed deal value</strong><div className="data-list">{analytics.data?.completedValues.map((item) => <div className="data-row" key={item.currency}><span>{item.currency}</span><strong>{item.value}</strong></div>)}</div><p className="text-xs mt-2">Values are grouped by currency; no conversion is applied.</p></div>
-        <div><strong>Top products by deal count</strong><div className="data-list">{analytics.data?.products.map((item) => <div className="data-row" key={item.product}><span>{item.product}</span><strong>{item.dealCount}</strong></div>)}</div></div>
-      </div>}
-    </section>
     <form className="panel mt-5" onSubmit={sendAnnouncement} data-testid="admin-announcement-form">
       <div className="section-heading"><div><div className="eyebrow">COMMUNICATION</div><h2>Announcement</h2></div></div>
       <p className="text-sm text-muted-foreground">Post an in-app notice to verified UDC accounts in one group. This does not send a WhatsApp message.</p>
