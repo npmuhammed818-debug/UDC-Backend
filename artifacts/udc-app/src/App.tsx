@@ -146,13 +146,25 @@ function Referrals({ user }: { user: AnyRecord }) {
   const allowed = user?.role === 'agent';
   const referrals = useQuery({ queryKey: ['agent-referrals'], queryFn: () => loadAgentRecords<{ referrals: AnyRecord[] }>('/api/referrals'), enabled: allowed });
   const commissions = useQuery({ queryKey: ['agent-commissions'], queryFn: () => loadAgentRecords<{ commissions: AnyRecord[] }>('/api/commissions'), enabled: allowed });
+  const rewardSummary = (commissions.data?.commissions ?? []).reduce<Record<string, { pending: number; paid: number }>>((totals, item) => {
+    const currency = String(item.currency || '').toUpperCase();
+    const amount = Number(item.amount);
+    if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(amount) || amount < 0) return totals;
+    const row = totals[currency] ?? { pending: 0, paid: 0 };
+    if (item.status === 'pending') row.pending += amount;
+    if (item.status === 'paid') row.paid += amount;
+    totals[currency] = row;
+    return totals;
+  }, {});
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Referral & earn" /><div className="panel"><EmptyState title="Agent access required" body="This view is for registered UDC agents." /></div></>;
   return <><PageHeader eyebrow="AGENT / REFERRAL & EARN" title="Your introductions" body="Track people you introduced and commissions recorded against your deals. UDC reviews each introduction and approves payouts." />
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">INTRODUCTIONS</div><h2>Referred participants</h2></div></div>
       {referrals.isError ? <Failure retry={() => referrals.refetch()} /> : referrals.isLoading ? <LoadingRows /> : !referrals.data?.referrals.length ? <EmptyState icon={CircleUserRound} title="No introductions recorded" body="Ask the UDC team to record your buyer or seller introduction and agreed referral terms." /> : <div className="data-list">{referrals.data.referrals.map((item) => <div className="data-row" key={item.id}><div className="row-leading"><CircleUserRound size={17} /></div><div className="row-main"><strong>{item.referredName}</strong><span>{formatStatus(item.referredRole)} · Code {item.referralCode}</span></div><StatusPill status={item.status} /></div>)}</div>}
     </div>
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">DEAL REWARDS</div><h2>Commissions</h2></div></div>
-      {commissions.isError ? <Failure retry={() => commissions.refetch()} /> : commissions.isLoading ? <LoadingRows /> : !commissions.data?.commissions.length ? <EmptyState icon={BriefcaseBusiness} title="No commission recorded yet" body="A referral becomes eligible only through an agreed deal and UDC's review." /> : <div className="data-list">{commissions.data.commissions.map((item) => <div className="data-row" key={item.id}><div className="row-leading"><BriefcaseBusiness size={17} /></div><div className="row-main"><strong>{item.dealNumber}</strong><span>{item.currency} {item.amount} · {item.commissionType ? formatStatus(item.commissionType) : 'Agreed reward'}</span></div><StatusPill status={item.status} /></div>)}</div>}
+      <p className="text-sm text-muted-foreground mb-3">An introduction is not a commission. UDC records an agreed reward against a deal; pending rewards are not marked paid until UDC confirms payment after deal completion.</p>
+      {!commissions.isLoading && !commissions.isError && Object.entries(rewardSummary).length > 0 && <div className="form-two mb-4">{Object.entries(rewardSummary).sort(([a], [b]) => a.localeCompare(b)).map(([currency, totals]) => <div className="handoff-note" key={currency}><strong>{currency} rewards</strong><span>Pending {totals.pending.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · Paid {totals.paid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>)}</div>}
+      {commissions.isError ? <Failure retry={() => commissions.refetch()} /> : commissions.isLoading ? <LoadingRows /> : !commissions.data?.commissions.length ? <EmptyState icon={BriefcaseBusiness} title="No commission recorded yet" body="A referral becomes eligible only through an agreed deal and UDC's review." /> : <div className="data-list">{commissions.data.commissions.map((item) => <div className="data-row" key={item.id}><div className="row-leading"><BriefcaseBusiness size={17} /></div><div className="row-main"><strong>{item.dealNumber}</strong><span>{item.currency} {item.amount} · {item.commissionType ? formatStatus(item.commissionType) : 'Agreed reward'}{item.status === 'paid' && item.paidAt ? ` · Paid ${new Date(item.paidAt).toLocaleDateString()}` : ''}</span></div><StatusPill status={item.status} /></div>)}</div>}
     </div>
   </>;
 }
