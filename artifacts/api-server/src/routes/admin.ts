@@ -11,6 +11,46 @@ import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "..
 
 const router: IRouter = Router();
 
+const announcementInput = z.object({
+  audience: z.enum(["buyer", "seller", "agent"]),
+  title: z.string().trim().min(3).max(100),
+  body: z.string().trim().min(5).max(1000),
+}).strict();
+
+router.post("/admin/announcements", requireRole("admin"), async (req, res) => {
+  try {
+    const input = announcementInput.parse(req.body);
+    const recipients = await db.select({ id: usersTable.id }).from(usersTable)
+      .where(and(eq(usersTable.role, input.audience), inArray(usersTable.status, ["verified", "active"])))
+      .limit(1001);
+    if (recipients.length > 1000) {
+      res.status(409).json({ error: "audience_too_large" }); return;
+    }
+    if (!recipients.length) {
+      res.status(409).json({ error: "no_active_recipients" }); return;
+    }
+    await db.transaction(async (tx) => {
+      await tx.insert(notificationsTable).values(recipients.map((recipient) => ({
+        userId: recipient.id,
+        type: "announcement",
+        title: input.title,
+        body: input.body,
+        link: "/notifications",
+      })));
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "announcement_created",
+        entityType: "announcement",
+        metadata: { audience: input.audience, recipientCount: recipients.length, title: input.title },
+      });
+    });
+    res.status(201).json({ recipientCount: recipients.length });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "announcement_create_failed" });
+  }
+});
+
 router.get("/admin/audit-log", requireRole("admin"), async (req, res) => {
   const querySchema = z.object({
     q: z.string().trim().max(100).optional(),
