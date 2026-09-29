@@ -7,6 +7,7 @@ import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { createSpaDraft } from "../deals/spaDraft";
 import { createLoiDraft } from "../deals/loiDraft";
+import { createFcoDraft } from "../deals/fcoDraft";
 
 const router: IRouter = Router();
 const documentType = z.enum(["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA", "SGS", "BL", "CO", "COA", "trade_document", "company_registration", "business_license", "certificate", "invoice", "packing_list", "bill_of_lading", "inspection_report", "certificate_of_origin", "other"]);
@@ -273,6 +274,61 @@ router.post("/deals/:dealId/loi-draft", requireAuth, async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "terms_confirmation_required_or_invalid_deal_id" }); return; }
     res.status(500).json({ error: "loi_draft_generation_failed" });
+  }
+});
+
+router.post("/deals/:dealId/fco-draft", requireAuth, async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    z.object({ confirmTerms: z.literal(true) }).parse(req.body);
+    const [deal] = await db.select().from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
+    if (!deal || (req.authUser!.role !== "admin" && req.authUser!.id !== deal.sellerUserId)) {
+      res.status(404).json({ error: "deal_not_found" }); return;
+    }
+    const [[product], [buyerRequest], [sellerListing]] = await Promise.all([
+      db.select({ name: productsTable.name }).from(productsTable).where(eq(productsTable.id, deal.productId)).limit(1),
+      deal.buyerRequestId
+        ? db.select({ companyId: buyerRequestsTable.companyId }).from(buyerRequestsTable).where(eq(buyerRequestsTable.id, deal.buyerRequestId)).limit(1)
+        : Promise.resolve([]),
+      deal.sellerListingId
+        ? db.select({ companyId: sellerListingsTable.companyId }).from(sellerListingsTable).where(eq(sellerListingsTable.id, deal.sellerListingId)).limit(1)
+        : Promise.resolve([]),
+    ]);
+    const [buyerCompany, sellerCompany] = await Promise.all([
+      buyerRequest?.companyId
+        ? db.select({ companyName: companiesTable.companyName }).from(companiesTable)
+            .where(and(eq(companiesTable.id, buyerRequest.companyId), eq(companiesTable.ownerUserId, deal.sellerUserId))).limit(1)
+        : Promise.resolve([]),
+      sellerListing?.companyId
+        ? db.select({ companyName: companiesTable.companyName }).from(companiesTable)
+            .where(and(eq(companiesTable.id, sellerListing.companyId), eq(companiesTable.ownerUserId, deal.sellerUserId))).limit(1)
+        : Promise.resolve([]),
+    ]);
+    const draft = createFcoDraft({
+      dealNumber: deal.dealNumber,
+      date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
+      buyerName: buyerCompany[0]?.companyName,
+      sellerName: sellerCompany[0]?.companyName,
+      productName: product?.name ?? "",
+      quantity: deal.quantity,
+      unit: deal.unit,
+      agreedPrice: deal.agreedPrice,
+      currency: deal.currency,
+      incoterm: deal.incoterm,
+      destination: deal.destination,
+    });
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "fco_draft_generated",
+      entityType: "deal",
+      entityId: deal.id,
+      metadata: { dealNumber: deal.dealNumber, draftVersion: 1, termsConfirmedByRequester: true },
+    });
+    res.json({ draft, dealNumber: deal.dealNumber, status: "draft_for_review" });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "terms_confirmation_required_or_invalid_deal_id" }); return; }
+    res.status(500).json({ error: "fco_draft_generation_failed" });
   }
 });
 
