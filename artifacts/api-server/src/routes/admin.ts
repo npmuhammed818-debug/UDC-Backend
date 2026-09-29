@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
+import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
 import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
@@ -309,6 +310,7 @@ const createDealSchema = z.object({
 
 const dealStatusSchema = z.object({
   status: z.enum(["initiated", "negotiation", "verification", "loi", "icpo", "fco_sco", "contract", "banking", "inspection", "loading", "shipment", "delivery", "payment", "commission", "completed", "on_hold", "cancelled", "rejected", "disputed"]),
+  confirmDestinationSgs: z.boolean().optional(),
 });
 
 const createCommissionSchema = z.object({
@@ -844,6 +846,23 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       res.status(404).json({ error: "deal_not_found" });
       return;
     }
+    let paymentEvidence: { confirmedDlcId: string; passedInspectionId: string; approvedSgsDocumentId: string } | undefined;
+    if (paymentMilestoneStages.has(input.status) && existingDeal.status !== input.status) {
+      const [[dlc], [inspection], [sgsDocument]] = await Promise.all([
+        db.select({ id: dealFinancialsTable.id }).from(dealFinancialsTable)
+          .where(and(eq(dealFinancialsTable.dealId, dealId), eq(dealFinancialsTable.instrumentType, "DLC"), eq(dealFinancialsTable.status, "confirmed"))).limit(1),
+        db.select({ id: inspectionsTable.id }).from(inspectionsTable)
+          .where(and(eq(inspectionsTable.dealId, dealId), eq(inspectionsTable.status, "passed"))).limit(1),
+        db.select({ id: documentsTable.id }).from(documentsTable)
+          .where(and(eq(documentsTable.dealId, dealId), eq(documentsTable.documentType, "SGS"), eq(documentsTable.status, "approved"))).limit(1),
+      ]);
+      const missing = missingPaymentEvidence({
+        confirmedDestinationSgs: input.confirmDestinationSgs === true,
+        confirmedDlcId: dlc?.id, passedInspectionId: inspection?.id, approvedSgsDocumentId: sgsDocument?.id,
+      });
+      if (missing.length) { res.status(409).json({ error: "payment_evidence_required", missing }); return; }
+      paymentEvidence = { confirmedDlcId: dlc.id, passedInspectionId: inspection.id, approvedSgsDocumentId: sgsDocument.id };
+    }
     const [deal] = await db.update(dealsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(dealsTable.id, dealId))
@@ -853,7 +872,7 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       action: "deal_status_updated",
       entityType: "deal",
       entityId: deal.id,
-      metadata: { previousStatus: existingDeal.status, newStatus: deal.status },
+      metadata: { previousStatus: existingDeal.status, newStatus: deal.status, ...(paymentEvidence ? { destinationSgsConfirmedByAdmin: true, paymentEvidence } : {}) },
     });
     if (existingDeal.status !== deal.status) {
       await notifyDealCounterparties(
