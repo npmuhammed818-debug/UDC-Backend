@@ -1,9 +1,55 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, referralsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, db, notificationsTable, referralsTable, usersTable } from "@workspace/db";
+import { randomUUID } from "node:crypto";
+import { z } from "zod/v4";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
+
+const referralRequestSchema = z.object({
+  email: z.email().max(254).transform((email) => email.toLowerCase()),
+  contactConsent: z.literal(true),
+}).strict();
+
+router.post("/referrals/request", requireAuth, async (req, res) => {
+  if (req.authUser!.role !== "agent" || !["verified", "active"].includes(req.authUser!.status)) {
+    res.status(403).json({ error: "verified_agent_required" }); return;
+  }
+  const parsed = referralRequestSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "valid_email_and_contact_consent_required" }); return; }
+  try {
+    const [referred] = await db.select({ id: usersTable.id }).from(usersTable)
+      .where(and(sql`lower(${usersTable.email}) = ${parsed.data.email}`, inArray(usersTable.role, ["buyer", "seller"])))
+      .limit(1);
+    if (referred && referred.id !== req.authUser!.id) {
+      await db.transaction(async (tx) => {
+        const [referral] = await tx.insert(referralsTable).values({
+          agentUserId: req.authUser!.id,
+          referredUserId: referred.id,
+          referralCode: `UDC-${randomUUID().slice(0, 8).toUpperCase()}`,
+          status: "pending",
+        }).onConflictDoNothing().returning({ id: referralsTable.id });
+        if (!referral) return;
+        await tx.insert(auditLogsTable).values({
+          actorUserId: req.authUser!.id, action: "agent_referral_requested",
+          entityType: "referral", entityId: referral.id,
+          metadata: { referredUserId: referred.id, contactConsentConfirmed: true },
+        });
+        const admins = await tx.select({ id: usersTable.id }).from(usersTable)
+          .where(and(eq(usersTable.role, "admin"), inArray(usersTable.status, ["verified", "active"]))).limit(100);
+        if (admins.length) await tx.insert(notificationsTable).values(admins.map((admin) => ({
+          userId: admin.id, type: "agent_referral_requested",
+          title: "Referral needs review", body: "An agent submitted a referral for review.", link: "/admin/agents",
+        })));
+      });
+    }
+    // Do not reveal whether an email is registered or already attributed to another agent.
+    res.status(202).json({ message: "If the person has a UDC buyer or seller account, the request will be reviewed. No commission is promised." });
+  } catch {
+    res.status(500).json({ error: "referral_request_failed" });
+  }
+});
 
 router.get("/referrals", requireAuth, async (req, res) => {
   if (req.authUser!.role !== "agent") {
