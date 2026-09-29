@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { buyerRequestsTable, db, productsTable, sellerListingsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../auth/middleware";
+import { hasConflictingPaymentTerms, udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 const router: IRouter = Router();
 const id = z.string().uuid();
@@ -11,7 +12,6 @@ const quantity = z.number().finite().positive();
 const text = z.string().trim().min(1).max(160);
 const optionalText = z.string().trim().max(160).transform((value) => value || undefined).optional();
 const optionalDetails = z.string().trim().max(2000).transform((value) => value || undefined).optional();
-const udcPaymentTerms = "DLC issued directly to the seller; payment after SGS inspection at destination";
 
 const productInput = z.object({
   name: text,
@@ -56,10 +56,6 @@ const requirementInput = z.object({
 function failed(res: import("express").Response, error: unknown, code: string) {
   if (error instanceof z.ZodError) res.status(400).json({ error: "validation_error", details: error.issues });
   else res.status(500).json({ error: code });
-}
-
-function hasConflictingPaymentTerms(value: string | undefined) {
-  return Boolean(value?.trim() && value.trim() !== udcPaymentTerms);
 }
 
 router.get("/products", requireAuth, async (_req, res) => {
