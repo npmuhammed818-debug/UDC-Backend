@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { buyerRequestsTable, db, productsTable, usersTable } from "@workspace/db";
 import { hashPassword } from "../auth/passwords";
+import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 export const buyerIntakeSchema = z.object({
   phone: z.string().min(7).max(32),
@@ -26,7 +27,8 @@ export async function recordPendingBuyerRequirement(input: z.infer<typeof buyerI
   const [requirement] = await db.insert(buyerRequestsTable).values({
     buyerUserId: buyer.id, productId: product.id, quantity: String(input.quantity), unit: input.unit,
     targetPrice: input.targetPrice ? String(input.targetPrice) : undefined, currency: input.currency.toUpperCase(),
-    destination: input.destination, preferredIncoterm: input.incoterm, status: "pending_admin_review",
+    destination: input.destination, preferredIncoterm: input.incoterm,
+    paymentTerms: udcPaymentTerms, status: "pending_admin_review",
   }).returning({ id: buyerRequestsTable.id, status: buyerRequestsTable.status });
   return requirement;
 }
