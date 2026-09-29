@@ -393,6 +393,7 @@ function Profile({ user }: { user: AnyRecord }) {
 function DealOperations({ user }: { user: AnyRecord }) {
   const allowed = user.role === 'admin';
   const deals = useQuery({ queryKey: ['admin-deals'], queryFn: () => loadAgentRecords<{ deals: AnyRecord[] }>('/api/admin/deals'), enabled: allowed });
+  const meetings = useQuery({ queryKey: ['admin-meeting-requests'], queryFn: () => loadAgentRecords<{ requests: AnyRecord[] }>('/api/admin/meeting-requests'), enabled: allowed });
   const [dealId, setDealId] = useState('');
   const selected = deals.data?.deals.find((deal) => deal.id === dealId);
   const instruments = useQuery({ queryKey: ['admin-financials', dealId], queryFn: () => loadAgentRecords<{ instruments: AnyRecord[] }>(`/api/admin/financial-instruments?dealId=${dealId}`), enabled: allowed && !!dealId });
@@ -411,6 +412,16 @@ function DealOperations({ user }: { user: AnyRecord }) {
         <p className="text-xs mt-4">UDC's DLC is issued directly to the seller. Payment release follows SGS inspection at destination, subject to bank and contract requirements. Confirm the evidence with the responsible parties before marking milestones complete.</p>
       </div>}
     </div>
+    <section className="panel mt-5" data-testid="admin-meeting-requests">
+      <div className="section-heading"><div><div className="eyebrow">COORDINATION</div><h2>Meeting requests</h2></div></div>
+      {meetings.isError ? <Failure retry={() => meetings.refetch()} /> : meetings.isLoading ? <LoadingRows />
+        : !meetings.data?.requests.length ? <EmptyState title="No meeting requests" body="Buyer and seller requests from deal conversations will appear here for UDC review." />
+        : <div className="data-list">{meetings.data.requests.map((item) => <div className="data-row" key={item.id}>
+          <div className="row-main"><strong>{item.dealNumber} · {item.participantRole}</strong><span>{new Date(item.createdAt).toLocaleString()}</span></div>
+          <div className="row-description">{item.originalText}</div>
+          <Link href={`/deals/${item.dealId}`} className="text-link">Open deal</Link>
+        </div>)}</div>}
+    </section>
   </>;
 }
 

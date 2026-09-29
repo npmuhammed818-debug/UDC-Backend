@@ -1246,6 +1246,26 @@ router.get("/admin/deals/:dealId/conversation", requireRole("admin"), async (req
   res.json({ events });
 });
 
+router.get("/admin/meeting-requests", requireRole("admin"), async (_req, res) => {
+  try {
+    const requests = await db.select({
+      id: dealConversationEventsTable.id,
+      dealId: dealConversationEventsTable.dealId,
+      dealNumber: dealsTable.dealNumber,
+      participantRole: dealConversationEventsTable.participantRole,
+      originalText: dealConversationEventsTable.originalText,
+      createdAt: dealConversationEventsTable.createdAt,
+    }).from(dealConversationEventsTable)
+      .innerJoin(dealsTable, eq(dealConversationEventsTable.dealId, dealsTable.id))
+      .where(eq(dealConversationEventsTable.intent, "meeting_request"))
+      .orderBy(desc(dealConversationEventsTable.createdAt))
+      .limit(100);
+    res.json({ requests });
+  } catch {
+    res.status(500).json({ error: "meeting_requests_fetch_failed" });
+  }
+});
+
 router.get("/admin/deals/:dealId/messages", requireRole("admin"), async (req, res) => {
   const dealId = req.params["dealId"];
   if (typeof dealId !== "string") {
