@@ -144,6 +144,11 @@ async function loadAgentRecords<T>(path: string): Promise<T> {
 
 function Referrals({ user }: { user: AnyRecord }) {
   const allowed = user?.role === 'agent';
+  const [referralEmail, setReferralEmail] = useState('');
+  const [contactConsent, setContactConsent] = useState(false);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestMessage, setRequestMessage] = useState('');
+  const qc = useQueryClient();
   const referrals = useQuery({ queryKey: ['agent-referrals'], queryFn: () => loadAgentRecords<{ referrals: AnyRecord[] }>('/api/referrals'), enabled: allowed });
   const commissions = useQuery({ queryKey: ['agent-commissions'], queryFn: () => loadAgentRecords<{ commissions: AnyRecord[] }>('/api/commissions'), enabled: allowed });
   const rewardSummary = (commissions.data?.commissions ?? []).reduce<Record<string, { pending: number; paid: number }>>((totals, item) => {
@@ -156,8 +161,23 @@ function Referrals({ user }: { user: AnyRecord }) {
     totals[currency] = row;
     return totals;
   }, {});
+  const requestReferral = async (event: FormEvent) => {
+    event.preventDefault(); setRequestBusy(true); setRequestMessage('');
+    try {
+      const response = await fetch('/api/referrals/request', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: referralEmail.trim(), contactConsent }),
+      });
+      if (!response.ok) throw new Error(response.status === 403 ? 'A verified agent account is required.' : 'Could not submit the request. Check the address and try again.');
+      setRequestMessage('Request received. If this person has a UDC account, UDC will review the introduction. No commission is promised.');
+      setReferralEmail(''); setContactConsent(false);
+      await qc.invalidateQueries({ queryKey: ['agent-referrals'] });
+    } catch (cause) { setRequestMessage(cause instanceof Error ? cause.message : 'Request failed.'); }
+    finally { setRequestBusy(false); }
+  };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Referral & earn" /><div className="panel"><EmptyState title="Agent access required" body="This view is for registered UDC agents." /></div></>;
   return <><PageHeader eyebrow="AGENT / REFERRAL & EARN" title="Your introductions" body="Track people you introduced and commissions recorded against your deals. UDC reviews each introduction and approves payouts." />
+    <form className="panel mt-5" onSubmit={requestReferral}><div className="section-heading"><div><div className="eyebrow">NEW INTRODUCTION</div><h2>Request referral review</h2></div></div><p className="text-sm text-muted-foreground">Enter the email of a buyer or seller who already has a UDC account. UDC will verify the introduction and any agreed reward.</p><Field label="Contact email"><Input type="email" required maxLength={254} value={referralEmail} onChange={(event) => setReferralEmail(event.target.value)} /></Field><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" checked={contactConsent} onChange={(event) => setContactConsent(event.target.checked)} /><span>I have this person's permission to share their contact with UDC.</span></label><Button type="submit" className="mt-3" disabled={requestBusy || !contactConsent || !referralEmail.trim()}>{requestBusy ? 'Submitting…' : 'Request review'}</Button>{requestMessage && <p className="text-sm mt-3" role="status">{requestMessage}</p>}</form>
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">INTRODUCTIONS</div><h2>Referred participants</h2></div></div>
       {referrals.isError ? <Failure retry={() => referrals.refetch()} /> : referrals.isLoading ? <LoadingRows /> : !referrals.data?.referrals.length ? <EmptyState icon={CircleUserRound} title="No introductions recorded" body="Ask the UDC team to record your buyer or seller introduction and agreed referral terms." /> : <div className="data-list">{referrals.data.referrals.map((item) => <div className="data-row" key={item.id}><div className="row-leading"><CircleUserRound size={17} /></div><div className="row-main"><strong>{item.referredName}</strong><span>{formatStatus(item.referredRole)} · Code {item.referralCode}</span></div><StatusPill status={item.status} /></div>)}</div>}
     </div>
