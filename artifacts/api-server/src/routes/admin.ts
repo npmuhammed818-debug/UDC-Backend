@@ -332,6 +332,11 @@ const createDocumentSchema = z.object({
 
 const documentStatusSchema = z.object({
   status: z.enum(["approved", "rejected"]),
+  reviewNote: z.string().trim().min(5).max(1000).optional(),
+}).superRefine((value, context) => {
+  if (value.status === "rejected" && !value.reviewNote) {
+    context.addIssue({ code: "custom", path: ["reviewNote"], message: "A rejection reason is required" });
+  }
 });
 
 const userVerificationStatusSchema = z.object({
@@ -1135,9 +1140,18 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       action: "document_reviewed",
       entityType: "document",
       entityId: document.id,
-      metadata: { previousStatus: existing.status, newStatus: document.status },
+      metadata: { previousStatus: existing.status, newStatus: document.status, reviewNote: input.reviewNote ?? null },
     });
-    if (existing.status !== document.status) {
+    if (document.status === "rejected" && existing.status !== "rejected") {
+      await db.insert(notificationsTable).values({
+        userId: document.uploadedBy,
+        type: "document_reviewed",
+        title: "Document needs correction",
+        body: `Your ${document.documentType} was rejected. Reason: ${input.reviewNote}`,
+        link: "/documents",
+      });
+    }
+    if (document.status === "approved" && existing.status !== document.status) {
       await notifyDealCounterparties(
         document.dealId,
         "document_reviewed",
