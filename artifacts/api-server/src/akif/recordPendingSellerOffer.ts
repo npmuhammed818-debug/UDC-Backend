@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db, productsTable, sellerListingsTable, usersTable } from "@workspace/db";
 import { hashPassword } from "../auth/passwords";
+import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 export const sellerOfferSchema = z.object({
   phone: z.string().min(7).max(32),
@@ -29,7 +30,8 @@ export async function recordPendingSellerOffer(input: z.infer<typeof sellerOffer
   const [offer] = await db.insert(sellerListingsTable).values({
     sellerUserId: seller.id, productId: product.id, quantity: String(input.quantity), unit: input.unit,
     price: String(input.price), currency: input.currency.toUpperCase(), originCountry: input.originCountry,
-    destination: input.destination, incoterm: input.incoterm, status: "pending_admin_review",
+    destination: input.destination, incoterm: input.incoterm,
+    paymentTerms: udcPaymentTerms, status: "pending_admin_review",
   }).returning({ id: sellerListingsTable.id, status: sellerListingsTable.status });
 
   return offer;
