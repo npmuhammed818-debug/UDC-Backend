@@ -488,6 +488,23 @@ function Admin() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [companyDocumentNotes, setCompanyDocumentNotes] = useState<Record<string, string>>({});
+  const [announcement, setAnnouncement] = useState({ audience: 'buyer', title: '', body: '' });
+  const [announcementResult, setAnnouncementResult] = useState('');
+  const sendAnnouncement = async (event: FormEvent) => {
+    event.preventDefault(); setBusy('announcement'); setError(''); setAnnouncementResult('');
+    try {
+      const response = await fetch('/api/admin/announcements', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(announcement),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error === 'no_active_recipients' ? 'There are no verified recipients in this group.' : 'The announcement could not be saved.');
+      setAnnouncementResult(`Delivered to ${result.recipientCount} UDC accounts.`);
+      setAnnouncement({ ...announcement, title: '', body: '' });
+      await qc.invalidateQueries({ queryKey: ['admin-audit-log'] });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Announcement failed'); }
+    finally { setBusy(''); }
+  };
   const review = async (path: string, status: string, extra: Record<string, unknown> = {}) => {
     setBusy(path); setError('');
     try {
@@ -522,6 +539,15 @@ function Admin() {
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
   return <><PageHeader eyebrow="UDC / ADMIN" title="Review queue" body="Review company evidence and trade terms before approving a participant, requirement, or offer." />
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
+    <form className="panel mt-5" onSubmit={sendAnnouncement} data-testid="admin-announcement-form">
+      <div className="section-heading"><div><div className="eyebrow">COMMUNICATION</div><h2>Announcement</h2></div></div>
+      <p className="text-sm text-muted-foreground">Post an in-app notice to verified UDC accounts in one group. This does not send a WhatsApp message.</p>
+      <Field label="Recipients"><select className="select" value={announcement.audience} onChange={(event) => setAnnouncement({ ...announcement, audience: event.target.value })}><option value="buyer">Buyers</option><option value="seller">Sellers</option><option value="agent">Agents</option></select></Field>
+      <Field label="Title"><Input required minLength={3} maxLength={100} value={announcement.title} onChange={(event) => setAnnouncement({ ...announcement, title: event.target.value })} /></Field>
+      <Field label="Message"><textarea required className="textarea" minLength={5} maxLength={1000} value={announcement.body} onChange={(event) => setAnnouncement({ ...announcement, body: event.target.value })} /></Field>
+      <Button type="submit" disabled={!!busy}>Post announcement</Button>
+      {announcementResult && <p className="text-sm mt-3">{announcementResult}</p>}
+    </form>
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">DOCUMENTS</div><h2>Pending document review</h2></div></div>
       {documents.isError ? <Failure retry={() => documents.refetch()} /> : documents.isLoading ? <LoadingRows /> : !documents.data?.documents.some((item) => item.status === 'pending') ? <EmptyState title="No documents waiting" body="Deal uploads appear here for inspection." /> : <div className="data-list">{documents.data.documents.filter((item) => item.status === 'pending').map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Deal {item.dealId}</span></div><a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-link">Open PDF</a><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'rejected')}>Reject</Button></div>)}</div>}
     </div>
