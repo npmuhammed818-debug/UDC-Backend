@@ -473,6 +473,7 @@ function AgentAdmin({ user }: { user: AnyRecord }) {
 function Admin() {
   const me = useGetCurrentUser();
   const allowed = ['admin', 'administrator'].includes(me.data?.user?.role || '');
+  const analytics = useQuery({ queryKey: ['admin-analytics'], queryFn: () => loadAgentRecords<{ stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[] }>('/api/admin/analytics'), enabled: allowed });
   const documents = useQuery({ queryKey: ['admin-documents'], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>('/api/admin/documents'), enabled: allowed });
   const users = useQuery({ queryKey: ['admin-pending-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users/pending-verification'), enabled: allowed });
   const companies = useQuery({ queryKey: ['admin-pending-companies'], queryFn: () => loadAgentRecords<{ companies: AnyRecord[] }>('/api/admin/companies/pending-verification'), enabled: allowed });
@@ -544,6 +545,14 @@ function Admin() {
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
   return <><PageHeader eyebrow="UDC / ADMIN" title="Review queue" body="Review company evidence and trade terms before approving a participant, requirement, or offer." />
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
+    <section className="panel mt-5" data-testid="admin-trade-analytics">
+      <div className="section-heading"><div><div className="eyebrow">REPORTS</div><h2>Trade activity</h2></div></div>
+      {analytics.isError ? <Failure retry={() => analytics.refetch()} /> : analytics.isLoading ? <LoadingRows /> : <div className="form-three">
+        <div><strong>Deal stages</strong><div className="data-list">{analytics.data?.stages.map((item) => <div className="data-row" key={item.status}><span>{formatStatus(item.status)}</span><strong>{item.count}</strong></div>)}</div></div>
+        <div><strong>Completed deal value</strong><div className="data-list">{analytics.data?.completedValues.map((item) => <div className="data-row" key={item.currency}><span>{item.currency}</span><strong>{item.value}</strong></div>)}</div><p className="text-xs mt-2">Values are grouped by currency; no conversion is applied.</p></div>
+        <div><strong>Top products by deal count</strong><div className="data-list">{analytics.data?.products.map((item) => <div className="data-row" key={item.product}><span>{item.product}</span><strong>{item.dealCount}</strong></div>)}</div></div>
+      </div>}
+    </section>
     <form className="panel mt-5" onSubmit={sendAnnouncement} data-testid="admin-announcement-form">
       <div className="section-heading"><div><div className="eyebrow">COMMUNICATION</div><h2>Announcement</h2></div></div>
       <p className="text-sm text-muted-foreground">Post an in-app notice to verified UDC accounts in one group. This does not send a WhatsApp message.</p>
