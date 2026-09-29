@@ -560,6 +560,7 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
     const [match] = await db.insert(matchesTable).values({
       buyerRequestId: buyerRequest.id,
       sellerListingId: sellerOffer.id,
+      matchScore: String(scoreTradeMatch(buyerRequest, sellerOffer).score),
       status: "approved",
     }).returning();
     await db.insert(auditLogsTable).values({
