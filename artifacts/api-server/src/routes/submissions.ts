@@ -66,4 +66,36 @@ router.get("/buyer-matching-offers", requireAuth, async (req, res) => {
   }
 });
 
+router.get("/seller-matching-inquiries", requireAuth, async (req, res) => {
+  try {
+    const inquiries = await db
+      .select({
+        matchId: matchesTable.id,
+        sellerListingId: sellerListingsTable.id,
+        matchedAt: matchesTable.createdAt,
+        quantity: buyerRequestsTable.quantity,
+        unit: buyerRequestsTable.unit,
+        targetPrice: buyerRequestsTable.targetPrice,
+        currency: buyerRequestsTable.currency,
+        destination: buyerRequestsTable.destination,
+        preferredIncoterm: buyerRequestsTable.preferredIncoterm,
+        specification: buyerRequestsTable.specification,
+        contractDuration: buyerRequestsTable.contractDuration,
+      })
+      .from(matchesTable)
+      .innerJoin(sellerListingsTable, eq(matchesTable.sellerListingId, sellerListingsTable.id))
+      .innerJoin(buyerRequestsTable, eq(matchesTable.buyerRequestId, buyerRequestsTable.id))
+      .where(and(
+        eq(sellerListingsTable.sellerUserId, req.authUser!.id),
+        eq(matchesTable.status, "approved"),
+        eq(buyerRequestsTable.status, "approved"),
+      ))
+      .orderBy(desc(matchesTable.createdAt));
+
+    res.json({ inquiries });
+  } catch {
+    res.status(500).json({ error: "seller_matching_inquiries_fetch_failed" });
+  }
+});
+
 export default router;
