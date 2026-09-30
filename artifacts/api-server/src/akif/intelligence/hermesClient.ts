@@ -17,6 +17,7 @@ type HermesCapabilities = {
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 
+type NvidiaChatResponse = HermesChatResponse;
 type OpenAIChatResponse = HermesChatResponse;
 type AkifBrainChatResponse = HermesChatResponse;
 
@@ -71,6 +72,66 @@ export async function runAkifBrainChat(
     const content = raw.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
       throw new Error("AKIF brain returned no text response");
+    }
+
+    return { content, raw };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+function nvidiaConfig() {
+  const apiKey = process.env.NVIDIA_API_KEY?.trim();
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    model: process.env.NVIDIA_MODEL?.trim() || "nvidia/nemotron-3.5-lightning-30b-a3b",
+    baseUrl: (process.env.NVIDIA_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1").replace(/\/$/, ""),
+  };
+}
+
+export function isNvidiaConfigured() {
+  return nvidiaConfig() !== null;
+}
+
+export async function runNvidiaChat(
+  message: string,
+  system?: string,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<{ content: string; raw: NvidiaChatResponse }> {
+  const config = nvidiaConfig();
+  if (!config) throw new Error("NVIDIA API key is not configured");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          ...(system ? [{ role: "system", content: system }] : []),
+          { role: "user", content: message },
+        ],
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`NVIDIA returned HTTP ${response.status}`);
+    }
+
+    const raw = await response.json() as NvidiaChatResponse;
+    const content = raw.choices?.[0]?.message?.content;
+    if (typeof content !== "string" || !content.trim()) {
+      throw new Error("NVIDIA returned no text response");
     }
 
     return { content, raw };
@@ -158,6 +219,24 @@ export async function runConversationChat(
         ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
       });
     }
+  }
+
+  if (isNvidiaConfigured()) {
+    try {
+      return await runNvidiaChat(message, system, timeoutMs);
+    } catch (error) {
+      const statusMatch = error instanceof Error
+        ? error.message.match(/NVIDIA returned HTTP (\d{3})/)
+        : null;
+      console.warn("Direct NVIDIA conversation failed; falling back to OpenAI", {
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : "provider_request_failed",
+        ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+      });
+    }
+  } else {
+    console.warn("Direct NVIDIA conversation skipped", { reason: "not_configured" });
   }
 
   if (isOpenAIConfigured()) {
