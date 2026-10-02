@@ -16,6 +16,7 @@ export * from "./sellerListings";
 export * from "./users";
 export * from "./workflow";
 export * from "./executionModules";
+export * from "./notificationPreferences";
 export * from "./whatsappMessageContexts";
 
 export * from "./dealConversation";
