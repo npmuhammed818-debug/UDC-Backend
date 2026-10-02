@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { Router, type IRouter, type Response } from "express";
 import { z } from "zod/v4";
 import {
+  auditLogsTable,
   akifResearchRunsTable,
   buyerRequestsTable,
   db,
@@ -88,7 +89,8 @@ const reasoningSchema = z.object({
     "message_understanding",
   ]),
   prompt: z.string().min(1).max(20_000),
-  context: z.record(z.string(), z.unknown()).optional(),
+  context: z.record(z.string(), z.unknown()).default({}),
+  mode: z.enum(["single", "specialist_review"]).default("single"),
 }).strict();
 
 function validationError(res: Response, error: unknown) {
@@ -242,7 +244,21 @@ router.get(
 
 router.post("/admin/akif/reasoning", requireRole("admin"), async (req, res) => {
   try {
-    res.json(await runAkifReasoning(reasoningSchema.parse(req.body)));
+    const input = reasoningSchema.parse(req.body);
+    const result = await runAkifReasoning(input);
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: input.mode === "specialist_review" ? "akif_specialist_review_run" : "akif_reasoning_run",
+      entityType: "akif_reasoning",
+      metadata: {
+        task: input.task,
+        mode: result.mode,
+        model: result.model,
+        humanReviewRequired: result.human_review_required,
+        roles: result.specialist_review ? ["evidence_analyst", "risk_reviewer", "coordinator"] : ["single"],
+      },
+    });
+    res.json(result);
   } catch (error) {
     if (validationError(res, error)) return;
     res.status(502).json({ error: "akif_reasoning_failed" });
