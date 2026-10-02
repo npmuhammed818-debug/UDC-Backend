@@ -10,7 +10,7 @@ import {
   db,
   sellerListingsTable,
 } from "@workspace/db";
-import { requireRole } from "../auth/middleware";
+import { requireAuth, requireRole } from "../auth/middleware";
 import { getAkifDealContext } from "../akif/intelligence/dealContext";
 import { assessDealRisks } from "../akif/intelligence/dealMonitoring";
 import { scoreBuyerSellerMatch } from "../akif/intelligence/matchScoring";
@@ -176,6 +176,15 @@ router.post("/admin/akif/documents/compare", requireRole("admin"), async (req, r
   } catch (error) {
     if (validationError(res, error)) return;
     res.status(502).json({ error: "akif_document_comparison_failed" });
+  }
+});
+
+router.post("/akif/learn", requireAuth, async (req, res) => {
+  try {
+    res.json(await explainAkifTopic(learnSchema.parse(req.body)));
+  } catch (error) {
+    if (validationError(res, error)) return;
+    res.status(502).json({ error: "akif_learn_failed" });
   }
 });
 
