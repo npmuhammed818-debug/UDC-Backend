@@ -465,6 +465,43 @@ async function notifyDealCounterparties(
   }));
 }
 
+router.post("/admin/deal-escalations/run", requireRole("admin"), async (req, res) => {
+  try {
+    const now = new Date();
+    const staleBefore = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+    const terminal = ["completed", "cancelled", "rejected"];
+    const deals = await db.select().from(dealsTable)
+      .where(and(sql`${dealsTable.status} not in (${sql.join(terminal.map((s) => sql`${s}`), sql`, `)})`, sql`${dealsTable.updatedAt} < ${staleBefore}`))
+      .orderBy(dealsTable.updatedAt)
+      .limit(250);
+
+    let created = 0;
+    for (const deal of deals) {
+      const dayKey = now.toISOString().slice(0, 10);
+      const type = `deal_escalation:${deal.status}:${dayKey}`;
+      const existing = await db.select({ id: notificationsTable.id }).from(notificationsTable)
+        .where(and(inArray(notificationsTable.userId, [deal.buyerUserId, deal.sellerUserId]), eq(notificationsTable.type, type), eq(notificationsTable.link, `/deals/${deal.id}`)))
+        .limit(1);
+      if (existing.length) continue;
+
+      const title = `Action check: ${deal.dealNumber}`;
+      const body = `Your UDC deal is still at ${deal.status.replaceAll("_", " ")}. Please review the deal room for the next required action.`;
+      await notifyDealCounterparties(deal.id, type, title, body, `/deals/${deal.id}`);
+      created += 2;
+      await db.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "deal_escalation_created",
+        entityType: "deal",
+        entityId: deal.id,
+        metadata: { stage: deal.status, staleHours: 48, notificationType: type },
+      });
+    }
+    res.json({ scanned: deals.length, notificationsCreated: created });
+  } catch {
+    res.status(500).json({ error: "deal_escalation_run_failed" });
+  }
+});
+
 router.get("/admin/buyer-requests", requireRole("admin"), async (_req, res) => {
   const requirements = await db
     .select()
