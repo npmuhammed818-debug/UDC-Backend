@@ -194,6 +194,29 @@ function Referrals({ user }: { user: AnyRecord }) {
   </>;
 }
 
+function Learn() {
+  const [topic, setTopic] = useState('DLC and SGS at destination');
+  const [result, setResult] = useState<AnyRecord | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const ask = async (event: FormEvent) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      const response = await fetch('/api/akif/learn', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error('AKIF could not explain this topic right now.');
+      setResult(data);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Learning request failed.'); }
+    finally { setBusy(false); }
+  };
+  const text = result ? String(result.explanation || result.answer || result.content || result.summary || JSON.stringify(result, null, 2)) : '';
+  return <><PageHeader eyebrow="UDC LEARN / AKIF" title="Trade, explained simply" body="Learn the documents, costs, risks, MOQ and execution steps before committing to a trade." />
+    <form className="panel mt-5" onSubmit={ask}><Field label="What do you want to understand?"><Input required minLength={2} maxLength={120} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. What happens after an FCO?" /></Field><Button className="mt-3" type="submit" disabled={busy}>{busy ? 'Explaining…' : 'Ask AKIF'}</Button>{error && <div className="error-banner mt-3"><CircleAlert size={15} /> {error}</div>}</form>
+    <section className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">NEWCOMER GUARDRAILS</div><h2>Before you commit</h2></div></div><div className="checklist"><div><span className="check-icon"><Check size={13} /></span><span>Understand MOQ and total capital required</span></div><div><span className="check-icon"><Check size={13} /></span><span>Calculate landed cost and realistic margin</span></div><div><span className="check-icon"><Check size={13} /></span><span>Verify company and trade documents</span></div><div><span className="check-icon"><Check size={13} /></span><span>Understand DLC, SGS, shipping and destination risks</span></div></div></section>
+    {text && <section className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">AKIF EXPLAINS</div><h2>{topic}</h2></div></div><p className="whitespace-pre-wrap text-sm">{text}</p></section>}
+  </>;
+}
+
 function Products({ user }: { user: AnyRecord }) {
   const products = useListProducts(); const create = useCreateProduct(); const qc = useQueryClient(); const [open, setOpen] = useState(false); const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', category: '', hs_code: '', description: '' });
@@ -737,6 +760,6 @@ function FormCard({ title, onSubmit, onCancel, pending, children }: { title: str
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 
-function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/register"><Auth mode="register" /></Route><Route path="/dashboard"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route path="/referrals"><Protected>{(u) => <Referrals user={u} />}</Protected></Route><Route path="/products"><Protected>{(u) => <Products user={u} />}</Protected></Route><Route path="/seller"><Protected>{() => <Seller />}</Protected></Route><Route path="/requirements"><Protected>{() => <Requirements />}</Protected></Route><Route path="/matches"><Protected>{(u) => <Matches user={u} />}</Protected></Route><Route path="/deals/:id"><Protected>{(u) => <DealDetail user={u} />}</Protected></Route><Route path="/deals"><Protected>{() => <Deals />}</Protected></Route><Route path="/documents"><Protected>{() => <Documents />}</Protected></Route><Route path="/messages"><Protected>{(u) => <Messages user={u} />}</Protected></Route><Route path="/notifications"><Protected>{() => <Notifications />}</Protected></Route><Route path="/profile"><Protected>{(u) => <Profile user={u} />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin"><Protected>{() => <Admin />}</Protected></Route><Route path="/"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route component={NotFound} /></Switch></ErrorBoundary>; }
+function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/register"><Auth mode="register" /></Route><Route path="/dashboard"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route path="/referrals"><Protected>{(u) => <Referrals user={u} />}</Protected></Route><Route path="/learn"><Protected>{() => <Learn />}</Protected></Route><Route path="/products"><Protected>{(u) => <Products user={u} />}</Protected></Route><Route path="/seller"><Protected>{() => <Seller />}</Protected></Route><Route path="/requirements"><Protected>{() => <Requirements />}</Protected></Route><Route path="/matches"><Protected>{(u) => <Matches user={u} />}</Protected></Route><Route path="/deals/:id"><Protected>{(u) => <DealDetail user={u} />}</Protected></Route><Route path="/deals"><Protected>{() => <Deals />}</Protected></Route><Route path="/documents"><Protected>{() => <Documents />}</Protected></Route><Route path="/messages"><Protected>{(u) => <Messages user={u} />}</Protected></Route><Route path="/notifications"><Protected>{() => <Notifications />}</Protected></Route><Route path="/profile"><Protected>{(u) => <Profile user={u} />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin"><Protected>{() => <Admin />}</Protected></Route><Route path="/"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route component={NotFound} /></Switch></ErrorBoundary>; }
 
 export default function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
