@@ -498,6 +498,7 @@ function DealOperations({ user }: { user: AnyRecord }) {
   const [stageError, setStageError] = useState('');
   const qc = useQueryClient();
   const selected = deals.data?.deals.find((deal) => deal.id === dealId);
+  const room = useQuery({ queryKey: ['admin-deal-room', dealId], queryFn: () => loadAgentRecords<AnyRecord>(`/api/admin/deals/${dealId}/room`), enabled: allowed && !!dealId });
   const instruments = useQuery({ queryKey: ['admin-financials', dealId], queryFn: () => loadAgentRecords<{ instruments: AnyRecord[] }>(`/api/admin/financial-instruments?dealId=${dealId}`), enabled: allowed && !!dealId });
   const inspections = useQuery({ queryKey: ['admin-inspections', dealId], queryFn: () => loadAgentRecords<{ inspections: AnyRecord[] }>(`/api/admin/inspections?dealId=${dealId}`), enabled: allowed && !!dealId });
   const shipments = useQuery({ queryKey: ['admin-shipments', dealId], queryFn: () => loadAgentRecords<{ shipments: AnyRecord[] }>(`/api/admin/shipments?dealId=${dealId}`), enabled: allowed && !!dealId });
@@ -530,6 +531,16 @@ function DealOperations({ user }: { user: AnyRecord }) {
       {deals.isError ? <Failure retry={() => deals.refetch()} /> : deals.isLoading ? <LoadingRows /> : <select className="select" value={dealId} onChange={(e) => { setDealId(e.target.value); setNextStage(''); setConfirmDestinationSgs(false); setStageError(''); }}><option value="">Select deal</option>{deals.data?.deals.map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.status}</option>)}</select>}
       {selected && <div className="mt-4"><div className="data-row"><div className="row-main"><strong>{selected.dealNumber}</strong><span>{selected.quantity} {selected.unit} · {selected.currency} {selected.agreedPrice}/{selected.unit} · {selected.destination || 'Destination pending'}</span></div><StatusPill status={selected.status} /><Link href={`/deals/${selected.id}`} className="text-link">Open deal</Link></div>
         <p className="text-sm mt-4">DLC: {latest(instruments.data?.instruments)} · Inspection: {latest(inspections.data?.inspections)} · Shipment: {latest(shipments.data?.shipments)} · Approved SGS document: {approvedSgs ? 'yes' : 'not recorded'}</p>
+        {room.isLoading ? <div className="mt-4"><LoadingRows /></div> : room.isError ? <div className="mt-4"><Failure retry={() => room.refetch()} /></div> : room.data ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="stat-card"><span>Participants</span><strong>{room.data.participants?.length || 0}</strong></div>
+          <div className="stat-card"><span>Messages</span><strong>{room.data.messages?.length || 0}</strong></div>
+          <div className="stat-card"><span>Meetings</span><strong>{room.data.meetings?.length || 0}</strong></div>
+          <div className="stat-card"><span>Open cases</span><strong>{room.data.cases?.filter((item: AnyRecord) => !['resolved','closed'].includes(item.status)).length || 0}</strong></div>
+          <div className="stat-card"><span>Customs</span><strong>{formatStatus(room.data.customs?.status || 'not_started')}</strong></div>
+          <div className="stat-card"><span>Commissions</span><strong>{room.data.commissions?.length || 0}</strong></div>
+          <div className="stat-card"><span>Timeline events</span><strong>{room.data.timeline?.length || 0}</strong></div>
+          <div className="stat-card"><span>Documents</span><strong>{room.data.documents?.length || 0}</strong></div>
+        </div> : null}
         <div className="data-list mt-4">{documents.data?.documents.map((item) => <a href={item.fileUrl} target="_blank" rel="noreferrer" className="data-row data-row-link" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Document for {selected.dealNumber}</span></div><StatusPill status={item.status} /><ArrowDownToLine size={16} /></a>)}</div>
         <p className="text-xs mt-4">UDC's DLC is issued directly to the seller. Payment release follows SGS inspection at destination, subject to bank and contract requirements. Confirm the evidence with the responsible parties before marking milestones complete.</p>
         <div className="mt-4 border-t border-border pt-4"><Field label="Update deal stage"><select className="select" value={nextStage || selected.status} onChange={(event) => { setNextStage(event.target.value); setStageError(''); setConfirmDestinationSgs(false); }}>{stageOptions.map((stage) => <option key={stage} value={stage}>{formatStatus(stage)}</option>)}</select></Field>
