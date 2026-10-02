@@ -1006,6 +1006,18 @@ router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, re
   const dealId = String(req.params["dealId"] ?? ""); const meetings = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)); res.json({ meetings });
 });
 
+router.patch("/admin/meetings/:meetingId", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const id = z.string().uuid().parse(req.params["meetingId"]);
+    const input = z.object({ status: z.enum(["requested","scheduled","completed","cancelled"]).optional(), scheduledAt: z.coerce.date().optional(), provider: z.string().trim().max(80).optional(), meetingUrl: z.string().url().max(1000).optional(), agenda: z.string().trim().max(2000).optional(), adminNotes: z.string().trim().max(3000).optional() }).refine((v) => Object.keys(v).length > 0).parse(req.body);
+    const [existing] = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.id, id)).limit(1);
+    if (!existing) { res.status(404).json({ error: "meeting_not_found" }); return; }
+    const [meeting] = await db.update(dealMeetingsTable).set({ ...input, completedAt: input.status === "completed" ? new Date() : existing.completedAt, updatedAt: new Date() }).where(eq(dealMeetingsTable.id, id)).returning();
+    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_updated", entityType: "deal", entityId: meeting.dealId, metadata: { meetingId: id, previousStatus: existing.status, newStatus: meeting.status } });
+    res.json({ meeting });
+  } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "meeting_update_failed" }); }
+});
+
 const caseInput = z.object({ caseType: z.enum(["trade_issue","document","inspection","shipment","payment","compliance"]).default("trade_issue"), priority: z.enum(["low","normal","high","critical"]).default("normal"), summary: z.string().trim().min(5).max(2000) });
 router.post("/admin/deals/:dealId/cases", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
@@ -1027,6 +1039,24 @@ router.patch("/admin/cases/:caseId", requireRole("admin"), async (req: Authentic
     res.json({case:dealCase});
   } catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"case_update_failed"});}
 });
+router.post("/admin/cases/:caseId/evidence", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const id = z.string().uuid().parse(req.params["caseId"]);
+    const input = z.object({ documentId: z.string().uuid().optional(), note: z.string().trim().min(2).max(2000).optional() }).refine((v) => Boolean(v.documentId || v.note)).parse(req.body);
+    const [existing] = await db.select().from(dealCasesTable).where(eq(dealCasesTable.id, id)).limit(1);
+    if (!existing) { res.status(404).json({ error: "case_not_found" }); return; }
+    if (input.documentId) {
+      const [doc] = await db.select({ id: documentsTable.id }).from(documentsTable).where(and(eq(documentsTable.id, input.documentId), eq(documentsTable.dealId, existing.dealId))).limit(1);
+      if (!doc) { res.status(400).json({ error: "evidence_document_not_in_deal" }); return; }
+    }
+    const previous = Array.isArray(existing.evidence) ? existing.evidence : existing.evidence ? [existing.evidence] : [];
+    const evidence = [...previous, { ...input, addedAt: new Date().toISOString(), addedBy: req.authUser.id }];
+    const [dealCase] = await db.update(dealCasesTable).set({ evidence, updatedAt: new Date() }).where(eq(dealCasesTable.id, id)).returning();
+    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_evidence_added", entityType: "deal", entityId: existing.dealId, metadata: { caseId: id, documentId: input.documentId ?? null } });
+    res.status(201).json({ case: dealCase });
+  } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "case_evidence_failed" }); }
+});
+
 router.get("/admin/deals/:dealId/cases", requireRole("admin"), async(req,res)=>{const dealId=String(req.params["dealId"]??"");res.json({cases:await db.select().from(dealCasesTable).where(eq(dealCasesTable.dealId,dealId)).orderBy(desc(dealCasesTable.createdAt))});});
 
 const customsInput=z.object({status:z.enum(["not_started","documents_pending","submitted","inspection","duties_pending","cleared","held"]),country:z.string().trim().max(100).optional(),port:z.string().trim().max(150).optional(),brokerName:z.string().trim().max(200).optional(),reference:z.string().trim().max(200).optional(),notes:z.string().trim().max(2000).optional()});
