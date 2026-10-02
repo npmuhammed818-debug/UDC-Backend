@@ -611,6 +611,7 @@ function Admin() {
   const me = useGetCurrentUser();
   const allowed = ['admin', 'administrator'].includes(me.data?.user?.role || '');
   const analytics = useQuery({ queryKey: ['admin-analytics'], queryFn: () => loadAgentRecords<{ stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[] }>('/api/admin/analytics'), enabled: allowed });
+  const opportunities = useQuery({ queryKey: ['akif-opportunities'], queryFn: () => loadAgentRecords<{ signals: AnyRecord[]; disclaimer: string }>('/api/admin/akif/opportunities?limit=30'), enabled: allowed });
   const documents = useQuery({ queryKey: ['admin-documents'], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>('/api/admin/documents'), enabled: allowed });
   const users = useQuery({ queryKey: ['admin-pending-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users/pending-verification'), enabled: allowed });
   const companies = useQuery({ queryKey: ['admin-pending-companies'], queryFn: () => loadAgentRecords<{ companies: AnyRecord[] }>('/api/admin/companies/pending-verification'), enabled: allowed });
@@ -683,6 +684,11 @@ function Admin() {
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
   return <><PageHeader eyebrow="UDC / ADMIN" title="Review queue" body="Review company evidence and trade terms before approving a participant, requirement, or offer." />
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
+    <section className="panel mt-5" data-testid="akif-opportunity-intelligence">
+      <div className="section-heading"><div><div className="eyebrow">AKIF / OPPORTUNITY INTELLIGENCE</div><h2>Evidence-backed market signals</h2></div><span className="akif-chip"><Sparkles size={12} /> AKIF</span></div>
+      <p className="text-sm text-muted-foreground mb-3">{opportunities.data?.disclaimer || 'Market signals are evidence records for human review.'}</p>
+      {opportunities.isError ? <Failure retry={() => opportunities.refetch()} /> : opportunities.isLoading ? <LoadingRows /> : !opportunities.data?.signals.length ? <EmptyState icon={Globe2} title="No market signals yet" body="AKIF signals will appear after evidence-backed trade data is ingested." /> : <div className="data-list">{opportunities.data.signals.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.productName || item.hsCode || 'Trade signal'} · {formatStatus(item.signalType)}</strong><span>{item.country || 'Market'}{item.period ? ` · ${item.period}` : ''} · {item.metricName}: {item.metricValue ?? 'n/a'} {item.unit || ''}{item.confidence ? ` · confidence ${item.confidence}` : ''}</span></div></div>)}</div>}
+    </section>
     <section className="panel mt-5" data-testid="admin-trade-analytics">
       <div className="section-heading"><div><div className="eyebrow">REPORTS</div><h2>Trade activity</h2></div></div>
       {analytics.isError ? <Failure retry={() => analytics.refetch()} /> : analytics.isLoading ? <LoadingRows /> : <div className="form-three">
