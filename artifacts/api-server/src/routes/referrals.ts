@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { auditLogsTable, db, notificationsTable, referralsTable, usersTable } from "@workspace/db";
+import { auditLogsTable, db, notificationsTable, referralsTable, usersTable, dealsTable } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { requireAuth } from "../auth/middleware";
@@ -76,6 +76,49 @@ router.get("/referrals", requireAuth, async (req, res) => {
     .orderBy(desc(referralsTable.updatedAt));
 
   res.json({ referrals });
+});
+
+router.get("/agent/deals", requireAuth, async (req, res) => {
+  if (req.authUser!.role !== "agent" || !["verified", "active"].includes(req.authUser!.status)) {
+    res.status(403).json({ error: "verified_agent_required" }); return;
+  }
+
+  const deals = await db.select({
+    id: dealsTable.id,
+    dealNumber: dealsTable.dealNumber,
+    status: dealsTable.status,
+    quantity: dealsTable.quantity,
+    unit: dealsTable.unit,
+    currency: dealsTable.currency,
+    destination: dealsTable.destination,
+    updatedAt: dealsTable.updatedAt,
+  }).from(dealsTable)
+    .where(eq(dealsTable.agentId, req.authUser!.id))
+    .orderBy(desc(dealsTable.updatedAt));
+
+  const label = (status: string) => ({
+    initiated: "Talking",
+    negotiation: "Talking",
+    verification: "Verification",
+    loi: "LOI sent",
+    icpo: "ICPO received",
+    fco_sco: "FCO/SCO sent",
+    contract: "SPA signed",
+    banking: "DLC in progress",
+    inspection: "SGS inspection",
+    loading: "Loading",
+    shipment: "Shipment in progress",
+    delivery: "Delivered / destination inspection",
+    payment: "Payment stage",
+    commission: "Commission stage",
+    completed: "Completed",
+    on_hold: "On hold",
+    cancelled: "Cancelled",
+    rejected: "Rejected",
+    disputed: "Issue under review",
+  } as Record<string, string>)[status] ?? status.replaceAll("_", " ");
+
+  res.json({ deals: deals.map((deal) => ({ ...deal, progress: label(deal.status), readOnly: true })) });
 });
 
 export default router;
