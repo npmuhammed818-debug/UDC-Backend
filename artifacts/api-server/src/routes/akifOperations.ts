@@ -4,6 +4,8 @@ import { z } from "zod/v4";
 import {
   auditLogsTable,
   akifResearchRunsTable,
+  akifMarketSignalsTable,
+  akifProductsTable,
   buyerRequestsTable,
   db,
   sellerListingsTable,
@@ -104,6 +106,33 @@ function validationError(res: Response, error: unknown) {
   });
   return true;
 }
+
+router.get("/admin/akif/opportunities", requireRole("admin"), async (req, res) => {
+  try {
+    const limit = z.coerce.number().int().min(1).max(100).default(30).parse(req.query.limit);
+    const signals = await db.select({
+      id: akifMarketSignalsTable.id,
+      signalType: akifMarketSignalsTable.signalType,
+      hsCode: akifMarketSignalsTable.hsCode,
+      country: akifMarketSignalsTable.country,
+      period: akifMarketSignalsTable.period,
+      metricName: akifMarketSignalsTable.metricName,
+      metricValue: akifMarketSignalsTable.metricValue,
+      unit: akifMarketSignalsTable.unit,
+      confidence: akifMarketSignalsTable.confidence,
+      evidence: akifMarketSignalsTable.evidence,
+      createdAt: akifMarketSignalsTable.createdAt,
+      productName: akifProductsTable.productName,
+    }).from(akifMarketSignalsTable)
+      .leftJoin(akifProductsTable, eq(akifMarketSignalsTable.productId, akifProductsTable.id))
+      .orderBy(desc(akifMarketSignalsTable.createdAt))
+      .limit(limit);
+    res.json({ signals, disclaimer: "Signals are evidence records for human review, not verified offers or trading recommendations." });
+  } catch (error) {
+    if (validationError(res, error)) return;
+    res.status(500).json({ error: "akif_opportunities_fetch_failed" });
+  }
+});
 
 router.post("/admin/akif/product/analyze", requireRole("admin"), async (req, res) => {
   try {
