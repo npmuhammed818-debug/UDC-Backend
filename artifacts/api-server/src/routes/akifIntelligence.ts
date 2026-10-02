@@ -75,6 +75,7 @@ router.get(
           "source_provenance",
           "explainable_opportunity_scoring",
           "open_source_worker_bridge",
+          "specialist_review",
         ],
         connectedResearchProviders: akifProviderRegistry.list(),
         workerConfigured: isAkifWorkerConfigured(),
@@ -162,7 +163,6 @@ router.post(
     }
   },
 );
-
 
 router.post(
   "/admin/akif/intelligence/trade/comtrade/preview",

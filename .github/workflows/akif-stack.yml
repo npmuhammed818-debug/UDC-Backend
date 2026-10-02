@@ -40,6 +40,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m compileall -q services/akif-worker/app services/akif-worker/tests
+      - run: pip install 'pytest>=8,<9' 'fastapi>=0.115,<1' 'pydantic>=2.11,<3'
+      - run: PYTHONPATH=services/akif-worker python -m pytest services/akif-worker/tests/test_reasoning.py -q
 
 
   hermes-compose:
