@@ -3,7 +3,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -927,6 +927,52 @@ router.post("/admin/deals/:dealId/issues", requireRole("admin"), async (req: Aut
     res.status(500).json({ error: "deal_issue_record_failed" });
   }
 });
+
+const meetingInput = z.object({ scheduledAt: z.coerce.date(), provider: z.string().trim().min(2).max(50), meetingUrl: z.string().url().max(1000), agenda: z.string().trim().max(1000).optional() });
+router.post("/admin/deals/:dealId/meetings", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = meetingInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const [meeting] = await db.insert(dealMeetingsTable).values({ dealId, requestedBy: req.authUser.id, scheduledBy: req.authUser.id, status: "scheduled", ...input }).returning();
+    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_scheduled", entityType: "deal", entityId: dealId, metadata: { meetingId: meeting.id, scheduledAt: meeting.scheduledAt, provider: meeting.provider } });
+    await notifyDealCounterparties(dealId, "deal_meeting_scheduled", "Deal meeting scheduled", "A UDC deal meeting has been scheduled. Open the deal for the confirmed time and joining details.", `/deals/${dealId}`);
+    res.status(201).json({ meeting });
+  } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "meeting_schedule_failed" }); }
+});
+router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, res) => {
+  const dealId = String(req.params["dealId"] ?? ""); const meetings = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)); res.json({ meetings });
+});
+
+const caseInput = z.object({ caseType: z.enum(["trade_issue","document","inspection","shipment","payment","compliance"]).default("trade_issue"), priority: z.enum(["low","normal","high","critical"]).default("normal"), summary: z.string().trim().min(5).max(2000) });
+router.post("/admin/deals/:dealId/cases", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = caseInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1); if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const [dealCase] = await db.insert(dealCasesTable).values({ dealId, openedBy: req.authUser.id, ...input }).returning();
+    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_opened", entityType: "deal", entityId: dealId, metadata: { caseId: dealCase.id, caseType: dealCase.caseType, priority: dealCase.priority } });
+    await notifyDealCounterparties(dealId, "deal_case_opened", "UDC case opened", "UDC has opened a case on this deal and will track it through resolution.", `/deals/${dealId}`);
+    res.status(201).json({ case: dealCase });
+  } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "case_create_failed" }); }
+});
+router.patch("/admin/cases/:caseId", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = z.object({ status: z.enum(["open","investigating","waiting_party","resolved","closed"]), resolution: z.string().trim().max(3000).optional() }).parse(req.body);
+    if (["resolved","closed"].includes(input.status) && !input.resolution) { res.status(400).json({ error: "resolution_required" }); return; }
+    const caseId=z.string().uuid().parse(req.params["caseId"]); const [existing]=await db.select().from(dealCasesTable).where(eq(dealCasesTable.id,caseId)).limit(1); if(!existing){res.status(404).json({error:"case_not_found"});return;}
+    const [dealCase]=await db.update(dealCasesTable).set({status:input.status,resolution:input.resolution??existing.resolution,resolvedAt:["resolved","closed"].includes(input.status)?new Date():null,updatedAt:new Date()}).where(eq(dealCasesTable.id,caseId)).returning();
+    await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_case_updated",entityType:"deal",entityId:dealCase.dealId,metadata:{caseId,previousStatus:existing.status,newStatus:dealCase.status}});
+    res.json({case:dealCase});
+  } catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"case_update_failed"});}
+});
+router.get("/admin/deals/:dealId/cases", requireRole("admin"), async(req,res)=>{const dealId=String(req.params["dealId"]??"");res.json({cases:await db.select().from(dealCasesTable).where(eq(dealCasesTable.dealId,dealId)).orderBy(desc(dealCasesTable.createdAt))});});
+
+const customsInput=z.object({status:z.enum(["not_started","documents_pending","submitted","inspection","duties_pending","cleared","held"]),country:z.string().trim().max(100).optional(),port:z.string().trim().max(150).optional(),brokerName:z.string().trim().max(200).optional(),reference:z.string().trim().max(200).optional(),notes:z.string().trim().max(2000).optional()});
+router.put("/admin/deals/:dealId/customs",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{try{const input=customsInput.parse(req.body);const dealId=z.string().uuid().parse(req.params["dealId"]);const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);if(!deal){res.status(404).json({error:"deal_not_found"});return;}const [row]=await db.insert(customsClearanceTable).values({dealId,...input,clearedAt:input.status==="cleared"?new Date():null}).onConflictDoUpdate({target:customsClearanceTable.dealId,set:{...input,clearedAt:input.status==="cleared"?new Date():null,updatedAt:new Date()}}).returning();await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"customs_status_updated",entityType:"deal",entityId:dealId,metadata:{customsId:row.id,status:row.status}});await notifyDealCounterparties(dealId,"customs_status_updated","Customs status updated",`Customs clearance is now ${row.status.replaceAll("_"," ")}.`,`/deals/${dealId}`);res.json({customs:row});}catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"customs_update_failed"});}});
+router.get("/admin/deals/:dealId/customs",requireRole("admin"),async(req,res)=>{const dealId=String(req.params["dealId"]??"");const [customs]=await db.select().from(customsClearanceTable).where(eq(customsClearanceTable.dealId,dealId)).limit(1);res.json({customs:customs??null});});
+
+router.get("/admin/feedback",requireRole("admin"),async(_req,res)=>{res.json({feedback:await db.select().from(dealFeedbackTable).orderBy(desc(dealFeedbackTable.createdAt))});});
+router.patch("/admin/feedback/:feedbackId/status",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{try{const input=z.object({status:z.enum(["approved","rejected"])}).parse(req.body);const id=z.string().uuid().parse(req.params["feedbackId"]);const [existing]=await db.select().from(dealFeedbackTable).where(eq(dealFeedbackTable.id,id)).limit(1);if(!existing){res.status(404).json({error:"feedback_not_found"});return;}const [feedback]=await db.update(dealFeedbackTable).set({status:input.status,updatedAt:new Date()}).where(eq(dealFeedbackTable.id,id)).returning();await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_feedback_reviewed",entityType:"deal",entityId:feedback.dealId,metadata:{feedbackId:id,previousStatus:existing.status,newStatus:feedback.status}});res.json({feedback});}catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"feedback_review_failed"});}});
 
 router.get("/admin/deals/:dealId/audit-log", requireRole("admin"), async (req, res) => {
   const dealId = req.params["dealId"];
