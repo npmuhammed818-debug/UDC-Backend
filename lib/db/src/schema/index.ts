@@ -3,6 +3,7 @@ export * from "./akifIntelligence";
 export * from "./akifResearch";
 export * from "./authSessions";
 export * from "./buyerRequests";
+export * from "./buyerPools";
 export * from "./companies";
 export * from "./companyVerificationDocuments";
 export * from "./commissions";
