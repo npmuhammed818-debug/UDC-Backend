@@ -830,6 +830,31 @@ router.get("/admin/deals", requireRole("admin"), async (_req, res) => {
   res.json({ deals });
 });
 
+router.get("/admin/deals/:dealId/room", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const [participants, messages, documents, financials, inspections, shipments, customs, meetings, cases, commissions, timeline] = await Promise.all([
+      db.select().from(dealParticipantsTable).where(eq(dealParticipantsTable.dealId, dealId)),
+      db.select().from(messagesTable).where(eq(messagesTable.dealId, dealId)).orderBy(desc(messagesTable.createdAt)).limit(200),
+      db.select().from(documentsTable).where(eq(documentsTable.dealId, dealId)).orderBy(desc(documentsTable.createdAt)),
+      db.select().from(dealFinancialsTable).where(eq(dealFinancialsTable.dealId, dealId)).orderBy(desc(dealFinancialsTable.updatedAt)),
+      db.select().from(inspectionsTable).where(eq(inspectionsTable.dealId, dealId)).orderBy(desc(inspectionsTable.updatedAt)),
+      db.select().from(shipmentsTable).where(eq(shipmentsTable.dealId, dealId)).orderBy(desc(shipmentsTable.updatedAt)),
+      db.select().from(customsClearanceTable).where(eq(customsClearanceTable.dealId, dealId)).limit(1),
+      db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)),
+      db.select().from(dealCasesTable).where(eq(dealCasesTable.dealId, dealId)).orderBy(desc(dealCasesTable.createdAt)),
+      db.select().from(commissionsTable).where(eq(commissionsTable.dealId, dealId)).orderBy(desc(commissionsTable.updatedAt)),
+      db.select().from(auditLogsTable).where(and(eq(auditLogsTable.entityType, "deal"), eq(auditLogsTable.entityId, dealId))).orderBy(desc(auditLogsTable.createdAt)).limit(250),
+    ]);
+    res.json({ deal, participants, messages, documents, financials, inspections, shipments, customs: customs[0] ?? null, meetings, cases, commissions, timeline });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_deal_id" }); return; }
+    res.status(500).json({ error: "deal_room_load_failed" });
+  }
+});
+
 router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = dealStatusSchema.parse(req.body);
