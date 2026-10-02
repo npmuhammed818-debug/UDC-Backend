@@ -1,9 +1,26 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
-import { db, notificationsTable } from "@workspace/db";
+import { db, notificationPreferencesTable, notificationsTable } from "@workspace/db";
+import { z } from "zod/v4";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
+
+const preferenceSchema = z
+  .object({
+    optionalInApp: z.boolean().optional(),
+    optionalWhatsApp: z.boolean().optional(),
+    reminders: z.boolean().optional(),
+    announcements: z.boolean().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, "at_least_one_preference_required");
+
+const defaultPreferences = {
+  optionalInApp: true,
+  optionalWhatsApp: true,
+  reminders: true,
+  announcements: true,
+};
 
 router.get("/notifications", requireAuth, async (req, res) => {
   try {
@@ -16,6 +33,77 @@ router.get("/notifications", requireAuth, async (req, res) => {
     res.json({ notifications });
   } catch {
     res.status(500).json({ error: "notifications_fetch_failed" });
+  }
+});
+
+router.get("/notifications/preferences", requireAuth, async (req, res) => {
+  try {
+    const [preferences] = await db
+      .select()
+      .from(notificationPreferencesTable)
+      .where(eq(notificationPreferencesTable.userId, req.authUser!.id))
+      .limit(1);
+
+    res.json({
+      preferences: preferences
+        ? {
+            optionalInApp: preferences.optionalInApp,
+            optionalWhatsApp: preferences.optionalWhatsApp,
+            reminders: preferences.reminders,
+            announcements: preferences.announcements,
+          }
+        : defaultPreferences,
+      criticalNotificationsAlwaysOn: true,
+    });
+  } catch {
+    res.status(500).json({ error: "notification_preferences_fetch_failed" });
+  }
+});
+
+router.patch("/notifications/preferences", requireAuth, async (req, res) => {
+  const parsed = preferenceSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_notification_preferences" });
+    return;
+  }
+
+  try {
+    const userId = req.authUser!.id;
+    const [current] = await db
+      .select()
+      .from(notificationPreferencesTable)
+      .where(eq(notificationPreferencesTable.userId, userId))
+      .limit(1);
+
+    const next = { ...(current ?? defaultPreferences), ...parsed.data, updatedAt: new Date() };
+
+    const [preferences] = await db
+      .insert(notificationPreferencesTable)
+      .values({
+        userId,
+        optionalInApp: next.optionalInApp,
+        optionalWhatsApp: next.optionalWhatsApp,
+        reminders: next.reminders,
+        announcements: next.announcements,
+      })
+      .onConflictDoUpdate({
+        target: notificationPreferencesTable.userId,
+        set: {
+          optionalInApp: next.optionalInApp,
+          optionalWhatsApp: next.optionalWhatsApp,
+          reminders: next.reminders,
+          announcements: next.announcements,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    res.json({
+      preferences,
+      criticalNotificationsAlwaysOn: true,
+    });
+  } catch {
+    res.status(500).json({ error: "notification_preferences_update_failed" });
   }
 });
 
