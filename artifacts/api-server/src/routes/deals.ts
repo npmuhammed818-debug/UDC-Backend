@@ -2,7 +2,7 @@ import { Router, raw, type IRouter } from "express";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { createSpaDraft } from "../deals/spaDraft";
@@ -99,6 +99,40 @@ router.get("/deals/:dealId/messages", requireAuth, async (req, res) => {
     )).orderBy(desc(messagesTable.createdAt));
     res.json({ messages });
   } catch { res.status(500).json({ error: "deal_messages_fetch_failed" }); }
+});
+
+router.get("/deals/:dealId/execution", requireAuth, async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const [meetings, cases, customs, feedback] = await Promise.all([
+      db.select({ id: dealMeetingsTable.id, status: dealMeetingsTable.status, scheduledAt: dealMeetingsTable.scheduledAt, provider: dealMeetingsTable.provider, meetingUrl: dealMeetingsTable.meetingUrl, agenda: dealMeetingsTable.agenda, completedAt: dealMeetingsTable.completedAt }).from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)),
+      db.select({ id: dealCasesTable.id, caseType: dealCasesTable.caseType, priority: dealCasesTable.priority, status: dealCasesTable.status, summary: dealCasesTable.summary, resolution: dealCasesTable.resolution, updatedAt: dealCasesTable.updatedAt }).from(dealCasesTable).where(eq(dealCasesTable.dealId, dealId)).orderBy(desc(dealCasesTable.createdAt)),
+      db.select({ status: customsClearanceTable.status, country: customsClearanceTable.country, port: customsClearanceTable.port, reference: customsClearanceTable.reference, clearedAt: customsClearanceTable.clearedAt, updatedAt: customsClearanceTable.updatedAt }).from(customsClearanceTable).where(eq(customsClearanceTable.dealId, dealId)).limit(1),
+      db.select({ id: dealFeedbackTable.id, rating: dealFeedbackTable.rating, comment: dealFeedbackTable.comment, createdAt: dealFeedbackTable.createdAt }).from(dealFeedbackTable).where(and(eq(dealFeedbackTable.dealId, dealId), eq(dealFeedbackTable.status, "approved"))).orderBy(desc(dealFeedbackTable.createdAt)),
+    ]);
+    res.json({ meetings, cases, customs: customs[0] ?? null, feedback });
+  } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_deal_id" }); return; } res.status(500).json({ error: "deal_execution_fetch_failed" }); }
+});
+
+router.post("/deals/:dealId/feedback", requireAuth, async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const input = z.object({ rating: z.number().int().min(1).max(5), comment: z.string().trim().max(1500).optional() }).parse(req.body);
+    const [deal] = await db.select({ id: dealsTable.id, buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId, status: dealsTable.status }).from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), or(eq(dealsTable.buyerUserId, req.authUser!.id), eq(dealsTable.sellerUserId, req.authUser!.id)))).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    if (deal.status !== "completed") { res.status(409).json({ error: "feedback_available_after_completion" }); return; }
+    const subjectUserId = req.authUser!.id === deal.buyerUserId ? deal.sellerUserId : deal.buyerUserId;
+    if (!subjectUserId) { res.status(409).json({ error: "counterparty_missing" }); return; }
+    try {
+      const [feedback] = await db.insert(dealFeedbackTable).values({ dealId, authorUserId: req.authUser!.id, subjectUserId, rating: String(input.rating), comment: input.comment, status: "pending_review" }).returning();
+      await db.insert(auditLogsTable).values({ actorUserId: req.authUser!.id, action: "deal_feedback_submitted", entityType: "deal", entityId: dealId, metadata: { feedbackId: feedback.id, rating: input.rating } });
+      res.status(201).json({ feedback: { id: feedback.id, rating: feedback.rating, comment: feedback.comment, status: feedback.status } });
+    } catch { res.status(409).json({ error: "feedback_already_submitted" }); }
+  } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "feedback_submit_failed" }); }
 });
 
 router.get("/deals", requireAuth, async (req, res) => {
