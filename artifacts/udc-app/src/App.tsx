@@ -350,19 +350,21 @@ function DealIntelligencePanel({ dealId }: { dealId: string }) {
   const [comparisonBusy, setComparisonBusy] = useState(false);
   const [comparisonError, setComparisonError] = useState('');
   const [comparisonResult, setComparisonResult] = useState<AnyRecord | null>(null);
+  const [selectedExtractionIds, setSelectedExtractionIds] = useState<string[]>([]);
   const snapshot = intelligence.data?.snapshot;
   const extractions: AnyRecord[] = snapshot?.documentExtractions || [];
   const comparableExtractions = extractions
     .filter((item) => (item.status === 'completed' || item.status === 'needs_review') && item.structuredData)
-    .map((item) => ({ label: String(item.fileName || item.documentType || 'Trade document').slice(0, 80), text: JSON.stringify(item.structuredData) }))
+    .map((item) => ({ id: String(item.id), label: String(item.fileName || item.documentType || 'Trade document').slice(0, 80), text: JSON.stringify(item.structuredData) }))
     .filter((item) => item.text.length <= 500_000)
     .slice(0, 10);
+  const selectedComparisons = comparableExtractions.filter((item) => selectedExtractionIds.includes(item.id));
   const compareExtractedDocuments = async () => {
     setComparisonBusy(true); setComparisonError(''); setComparisonResult(null);
     try {
       const response = await fetch('/api/admin/akif/documents/compare', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documents: comparableExtractions }),
+        body: JSON.stringify({ documents: selectedComparisons.map(({ label, text }) => ({ label, text })) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error('AKIF could not compare the extracted documents. Please try again.');
@@ -388,9 +390,12 @@ function DealIntelligencePanel({ dealId }: { dealId: string }) {
     <div className="mt-5 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h3 className="font-semibold">Compare extracted documents</h3><p className="text-xs text-muted-foreground">AKIF compares saved extracted terms; extraction mistakes can affect the result. Review the source files before making decisions.</p></div>
-        <Button size="sm" variant="outline" disabled={comparisonBusy || comparableExtractions.length < 2} onClick={() => void compareExtractedDocuments()}>{comparisonBusy ? 'Comparing…' : 'Compare deal documents'}</Button>
+        <Button size="sm" variant="outline" disabled={comparisonBusy || selectedComparisons.length < 2} onClick={() => void compareExtractedDocuments()}>{comparisonBusy ? 'Comparing…' : 'Compare selected documents'}</Button>
       </div>
-      {comparableExtractions.length < 2 && <p className="mt-2 text-xs text-muted-foreground">At least two completed extractions with structured terms are needed.</p>}
+      {comparableExtractions.length > 0 && <div className="mt-3 grid gap-2">{comparableExtractions.map((item) => <label key={item.id} className="flex items-start gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={selectedExtractionIds.includes(item.id)} onChange={(event) => setSelectedExtractionIds((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} /><span>{item.label}</span></label>)}</div>}
+      {comparableExtractions.length === 0 && <p className="mt-2 text-xs text-muted-foreground">No eligible extractions with structured terms yet.</p>}
+      {comparableExtractions.length === 10 && <p className="mt-2 text-xs text-muted-foreground">Showing up to 10 eligible extractions for comparison.</p>}
+      {selectedComparisons.length < 2 && comparableExtractions.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Select at least two documents to compare.</p>}
       {comparisonError && <p role="alert" className="mt-3 text-sm text-destructive">{comparisonError}</p>}
       {comparisonResult && <div className="mt-3" aria-live="polite"><h4 className="text-sm font-semibold">Comparison result</h4><pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-muted p-3 text-xs whitespace-pre-wrap">{JSON.stringify(comparisonResult, null, 2)}</pre></div>}
     </div>
