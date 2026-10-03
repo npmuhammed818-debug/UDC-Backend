@@ -69,3 +69,16 @@ def test_payment_terms_do_not_match_inside_other_words():
         "LOI": ["DLC"],
         "SPA": ["DLC"],
     }
+
+def test_absent_terms_are_reported_as_insufficient_data():
+    result = compare_documents(
+        DocumentCompareRequest(
+            documents=[
+                DocumentText(label="LOI", text="Commercial values are not stated."),
+                DocumentText(label="SPA", text="Commercial values are not stated."),
+            ]
+        )
+    )
+
+    for field in ("incoterms", "payment_terms", "quantities", "prices"):
+        assert _finding(result, field).status == "insufficient_data"
