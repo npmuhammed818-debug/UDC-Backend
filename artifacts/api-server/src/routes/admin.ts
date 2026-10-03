@@ -3,7 +3,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -46,7 +46,8 @@ router.post("/admin/announcements", requireRole("admin"), async (req, res) => {
   try {
     const input = announcementInput.parse(req.body);
     const recipients = await db.select({ id: usersTable.id }).from(usersTable)
-      .where(and(eq(usersTable.role, input.audience), inArray(usersTable.status, ["verified", "active"])))
+      .innerJoin(notificationPreferencesTable, eq(notificationPreferencesTable.userId, usersTable.id))
+      .where(and(eq(usersTable.role, input.audience), inArray(usersTable.status, ["verified", "active"]), eq(notificationPreferencesTable.optionalInApp, true), eq(notificationPreferencesTable.announcements, true)))
       .limit(1001);
     if (recipients.length > 1000) {
       res.status(409).json({ error: "audience_too_large" }); return;

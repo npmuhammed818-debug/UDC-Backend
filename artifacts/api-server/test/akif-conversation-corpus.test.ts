@@ -29,6 +29,8 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
   };
   const names = [
     "usersTable",
+    "auditLogsTable",
+    "notificationPreferencesTable",
     "dealConversationEventsTable",
     "dealParticipantsTable",
     "dealsTable",
@@ -45,6 +47,8 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     phone: i ? "222222222" : "111111111",
   }));
   s.db = {
+    transaction: async (callback: any) => callback(s.db),
+    execute: async () => [],
     select(selection?: any) {
       let rows: any[] = [];
       const q: any = {
@@ -66,6 +70,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
           return q;
         },
         orderBy() {
+          rows.reverse();
           return q;
         },
         limit(n: number) {
@@ -141,7 +146,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
   const stubs: Record<string, string> = {
     "@workspace/db": `export const db=globalThis.__udcChatTest.db;${names.map((n) => `export const ${n}=new Proxy({_name:'${n}'},{get:(t,k)=>k==='_name'?t._name:{key:k}});`).join("")}`,
     "drizzle-orm":
-      "export const eq=(c,v)=>r=>r[c.key]===v;export const and=(...ps)=>r=>ps.every(p=>p(r));export const desc=x=>x;",
+      `export const eq=(c,v)=>r=>r[c.key]===v;export const and=(...ps)=>r=>ps.every(p=>p(r));export const desc=x=>x;export const sql=(strings,...values)=>strings.join("").includes("fingerprint") ? (r=>r.metadata?.fingerprint===values.at(-1)) : {};`,
     "../auth/middleware": "export const requireRole=()=>()=>{};",
     "../akif/queueResearch":
       "export const queueWhatsAppResearch=async()=>null;",
@@ -264,6 +269,16 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       );
       assert.equal(status, 200);
     }
+    for (const phone of ['111111111', '222222222']) {
+      await send(phone, 'I need copper 50mt', undefined);
+      assert.match(s.sent.at(-1).body, /Reply AGREE/);
+      assert.equal(s.records.length, 0, 'no trade record before consent');
+      assert.equal(s.prompts.length, 0, 'no AI processing before consent');
+      await send(phone, 'AGREE', undefined);
+      assert.match(s.sent.at(-1).body, /Thanks/);
+    }
+    assert.equal(s.tables.auditLogsTable.filter((row: any) => row.metadata?.status === 'accepted').length, 2);
+    s.sent = [];
     const intake = (fields: any, reply: string) => ({
       role: "buyer",
       fields,

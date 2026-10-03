@@ -82,7 +82,12 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
+      try {
+        const choice = JSON.parse(localStorage.getItem('udc-cookie-choice-v1') || 'null');
+        if (choice?.preferences === true && Date.now() >= choice.at && Date.now() - choice.at < 180 * 86400000) {
+          document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; SameSite=Lax`;
+        }
+      } catch { /* Optional preference storage stays off. */ }
     },
     [setOpenProp, open],
   );
