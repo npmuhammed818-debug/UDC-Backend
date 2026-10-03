@@ -34,11 +34,13 @@ const nav = [
   { href: '/products', label: 'Product catalog', icon: Boxes },
   { href: '/seller', label: 'Seller supply', icon: Package, roles: ['seller'] },
   { href: '/requirements', label: 'Buyer demand', icon: ClipboardList, roles: ['buyer'] },
+  { href: '/buyer-pools', label: 'My pooled quantity', icon: Boxes, roles: ['buyer'] },
   { href: '/matches', label: 'Matching desk', icon: Zap, roles: ['admin'] },
   { href: '/deals', label: 'Deal pipeline', icon: BriefcaseBusiness },
   { href: '/referrals', label: 'Referral & earn', icon: CircleUserRound, roles: ['agent'] },
   { href: '/admin/agents', label: 'Agent controls', icon: CircleUserRound, roles: ['admin'] },
   { href: '/admin/deals', label: 'Deal operations', icon: BriefcaseBusiness, roles: ['admin'] },
+  { href: '/admin/buyer-pools', label: 'Small-buyer pools', icon: Boxes, roles: ['admin'] },
   { href: '/documents', label: 'Documents', icon: FileText },
   { href: '/messages', label: 'Negotiation records', icon: MessageSquare },
 ];
@@ -515,6 +517,123 @@ function Profile({ user }: { user: AnyRecord }) {
     {company.data?.company && <section className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">PRIVATE EVIDENCE</div><h2>Company verification documents</h2></div></div><p className="text-sm text-muted-foreground">Upload a registration, business license, or tax certificate as a PDF. Only you and UDC administrators can access the file.</p><div className="form-two mt-4"><Field label="Document type"><select className="select" value={documentType} onChange={(e) => setDocumentType(e.target.value)}><option value="company_registration">Company registration</option><option value="business_license">Business license</option><option value="tax_certificate">Tax certificate</option><option value="other">Other</option></select></Field><Field label="PDF file (max 5 MB)"><Input type="file" accept="application/pdf,.pdf" disabled={uploading} onChange={(e) => { void uploadCompanyDocument(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} /></Field></div>{uploadError && <div className="error-banner mt-3"><CircleAlert size={15} /> {uploadError}</div>}{documents.isError ? <Failure retry={() => documents.refetch()} /> : documents.isLoading ? <LoadingRows count={2} /> : !documents.data?.documents.length ? <EmptyState title="No evidence uploaded" body="Upload a company document to start manual verification." /> : <div className="data-list mt-4">{documents.data.documents.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{formatStatus(item.documentType)}</strong><span>{new Date(item.createdAt).toLocaleDateString()} {item.reviewNote ? `· ${item.reviewNote}` : ''}</span></div><StatusPill status={item.status} />{item.fileUrl && <a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-link">Open PDF</a>}</div>)}</div>}</section>}</>;
 }
 
+
+function BuyerPools({ user }: { user: AnyRecord }) {
+  const allowed = user?.role === 'buyer';
+  const pools = useQuery({
+    queryKey: ['buyer-pools-mine'],
+    queryFn: () => loadAgentRecords<{ allocations: AnyRecord[]; notice: string }>('/api/buyer-pools/mine'),
+    enabled: allowed,
+  });
+  if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="My pooled quantity" /><EmptyState title="Buyer access required" body="Pool allocations are shown to the buyer assigned to each allocation." /></>;
+  return <><PageHeader eyebrow="UDC / BUYER POOLS" title="My pooled quantity" body="See your quantity allocation in a buyer pool." />
+    <div className="panel mt-5">
+      <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">A pool records proposed buyer quantities. It does not combine DLCs or confirm bank approval. Each buyer’s DLC remains directly to the seller; payment release follows destination SGS under the agreed contract.</p>
+      {pools.isError ? <Failure retry={() => pools.refetch()} /> : pools.isLoading ? <LoadingRows /> : !pools.data?.allocations.length
+        ? <EmptyState title="No pool allocation yet" body="If UDC assigns you to a buyer pool, your quantity and status will appear here." />
+        : <div className="data-list">{pools.data.allocations.map((item, index) => <div className="data-row" key={item.poolId + '-' + index}>
+          <div className="row-main"><strong>{item.quantity} {item.unit} allocated</strong><span>Pool target: {item.targetQuantity} {item.unit} · Deal {String(item.dealId).slice(0, 8)}</span></div>
+          <StatusPill status={item.allocationStatus} />
+          <span className="text-xs text-muted-foreground">Bank review: {formatStatus(item.bankApprovalStatus)}</span>
+          {item.committedValue != null && <span>{item.currency} {item.committedValue}</span>}
+        </div>)}</div>}
+    </div>
+  </>;
+}
+
+function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
+  const allowed = user?.role === 'admin';
+  const deals = useQuery({ queryKey: ['admin-buyer-pool-deals'], queryFn: () => loadAgentRecords<{ deals: AnyRecord[] }>('/api/admin/deals'), enabled: allowed });
+  const buyers = useQuery({ queryKey: ['admin-buyer-pool-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users'), enabled: allowed });
+  const [dealId, setDealId] = useState('');
+  const [targetQuantity, setTargetQuantity] = useState('');
+  const [unit, setUnit] = useState('');
+  const [notes, setNotes] = useState('');
+  const [pool, setPool] = useState<AnyRecord | null>(null);
+  const [buyerUserId, setBuyerUserId] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [committedValue, setCommittedValue] = useState('');
+  const [currency, setCurrency] = useState('USD');
+  const [createdAllocations, setCreatedAllocations] = useState<AnyRecord[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const buyersOnly = (buyers.data?.users || []).filter((item) => item.role === 'buyer');
+  const qc = useQueryClient();
+
+  const createPool = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!dealId) { setError('Choose a deal first.'); return; }
+    setBusy(true); setError(''); setSuccess('');
+    try {
+      const response = await fetch('/api/admin/deals/' + dealId + '/buyer-pool', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetQuantity: Number(targetQuantity), unit: unit.trim(), notes: notes.trim() || undefined }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error === 'invalid_buyer_pool' ? 'Check the target quantity and unit.' : 'The pool could not be created.');
+      setPool(result.pool); setCreatedAllocations([]);
+      setSuccess('Pool created. Add buyer allocations below; bank review is still required.');
+      await qc.invalidateQueries({ queryKey: ['admin-deals'] });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Pool creation failed.'); }
+    finally { setBusy(false); }
+  };
+
+  const addAllocation = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!pool || !buyerUserId) { setError('Choose a buyer.'); return; }
+    setBusy(true); setError(''); setSuccess('');
+    try {
+      const body: AnyRecord = { buyerUserId, quantity: Number(quantity), currency: currency.trim().toUpperCase() || 'USD' };
+      if (committedValue.trim()) body.committedValue = Number(committedValue);
+      const response = await fetch('/api/admin/buyer-pools/' + pool.id + '/allocations', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        const message = result.error === 'allocation_exceeds_pool_target' ? 'That quantity would exceed the pool target.'
+          : result.error === 'invalid_buyer_pool_allocation' ? 'Check the buyer, quantity, and currency.' : 'The allocation could not be saved.';
+        throw new Error(message);
+      }
+      setCreatedAllocations((items) => [result.allocation, ...items]);
+      setBuyerUserId(''); setQuantity(''); setCommittedValue('');
+      setSuccess('Buyer allocation saved.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Allocation failed.'); }
+    finally { setBusy(false); }
+  };
+
+  if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Small-buyer pools" /><EmptyState title="Admin access required" body="Only UDC administrators can create pools and assign buyer quantities." /></>;
+  return <><PageHeader eyebrow="UDC / AGGREGATION" title="Small-buyer pools" body="Set a target for a real deal, then record each buyer’s allocated quantity." />
+    <div className="panel mt-5">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">This records proposed quantities only. Do not represent separate buyers as one DLC or claim bank approval. Each buyer’s DLC remains directly to the seller; banks must review any proposed instrument structure.</div>
+      <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={createPool}>
+        <Field label="Deal"><select className="select" required value={dealId} onChange={(event) => { setDealId(event.target.value); setPool(null); setCreatedAllocations([]); setError(''); setSuccess(''); }}><option value="">Choose a deal</option>{(deals.data?.deals || []).map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.quantity} {item.unit} · {formatStatus(item.status)}</option>)}</select></Field>
+        <Field label="Pool target quantity"><Input required type="number" min="0.001" step="any" value={targetQuantity} onChange={(event) => setTargetQuantity(event.target.value)} placeholder="e.g. 100" /></Field>
+        <Field label="Unit"><Input required maxLength={30} value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="MT, cartons, kg…" /></Field>
+        <Field label="Admin notes"><Input maxLength={1500} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional internal note" /></Field>
+        <div className="md:col-span-2"><Button type="submit" disabled={busy || deals.isLoading || !dealId}>{busy ? 'Saving…' : 'Create buyer pool'} <ArrowRight size={15} /></Button></div>
+      </form>
+      {deals.isError && <div className="mt-3"><Failure retry={() => deals.refetch()} /></div>}
+      {pool && <div className="mt-5 rounded-lg border border-border p-4">
+        <div className="section-heading"><div><div className="eyebrow">POOL CREATED</div><h2>{pool.targetQuantity} {pool.unit} target</h2></div><StatusPill status={pool.status} /></div>
+        <p className="text-sm text-muted-foreground">Pool ID: {pool.id}</p>
+        <form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={addAllocation}>
+          <Field label="Buyer"><select className="select" required value={buyerUserId} onChange={(event) => setBuyerUserId(event.target.value)}><option value="">Choose buyer</option>{buyersOnly.map((item) => <option key={item.id} value={item.id}>{item.fullName} · {item.email}</option>)}</select></Field>
+          <Field label="Allocated quantity"><Input required type="number" min="0.001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder={'Up to ' + pool.targetQuantity + ' ' + pool.unit} /></Field>
+          <Field label="Optional committed value"><Input type="number" min="0.01" step="any" value={committedValue} onChange={(event) => setCommittedValue(event.target.value)} placeholder="Optional amount" /></Field>
+          <Field label="Currency"><Input required minLength={3} maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></Field>
+          <div className="md:col-span-2"><Button type="submit" disabled={busy || buyers.isLoading || buyersOnly.length === 0}>{busy ? 'Saving…' : 'Add buyer allocation'} <ArrowRight size={15} /></Button></div>
+        </form>
+        {buyers.isError && <div className="mt-3"><Failure retry={() => buyers.refetch()} /></div>}
+        {!buyers.isLoading && !buyers.isError && buyersOnly.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No buyer accounts are available to assign.</p>}
+        {createdAllocations.length > 0 && <div className="data-list mt-4">{createdAllocations.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.quantity} {pool.unit}</strong><span>{buyersOnly.find((buyer) => buyer.id === item.buyerUserId)?.fullName || 'Buyer'} · {formatStatus(item.status)}</span></div>{item.committedValue != null && <span>{item.currency} {item.committedValue}</span>}</div>)}</div>}
+      </div>}
+      {error && <div className="error-banner mt-4" role="alert"><CircleAlert size={15} /> {error}</div>}
+      {success && <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm" role="status">{success}</div>}
+    </div>
+  </>;
+}
+
 function DealOperations({ user }: { user: AnyRecord }) {
   const allowed = user.role === 'admin';
   const deals = useQuery({ queryKey: ['admin-deals'], queryFn: () => loadAgentRecords<{ deals: AnyRecord[] }>('/api/admin/deals'), enabled: allowed });
@@ -760,6 +879,6 @@ function FormCard({ title, onSubmit, onCancel, pending, children }: { title: str
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 
-function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/register"><Auth mode="register" /></Route><Route path="/dashboard"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route path="/referrals"><Protected>{(u) => <Referrals user={u} />}</Protected></Route><Route path="/learn"><Protected>{() => <Learn />}</Protected></Route><Route path="/products"><Protected>{(u) => <Products user={u} />}</Protected></Route><Route path="/seller"><Protected>{() => <Seller />}</Protected></Route><Route path="/requirements"><Protected>{() => <Requirements />}</Protected></Route><Route path="/matches"><Protected>{(u) => <Matches user={u} />}</Protected></Route><Route path="/deals/:id"><Protected>{(u) => <DealDetail user={u} />}</Protected></Route><Route path="/deals"><Protected>{() => <Deals />}</Protected></Route><Route path="/documents"><Protected>{() => <Documents />}</Protected></Route><Route path="/messages"><Protected>{(u) => <Messages user={u} />}</Protected></Route><Route path="/notifications"><Protected>{() => <Notifications />}</Protected></Route><Route path="/profile"><Protected>{(u) => <Profile user={u} />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin"><Protected>{() => <Admin />}</Protected></Route><Route path="/"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route component={NotFound} /></Switch></ErrorBoundary>; }
+function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/register"><Auth mode="register" /></Route><Route path="/dashboard"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route path="/referrals"><Protected>{(u) => <Referrals user={u} />}</Protected></Route><Route path="/learn"><Protected>{() => <Learn />}</Protected></Route><Route path="/products"><Protected>{(u) => <Products user={u} />}</Protected></Route><Route path="/seller"><Protected>{() => <Seller />}</Protected></Route><Route path="/requirements"><Protected>{() => <Requirements />}</Protected></Route><Route path="/buyer-pools"><Protected>{(u) => <BuyerPools user={u} />}</Protected></Route><Route path="/matches"><Protected>{(u) => <Matches user={u} />}</Protected></Route><Route path="/deals/:id"><Protected>{(u) => <DealDetail user={u} />}</Protected></Route><Route path="/deals"><Protected>{() => <Deals />}</Protected></Route><Route path="/documents"><Protected>{() => <Documents />}</Protected></Route><Route path="/messages"><Protected>{(u) => <Messages user={u} />}</Protected></Route><Route path="/notifications"><Protected>{() => <Notifications />}</Protected></Route><Route path="/profile"><Protected>{(u) => <Profile user={u} />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin/buyer-pools"><Protected>{(u) => <BuyerPoolAdmin user={u} />}</Protected></Route><Route path="/admin"><Protected>{() => <Admin />}</Protected></Route><Route path="/"><Protected>{(u) => <Dashboard user={u} />}</Protected></Route><Route component={NotFound} /></Switch></ErrorBoundary>; }
 
 export default function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
