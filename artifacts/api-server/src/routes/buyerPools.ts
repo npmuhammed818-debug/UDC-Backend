@@ -56,6 +56,32 @@ router.post("/admin/deals/:dealId/buyer-pool", requireRole("admin"), async (req,
   }
 });
 
+router.get("/admin/deals/:dealId/buyer-pool", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [pool] = await db.select().from(buyerPoolsTable)
+      .where(eq(buyerPoolsTable.dealId, dealId)).limit(1);
+    if (!pool) { res.json({ pool: null, allocations: [] }); return; }
+
+    const allocations = await db.select({
+      id: buyerPoolAllocationsTable.id,
+      buyerUserId: buyerPoolAllocationsTable.buyerUserId,
+      quantity: buyerPoolAllocationsTable.quantity,
+      committedValue: buyerPoolAllocationsTable.committedValue,
+      currency: buyerPoolAllocationsTable.currency,
+      status: buyerPoolAllocationsTable.status,
+      instrumentStatus: buyerPoolAllocationsTable.instrumentStatus,
+      createdAt: buyerPoolAllocationsTable.createdAt,
+    }).from(buyerPoolAllocationsTable)
+      .where(eq(buyerPoolAllocationsTable.poolId, pool.id));
+
+    res.json({ pool, allocations });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_deal_id" }); return; }
+    res.status(500).json({ error: "buyer_pool_fetch_failed" });
+  }
+});
+
 router.post("/admin/buyer-pools/:poolId/allocations", requireRole("admin"), async (req, res) => {
   try {
     const poolId = z.string().uuid().parse(req.params["poolId"]);
