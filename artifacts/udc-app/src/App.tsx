@@ -656,6 +656,12 @@ function Admin() {
   const [error, setError] = useState('');
   const [companyDocumentNotes, setCompanyDocumentNotes] = useState<Record<string, string>>({});
   const [dealDocumentNotes, setDealDocumentNotes] = useState<Record<string, string>>({});
+  const [comparisonDocuments, setComparisonDocuments] = useState([
+    { label: 'Agreed terms', text: '' },
+    { label: 'Document to review', text: '' },
+  ]);
+  const [comparisonResult, setComparisonResult] = useState<AnyRecord | null>(null);
+  const [comparisonError, setComparisonError] = useState('');
   const [announcement, setAnnouncement] = useState({ audience: 'buyer', title: '', body: '' });
   const [announcementResult, setAnnouncementResult] = useState('');
   const sendAnnouncement = async (event: FormEvent) => {
@@ -672,6 +678,20 @@ function Admin() {
       await qc.invalidateQueries({ queryKey: ['admin-audit-log'] });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Announcement failed'); }
     finally { setBusy(''); }
+  };
+  const compareDocuments = async (event: FormEvent) => {
+    event.preventDefault(); setBusy('document-comparison'); setComparisonError(''); setComparisonResult(null);
+    try {
+      const response = await fetch('/api/admin/akif/documents/compare', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documents: comparisonDocuments }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error('AKIF could not compare these documents. Check the text and try again.');
+      setComparisonResult(result);
+    } catch (cause) {
+      setComparisonError(cause instanceof Error ? cause.message : 'Document comparison failed.');
+    } finally { setBusy(''); }
   };
   const review = async (path: string, status: string, extra: Record<string, unknown> = {}) => {
     setBusy(path); setError('');
@@ -732,6 +752,23 @@ function Admin() {
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">DOCUMENTS</div><h2>Pending document review</h2></div></div>
       {documents.isError ? <Failure retry={() => documents.refetch()} /> : documents.isLoading ? <LoadingRows /> : !documents.data?.documents.some((item) => item.status === 'pending') ? <EmptyState title="No documents waiting" body="Deal uploads appear here for inspection." /> : <div className="data-list">{documents.data.documents.filter((item) => item.status === 'pending').map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Deal {item.dealId}</span><Input aria-label="Reason for rejecting deal document" placeholder="Reason for rejection (5–1,000 characters)" minLength={5} maxLength={1000} value={dealDocumentNotes[item.id] || ''} onChange={(e) => setDealDocumentNotes((current) => ({ ...current, [item.id]: e.target.value }))} /></div><a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-link">Open PDF</a><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy || (dealDocumentNotes[item.id]?.trim().length ?? 0) < 5} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'rejected', { reviewNote: dealDocumentNotes[item.id].trim() })}>Reject</Button></div>)}</div>}
     </div>
+    <section className="panel mt-5" aria-labelledby="document-compare-heading">
+      <div className="section-heading"><div><div className="eyebrow">AKIF / DOCUMENT REVIEW</div><h2 id="document-compare-heading">Compare document text</h2></div></div>
+      <p className="text-sm text-muted-foreground mb-4">Paste agreed terms and a document excerpt to spot differences. Only compare text you are authorized to share. AKIF results support review and do not verify authenticity or replace legal review.</p>
+      <form onSubmit={compareDocuments} className="grid gap-4">
+        {comparisonDocuments.map((document, index) => <div className="grid gap-2 md:grid-cols-2" key={index}>
+          <Field label={index === 0 ? 'Agreed terms label' : 'Document label'}>
+            <Input required maxLength={80} value={document.label} onChange={(event) => setComparisonDocuments((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item))} />
+          </Field>
+          <Field label={index === 0 ? 'Agreed terms text' : 'Document text'}>
+            <textarea className="textarea min-h-32" required maxLength={500000} value={document.text} onChange={(event) => setComparisonDocuments((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item))} placeholder="Paste relevant text here" />
+          </Field>
+        </div>)}
+        <div><Button type="submit" disabled={!!busy || comparisonDocuments.some((document) => !document.text.trim())}>{busy === 'document-comparison' ? 'Comparing…' : 'Compare with AKIF'}</Button></div>
+      </form>
+      {comparisonError && <p role="alert" className="mt-3 text-sm text-destructive">{comparisonError}</p>}
+      {comparisonResult && <div className="mt-4" aria-live="polite"><h3 className="font-semibold">Comparison result</h3><pre className="mt-2 max-h-96 overflow-auto rounded-lg bg-muted p-4 text-xs whitespace-pre-wrap">{JSON.stringify(comparisonResult, null, 2)}</pre></div>}
+    </section>
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">BUSINESS VERIFICATION</div><h2>Company review</h2></div></div>
       {companies.isError ? <Failure retry={() => companies.refetch()} /> : companies.isLoading ? <LoadingRows /> : !companies.data?.companies.length ? <EmptyState title="No companies waiting" body="Submitted company profiles appear here for manual review." /> : <div className="data-list">{companies.data.companies.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.companyName}</strong><span>{item.ownerName} · {item.ownerRole} · {item.ownerEmail}</span><span>{[item.registrationNumber, item.country, item.address, item.website].filter(Boolean).join(" · ") || "Registration details not provided"}</span></div><StatusPill status={item.verificationStatus} /><Button size="sm" variant="outline" disabled={!!busy} onClick={() => reviewCompany(item.id, 'under_review')}>Review</Button><Button size="sm" disabled={!!busy} onClick={() => reviewCompany(item.id, 'verified')}>Verify</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => reviewCompany(item.id, 'rejected')}>Reject</Button></div>)}</div>}
     </div>
