@@ -17,6 +17,8 @@ import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
+import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
+
 const router: IRouter = Router();
 
 function isEqual(left: string, right: string) {
@@ -896,6 +898,16 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
+      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string")) {
+        try {
+          const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
+          if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
+        } catch {
+          req.log.error({ flow: "privacy_consent", reason: "consent_check_failed" }, "UDC privacy check unavailable");
+          await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");
+          continue;
+        }
+      }
       if (message.from && typeof message.document?.id === "string") {
         try {
           const documentResult = await handleWhatsAppDealDocument(

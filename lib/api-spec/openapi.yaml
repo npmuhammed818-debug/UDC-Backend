@@ -592,13 +592,15 @@ components:
         read: { type: boolean }
     RegisterInput:
       type: object
-      required: [full_name, email, password, role]
+      required: [full_name, email, password, role, accepted_terms, adult_business_user]
       properties:
         full_name: { type: string }
         email: { type: string }
         phone: { type: string }
         password: { type: string, minLength: 12 }
         role: { type: string, enum: [buyer, seller, agent] }
+        accepted_terms: { type: boolean, enum: [true] }
+        adult_business_user: { type: boolean, enum: [true] }
     LoginInput:
       type: object
       required: [email, password]

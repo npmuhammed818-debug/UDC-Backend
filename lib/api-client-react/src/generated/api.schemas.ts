@@ -162,6 +162,8 @@ export interface RegisterInput {
   /** @minLength 12 */
   password: string;
   role: RegisterInputRole;
+  accepted_terms: true;
+  adult_business_user: true;
 }
 
 export interface LoginInput {

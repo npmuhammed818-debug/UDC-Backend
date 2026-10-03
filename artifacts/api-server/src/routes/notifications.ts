@@ -16,10 +16,10 @@ const preferenceSchema = z
   .refine((value) => Object.keys(value).length > 0, "at_least_one_preference_required");
 
 const defaultPreferences = {
-  optionalInApp: true,
-  optionalWhatsApp: true,
-  reminders: true,
-  announcements: true,
+  optionalInApp: false,
+  optionalWhatsApp: false,
+  reminders: false,
+  announcements: false,
 };
 
 router.get("/notifications", requireAuth, async (req, res) => {

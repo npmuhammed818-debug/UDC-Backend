@@ -2,7 +2,11 @@ import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
-import { usersTable } from "@workspace/db";
+import {
+  auditLogsTable,
+  notificationPreferencesTable,
+  usersTable,
+} from "@workspace/db";
 import {
   authRateLimitKey,
   clearAuthFailures,
@@ -10,42 +14,26 @@ import {
   recordAuthFailure,
 } from "../auth/rateLimit";
 import { hashPassword, verifyPassword } from "../auth/passwords";
-import {
-  createSession,
-  revokeSession,
-  SESSION_COOKIE,
-} from "../auth/sessions";
+import { createSession, revokeSession, SESSION_COOKIE } from "../auth/sessions";
 import { requireAuth } from "../auth/middleware";
 import { getSafeUserProfile } from "../auth/userProfile";
 
+import { POLICY_VERSION } from "../privacy/policies";
+
 const router: IRouter = Router();
 
-const passwordSchema = z
-  .string()
-  .min(12, "Password must be at least 12 characters.")
-  .regex(/[a-z]/, "Password must contain a lowercase letter.")
-  .regex(/[A-Z]/, "Password must contain an uppercase letter.")
-  .regex(/[0-9]/, "Password must contain a number.")
-  .regex(/[^A-Za-z0-9]/, "Password must contain a special character.");
-
-const registrationSchema = z.object({
-  full_name: z.string().trim().min(2).max(200),
-  email: z.string().trim().email().transform((value) => value.toLowerCase()),
-  phone: z.string().trim().min(3).max(50).optional(),
-  password: passwordSchema,
-  role: z.enum(["buyer", "seller", "agent"]),
-});
+import { registrationSchema } from "../privacy/registration";
 
 const loginSchema = z.object({
-  email: z.string().trim().email().transform((value) => value.toLowerCase()),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .transform((value) => value.toLowerCase()),
   password: z.string().min(1),
 });
 
-function setSessionCookie(
-  res: Response,
-  token: string,
-  expiresAt: Date,
-) {
+function setSessionCookie(res: Response, token: string, expiresAt: Date) {
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -90,17 +78,43 @@ router.post("/auth/register", async (req, res) => {
     }
 
     const passwordHash = await hashPassword(input.password);
-    const [user] = await db
-      .insert(usersTable)
-      .values({
-        fullName: input.full_name,
-        email: input.email,
-        phone: input.phone,
-        passwordHash,
-        role: input.role,
-        status: input.role === "agent" ? "active" : "pending",
-      })
-      .returning({ id: usersTable.id });
+    const user = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(usersTable)
+        .values({
+          fullName: input.full_name,
+          email: input.email,
+          phone: input.phone,
+          passwordHash,
+          role: input.role,
+          status: input.role === "agent" ? "active" : "pending",
+        })
+        .returning({ id: usersTable.id });
+      await tx
+        .insert(auditLogsTable)
+        .values({
+          actorUserId: created.id,
+          action: "registration_consent_recorded",
+          entityType: "user",
+          entityId: created.id,
+          metadata: {
+            policyVersion: POLICY_VERSION,
+            termsAccepted: true,
+            adultBusinessUser: true,
+            source: "web_registration",
+          },
+        });
+      await tx
+        .insert(notificationPreferencesTable)
+        .values({
+          userId: created.id,
+          optionalInApp: false,
+          optionalWhatsApp: false,
+          reminders: false,
+          announcements: false,
+        });
+      return created;
+    });
 
     const { token, expiresAt } = await createSession(user.id);
     setSessionCookie(res, token, expiresAt);
@@ -164,7 +178,11 @@ router.post("/auth/logout", async (req, res) => {
     if (req.authToken) {
       await revokeSession(req.authToken);
     }
-    res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: "lax", path: "/" });
+    res.clearCookie(SESSION_COOKIE, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+    });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "logout_failed" });

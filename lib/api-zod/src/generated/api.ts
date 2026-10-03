@@ -26,7 +26,9 @@ export const RegisterUserBody = zod.object({
   "email": zod.string(),
   "phone": zod.string().optional(),
   "password": zod.string().min(registerUserBodyPasswordMin),
-  "role": zod.enum(['buyer', 'seller', 'agent'])
+  "role": zod.enum(['buyer', 'seller', 'agent']),
+  "accepted_terms": zod.literal(true),
+  "adult_business_user": zod.literal(true)
 })
 
 export const RegisterUserResponse = zod.object({
