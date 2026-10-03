@@ -546,6 +546,7 @@ function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
   const deals = useQuery({ queryKey: ['admin-buyer-pool-deals'], queryFn: () => loadAgentRecords<{ deals: AnyRecord[] }>('/api/admin/deals'), enabled: allowed });
   const buyers = useQuery({ queryKey: ['admin-buyer-pool-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users'), enabled: allowed });
   const [dealId, setDealId] = useState('');
+  const existingPool = useQuery({ queryKey: ['admin-buyer-pool', dealId], queryFn: () => loadAgentRecords<{ pool: AnyRecord | null; allocations: AnyRecord[] }>('/api/admin/deals/' + dealId + '/buyer-pool'), enabled: allowed && !!dealId });
   const [targetQuantity, setTargetQuantity] = useState('');
   const [unit, setUnit] = useState('');
   const [notes, setNotes] = useState('');
@@ -554,16 +555,17 @@ function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
   const [quantity, setQuantity] = useState('');
   const [committedValue, setCommittedValue] = useState('');
   const [currency, setCurrency] = useState('USD');
-  const [createdAllocations, setCreatedAllocations] = useState<AnyRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const buyersOnly = (buyers.data?.users || []).filter((item) => item.role === 'buyer');
   const qc = useQueryClient();
+  const activePool = existingPool.data?.pool ?? pool;
 
   const createPool = async (event: FormEvent) => {
     event.preventDefault();
     if (!dealId) { setError('Choose a deal first.'); return; }
+    if (activePool) { setError('A pool already exists for this deal.'); return; }
     setBusy(true); setError(''); setSuccess('');
     try {
       const response = await fetch('/api/admin/deals/' + dealId + '/buyer-pool', {
@@ -572,7 +574,8 @@ function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error === 'invalid_buyer_pool' ? 'Check the target quantity and unit.' : 'The pool could not be created.');
-      setPool(result.pool); setCreatedAllocations([]);
+      setPool(result.pool);
+      await qc.invalidateQueries({ queryKey: ['admin-buyer-pool', dealId] });
       setSuccess('Pool created. Add buyer allocations below; bank review is still required.');
       await qc.invalidateQueries({ queryKey: ['admin-deals'] });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Pool creation failed.'); }
@@ -581,12 +584,12 @@ function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
 
   const addAllocation = async (event: FormEvent) => {
     event.preventDefault();
-    if (!pool || !buyerUserId) { setError('Choose a buyer.'); return; }
+    if (!activePool || !buyerUserId) { setError('Choose a buyer.'); return; }
     setBusy(true); setError(''); setSuccess('');
     try {
       const body: AnyRecord = { buyerUserId, quantity: Number(quantity), currency: currency.trim().toUpperCase() || 'USD' };
       if (committedValue.trim()) body.committedValue = Number(committedValue);
-      const response = await fetch('/api/admin/buyer-pools/' + pool.id + '/allocations', {
+      const response = await fetch('/api/admin/buyer-pools/' + activePool.id + '/allocations', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       const result = await response.json();
@@ -595,7 +598,7 @@ function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
           : result.error === 'invalid_buyer_pool_allocation' ? 'Check the buyer, quantity, and currency.' : 'The allocation could not be saved.';
         throw new Error(message);
       }
-      setCreatedAllocations((items) => [result.allocation, ...items]);
+      await qc.invalidateQueries({ queryKey: ['admin-buyer-pool', dealId] });
       setBuyerUserId(''); setQuantity(''); setCommittedValue('');
       setSuccess('Buyer allocation saved.');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Allocation failed.'); }
@@ -607,26 +610,28 @@ function BuyerPoolAdmin({ user }: { user: AnyRecord }) {
     <div className="panel mt-5">
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">This records proposed quantities only. Do not represent separate buyers as one DLC or claim bank approval. Each buyer’s DLC remains directly to the seller; banks must review any proposed instrument structure.</div>
       <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={createPool}>
-        <Field label="Deal"><select className="select" required value={dealId} onChange={(event) => { setDealId(event.target.value); setPool(null); setCreatedAllocations([]); setError(''); setSuccess(''); }}><option value="">Choose a deal</option>{(deals.data?.deals || []).map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.quantity} {item.unit} · {formatStatus(item.status)}</option>)}</select></Field>
+        <Field label="Deal"><select className="select" required value={dealId} onChange={(event) => { setDealId(event.target.value); setPool(null); setError(''); setSuccess(''); }}><option value="">Choose a deal</option>{(deals.data?.deals || []).map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.quantity} {item.unit} · {formatStatus(item.status)}</option>)}</select></Field>
         <Field label="Pool target quantity"><Input required type="number" min="0.001" step="any" value={targetQuantity} onChange={(event) => setTargetQuantity(event.target.value)} placeholder="e.g. 100" /></Field>
         <Field label="Unit"><Input required maxLength={30} value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="MT, cartons, kg…" /></Field>
         <Field label="Admin notes"><Input maxLength={1500} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional internal note" /></Field>
-        <div className="md:col-span-2"><Button type="submit" disabled={busy || deals.isLoading || !dealId}>{busy ? 'Saving…' : 'Create buyer pool'} <ArrowRight size={15} /></Button></div>
+        <div className="md:col-span-2"><Button type="submit" disabled={busy || deals.isLoading || !dealId || existingPool.isLoading || existingPool.isError || Boolean(activePool)}>{activePool ? 'Pool already exists' : busy ? 'Saving…' : 'Create buyer pool'} <ArrowRight size={15} /></Button></div>
       </form>
       {deals.isError && <div className="mt-3"><Failure retry={() => deals.refetch()} /></div>}
-      {pool && <div className="mt-5 rounded-lg border border-border p-4">
-        <div className="section-heading"><div><div className="eyebrow">POOL CREATED</div><h2>{pool.targetQuantity} {pool.unit} target</h2></div><StatusPill status={pool.status} /></div>
-        <p className="text-sm text-muted-foreground">Pool ID: {pool.id}</p>
+      {existingPool.isError && <div className="mt-3"><Failure retry={() => existingPool.refetch()} /></div>}
+      {existingPool.isLoading && !activePool && <div className="mt-3"><LoadingRows count={1} /></div>}
+      {activePool && <div className="mt-5 rounded-lg border border-border p-4">
+        <div className="section-heading"><div><div className="eyebrow">POOL DETAILS</div><h2>{activePool.targetQuantity} {activePool.unit} target</h2></div><StatusPill status={activePool.status} /></div>
+        <p className="text-sm text-muted-foreground">Pool ID: {activePool.id}</p>
         <form className="mt-4 grid gap-4 md:grid-cols-2" onSubmit={addAllocation}>
           <Field label="Buyer"><select className="select" required value={buyerUserId} onChange={(event) => setBuyerUserId(event.target.value)}><option value="">Choose buyer</option>{buyersOnly.map((item) => <option key={item.id} value={item.id}>{item.fullName} · {item.email}</option>)}</select></Field>
-          <Field label="Allocated quantity"><Input required type="number" min="0.001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder={'Up to ' + pool.targetQuantity + ' ' + pool.unit} /></Field>
+          <Field label="Allocated quantity"><Input required type="number" min="0.001" step="any" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder={'Up to ' + activePool.targetQuantity + ' ' + activePool.unit} /></Field>
           <Field label="Optional committed value"><Input type="number" min="0.01" step="any" value={committedValue} onChange={(event) => setCommittedValue(event.target.value)} placeholder="Optional amount" /></Field>
           <Field label="Currency"><Input required minLength={3} maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></Field>
-          <div className="md:col-span-2"><Button type="submit" disabled={busy || buyers.isLoading || buyersOnly.length === 0}>{busy ? 'Saving…' : 'Add buyer allocation'} <ArrowRight size={15} /></Button></div>
+          <div className="md:col-span-2"><Button type="submit" disabled={busy || buyers.isLoading || existingPool.isLoading || buyersOnly.length === 0}>{busy ? 'Saving…' : 'Add buyer allocation'} <ArrowRight size={15} /></Button></div>
         </form>
         {buyers.isError && <div className="mt-3"><Failure retry={() => buyers.refetch()} /></div>}
         {!buyers.isLoading && !buyers.isError && buyersOnly.length === 0 && <p className="mt-3 text-sm text-muted-foreground">No buyer accounts are available to assign.</p>}
-        {createdAllocations.length > 0 && <div className="data-list mt-4">{createdAllocations.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.quantity} {pool.unit}</strong><span>{buyersOnly.find((buyer) => buyer.id === item.buyerUserId)?.fullName || 'Buyer'} · {formatStatus(item.status)}</span></div>{item.committedValue != null && <span>{item.currency} {item.committedValue}</span>}</div>)}</div>}
+        {(existingPool.data?.allocations || []).length > 0 && <div className="data-list mt-4">{(existingPool.data?.allocations || []).map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.quantity} {activePool.unit}</strong><span>{buyersOnly.find((buyer) => buyer.id === item.buyerUserId)?.fullName || 'Buyer'} · {formatStatus(item.status)}</span></div>{item.committedValue != null && <span>{item.currency} {item.committedValue}</span>}</div>)}</div>}
       </div>}
       {error && <div className="error-banner mt-4" role="alert"><CircleAlert size={15} /> {error}</div>}
       {success && <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm" role="status">{success}</div>}
