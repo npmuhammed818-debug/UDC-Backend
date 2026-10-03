@@ -172,7 +172,15 @@ router.post("/admin/akif/verification/assess", requireRole("admin"), async (req,
 
 router.post("/admin/akif/documents/compare", requireRole("admin"), async (req, res) => {
   try {
-    res.json(await compareAkifDocuments(documentCompareSchema.parse(req.body)));
+    const input = documentCompareSchema.parse(req.body);
+    const result = await compareAkifDocuments(input);
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "akif_document_comparison_run",
+      entityType: "akif_document_comparison",
+      metadata: { documentCount: input.documents.length },
+    });
+    res.json(result);
   } catch (error) {
     if (validationError(res, error)) return;
     res.status(502).json({ error: "akif_document_comparison_failed" });
