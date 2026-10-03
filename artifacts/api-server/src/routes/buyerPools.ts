@@ -86,33 +86,41 @@ router.post("/admin/buyer-pools/:poolId/allocations", requireRole("admin"), asyn
   try {
     const poolId = z.string().uuid().parse(req.params["poolId"]);
     const input = allocationSchema.parse(req.body);
-    const [pool] = await db.select().from(buyerPoolsTable).where(eq(buyerPoolsTable.id, poolId)).limit(1);
-    if (!pool) { res.status(404).json({ error: "buyer_pool_not_found" }); return; }
+    const result = await db.transaction(async (tx) => {
+      const [pool] = await tx.select().from(buyerPoolsTable)
+        .where(eq(buyerPoolsTable.id, poolId)).for("update").limit(1);
+      if (!pool) return { kind: "not_found" as const };
 
-    const [totals] = await db.select({
-      quantity: sql<string>`coalesce(sum(${buyerPoolAllocationsTable.quantity}), 0)::text`,
-    }).from(buyerPoolAllocationsTable).where(eq(buyerPoolAllocationsTable.poolId, poolId));
+      const [totals] = await tx.select({
+        quantity: sql<string>`coalesce(sum(${buyerPoolAllocationsTable.quantity}), 0)::text`,
+      }).from(buyerPoolAllocationsTable).where(eq(buyerPoolAllocationsTable.poolId, poolId));
 
-    if (Number(totals?.quantity ?? 0) + input.quantity > Number(pool.targetQuantity)) {
-      res.status(409).json({ error: "allocation_exceeds_pool_target" }); return;
-    }
+      if (Number(totals?.quantity ?? 0) + input.quantity > Number(pool.targetQuantity)) {
+        return { kind: "over_target" as const };
+      }
 
-    const [allocation] = await db.insert(buyerPoolAllocationsTable).values({
-      poolId,
-      buyerUserId: input.buyerUserId,
-      quantity: String(input.quantity),
-      committedValue: input.committedValue == null ? null : String(input.committedValue),
-      currency: input.currency.toUpperCase(),
-    }).returning();
+      const [allocation] = await tx.insert(buyerPoolAllocationsTable).values({
+        poolId,
+        buyerUserId: input.buyerUserId,
+        quantity: String(input.quantity),
+        committedValue: input.committedValue == null ? null : String(input.committedValue),
+        currency: input.currency.toUpperCase(),
+      }).returning();
+      if (!allocation) throw new Error("buyer_pool_allocation_not_created");
 
-    await db.insert(auditLogsTable).values({
-      actorUserId: req.authUser!.id,
-      action: "buyer_pool_allocation_created",
-      entityType: "buyer_pool",
-      entityId: poolId,
-      metadata: { buyerUserId: input.buyerUserId, quantity: input.quantity },
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "buyer_pool_allocation_created",
+        entityType: "buyer_pool",
+        entityId: poolId,
+        metadata: { buyerUserId: input.buyerUserId, quantity: input.quantity },
+      });
+      return { kind: "created" as const, allocation };
     });
-    res.status(201).json({ allocation });
+
+    if (result.kind === "not_found") { res.status(404).json({ error: "buyer_pool_not_found" }); return; }
+    if (result.kind === "over_target") { res.status(409).json({ error: "allocation_exceeds_pool_target" }); return; }
+    res.status(201).json({ allocation: result.allocation });
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_buyer_pool_allocation" }); return; }
     res.status(500).json({ error: "buyer_pool_allocation_failed" });
