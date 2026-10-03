@@ -61,7 +61,10 @@ def compare_documents(request: DocumentCompareRequest) -> DocumentCompareRespons
     for field in ["incoterms", "payment_terms", "quantities", "prices"]:
         values = {label: data[field] for label, data in extracted.items()}
         canonical = {tuple(value) for value in values.values()}
-        status = "consistent" if len(canonical) == 1 else "different"
+        if all(not value for value in values.values()):
+            status = "insufficient_data"
+        else:
+            status = "consistent" if len(canonical) == 1 else "different"
         findings.append(DocumentFinding(field=field, values=values, status=status))
 
     warnings = [
