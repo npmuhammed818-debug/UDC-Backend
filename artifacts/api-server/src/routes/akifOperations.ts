@@ -73,6 +73,14 @@ const documentCompareSchema = z.object({
   }).strict()).min(2).max(10),
 }).strict();
 
+const dealDocumentCompareSchema = z.object({
+  documentIds: z.array(z.string().uuid()).min(1).max(9),
+}).strict().superRefine((input, context) => {
+  if (new Set(input.documentIds).size !== input.documentIds.length) {
+    context.addIssue({ code: "custom", path: ["documentIds"], message: "Document IDs must be unique." });
+  }
+});
+
 const learnSchema = z.object({
   topic: z.string().trim().min(2).max(120),
 }).strict();
@@ -172,10 +180,77 @@ router.post("/admin/akif/verification/assess", requireRole("admin"), async (req,
 
 router.post("/admin/akif/documents/compare", requireRole("admin"), async (req, res) => {
   try {
-    res.json(await compareAkifDocuments(documentCompareSchema.parse(req.body)));
+    const input = documentCompareSchema.parse(req.body);
+    const result = await compareAkifDocuments(input);
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "akif_document_comparison_run",
+      entityType: "akif_document_comparison",
+      metadata: { documentCount: input.documents.length },
+    });
+    res.json(result);
   } catch (error) {
     if (validationError(res, error)) return;
     res.status(502).json({ error: "akif_document_comparison_failed" });
+  }
+});
+
+router.post("/admin/akif/deals/:dealId/documents/compare", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const input = dealDocumentCompareSchema.parse(req.body);
+    const context = await getAkifDealContext(dealId);
+    if (!context) {
+      res.status(404).json({ error: "deal_not_found" });
+      return;
+    }
+
+    const selected = context.documentExtractions.filter((extraction) =>
+      input.documentIds.includes(extraction.documentId)
+      && (extraction.status === "completed" || extraction.status === "needs_review")
+      && extraction.structuredData,
+    );
+    if (selected.length !== input.documentIds.length) {
+      res.status(409).json({ error: "document_extractions_not_ready" });
+      return;
+    }
+
+    const dealTerms = {
+      dealNumber: context.deal.dealNumber,
+      product: context.product
+        ? { name: context.product.name, grade: context.product.grade, hsCode: context.product.hsCode }
+        : null,
+      quantity: context.deal.quantity,
+      unit: context.deal.unit,
+      agreedPrice: context.deal.agreedPrice,
+      currency: context.deal.currency,
+      incoterm: context.deal.incoterm,
+      destination: context.deal.destination,
+    };
+    const documents = [
+      { label: "UDC agreed deal terms", text: JSON.stringify(dealTerms) },
+      ...selected.map((extraction) => ({
+        label: String(extraction.fileName || "Trade document").slice(0, 80),
+        text: JSON.stringify(extraction.structuredData),
+      })),
+    ];
+    if (documents.some((document) => document.text.length > 500_000)) {
+      res.status(413).json({ error: "document_terms_too_large_to_compare" });
+      return;
+    }
+
+    const result = await compareAkifDocuments({ documents });
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "akif_deal_document_comparison_run",
+      entityType: "deal",
+      entityId: context.deal.id,
+      metadata: { documentCount: selected.length, comparisonBasis: "saved_deal_terms" },
+    });
+    res.json(result);
+  } catch (error) {
+    if (validationError(res, error)) return;
+    res.status(502).json({ error: "akif_deal_document_comparison_failed" });
   }
 });
 
