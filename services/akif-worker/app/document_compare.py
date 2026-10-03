@@ -32,19 +32,19 @@ PAYMENT_TERMS = ["DLC", "LC", "SBLC", "MT103", "TT", "T/T", "BG"]
 
 def _extract(text: str) -> dict[str, Any]:
     upper = text.upper()
-    incoterms = sorted({term for term in INCOTERMS if re.search(rf"\\b{re.escape(term)}\\b", upper)})
+    incoterms = sorted({term for term in INCOTERMS if re.search(rf"\b{re.escape(term)}\b", upper)})
     payments = sorted({
         term
         for term in PAYMENT_TERMS
-        if re.search(rf"\\b{re.escape(term)}\\b", upper)
+        if re.search(rf"\b{re.escape(term)}\b", upper)
     })
     quantities = sorted({
         m.group(0).strip()
-        for m in re.finditer(r"\\b[\\d,.]+\\s*(?:MT|METRIC TONS?|TONNES?|KG|KGS)\\b", upper)
+        for m in re.finditer(r"\b[\d,.]+\s*(?:MT|METRIC TONS?|TONNES?|KG|KGS)\b", upper)
     })[:10]
     prices = sorted({
         m.group(0).strip()
-        for m in re.finditer(r"(?:USD|US\\$|\\$|AED|EUR|€|INR|₹)\\s*[\\d,.]+(?:\\s*/\\s*(?:MT|KG|TONNE))?", upper)
+        for m in re.finditer(r"(?:USD|US\$|\$|AED|EUR|€|INR|₹)\s*[\d,.]+(?:\s*/\s*(?:MT|KG|TONNE))?", upper)
     })[:10]
     return {
         "incoterms": incoterms,
