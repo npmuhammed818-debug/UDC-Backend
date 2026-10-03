@@ -5,6 +5,7 @@ on:
     paths:
       - "artifacts/api-server/**"
       - "services/akif-worker/**"
+      - "services/document_extractor/**"
       - "services/hermes-learning/**"
       - "docker-compose.hermes.yml"
       - ".github/workflows/akif-stack.yml"
@@ -13,6 +14,7 @@ on:
     paths:
       - "artifacts/api-server/**"
       - "services/akif-worker/**"
+      - "services/document_extractor/**"
       - "services/hermes-learning/**"
       - "docker-compose.hermes.yml"
       - ".github/workflows/akif-stack.yml"
@@ -41,8 +43,17 @@ jobs:
           python-version: "3.12"
       - run: python -m compileall -q services/akif-worker/app services/akif-worker/tests
       - run: pip install 'pytest>=8,<9' 'fastapi>=0.115,<1' 'pydantic>=2.11,<3'
-      - run: PYTHONPATH=services/akif-worker python -m pytest services/akif-worker/tests/test_reasoning.py -q
+      - run: PYTHONPATH=services/akif-worker python -m pytest services/akif-worker/tests/test_reasoning.py services/akif-worker/tests/test_document_compare.py -q
 
+  document-extractor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r services/document_extractor/requirements.txt 'pytest>=8,<9' 'httpx>=0.28,<1'
+      - run: PYTHONPATH=services/document_extractor python -m pytest services/document_extractor/tests -q
 
   hermes-compose:
     runs-on: ubuntu-latest
