@@ -355,19 +355,18 @@ function DealIntelligencePanel({ dealId }: { dealId: string }) {
   const extractions: AnyRecord[] = snapshot?.documentExtractions || [];
   const comparableExtractions = extractions
     .filter((item) => (item.status === 'completed' || item.status === 'needs_review') && item.structuredData)
-    .map((item) => ({ id: String(item.id), label: String(item.fileName || item.documentType || 'Trade document').slice(0, 80), text: JSON.stringify(item.structuredData) }))
-    .filter((item) => item.text.length <= 500_000)
-    .slice(0, 10);
+    .map((item) => ({ id: String(item.documentId), label: String(item.fileName || item.documentType || 'Trade document').slice(0, 80) }))
+    
   const selectedComparisons = comparableExtractions.filter((item) => selectedExtractionIds.includes(item.id));
   const compareExtractedDocuments = async () => {
     setComparisonBusy(true); setComparisonError(''); setComparisonResult(null);
     try {
-      const response = await fetch('/api/admin/akif/documents/compare', {
+      const response = await fetch(`/api/admin/akif/deals/${dealId}/documents/compare`, {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documents: selectedComparisons.map(({ label, text }) => ({ label, text })) }),
+        body: JSON.stringify({ documentIds: selectedComparisons.map((document) => document.id) }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error('AKIF could not compare the extracted documents. Please try again.');
+      if (!response.ok) throw new Error('AKIF could not compare these deal documents. Please try again.');
       setComparisonResult(result);
     } catch (cause) {
       setComparisonError(cause instanceof Error ? cause.message : 'Document comparison failed.');
@@ -389,13 +388,13 @@ function DealIntelligencePanel({ dealId }: { dealId: string }) {
     {intelligence.isError ? <Failure retry={() => intelligence.refetch()} /> : intelligence.isLoading ? <LoadingRows count={2} /> : !extractions.length ? <EmptyState icon={FileText} title="No extraction records yet" body="Document uploads will show their extraction status here." /> : <div className="data-list">{extractions.map((item) => <article className="data-row" key={item.id}><div className="row-main"><strong>{item.fileName || item.documentType || 'Trade document'}</strong><span>{item.extractor || 'Extractor pending'} · {item.pageCount ?? 'Page count unavailable'} pages · {item.confidence ? `Confidence ${Math.round(Number(item.confidence) * 100)}%` : 'Confidence unavailable'}</span>{item.errorCode && <span className="text-destructive">{item.errorCode}</span>}{item.warnings?.length > 0 && <span>{item.warnings.join(' · ')}</span>}{item.structuredData && <details className="mt-1"><summary className="text-link cursor-pointer">Structured terms</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-3 text-xs">{JSON.stringify(item.structuredData, null, 2)}</pre></details>}</div><StatusPill status={item.status} /></article>)}</div>}
     <div className="mt-5 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h3 className="font-semibold">Compare extracted documents</h3><p className="text-xs text-muted-foreground">AKIF compares saved extracted terms; extraction mistakes can affect the result. Review the source files before making decisions.</p></div>
-        <Button size="sm" variant="outline" disabled={comparisonBusy || selectedComparisons.length < 2} onClick={() => void compareExtractedDocuments()}>{comparisonBusy ? 'Comparing…' : 'Compare selected documents'}</Button>
+        <div><h3 className="font-semibold">Compare extracted documents against deal terms</h3><p className="text-xs text-muted-foreground">AKIF compares the selected documents with saved quantity, price, currency, Incoterm and destination. Extraction mistakes can affect results; review the source files before deciding.</p></div>
+        <Button size="sm" variant="outline" disabled={comparisonBusy || selectedComparisons.length < 1} onClick={() => void compareExtractedDocuments()}>{comparisonBusy ? 'Comparing…' : 'Compare with deal terms'}</Button>
       </div>
       {comparableExtractions.length > 0 && <div className="mt-3 grid gap-2">{comparableExtractions.map((item) => <label key={item.id} className="flex items-start gap-2 rounded-md border p-2 text-sm"><input type="checkbox" checked={selectedExtractionIds.includes(item.id)} onChange={(event) => setSelectedExtractionIds((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} /><span>{item.label}</span></label>)}</div>}
       {comparableExtractions.length === 0 && <p className="mt-2 text-xs text-muted-foreground">No eligible extractions with structured terms yet.</p>}
-      {comparableExtractions.length === 10 && <p className="mt-2 text-xs text-muted-foreground">Showing up to 10 eligible extractions for comparison.</p>}
-      {selectedComparisons.length < 2 && comparableExtractions.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Select at least two documents to compare.</p>}
+      {comparableExtractions.length === 9 && <p className="mt-2 text-xs text-muted-foreground">Showing up to 9 eligible documents for comparison.</p>}
+      {selectedComparisons.length < 1 && comparableExtractions.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Select at least one document to compare with the deal terms.</p>}
       {comparisonError && <p role="alert" className="mt-3 text-sm text-destructive">{comparisonError}</p>}
       {comparisonResult && <div className="mt-3" aria-live="polite"><h4 className="text-sm font-semibold">Comparison result</h4><pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-muted p-3 text-xs whitespace-pre-wrap">{JSON.stringify(comparisonResult, null, 2)}</pre></div>}
     </div>
