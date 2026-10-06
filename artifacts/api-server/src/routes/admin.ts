@@ -1812,16 +1812,23 @@ router.get("/admin/deals/:dealId/conversation", requireRole("admin"), async (req
 router.get("/admin/meeting-requests", requireRole("admin"), async (_req, res) => {
   try {
     const requests = await db.select({
-      id: dealConversationEventsTable.id,
-      dealId: dealConversationEventsTable.dealId,
+      id: dealMeetingsTable.id,
+      dealId: dealMeetingsTable.dealId,
       dealNumber: dealsTable.dealNumber,
-      participantRole: dealConversationEventsTable.participantRole,
-      originalText: dealConversationEventsTable.originalText,
-      createdAt: dealConversationEventsTable.createdAt,
-    }).from(dealConversationEventsTable)
-      .innerJoin(dealsTable, eq(dealConversationEventsTable.dealId, dealsTable.id))
-      .where(eq(dealConversationEventsTable.intent, "meeting_request"))
-      .orderBy(desc(dealConversationEventsTable.createdAt))
+      requestedBy: dealMeetingsTable.requestedBy,
+      requesterRole: usersTable.role,
+      status: dealMeetingsTable.status,
+      meetingMode: dealMeetingsTable.meetingMode,
+      location: dealMeetingsTable.location,
+      udcRepresentativeRequested: dealMeetingsTable.udcRepresentativeRequested,
+      agenda: dealMeetingsTable.agenda,
+      scheduledAt: dealMeetingsTable.scheduledAt,
+      createdAt: dealMeetingsTable.createdAt,
+    }).from(dealMeetingsTable)
+      .innerJoin(dealsTable, eq(dealMeetingsTable.dealId, dealsTable.id))
+      .innerJoin(usersTable, eq(dealMeetingsTable.requestedBy, usersTable.id))
+      .where(inArray(dealMeetingsTable.status, ["requested", "scheduled"]))
+      .orderBy(desc(dealMeetingsTable.createdAt))
       .limit(100);
     res.json({ requests });
   } catch {
