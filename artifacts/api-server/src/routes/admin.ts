@@ -9,6 +9,7 @@ import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
+import { canAllocateCommissionShare, nextReferralPosition } from "../referrals/agentChain";
 
 const router: IRouter = Router();
 
@@ -359,6 +360,8 @@ const referralStatusSchema = z.object({
 
 const addAgentParticipantSchema = z.object({
   userId: z.string().uuid(),
+  referredByAgentUserId: z.string().uuid().optional(),
+  commissionSharePct: z.coerce.number().min(0).max(100).optional(),
 });
 
 const sendDealNotificationSchema = z.object({
@@ -1796,9 +1799,19 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       res.status(400).json({ error: "invalid_deal_id" });
       return;
     }
-    const [[deal], [agent]] = await Promise.all([
+    const [[deal], [agent], existingAgents] = await Promise.all([
       db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
       db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
+      db.select({
+        userId: dealParticipantsTable.userId,
+        referredByAgentUserId: dealParticipantsTable.referredByAgentUserId,
+        referralPosition: dealParticipantsTable.referralPosition,
+        commissionSharePct: dealParticipantsTable.commissionSharePct,
+      }).from(dealParticipantsTable).where(and(
+        eq(dealParticipantsTable.dealId, dealId),
+        eq(dealParticipantsTable.participantRole, "agent"),
+        eq(dealParticipantsTable.status, "active"),
+      )),
     ]);
     if (!deal) {
       res.status(404).json({ error: "deal_not_found" });
@@ -1808,11 +1821,22 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       res.status(409).json({ error: "user_is_not_agent" });
       return;
     }
+    if (input.referredByAgentUserId && !existingAgents.some((member) => member.userId === input.referredByAgentUserId)) {
+      res.status(409).json({ error: "referring_agent_not_on_deal" });
+      return;
+    }
+    if (!canAllocateCommissionShare(existingAgents, input.commissionSharePct)) {
+      res.status(409).json({ error: "agent_commission_pool_exceeds_100_percent" });
+      return;
+    }
     const [participant] = await db.insert(dealParticipantsTable).values({
       dealId: deal.id,
       userId: agent.id,
       participantRole: "agent",
       status: "active",
+      referredByAgentUserId: input.referredByAgentUserId,
+      referralPosition: nextReferralPosition(existingAgents),
+      commissionSharePct: input.commissionSharePct === undefined ? undefined : String(input.commissionSharePct),
     }).onConflictDoNothing().returning();
     if (!participant) {
       res.status(409).json({ error: "agent_already_assigned" });
@@ -1823,13 +1847,13 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       action: "deal_agent_assigned",
       entityType: "deal",
       entityId: deal.id,
-      metadata: { agentUserId: agent.id },
+      metadata: { agentUserId: agent.id, referredByAgentUserId: input.referredByAgentUserId ?? null, referralPosition: participant.referralPosition, commissionSharePct: participant.commissionSharePct },
     });
     await db.insert(notificationsTable).values({
       userId: agent.id,
       type: "deal_agent_assigned",
       title: "You were assigned to a deal",
-      body: "UDC assigned you to a deal. You can now follow its progress.",
+      body: "UDC added you to a deal referral chain. You can follow the deal progress without seeing private counterparty details.",
       link: `/deals/${deal.id}`,
     });
     res.status(201).json({ participant });
