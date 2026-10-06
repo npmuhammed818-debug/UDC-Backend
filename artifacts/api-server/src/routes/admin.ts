@@ -15,23 +15,88 @@ const router: IRouter = Router();
 
 router.get("/admin/analytics", requireRole("admin"), async (_req, res) => {
   try {
-    const [stages, completedValues, products] = await Promise.all([
+    const [
+      stages,
+      tradeVolume,
+      completedValues,
+      products,
+      topCountries,
+      totalUsers,
+      verifiedUsers,
+      totalDeals,
+      completedDeals,
+      activeShipments,
+      openCases,
+    ] = await Promise.all([
       db.select({ status: dealsTable.status, count: sql<number>`count(*)::int` })
-        .from(dealsTable).groupBy(dealsTable.status),
+        .from(dealsTable)
+        .groupBy(dealsTable.status),
       db.select({
         currency: dealsTable.currency,
         dealCount: sql<number>`count(*)::int`,
-        value: sql<string>`sum(${dealsTable.quantity} * ${dealsTable.agreedPrice})::text`,
-      }).from(dealsTable).where(eq(dealsTable.status, "completed"))
+        value: sql<string>`sum(coalesce(${dealsTable.dealValue}, ${dealsTable.quantity} * ${dealsTable.agreedPrice}))::text`,
+      }).from(dealsTable)
+        .groupBy(dealsTable.currency),
+      db.select({
+        currency: dealsTable.currency,
+        dealCount: sql<number>`count(*)::int`,
+        value: sql<string>`sum(coalesce(${dealsTable.dealValue}, ${dealsTable.quantity} * ${dealsTable.agreedPrice}))::text`,
+      }).from(dealsTable)
+        .where(eq(dealsTable.status, "completed"))
         .groupBy(dealsTable.currency),
       db.select({
         product: productsTable.name,
         dealCount: sql<number>`count(*)::int`,
-      }).from(dealsTable).innerJoin(productsTable, eq(dealsTable.productId, productsTable.id))
+        value: sql<string>`sum(coalesce(${dealsTable.dealValue}, ${dealsTable.quantity} * ${dealsTable.agreedPrice}))::text`,
+      }).from(dealsTable)
+        .innerJoin(productsTable, eq(dealsTable.productId, productsTable.id))
         .groupBy(productsTable.id, productsTable.name)
-        .orderBy(desc(sql`count(*)`)).limit(10),
+        .orderBy(desc(sql`count(*)`))
+        .limit(10),
+      db.select({
+        country: sellerListingsTable.originCountry,
+        dealCount: sql<number>`count(*)::int`,
+      }).from(dealsTable)
+        .innerJoin(sellerListingsTable, eq(dealsTable.sellerListingId, sellerListingsTable.id))
+        .where(sql`${sellerListingsTable.originCountry} is not null and trim(${sellerListingsTable.originCountry}) <> ''`)
+        .groupBy(sellerListingsTable.originCountry)
+        .orderBy(desc(sql`count(*)`))
+        .limit(10),
+      db.select({ count: sql<number>`count(*)::int` }).from(usersTable),
+      db.select({ count: sql<number>`count(*)::int` }).from(usersTable)
+        .where(eq(usersTable.status, "verified")),
+      db.select({ count: sql<number>`count(*)::int` }).from(dealsTable),
+      db.select({ count: sql<number>`count(*)::int` }).from(dealsTable)
+        .where(eq(dealsTable.status, "completed")),
+      db.select({ count: sql<number>`count(*)::int` }).from(shipmentsTable)
+        .where(inArray(shipmentsTable.status, ["planned", "booked", "in_transit", "delayed", "arrived"])),
+      db.select({ count: sql<number>`count(*)::int` }).from(dealCasesTable)
+        .where(inArray(dealCasesTable.status, ["open", "investigating", "waiting_party"])),
     ]);
-    res.json({ stages, completedValues, products });
+
+    const totals = {
+      users: totalUsers[0]?.count ?? 0,
+      verifiedUsers: verifiedUsers[0]?.count ?? 0,
+      deals: totalDeals[0]?.count ?? 0,
+      completedDeals: completedDeals[0]?.count ?? 0,
+      activeShipments: activeShipments[0]?.count ?? 0,
+      openCases: openCases[0]?.count ?? 0,
+    };
+    const completionRate = totals.deals > 0
+      ? Number(((totals.completedDeals / totals.deals) * 100).toFixed(2))
+      : 0;
+
+    res.json({
+      stages,
+      tradeVolume,
+      completedValues,
+      products,
+      topCountries,
+      platformPerformance: {
+        ...totals,
+        completionRatePct: completionRate,
+      },
+    });
   } catch {
     res.status(500).json({ error: "analytics_fetch_failed" });
   }
