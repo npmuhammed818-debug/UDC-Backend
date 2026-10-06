@@ -32,7 +32,7 @@ export async function transcribeAudio(
       : mimeType.includes("wav") ? "wav"
         : mimeType.includes("webm") ? "webm"
           : "ogg";
-  form.append("file", new Blob([bytes], { type: mimeType }), `voice-note.${extension}`);
+  const audioBuffer = new ArrayBuffer(bytes.byteLength);\n  new Uint8Array(audioBuffer).set(bytes);\n  form.append("file", new Blob([audioBuffer], { type: mimeType }), `voice-note.${extension}`);
   form.append("model", config.model);
 
   const response = await fetch(`${config.baseUrl}/audio/transcriptions`, {
