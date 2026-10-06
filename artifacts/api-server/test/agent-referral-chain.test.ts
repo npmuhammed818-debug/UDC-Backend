@@ -6,7 +6,7 @@ import {
   canAllocateCommissionShare,
   nextReferralPosition,
   type AgentChainMember,
-} from "../src/referrals/agentChain";
+} from "../src/referrals/agentChain.ts";
 
 const chain: AgentChainMember[] = [
   { userId: "a", referredByAgentUserId: null, referralPosition: 1, commissionSharePct: "20.000" },
