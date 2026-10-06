@@ -12,6 +12,7 @@ import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
+import { isOpenAITranscriptionConfigured, transcribeAudio } from "../akif/intelligence/audioTranscription";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
@@ -891,14 +892,14 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; audio?: { id?: string; mime_type?: string; voice?: boolean }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
-      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string")) {
+      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string" || typeof message.audio?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
           if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
@@ -908,6 +909,45 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           continue;
         }
       }
+      if (message.from && typeof message.audio?.id === "string") {
+        if (!isOpenAITranscriptionConfigured()) {
+          await deliverWhatsAppReply(
+            message.from,
+            "I can receive voice notes, but voice transcription isn’t connected yet. Please send this one as text for now.",
+          );
+          continue;
+        }
+
+        try {
+          const audio = await downloadWhatsAppMedia(message.audio.id);
+          if (!audio.mimeType.startsWith("audio/")) {
+            await deliverWhatsAppReply(message.from, "That audio format didn’t come through correctly. Please resend the voice note.");
+            continue;
+          }
+          const transcript = await transcribeAudio(audio.bytes, audio.mimeType);
+          message.text = { body: transcript };
+          req.log.info(
+            { whatsappMessageId: message.id, flow: "voice_note" },
+            "UDC transcribed WhatsApp voice note",
+          );
+        } catch (error) {
+          req.log.error(
+            {
+              whatsappMessageId: message.id,
+              flow: "voice_note",
+              errorName: error instanceof Error ? error.name : "UnknownError",
+              reason: "voice_transcription_failed",
+            },
+            "UDC could not transcribe WhatsApp voice note",
+          );
+          await deliverWhatsAppReply(
+            message.from,
+            "I couldn’t understand that voice note clearly. Please resend it or type the message.",
+          );
+          continue;
+        }
+      }
+
       if (message.from && typeof message.document?.id === "string") {
         try {
           const documentResult = await handleWhatsAppDealDocument(
