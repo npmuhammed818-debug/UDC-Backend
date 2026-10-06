@@ -1,6 +1,7 @@
 import { createInsertSchema } from "drizzle-zod";
 import {
   index,
+  integer,
   jsonb,
   numeric,
   pgTable,
@@ -26,6 +27,9 @@ export const dealParticipantsTable = pgTable(
       .references(() => usersTable.id, { onDelete: "cascade" }),
     participantRole: text("participant_role").notNull(),
     status: text("status").notNull().default("active"),
+    referredByAgentUserId: uuid("referred_by_agent_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+    referralPosition: integer("referral_position"),
+    commissionSharePct: numeric("commission_share_pct", { precision: 6, scale: 3 }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -42,6 +46,8 @@ export const dealParticipantsTable = pgTable(
     ),
     index("deal_participants_deal_id_idx").on(table.dealId),
     index("deal_participants_user_id_idx").on(table.userId),
+    index("deal_participants_referrer_idx").on(table.referredByAgentUserId),
+    index("deal_participants_chain_idx").on(table.dealId, table.referralPosition),
   ],
 );
 
