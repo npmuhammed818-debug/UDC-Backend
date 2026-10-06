@@ -108,13 +108,83 @@ router.get("/deals/:dealId/execution", requireAuth, async (req, res) => {
       .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
     if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
     const [meetings, cases, customs, feedback] = await Promise.all([
-      db.select({ id: dealMeetingsTable.id, status: dealMeetingsTable.status, scheduledAt: dealMeetingsTable.scheduledAt, provider: dealMeetingsTable.provider, meetingUrl: dealMeetingsTable.meetingUrl, agenda: dealMeetingsTable.agenda, completedAt: dealMeetingsTable.completedAt }).from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)),
+      db.select({ id: dealMeetingsTable.id, status: dealMeetingsTable.status, meetingMode: dealMeetingsTable.meetingMode, location: dealMeetingsTable.location, udcRepresentativeRequested: dealMeetingsTable.udcRepresentativeRequested, scheduledAt: dealMeetingsTable.scheduledAt, provider: dealMeetingsTable.provider, meetingUrl: dealMeetingsTable.meetingUrl, agenda: dealMeetingsTable.agenda, completedAt: dealMeetingsTable.completedAt }).from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)),
       db.select({ id: dealCasesTable.id, caseType: dealCasesTable.caseType, priority: dealCasesTable.priority, status: dealCasesTable.status, summary: dealCasesTable.summary, resolution: dealCasesTable.resolution, updatedAt: dealCasesTable.updatedAt }).from(dealCasesTable).where(eq(dealCasesTable.dealId, dealId)).orderBy(desc(dealCasesTable.createdAt)),
       db.select({ status: customsClearanceTable.status, country: customsClearanceTable.country, port: customsClearanceTable.port, reference: customsClearanceTable.reference, clearedAt: customsClearanceTable.clearedAt, updatedAt: customsClearanceTable.updatedAt }).from(customsClearanceTable).where(eq(customsClearanceTable.dealId, dealId)).limit(1),
       db.select({ id: dealFeedbackTable.id, rating: dealFeedbackTable.rating, comment: dealFeedbackTable.comment, createdAt: dealFeedbackTable.createdAt }).from(dealFeedbackTable).where(and(eq(dealFeedbackTable.dealId, dealId), eq(dealFeedbackTable.status, "approved"))).orderBy(desc(dealFeedbackTable.createdAt)),
     ]);
     res.json({ meetings, cases, customs: customs[0] ?? null, feedback });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_deal_id" }); return; } res.status(500).json({ error: "deal_execution_fetch_failed" }); }
+});
+
+const meetingRequestInput = z.object({
+  meetingMode: z.enum(["virtual", "face_to_face"]).default("virtual"),
+  location: z.string().trim().min(2).max(200).optional(),
+  agenda: z.string().trim().max(1000).optional(),
+  udcRepresentativeRequested: z.boolean().default(false),
+}).superRefine((input, ctx) => {
+  if (input.meetingMode === "face_to_face" && input.location && input.location.length < 2) {
+    ctx.addIssue({ code: "custom", message: "invalid_location", path: ["location"] });
+  }
+});
+
+router.post("/deals/:dealId/meetings/request", requireAuth, async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const input = meetingRequestInput.parse(req.body ?? {});
+    const [deal] = await db.select({
+      id: dealsTable.id,
+      buyerUserId: dealsTable.buyerUserId,
+      sellerUserId: dealsTable.sellerUserId,
+    }).from(dealsTable)
+      .where(eq(dealsTable.id, dealId))
+      .limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    if (![deal.buyerUserId, deal.sellerUserId].includes(req.authUser!.id)) {
+      res.status(403).json({ error: "buyer_or_seller_required" }); return;
+    }
+
+    const [existing] = await db.select().from(dealMeetingsTable)
+      .where(and(
+        eq(dealMeetingsTable.dealId, dealId),
+        eq(dealMeetingsTable.requestedBy, req.authUser!.id),
+        eq(dealMeetingsTable.status, "requested"),
+      ))
+      .orderBy(desc(dealMeetingsTable.createdAt))
+      .limit(1);
+    if (existing) {
+      res.json({ meeting: existing, alreadyRequested: true });
+      return;
+    }
+
+    const [meeting] = await db.insert(dealMeetingsTable).values({
+      dealId,
+      requestedBy: req.authUser!.id,
+      status: "requested",
+      meetingMode: input.meetingMode,
+      location: input.location,
+      agenda: input.agenda,
+      udcRepresentativeRequested: input.udcRepresentativeRequested,
+    }).returning();
+
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "deal_meeting_requested",
+      entityType: "deal",
+      entityId: dealId,
+      metadata: {
+        meetingId: meeting.id,
+        meetingMode: meeting.meetingMode,
+        location: meeting.location ?? null,
+        udcRepresentativeRequested: meeting.udcRepresentativeRequested,
+      },
+    });
+
+    res.status(201).json({ meeting, alreadyRequested: false });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "meeting_request_failed" });
+  }
 });
 
 router.post("/deals/:dealId/feedback", requireAuth, async (req, res) => {
@@ -459,10 +529,22 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
           id: shipmentsTable.id,
           carrier: shipmentsTable.carrier,
           trackingNumber: shipmentsTable.trackingNumber,
+          containerNumber: shipmentsTable.containerNumber,
+          vesselName: shipmentsTable.vesselName,
+          voyageNumber: shipmentsTable.voyageNumber,
           status: shipmentsTable.status,
           origin: shipmentsTable.origin,
+          portOfLoading: shipmentsTable.portOfLoading,
+          currentPort: shipmentsTable.currentPort,
+          nextPort: shipmentsTable.nextPort,
           destination: shipmentsTable.destination,
+          portOfDischarge: shipmentsTable.portOfDischarge,
+          departedAt: shipmentsTable.departedAt,
           estimatedArrival: shipmentsTable.estimatedArrival,
+          arrivedAt: shipmentsTable.arrivedAt,
+          lastCarrierEvent: shipmentsTable.lastCarrierEvent,
+          lastCarrierEventAt: shipmentsTable.lastCarrierEventAt,
+          delayReason: shipmentsTable.delayReason,
           notes: shipmentsTable.notes,
           updatedAt: shipmentsTable.updatedAt,
         })

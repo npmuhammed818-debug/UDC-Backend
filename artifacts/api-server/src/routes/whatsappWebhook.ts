@@ -1,7 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq } from "drizzle-orm";
-import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { db, dealConversationEventsTable, dealMeetingsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -12,6 +12,7 @@ import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
+import { isOpenAITranscriptionConfigured, transcribeAudio } from "../akif/intelligence/audioTranscription";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
@@ -161,6 +162,15 @@ function mediatorCopy(_role: string, intent: ConversationIntent, text: string) {
         relay: false,
       };
   }
+}
+
+function meetingRequestDetails(text: string) {
+  const normalized = text.toLowerCase();
+  const meetingMode = /\b(?:face[- ]?to[- ]?face|in[- ]?person|physical meeting|meet physically|office meeting)\b/i.test(normalized)
+    ? "face_to_face"
+    : "virtual";
+  const udcRepresentativeRequested = /\b(?:udc representative|udc rep|representative from udc|udc agent|someone from udc)\b/i.test(normalized);
+  return { meetingMode, udcRepresentativeRequested };
 }
 
 function parseExplicitCommercialTerms(text: string) {
@@ -460,6 +470,81 @@ async function handleWhatsAppDealDocument(
 
   return {
     reply: `Got the ${documentType}. I’ll keep it here for review.`,
+    dealId,
+    recipientUserId: sender.id,
+  };
+}
+
+
+async function handleWhatsAppDealImage(
+  from: string,
+  image: { id: string; mime_type?: string; caption?: string },
+  inboundProviderMessageId?: string,
+) {
+  const [sender] = await db
+    .select({ id: usersTable.id, status: usersTable.status })
+    .from(usersTable)
+    .where(eq(usersTable.phone, from))
+    .limit(1);
+
+  if (!sender || sender.status !== "verified") {
+    return { reply: "I got the image, but this number isn’t verified for UDC deal media yet." };
+  }
+
+  const dealId = await resolveActiveDealForUser(sender.id);
+  if (!dealId) {
+    return { reply: "I got the image, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
+  }
+
+  if (inboundProviderMessageId) {
+    const [claim] = await db.insert(whatsappMessageContextsTable)
+      .values({
+        providerMessageId: inboundProviderMessageId,
+        dealId,
+        recipientUserId: sender.id,
+        kind: "inbound_image_processing",
+      })
+      .onConflictDoNothing()
+      .returning({ id: whatsappMessageContextsTable.id });
+    if (!claim) return { duplicate: true as const, reply: "" };
+  }
+
+  const media = await downloadWhatsAppMedia(image.id);
+  if (!media.mimeType.startsWith("image/")) {
+    return { reply: "That image format didn’t come through correctly. Please resend it." };
+  }
+  if (media.bytes.byteLength > 10 * 1024 * 1024) {
+    return { reply: "That image is too large. Please send a smaller copy." };
+  }
+
+  const extension = media.mimeType.includes("png") ? "png"
+    : media.mimeType.includes("webp") ? "webp"
+      : "jpg";
+  const objectPath = `deals/${dealId}/whatsapp/${randomUUID()}-image.${extension}`;
+  const fileUrl = await uploadDocumentBytes(objectPath, media.bytes, media.mimeType);
+
+  const [savedDocument] = await db.insert(documentsTable).values({
+    dealId,
+    uploadedBy: sender.id,
+    documentType: "trade_document",
+    fileUrl,
+    status: "pending",
+  }).returning({ id: documentsTable.id });
+  if (!savedDocument) throw new Error("image_record_not_created");
+
+  await setActiveDealContext(sender.id, dealId);
+  await db.insert(dealConversationEventsTable).values({
+    dealId,
+    userId: sender.id,
+    participantRole: "image_sender",
+    intent: "image_submission",
+    originalText: image.caption ? `Uploaded image — ${image.caption}` : "Uploaded image",
+    relayText: null,
+    relayed: false,
+  });
+
+  return {
+    reply: "Got the image. I attached it to the deal for review.",
     dealId,
     recipientUserId: sender.id,
   };
@@ -798,6 +883,30 @@ async function handleDealWhatsAppMessage(
     relayed: false,
   }).returning({ id: dealConversationEventsTable.id });
 
+  if (effectiveIntent === "meeting_request") {
+    const [existingMeeting] = await db.select({ id: dealMeetingsTable.id })
+      .from(dealMeetingsTable)
+      .where(and(
+        eq(dealMeetingsTable.dealId, deal.id),
+        eq(dealMeetingsTable.requestedBy, sender.id),
+        inArray(dealMeetingsTable.status, ["requested", "scheduled"]),
+      ))
+      .orderBy(desc(dealMeetingsTable.createdAt))
+      .limit(1);
+
+    if (!existingMeeting) {
+      const details = meetingRequestDetails(messageBody);
+      await db.insert(dealMeetingsTable).values({
+        dealId: deal.id,
+        requestedBy: sender.id,
+        status: "requested",
+        meetingMode: details.meetingMode,
+        udcRepresentativeRequested: details.udcRepresentativeRequested,
+        agenda: messageBody.slice(0, 1000),
+      });
+    }
+  }
+
   let deliveredToCounterparty = false;
   if (copy.relay && copy.toOther) {
     const [receiver] = await db
@@ -847,6 +956,7 @@ router.get(
       webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
       accessTokenConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
       phoneNumberIdConfigured: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
+      voiceTranscriptionConfigured: isOpenAITranscriptionConfigured(),
     };
     const inboundReady = config.appSecretConfigured && config.webhookVerifyTokenConfigured;
     const outboundReady = config.accessTokenConfigured && config.phoneNumberIdConfigured;
@@ -891,14 +1001,14 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; audio?: { id?: string; mime_type?: string; voice?: boolean }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
-      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string")) {
+      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
           if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
@@ -908,6 +1018,85 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           continue;
         }
       }
+      if (message.from && typeof message.audio?.id === "string") {
+        if (!isOpenAITranscriptionConfigured()) {
+          await deliverWhatsAppReply(
+            message.from,
+            "I can receive voice notes, but voice transcription isn’t connected yet. Please send this one as text for now.",
+          );
+          continue;
+        }
+
+        try {
+          const audio = await downloadWhatsAppMedia(message.audio.id);
+          if (!audio.mimeType.startsWith("audio/")) {
+            await deliverWhatsAppReply(message.from, "That audio format didn’t come through correctly. Please resend the voice note.");
+            continue;
+          }
+          const transcript = await transcribeAudio(audio.bytes, audio.mimeType);
+          message.text = { body: transcript };
+          req.log.info(
+            { whatsappMessageId: message.id, flow: "voice_note" },
+            "UDC transcribed WhatsApp voice note",
+          );
+        } catch (error) {
+          req.log.error(
+            {
+              whatsappMessageId: message.id,
+              flow: "voice_note",
+              errorName: error instanceof Error ? error.name : "UnknownError",
+              reason: "voice_transcription_failed",
+            },
+            "UDC could not transcribe WhatsApp voice note",
+          );
+          await deliverWhatsAppReply(
+            message.from,
+            "I couldn’t understand that voice note clearly. Please resend it or type the message.",
+          );
+          continue;
+        }
+      }
+
+      if (message.from && typeof message.image?.id === "string") {
+        try {
+          const imageResult = await handleWhatsAppDealImage(
+            message.from,
+            {
+              id: message.image.id,
+              mime_type: message.image.mime_type,
+              caption: message.image.caption,
+            },
+            message.id,
+          );
+          if ("duplicate" in imageResult && imageResult.duplicate) {
+            req.log.info(
+              { whatsappMessageId: message.id, flow: "deal_image" },
+              "UDC ignored duplicate WhatsApp deal image",
+            );
+            continue;
+          }
+          const delivery = await deliverWhatsAppReply(message.from, imageResult.reply);
+          req.log.info(
+            { flow: "deal_image", delivered: delivery.delivered },
+            "UDC processed WhatsApp deal image",
+          );
+        } catch (error) {
+          req.log.error(
+            {
+              flow: "deal_image",
+              errorName: error instanceof Error ? error.name : "UnknownError",
+              reason: "image_processing_failed",
+            },
+            "UDC could not process WhatsApp deal image",
+          );
+          await deliverWhatsAppReply(
+            message.from,
+            "I received the image, but I couldn’t attach it to the deal safely. Please try again in a moment.",
+          );
+        }
+        continue;
+      }
+
       if (message.from && typeof message.document?.id === "string") {
         try {
           const documentResult = await handleWhatsAppDealDocument(

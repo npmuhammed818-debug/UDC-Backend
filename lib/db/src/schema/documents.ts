@@ -9,6 +9,7 @@ import {
 import { z } from "zod/v4";
 import { dealsTable } from "./deals";
 import { usersTable } from "./users";
+import { platformDocumentsTable } from "./platformDocuments";
 
 export const documentsTable = pgTable(
   "documents",
@@ -22,6 +23,7 @@ export const documentsTable = pgTable(
       .references(() => usersTable.id),
     documentType: text("document_type").notNull(),
     fileUrl: text("file_url").notNull(),
+    sourcePlatformDocumentId: uuid("source_platform_document_id").references(() => platformDocumentsTable.id, { onDelete: "set null" }),
     status: text("status").notNull().default("pending"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -36,6 +38,7 @@ export const documentsTable = pgTable(
     index("documents_uploaded_by_idx").on(table.uploadedBy),
     index("documents_status_idx").on(table.status),
     index("documents_document_type_idx").on(table.documentType),
+    index("documents_source_platform_document_id_idx").on(table.sourcePlatformDocumentId),
   ],
 );
 

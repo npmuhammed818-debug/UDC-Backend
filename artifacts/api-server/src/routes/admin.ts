@@ -3,7 +3,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, platformDocumentsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -15,23 +15,88 @@ const router: IRouter = Router();
 
 router.get("/admin/analytics", requireRole("admin"), async (_req, res) => {
   try {
-    const [stages, completedValues, products] = await Promise.all([
+    const [
+      stages,
+      tradeVolume,
+      completedValues,
+      products,
+      topCountries,
+      totalUsers,
+      verifiedUsers,
+      totalDeals,
+      completedDeals,
+      activeShipments,
+      openCases,
+    ] = await Promise.all([
       db.select({ status: dealsTable.status, count: sql<number>`count(*)::int` })
-        .from(dealsTable).groupBy(dealsTable.status),
+        .from(dealsTable)
+        .groupBy(dealsTable.status),
       db.select({
         currency: dealsTable.currency,
         dealCount: sql<number>`count(*)::int`,
-        value: sql<string>`sum(${dealsTable.quantity} * ${dealsTable.agreedPrice})::text`,
-      }).from(dealsTable).where(eq(dealsTable.status, "completed"))
+        value: sql<string>`sum(coalesce(${dealsTable.dealValue}, ${dealsTable.quantity} * ${dealsTable.agreedPrice}))::text`,
+      }).from(dealsTable)
+        .groupBy(dealsTable.currency),
+      db.select({
+        currency: dealsTable.currency,
+        dealCount: sql<number>`count(*)::int`,
+        value: sql<string>`sum(coalesce(${dealsTable.dealValue}, ${dealsTable.quantity} * ${dealsTable.agreedPrice}))::text`,
+      }).from(dealsTable)
+        .where(eq(dealsTable.status, "completed"))
         .groupBy(dealsTable.currency),
       db.select({
         product: productsTable.name,
         dealCount: sql<number>`count(*)::int`,
-      }).from(dealsTable).innerJoin(productsTable, eq(dealsTable.productId, productsTable.id))
+        value: sql<string>`sum(coalesce(${dealsTable.dealValue}, ${dealsTable.quantity} * ${dealsTable.agreedPrice}))::text`,
+      }).from(dealsTable)
+        .innerJoin(productsTable, eq(dealsTable.productId, productsTable.id))
         .groupBy(productsTable.id, productsTable.name)
-        .orderBy(desc(sql`count(*)`)).limit(10),
+        .orderBy(desc(sql`count(*)`))
+        .limit(10),
+      db.select({
+        country: sellerListingsTable.originCountry,
+        dealCount: sql<number>`count(*)::int`,
+      }).from(dealsTable)
+        .innerJoin(sellerListingsTable, eq(dealsTable.sellerListingId, sellerListingsTable.id))
+        .where(sql`${sellerListingsTable.originCountry} is not null and trim(${sellerListingsTable.originCountry}) <> ''`)
+        .groupBy(sellerListingsTable.originCountry)
+        .orderBy(desc(sql`count(*)`))
+        .limit(10),
+      db.select({ count: sql<number>`count(*)::int` }).from(usersTable),
+      db.select({ count: sql<number>`count(*)::int` }).from(usersTable)
+        .where(eq(usersTable.status, "verified")),
+      db.select({ count: sql<number>`count(*)::int` }).from(dealsTable),
+      db.select({ count: sql<number>`count(*)::int` }).from(dealsTable)
+        .where(eq(dealsTable.status, "completed")),
+      db.select({ count: sql<number>`count(*)::int` }).from(shipmentsTable)
+        .where(inArray(shipmentsTable.status, ["planned", "booked", "in_transit", "delayed", "arrived"])),
+      db.select({ count: sql<number>`count(*)::int` }).from(dealCasesTable)
+        .where(inArray(dealCasesTable.status, ["open", "investigating", "waiting_party"])),
     ]);
-    res.json({ stages, completedValues, products });
+
+    const totals = {
+      users: totalUsers[0]?.count ?? 0,
+      verifiedUsers: verifiedUsers[0]?.count ?? 0,
+      deals: totalDeals[0]?.count ?? 0,
+      completedDeals: completedDeals[0]?.count ?? 0,
+      activeShipments: activeShipments[0]?.count ?? 0,
+      openCases: openCases[0]?.count ?? 0,
+    };
+    const completionRate = totals.deals > 0
+      ? Number(((totals.completedDeals / totals.deals) * 100).toFixed(2))
+      : 0;
+
+    res.json({
+      stages,
+      tradeVolume,
+      completedValues,
+      products,
+      topCountries,
+      platformPerformance: {
+        ...totals,
+        completionRatePct: completionRate,
+      },
+    });
   } catch {
     res.status(500).json({ error: "analytics_fetch_failed" });
   }
@@ -334,6 +399,18 @@ const createDocumentSchema = z.object({
   fileUrl: z.string().refine((value) => value.startsWith("storage://udc-documents/") || value.startsWith("https://"), "secure_url_required"),
 });
 
+const platformDocumentUploadSchema = z.object({
+  documentType: z.literal("NCNDA"),
+  fileName: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(180),
+});
+
+const registerPlatformDocumentSchema = z.object({
+  documentType: z.literal("NCNDA"),
+  version: z.string().trim().min(1).max(80),
+  fileUrl: z.string().refine((value) => value.startsWith("storage://udc-documents/"), "private_storage_url_required"),
+  lawyerReference: z.string().trim().max(300).optional(),
+});
+
 const documentStatusSchema = z.object({
   status: z.enum(["approved", "rejected"]),
   reviewNote: z.string().trim().min(5).max(1000).optional(),
@@ -386,16 +463,35 @@ const createShipmentSchema = z.object({
   dealId: z.string().uuid(),
   carrier: z.string().min(2).max(160).optional(),
   trackingNumber: z.string().min(2).max(160).optional(),
+  containerNumber: z.string().min(2).max(160).optional(),
+  vesselName: z.string().min(2).max(160).optional(),
+  voyageNumber: z.string().min(1).max(160).optional(),
   origin: z.string().min(2).max(160).optional(),
+  portOfLoading: z.string().min(2).max(160).optional(),
+  currentPort: z.string().min(2).max(160).optional(),
+  nextPort: z.string().min(2).max(160).optional(),
   destination: z.string().min(2).max(160).optional(),
+  portOfDischarge: z.string().min(2).max(160).optional(),
+  departedAt: z.coerce.date().optional(),
   estimatedArrival: z.coerce.date().optional(),
+  arrivedAt: z.coerce.date().optional(),
+  lastCarrierEvent: z.string().max(500).optional(),
+  lastCarrierEventAt: z.coerce.date().optional(),
+  delayReason: z.string().max(1000).optional(),
   notes: z.string().max(2000).optional(),
 });
 
 const shipmentStatusSchema = z.object({
-  status: z.enum(["planned", "booked", "in_transit", "arrived", "delivered", "cancelled"]),
+  status: z.enum(["planned", "booked", "in_transit", "delayed", "arrived", "delivered", "cancelled"]),
   notes: z.string().max(2000).optional(),
   estimatedArrival: z.coerce.date().optional(),
+  currentPort: z.string().min(2).max(160).optional(),
+  nextPort: z.string().min(2).max(160).optional(),
+  departedAt: z.coerce.date().optional(),
+  arrivedAt: z.coerce.date().optional(),
+  lastCarrierEvent: z.string().max(500).optional(),
+  lastCarrierEventAt: z.coerce.date().optional(),
+  delayReason: z.string().max(1000).optional(),
 });
 
 const createFinancialInstrumentSchema = z.object({
@@ -994,18 +1090,104 @@ router.post("/admin/deals/:dealId/issues", requireRole("admin"), async (req: Aut
   }
 });
 
-const meetingInput = z.object({ scheduledAt: z.coerce.date(), provider: z.string().trim().min(2).max(50), meetingUrl: z.string().url().max(1000), agenda: z.string().trim().max(1000).optional() });
+const meetingInput = z.object({
+  scheduledAt: z.coerce.date(),
+  meetingMode: z.enum(["virtual", "face_to_face"]).default("virtual"),
+  provider: z.string().trim().min(2).max(50).optional(),
+  meetingUrl: z.string().url().max(1000).optional(),
+  location: z.string().trim().min(2).max(200).optional(),
+  agenda: z.string().trim().max(1000).optional(),
+  udcRepresentativeRequested: z.boolean().optional(),
+}).superRefine((input, ctx) => {
+  if (input.meetingMode === "virtual") {
+    if (!input.provider) ctx.addIssue({ code: "custom", message: "provider_required", path: ["provider"] });
+    if (!input.meetingUrl) ctx.addIssue({ code: "custom", message: "meeting_url_required", path: ["meetingUrl"] });
+  }
+  if (input.meetingMode === "face_to_face" && !input.location) {
+    ctx.addIssue({ code: "custom", message: "location_required", path: ["location"] });
+  }
+});
 router.post("/admin/deals/:dealId/meetings", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = meetingInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
     if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
-    const [meeting] = await db.insert(dealMeetingsTable).values({ dealId, requestedBy: req.authUser.id, scheduledBy: req.authUser.id, status: "scheduled", ...input }).returning();
+    const [meeting] = await db.insert(dealMeetingsTable).values({
+      dealId,
+      requestedBy: req.authUser.id,
+      scheduledBy: req.authUser.id,
+      status: "scheduled",
+      scheduledAt: input.scheduledAt,
+      meetingMode: input.meetingMode,
+      provider: input.provider,
+      meetingUrl: input.meetingUrl,
+      location: input.location,
+      agenda: input.agenda,
+      udcRepresentativeRequested: input.udcRepresentativeRequested ?? false,
+    }).returning();
     await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_scheduled", entityType: "deal", entityId: dealId, metadata: { meetingId: meeting.id, scheduledAt: meeting.scheduledAt, provider: meeting.provider } });
     await notifyDealCounterparties(dealId, "deal_meeting_scheduled", "Deal meeting scheduled", "A UDC deal meeting has been scheduled. Open the deal for the confirmed time and joining details.", `/deals/${dealId}`);
     res.status(201).json({ meeting });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "meeting_schedule_failed" }); }
 });
+router.patch("/admin/deal-meetings/:meetingId/schedule", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const meetingId = z.string().uuid().parse(req.params["meetingId"]);
+    const input = meetingInput.parse(req.body);
+    const [existing] = await db.select().from(dealMeetingsTable)
+      .where(eq(dealMeetingsTable.id, meetingId))
+      .limit(1);
+    if (!existing) { res.status(404).json({ error: "meeting_not_found" }); return; }
+
+    const [meeting] = await db.update(dealMeetingsTable)
+      .set({
+        status: "scheduled",
+        scheduledBy: req.authUser.id,
+        scheduledAt: input.scheduledAt,
+        meetingMode: input.meetingMode,
+        provider: input.provider ?? null,
+        meetingUrl: input.meetingUrl ?? null,
+        location: input.location ?? null,
+        agenda: input.agenda ?? existing.agenda,
+        udcRepresentativeRequested: input.udcRepresentativeRequested ?? existing.udcRepresentativeRequested,
+        updatedAt: new Date(),
+      })
+      .where(eq(dealMeetingsTable.id, meetingId))
+      .returning();
+
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "deal_meeting_scheduled",
+      entityType: "deal",
+      entityId: meeting.dealId,
+      metadata: {
+        meetingId: meeting.id,
+        meetingMode: meeting.meetingMode,
+        scheduledAt: meeting.scheduledAt,
+        provider: meeting.provider ?? null,
+        location: meeting.location ?? null,
+        udcRepresentativeRequested: meeting.udcRepresentativeRequested,
+      },
+    });
+
+    const detail = meeting.meetingMode === "virtual"
+      ? "Your UDC video meeting is scheduled. Open the deal for the time and joining link."
+      : `Your UDC face-to-face meeting is scheduled${meeting.location ? ` at ${meeting.location}` : ""}.`;
+    await notifyDealCounterparties(
+      meeting.dealId,
+      "deal_meeting_scheduled",
+      "Deal meeting scheduled",
+      detail,
+      `/deals/${meeting.dealId}`,
+    );
+
+    res.json({ meeting });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "meeting_schedule_failed" });
+  }
+});
+
 router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, res) => {
   const dealId = String(req.params["dealId"] ?? ""); const meetings = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)); res.json({ meetings });
 });
@@ -1199,6 +1381,148 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       return;
     }
     res.status(500).json({ error: "commission_status_update_failed" });
+  }
+});
+
+
+router.post("/admin/platform-document-uploads", requireRole("admin"), async (req, res) => {
+  try {
+    const input = platformDocumentUploadSchema.parse(req.body);
+    const path = `platform/ncnda/${crypto.randomUUID()}-${input.fileName}`;
+    const uploadUrl = await createSignedUploadUrl(path);
+    res.status(201).json({
+      uploadUrl,
+      document: { documentType: input.documentType, fileUrl: storagePath(path) },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(503).json({ error: "document_storage_unavailable" });
+  }
+});
+
+router.post("/admin/platform-documents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = registerPlatformDocumentSchema.parse(req.body);
+    const document = await db.transaction(async (tx) => {
+      await tx.update(platformDocumentsTable)
+        .set({ status: "retired", updatedAt: new Date() })
+        .where(and(eq(platformDocumentsTable.documentType, input.documentType), eq(platformDocumentsTable.status, "active")));
+      const [created] = await tx.insert(platformDocumentsTable).values({
+        documentType: input.documentType,
+        version: input.version,
+        fileUrl: input.fileUrl,
+        status: "active",
+        lawyerReference: input.lawyerReference,
+        approvedBy: req.authUser.id,
+        approvedAt: new Date(),
+      }).returning();
+      return created;
+    });
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "platform_ncnda_activated",
+      entityType: "platform_document",
+      entityId: document.id,
+      metadata: { version: document.version, lawyerReference: document.lawyerReference ?? null },
+    });
+    res.status(201).json({ document });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "platform_document_registration_failed" });
+  }
+});
+
+router.get("/admin/platform-documents", requireRole("admin"), async (_req, res) => {
+  try {
+    const rows = await db.select().from(platformDocumentsTable)
+      .orderBy(desc(platformDocumentsTable.createdAt));
+    res.json({ documents: await Promise.all(rows.map(async (item) => {
+      const path = parseStoragePath(item.fileUrl);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+    })) });
+  } catch {
+    res.status(500).json({ error: "platform_documents_fetch_failed" });
+  }
+});
+
+router.post("/admin/deals/:dealId/share-ncnda", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [[deal], [master]] = await Promise.all([
+      db.select({
+        id: dealsTable.id,
+        buyerUserId: dealsTable.buyerUserId,
+        sellerUserId: dealsTable.sellerUserId,
+      }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
+      db.select().from(platformDocumentsTable)
+        .where(and(eq(platformDocumentsTable.documentType, "NCNDA"), eq(platformDocumentsTable.status, "active")))
+        .orderBy(desc(platformDocumentsTable.createdAt))
+        .limit(1),
+    ]);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    if (!master) { res.status(409).json({ error: "active_ncnda_not_configured" }); return; }
+
+    const [existing] = await db.select().from(documentsTable)
+      .where(and(eq(documentsTable.dealId, deal.id), eq(documentsTable.sourcePlatformDocumentId, master.id)))
+      .limit(1);
+    if (existing) {
+      res.json({ document: existing, shared: false, reason: "already_shared" });
+      return;
+    }
+
+    const agents = await db.select({ userId: dealParticipantsTable.userId })
+      .from(dealParticipantsTable)
+      .where(and(
+        eq(dealParticipantsTable.dealId, deal.id),
+        eq(dealParticipantsTable.participantRole, "agent"),
+        eq(dealParticipantsTable.status, "active"),
+      ));
+    const recipientUserIds = Array.from(new Set([
+      deal.buyerUserId,
+      deal.sellerUserId,
+      ...agents.map((agent) => agent.userId),
+    ]));
+
+    const [document] = await db.insert(documentsTable).values({
+      dealId: deal.id,
+      uploadedBy: req.authUser.id,
+      documentType: "NCNDA",
+      fileUrl: master.fileUrl,
+      sourcePlatformDocumentId: master.id,
+      status: "approved",
+    }).returning();
+
+    await db.insert(documentAccessTable).values(recipientUserIds.map((userId) => ({
+      documentId: document.id,
+      userId,
+      accessRole: "viewer",
+    }))).onConflictDoNothing();
+
+    await db.insert(notificationsTable).values(recipientUserIds.map((userId) => ({
+      userId,
+      type: "ncnda_shared",
+      title: "UDC NCNDA available",
+      body: `UDC's lawyer-approved NCNDA (version ${master.version}) is available for this deal.`,
+      link: "/documents",
+    })));
+
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "ncnda_shared_with_deal",
+      entityType: "document",
+      entityId: document.id,
+      metadata: { dealId: deal.id, platformDocumentId: master.id, version: master.version, recipientCount: recipientUserIds.length },
+    });
+
+    res.status(201).json({
+      document,
+      shared: true,
+      version: master.version,
+      recipientCount: recipientUserIds.length,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "ncnda_share_failed" });
   }
 });
 
@@ -1488,16 +1812,23 @@ router.get("/admin/deals/:dealId/conversation", requireRole("admin"), async (req
 router.get("/admin/meeting-requests", requireRole("admin"), async (_req, res) => {
   try {
     const requests = await db.select({
-      id: dealConversationEventsTable.id,
-      dealId: dealConversationEventsTable.dealId,
+      id: dealMeetingsTable.id,
+      dealId: dealMeetingsTable.dealId,
       dealNumber: dealsTable.dealNumber,
-      participantRole: dealConversationEventsTable.participantRole,
-      originalText: dealConversationEventsTable.originalText,
-      createdAt: dealConversationEventsTable.createdAt,
-    }).from(dealConversationEventsTable)
-      .innerJoin(dealsTable, eq(dealConversationEventsTable.dealId, dealsTable.id))
-      .where(eq(dealConversationEventsTable.intent, "meeting_request"))
-      .orderBy(desc(dealConversationEventsTable.createdAt))
+      requestedBy: dealMeetingsTable.requestedBy,
+      requesterRole: usersTable.role,
+      status: dealMeetingsTable.status,
+      meetingMode: dealMeetingsTable.meetingMode,
+      location: dealMeetingsTable.location,
+      udcRepresentativeRequested: dealMeetingsTable.udcRepresentativeRequested,
+      agenda: dealMeetingsTable.agenda,
+      scheduledAt: dealMeetingsTable.scheduledAt,
+      createdAt: dealMeetingsTable.createdAt,
+    }).from(dealMeetingsTable)
+      .innerJoin(dealsTable, eq(dealMeetingsTable.dealId, dealsTable.id))
+      .innerJoin(usersTable, eq(dealMeetingsTable.requestedBy, usersTable.id))
+      .where(inArray(dealMeetingsTable.status, ["requested", "scheduled"]))
+      .orderBy(desc(dealMeetingsTable.createdAt))
       .limit(100);
     res.json({ requests });
   } catch {
@@ -1653,8 +1984,12 @@ router.post("/admin/shipments", requireRole("admin"), async (req, res) => {
     }
     const [shipment] = await db.insert(shipmentsTable).values({
       dealId: deal.id, carrier: input.carrier, trackingNumber: input.trackingNumber,
-      origin: input.origin, destination: input.destination, estimatedArrival: input.estimatedArrival,
-      notes: input.notes, status: "planned",
+      containerNumber: input.containerNumber, vesselName: input.vesselName, voyageNumber: input.voyageNumber,
+      origin: input.origin, portOfLoading: input.portOfLoading, currentPort: input.currentPort, nextPort: input.nextPort,
+      destination: input.destination, portOfDischarge: input.portOfDischarge,
+      departedAt: input.departedAt, estimatedArrival: input.estimatedArrival, arrivedAt: input.arrivedAt,
+      lastCarrierEvent: input.lastCarrierEvent, lastCarrierEventAt: input.lastCarrierEventAt,
+      delayReason: input.delayReason, notes: input.notes, status: "planned",
     }).returning();
     res.status(201).json({ shipment });
   } catch (error) {
@@ -1682,7 +2017,19 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       return;
     }
     const [shipment] = await db.update(shipmentsTable)
-      .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
+      .set({
+        status: input.status,
+        ...(input.notes === undefined ? {} : { notes: input.notes }),
+        ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }),
+        ...(input.currentPort === undefined ? {} : { currentPort: input.currentPort }),
+        ...(input.nextPort === undefined ? {} : { nextPort: input.nextPort }),
+        ...(input.departedAt === undefined ? {} : { departedAt: input.departedAt }),
+        ...(input.arrivedAt === undefined ? {} : { arrivedAt: input.arrivedAt }),
+        ...(input.lastCarrierEvent === undefined ? {} : { lastCarrierEvent: input.lastCarrierEvent }),
+        ...(input.lastCarrierEventAt === undefined ? {} : { lastCarrierEventAt: input.lastCarrierEventAt }),
+        ...(input.delayReason === undefined ? {} : { delayReason: input.delayReason }),
+        updatedAt: new Date(),
+      })
       .where(eq(shipmentsTable.id, shipmentId))
       .returning();
     await db.insert(auditLogsTable).values({

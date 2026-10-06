@@ -9,6 +9,7 @@ export * from "./companyVerificationDocuments";
 export * from "./commissions";
 export * from "./deals";
 export * from "./documents";
+export * from "./platformDocuments";
 export * from "./legacy";
 export * from "./matches";
 export * from "./messages";

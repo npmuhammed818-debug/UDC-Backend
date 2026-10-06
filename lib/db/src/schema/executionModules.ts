@@ -1,4 +1,4 @@
-import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { dealsTable } from "./deals";
 import { usersTable } from "./users";
 
@@ -8,6 +8,9 @@ export const dealMeetingsTable = pgTable("deal_meetings", {
   requestedBy: uuid("requested_by").notNull().references(() => usersTable.id),
   scheduledBy: uuid("scheduled_by").references(() => usersTable.id),
   status: text("status").notNull().default("requested"),
+  meetingMode: text("meeting_mode").notNull().default("virtual"),
+  location: text("location"),
+  udcRepresentativeRequested: boolean("udc_representative_requested").notNull().default(false),
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
   provider: text("provider"),
   meetingUrl: text("meeting_url"),
