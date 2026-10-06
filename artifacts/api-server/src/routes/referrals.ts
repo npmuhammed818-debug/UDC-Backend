@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { auditLogsTable, db, notificationsTable, referralsTable, usersTable, dealsTable } from "@workspace/db";
+import { auditLogsTable, db, dealParticipantsTable, notificationsTable, referralsTable, usersTable, dealsTable } from "@workspace/db";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { requireAuth } from "../auth/middleware";
+import { buildSafeReferralChain } from "../referrals/agentChain";
 
 const router: IRouter = Router();
 
@@ -93,8 +94,39 @@ router.get("/agent/deals", requireAuth, async (req, res) => {
     destination: dealsTable.destination,
     updatedAt: dealsTable.updatedAt,
   }).from(dealsTable)
-    .where(eq(dealsTable.agentId, req.authUser!.id))
+    .where(inArray(
+      dealsTable.id,
+      db.select({ dealId: dealParticipantsTable.dealId })
+        .from(dealParticipantsTable)
+        .where(and(
+          eq(dealParticipantsTable.userId, req.authUser!.id),
+          eq(dealParticipantsTable.participantRole, "agent"),
+          eq(dealParticipantsTable.status, "active"),
+        )),
+    ))
     .orderBy(desc(dealsTable.updatedAt));
+
+  const chainRows = deals.length
+    ? await db.select({
+        dealId: dealParticipantsTable.dealId,
+        userId: dealParticipantsTable.userId,
+        referredByAgentUserId: dealParticipantsTable.referredByAgentUserId,
+        referralPosition: dealParticipantsTable.referralPosition,
+        commissionSharePct: dealParticipantsTable.commissionSharePct,
+      }).from(dealParticipantsTable)
+        .where(and(
+          inArray(dealParticipantsTable.dealId, deals.map((deal) => deal.id)),
+          eq(dealParticipantsTable.participantRole, "agent"),
+          eq(dealParticipantsTable.status, "active"),
+        ))
+    : [];
+
+  const chainsByDeal = new Map<string, typeof chainRows>();
+  for (const member of chainRows) {
+    const current = chainsByDeal.get(member.dealId) ?? [];
+    current.push(member);
+    chainsByDeal.set(member.dealId, current);
+  }
 
   const label = (status: string) => ({
     initiated: "Talking",
@@ -118,7 +150,12 @@ router.get("/agent/deals", requireAuth, async (req, res) => {
     disputed: "Issue under review",
   } as Record<string, string>)[status] ?? status.replaceAll("_", " ");
 
-  res.json({ deals: deals.map((deal) => ({ ...deal, progress: label(deal.status), readOnly: true })) });
+  res.json({ deals: deals.map((deal) => ({
+    ...deal,
+    progress: label(deal.status),
+    readOnly: true,
+    referralChain: buildSafeReferralChain(chainsByDeal.get(deal.id) ?? [], req.authUser!.id),
+  })) });
 });
 
 export default router;
