@@ -956,6 +956,7 @@ router.get(
       webhookVerifyTokenConfigured: Boolean(process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN),
       accessTokenConfigured: Boolean(process.env.WHATSAPP_ACCESS_TOKEN),
       phoneNumberIdConfigured: Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID),
+      voiceTranscriptionConfigured: isOpenAITranscriptionConfigured(),
     };
     const inboundReady = config.appSecretConfigured && config.webhookVerifyTokenConfigured;
     const outboundReady = config.accessTokenConfigured && config.phoneNumberIdConfigured;
