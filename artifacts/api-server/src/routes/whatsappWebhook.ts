@@ -475,6 +475,81 @@ async function handleWhatsAppDealDocument(
   };
 }
 
+
+async function handleWhatsAppDealImage(
+  from: string,
+  image: { id: string; mime_type?: string; caption?: string },
+  inboundProviderMessageId?: string,
+) {
+  const [sender] = await db
+    .select({ id: usersTable.id, status: usersTable.status })
+    .from(usersTable)
+    .where(eq(usersTable.phone, from))
+    .limit(1);
+
+  if (!sender || sender.status !== "verified") {
+    return { reply: "I got the image, but this number isn’t verified for UDC deal media yet." };
+  }
+
+  const dealId = await resolveActiveDealForUser(sender.id);
+  if (!dealId) {
+    return { reply: "I got the image, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
+  }
+
+  if (inboundProviderMessageId) {
+    const [claim] = await db.insert(whatsappMessageContextsTable)
+      .values({
+        providerMessageId: inboundProviderMessageId,
+        dealId,
+        recipientUserId: sender.id,
+        kind: "inbound_image_processing",
+      })
+      .onConflictDoNothing()
+      .returning({ id: whatsappMessageContextsTable.id });
+    if (!claim) return { duplicate: true as const, reply: "" };
+  }
+
+  const media = await downloadWhatsAppMedia(image.id);
+  if (!media.mimeType.startsWith("image/")) {
+    return { reply: "That image format didn’t come through correctly. Please resend it." };
+  }
+  if (media.bytes.byteLength > 10 * 1024 * 1024) {
+    return { reply: "That image is too large. Please send a smaller copy." };
+  }
+
+  const extension = media.mimeType.includes("png") ? "png"
+    : media.mimeType.includes("webp") ? "webp"
+      : "jpg";
+  const objectPath = `deals/${dealId}/whatsapp/${randomUUID()}-image.${extension}`;
+  const fileUrl = await uploadDocumentBytes(objectPath, media.bytes, media.mimeType);
+
+  const [savedDocument] = await db.insert(documentsTable).values({
+    dealId,
+    uploadedBy: sender.id,
+    documentType: "trade_document",
+    fileUrl,
+    status: "pending",
+  }).returning({ id: documentsTable.id });
+  if (!savedDocument) throw new Error("image_record_not_created");
+
+  await setActiveDealContext(sender.id, dealId);
+  await db.insert(dealConversationEventsTable).values({
+    dealId,
+    userId: sender.id,
+    participantRole: "image_sender",
+    intent: "image_submission",
+    originalText: image.caption ? `Uploaded image — ${image.caption}` : "Uploaded image",
+    relayText: null,
+    relayed: false,
+  });
+
+  return {
+    reply: "Got the image. I attached it to the deal for review.",
+    dealId,
+    recipientUserId: sender.id,
+  };
+}
+
 async function handleDealWhatsAppMessage(
   from: string,
   text: string,
@@ -925,14 +1000,14 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; audio?: { id?: string; mime_type?: string; voice?: boolean }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; audio?: { id?: string; mime_type?: string; voice?: boolean }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
-      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string" || typeof message.audio?.id === "string")) {
+      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
           if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
@@ -979,6 +1054,46 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           );
           continue;
         }
+      }
+
+      if (message.from && typeof message.image?.id === "string") {
+        try {
+          const imageResult = await handleWhatsAppDealImage(
+            message.from,
+            {
+              id: message.image.id,
+              mime_type: message.image.mime_type,
+              caption: message.image.caption,
+            },
+            message.id,
+          );
+          if ("duplicate" in imageResult && imageResult.duplicate) {
+            req.log.info(
+              { whatsappMessageId: message.id, flow: "deal_image" },
+              "UDC ignored duplicate WhatsApp deal image",
+            );
+            continue;
+          }
+          const delivery = await deliverWhatsAppReply(message.from, imageResult.reply);
+          req.log.info(
+            { flow: "deal_image", delivered: delivery.delivered },
+            "UDC processed WhatsApp deal image",
+          );
+        } catch (error) {
+          req.log.error(
+            {
+              flow: "deal_image",
+              errorName: error instanceof Error ? error.name : "UnknownError",
+              reason: "image_processing_failed",
+            },
+            "UDC could not process WhatsApp deal image",
+          );
+          await deliverWhatsAppReply(
+            message.from,
+            "I received the image, but I couldn’t attach it to the deal safely. Please try again in a moment.",
+          );
+        }
+        continue;
       }
 
       if (message.from && typeof message.document?.id === "string") {
