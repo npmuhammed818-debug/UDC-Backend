@@ -1,7 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq } from "drizzle-orm";
-import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { db, dealConversationEventsTable, dealMeetingsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -162,6 +162,15 @@ function mediatorCopy(_role: string, intent: ConversationIntent, text: string) {
         relay: false,
       };
   }
+}
+
+function meetingRequestDetails(text: string) {
+  const normalized = text.toLowerCase();
+  const meetingMode = /\b(?:face[- ]?to[- ]?face|in[- ]?person|physical meeting|meet physically|office meeting)\b/i.test(normalized)
+    ? "face_to_face"
+    : "virtual";
+  const udcRepresentativeRequested = /\b(?:udc representative|udc rep|representative from udc|udc agent|someone from udc)\b/i.test(normalized);
+  return { meetingMode, udcRepresentativeRequested };
 }
 
 function parseExplicitCommercialTerms(text: string) {
@@ -798,6 +807,30 @@ async function handleDealWhatsAppMessage(
     relayText: copy.toOther,
     relayed: false,
   }).returning({ id: dealConversationEventsTable.id });
+
+  if (effectiveIntent === "meeting_request") {
+    const [existingMeeting] = await db.select({ id: dealMeetingsTable.id })
+      .from(dealMeetingsTable)
+      .where(and(
+        eq(dealMeetingsTable.dealId, deal.id),
+        eq(dealMeetingsTable.requestedBy, sender.id),
+        inArray(dealMeetingsTable.status, ["requested", "scheduled"]),
+      ))
+      .orderBy(desc(dealMeetingsTable.createdAt))
+      .limit(1);
+
+    if (!existingMeeting) {
+      const details = meetingRequestDetails(messageBody);
+      await db.insert(dealMeetingsTable).values({
+        dealId: deal.id,
+        requestedBy: sender.id,
+        status: "requested",
+        meetingMode: details.meetingMode,
+        udcRepresentativeRequested: details.udcRepresentativeRequested,
+        agenda: messageBody.slice(0, 1000),
+      });
+    }
+  }
 
   let deliveredToCounterparty = false;
   if (copy.relay && copy.toOther) {
