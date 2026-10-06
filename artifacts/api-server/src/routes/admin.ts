@@ -3,7 +3,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, platformDocumentsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -332,6 +332,18 @@ const createDocumentSchema = z.object({
   dealId: z.string().uuid(),
   documentType: z.string().min(2).max(80),
   fileUrl: z.string().refine((value) => value.startsWith("storage://udc-documents/") || value.startsWith("https://"), "secure_url_required"),
+});
+
+const platformDocumentUploadSchema = z.object({
+  documentType: z.literal("NCNDA"),
+  fileName: z.string().regex(/^[a-zA-Z0-9._-]+$/).max(180),
+});
+
+const registerPlatformDocumentSchema = z.object({
+  documentType: z.literal("NCNDA"),
+  version: z.string().trim().min(1).max(80),
+  fileUrl: z.string().refine((value) => value.startsWith("storage://udc-documents/"), "private_storage_url_required"),
+  lawyerReference: z.string().trim().max(300).optional(),
 });
 
 const documentStatusSchema = z.object({
@@ -1218,6 +1230,148 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       return;
     }
     res.status(500).json({ error: "commission_status_update_failed" });
+  }
+});
+
+
+router.post("/admin/platform-document-uploads", requireRole("admin"), async (req, res) => {
+  try {
+    const input = platformDocumentUploadSchema.parse(req.body);
+    const path = `platform/ncnda/${crypto.randomUUID()}-${input.fileName}`;
+    const uploadUrl = await createSignedUploadUrl(path);
+    res.status(201).json({
+      uploadUrl,
+      document: { documentType: input.documentType, fileUrl: storagePath(path) },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(503).json({ error: "document_storage_unavailable" });
+  }
+});
+
+router.post("/admin/platform-documents", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const input = registerPlatformDocumentSchema.parse(req.body);
+    const document = await db.transaction(async (tx) => {
+      await tx.update(platformDocumentsTable)
+        .set({ status: "retired", updatedAt: new Date() })
+        .where(and(eq(platformDocumentsTable.documentType, input.documentType), eq(platformDocumentsTable.status, "active")));
+      const [created] = await tx.insert(platformDocumentsTable).values({
+        documentType: input.documentType,
+        version: input.version,
+        fileUrl: input.fileUrl,
+        status: "active",
+        lawyerReference: input.lawyerReference,
+        approvedBy: req.authUser.id,
+        approvedAt: new Date(),
+      }).returning();
+      return created;
+    });
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "platform_ncnda_activated",
+      entityType: "platform_document",
+      entityId: document.id,
+      metadata: { version: document.version, lawyerReference: document.lawyerReference ?? null },
+    });
+    res.status(201).json({ document });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "platform_document_registration_failed" });
+  }
+});
+
+router.get("/admin/platform-documents", requireRole("admin"), async (_req, res) => {
+  try {
+    const rows = await db.select().from(platformDocumentsTable)
+      .orderBy(desc(platformDocumentsTable.createdAt));
+    res.json({ documents: await Promise.all(rows.map(async (item) => {
+      const path = parseStoragePath(item.fileUrl);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+    })) });
+  } catch {
+    res.status(500).json({ error: "platform_documents_fetch_failed" });
+  }
+});
+
+router.post("/admin/deals/:dealId/share-ncnda", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const [[deal], [master]] = await Promise.all([
+      db.select({
+        id: dealsTable.id,
+        buyerUserId: dealsTable.buyerUserId,
+        sellerUserId: dealsTable.sellerUserId,
+      }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
+      db.select().from(platformDocumentsTable)
+        .where(and(eq(platformDocumentsTable.documentType, "NCNDA"), eq(platformDocumentsTable.status, "active")))
+        .orderBy(desc(platformDocumentsTable.createdAt))
+        .limit(1),
+    ]);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    if (!master) { res.status(409).json({ error: "active_ncnda_not_configured" }); return; }
+
+    const [existing] = await db.select().from(documentsTable)
+      .where(and(eq(documentsTable.dealId, deal.id), eq(documentsTable.sourcePlatformDocumentId, master.id)))
+      .limit(1);
+    if (existing) {
+      res.json({ document: existing, shared: false, reason: "already_shared" });
+      return;
+    }
+
+    const agents = await db.select({ userId: dealParticipantsTable.userId })
+      .from(dealParticipantsTable)
+      .where(and(
+        eq(dealParticipantsTable.dealId, deal.id),
+        eq(dealParticipantsTable.participantRole, "agent"),
+        eq(dealParticipantsTable.status, "active"),
+      ));
+    const recipientUserIds = Array.from(new Set([
+      deal.buyerUserId,
+      deal.sellerUserId,
+      ...agents.map((agent) => agent.userId),
+    ]));
+
+    const [document] = await db.insert(documentsTable).values({
+      dealId: deal.id,
+      uploadedBy: req.authUser.id,
+      documentType: "NCNDA",
+      fileUrl: master.fileUrl,
+      sourcePlatformDocumentId: master.id,
+      status: "approved",
+    }).returning();
+
+    await db.insert(documentAccessTable).values(recipientUserIds.map((userId) => ({
+      documentId: document.id,
+      userId,
+      accessRole: "viewer",
+    }))).onConflictDoNothing();
+
+    await db.insert(notificationsTable).values(recipientUserIds.map((userId) => ({
+      userId,
+      type: "ncnda_shared",
+      title: "UDC NCNDA available",
+      body: `UDC's lawyer-approved NCNDA (version ${master.version}) is available for this deal.`,
+      link: "/documents",
+    })));
+
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "ncnda_shared_with_deal",
+      entityType: "document",
+      entityId: document.id,
+      metadata: { dealId: deal.id, platformDocumentId: master.id, version: master.version, recipientCount: recipientUserIds.length },
+    });
+
+    res.status(201).json({
+      document,
+      shared: true,
+      version: master.version,
+      recipientCount: recipientUserIds.length,
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "ncnda_share_failed" });
   }
 });
 
