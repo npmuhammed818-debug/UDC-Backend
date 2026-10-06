@@ -1025,18 +1025,104 @@ router.post("/admin/deals/:dealId/issues", requireRole("admin"), async (req: Aut
   }
 });
 
-const meetingInput = z.object({ scheduledAt: z.coerce.date(), provider: z.string().trim().min(2).max(50), meetingUrl: z.string().url().max(1000), agenda: z.string().trim().max(1000).optional() });
+const meetingInput = z.object({
+  scheduledAt: z.coerce.date(),
+  meetingMode: z.enum(["virtual", "face_to_face"]).default("virtual"),
+  provider: z.string().trim().min(2).max(50).optional(),
+  meetingUrl: z.string().url().max(1000).optional(),
+  location: z.string().trim().min(2).max(200).optional(),
+  agenda: z.string().trim().max(1000).optional(),
+  udcRepresentativeRequested: z.boolean().optional(),
+}).superRefine((input, ctx) => {
+  if (input.meetingMode === "virtual") {
+    if (!input.provider) ctx.addIssue({ code: "custom", message: "provider_required", path: ["provider"] });
+    if (!input.meetingUrl) ctx.addIssue({ code: "custom", message: "meeting_url_required", path: ["meetingUrl"] });
+  }
+  if (input.meetingMode === "face_to_face" && !input.location) {
+    ctx.addIssue({ code: "custom", message: "location_required", path: ["location"] });
+  }
+});
 router.post("/admin/deals/:dealId/meetings", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = meetingInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
     if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
-    const [meeting] = await db.insert(dealMeetingsTable).values({ dealId, requestedBy: req.authUser.id, scheduledBy: req.authUser.id, status: "scheduled", ...input }).returning();
+    const [meeting] = await db.insert(dealMeetingsTable).values({
+      dealId,
+      requestedBy: req.authUser.id,
+      scheduledBy: req.authUser.id,
+      status: "scheduled",
+      scheduledAt: input.scheduledAt,
+      meetingMode: input.meetingMode,
+      provider: input.provider,
+      meetingUrl: input.meetingUrl,
+      location: input.location,
+      agenda: input.agenda,
+      udcRepresentativeRequested: input.udcRepresentativeRequested ?? false,
+    }).returning();
     await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_scheduled", entityType: "deal", entityId: dealId, metadata: { meetingId: meeting.id, scheduledAt: meeting.scheduledAt, provider: meeting.provider } });
     await notifyDealCounterparties(dealId, "deal_meeting_scheduled", "Deal meeting scheduled", "A UDC deal meeting has been scheduled. Open the deal for the confirmed time and joining details.", `/deals/${dealId}`);
     res.status(201).json({ meeting });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "meeting_schedule_failed" }); }
 });
+router.patch("/admin/deal-meetings/:meetingId/schedule", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const meetingId = z.string().uuid().parse(req.params["meetingId"]);
+    const input = meetingInput.parse(req.body);
+    const [existing] = await db.select().from(dealMeetingsTable)
+      .where(eq(dealMeetingsTable.id, meetingId))
+      .limit(1);
+    if (!existing) { res.status(404).json({ error: "meeting_not_found" }); return; }
+
+    const [meeting] = await db.update(dealMeetingsTable)
+      .set({
+        status: "scheduled",
+        scheduledBy: req.authUser.id,
+        scheduledAt: input.scheduledAt,
+        meetingMode: input.meetingMode,
+        provider: input.provider ?? null,
+        meetingUrl: input.meetingUrl ?? null,
+        location: input.location ?? null,
+        agenda: input.agenda ?? existing.agenda,
+        udcRepresentativeRequested: input.udcRepresentativeRequested ?? existing.udcRepresentativeRequested,
+        updatedAt: new Date(),
+      })
+      .where(eq(dealMeetingsTable.id, meetingId))
+      .returning();
+
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser.id,
+      action: "deal_meeting_scheduled",
+      entityType: "deal",
+      entityId: meeting.dealId,
+      metadata: {
+        meetingId: meeting.id,
+        meetingMode: meeting.meetingMode,
+        scheduledAt: meeting.scheduledAt,
+        provider: meeting.provider ?? null,
+        location: meeting.location ?? null,
+        udcRepresentativeRequested: meeting.udcRepresentativeRequested,
+      },
+    });
+
+    const detail = meeting.meetingMode === "virtual"
+      ? "Your UDC video meeting is scheduled. Open the deal for the time and joining link."
+      : `Your UDC face-to-face meeting is scheduled${meeting.location ? ` at ${meeting.location}` : ""}.`;
+    await notifyDealCounterparties(
+      meeting.dealId,
+      "deal_meeting_scheduled",
+      "Deal meeting scheduled",
+      detail,
+      `/deals/${meeting.dealId}`,
+    );
+
+    res.json({ meeting });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "meeting_schedule_failed" });
+  }
+});
+
 router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, res) => {
   const dealId = String(req.params["dealId"] ?? ""); const meetings = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)); res.json({ meetings });
 });
