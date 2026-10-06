@@ -3,7 +3,7 @@ BEGIN;
 ALTER TABLE public.deal_meetings
   ADD COLUMN IF NOT EXISTS meeting_mode text NOT NULL DEFAULT 'virtual',
   ADD COLUMN IF NOT EXISTS location text,
-  ADD COLUMN IF NOT EXISTS udc_representative_requested text NOT NULL DEFAULT 'false';
+  ADD COLUMN IF NOT EXISTS udc_representative_requested boolean NOT NULL DEFAULT false;
 
 ALTER TABLE public.deal_meetings
   DROP CONSTRAINT IF EXISTS deal_meetings_mode_check;
