@@ -117,6 +117,76 @@ router.get("/deals/:dealId/execution", requireAuth, async (req, res) => {
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_deal_id" }); return; } res.status(500).json({ error: "deal_execution_fetch_failed" }); }
 });
 
+const meetingRequestInput = z.object({
+  meetingMode: z.enum(["virtual", "face_to_face"]).default("virtual"),
+  location: z.string().trim().min(2).max(200).optional(),
+  agenda: z.string().trim().max(1000).optional(),
+  udcRepresentativeRequested: z.boolean().default(false),
+}).superRefine((input, ctx) => {
+  if (input.meetingMode === "face_to_face" && input.location && input.location.length < 2) {
+    ctx.addIssue({ code: "custom", message: "invalid_location", path: ["location"] });
+  }
+});
+
+router.post("/deals/:dealId/meetings/request", requireAuth, async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const input = meetingRequestInput.parse(req.body ?? {});
+    const [deal] = await db.select({
+      id: dealsTable.id,
+      buyerUserId: dealsTable.buyerUserId,
+      sellerUserId: dealsTable.sellerUserId,
+    }).from(dealsTable)
+      .where(eq(dealsTable.id, dealId))
+      .limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    if (![deal.buyerUserId, deal.sellerUserId].includes(req.authUser!.id)) {
+      res.status(403).json({ error: "buyer_or_seller_required" }); return;
+    }
+
+    const [existing] = await db.select().from(dealMeetingsTable)
+      .where(and(
+        eq(dealMeetingsTable.dealId, dealId),
+        eq(dealMeetingsTable.requestedBy, req.authUser!.id),
+        eq(dealMeetingsTable.status, "requested"),
+      ))
+      .orderBy(desc(dealMeetingsTable.createdAt))
+      .limit(1);
+    if (existing) {
+      res.json({ meeting: existing, alreadyRequested: true });
+      return;
+    }
+
+    const [meeting] = await db.insert(dealMeetingsTable).values({
+      dealId,
+      requestedBy: req.authUser!.id,
+      status: "requested",
+      meetingMode: input.meetingMode,
+      location: input.location,
+      agenda: input.agenda,
+      udcRepresentativeRequested: input.udcRepresentativeRequested,
+    }).returning();
+
+    await db.insert(auditLogsTable).values({
+      actorUserId: req.authUser!.id,
+      action: "deal_meeting_requested",
+      entityType: "deal",
+      entityId: dealId,
+      metadata: {
+        meetingId: meeting.id,
+        meetingMode: meeting.meetingMode,
+        location: meeting.location ?? null,
+        udcRepresentativeRequested: meeting.udcRepresentativeRequested,
+      },
+    });
+
+    res.status(201).json({ meeting, alreadyRequested: false });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "meeting_request_failed" });
+  }
+});
+
 router.post("/deals/:dealId/feedback", requireAuth, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
