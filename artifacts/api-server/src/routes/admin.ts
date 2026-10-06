@@ -386,16 +386,35 @@ const createShipmentSchema = z.object({
   dealId: z.string().uuid(),
   carrier: z.string().min(2).max(160).optional(),
   trackingNumber: z.string().min(2).max(160).optional(),
+  containerNumber: z.string().min(2).max(160).optional(),
+  vesselName: z.string().min(2).max(160).optional(),
+  voyageNumber: z.string().min(1).max(160).optional(),
   origin: z.string().min(2).max(160).optional(),
+  portOfLoading: z.string().min(2).max(160).optional(),
+  currentPort: z.string().min(2).max(160).optional(),
+  nextPort: z.string().min(2).max(160).optional(),
   destination: z.string().min(2).max(160).optional(),
+  portOfDischarge: z.string().min(2).max(160).optional(),
+  departedAt: z.coerce.date().optional(),
   estimatedArrival: z.coerce.date().optional(),
+  arrivedAt: z.coerce.date().optional(),
+  lastCarrierEvent: z.string().max(500).optional(),
+  lastCarrierEventAt: z.coerce.date().optional(),
+  delayReason: z.string().max(1000).optional(),
   notes: z.string().max(2000).optional(),
 });
 
 const shipmentStatusSchema = z.object({
-  status: z.enum(["planned", "booked", "in_transit", "arrived", "delivered", "cancelled"]),
+  status: z.enum(["planned", "booked", "in_transit", "delayed", "arrived", "delivered", "cancelled"]),
   notes: z.string().max(2000).optional(),
   estimatedArrival: z.coerce.date().optional(),
+  currentPort: z.string().min(2).max(160).optional(),
+  nextPort: z.string().min(2).max(160).optional(),
+  departedAt: z.coerce.date().optional(),
+  arrivedAt: z.coerce.date().optional(),
+  lastCarrierEvent: z.string().max(500).optional(),
+  lastCarrierEventAt: z.coerce.date().optional(),
+  delayReason: z.string().max(1000).optional(),
 });
 
 const createFinancialInstrumentSchema = z.object({
@@ -1653,8 +1672,12 @@ router.post("/admin/shipments", requireRole("admin"), async (req, res) => {
     }
     const [shipment] = await db.insert(shipmentsTable).values({
       dealId: deal.id, carrier: input.carrier, trackingNumber: input.trackingNumber,
-      origin: input.origin, destination: input.destination, estimatedArrival: input.estimatedArrival,
-      notes: input.notes, status: "planned",
+      containerNumber: input.containerNumber, vesselName: input.vesselName, voyageNumber: input.voyageNumber,
+      origin: input.origin, portOfLoading: input.portOfLoading, currentPort: input.currentPort, nextPort: input.nextPort,
+      destination: input.destination, portOfDischarge: input.portOfDischarge,
+      departedAt: input.departedAt, estimatedArrival: input.estimatedArrival, arrivedAt: input.arrivedAt,
+      lastCarrierEvent: input.lastCarrierEvent, lastCarrierEventAt: input.lastCarrierEventAt,
+      delayReason: input.delayReason, notes: input.notes, status: "planned",
     }).returning();
     res.status(201).json({ shipment });
   } catch (error) {
@@ -1682,7 +1705,19 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       return;
     }
     const [shipment] = await db.update(shipmentsTable)
-      .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
+      .set({
+        status: input.status,
+        ...(input.notes === undefined ? {} : { notes: input.notes }),
+        ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }),
+        ...(input.currentPort === undefined ? {} : { currentPort: input.currentPort }),
+        ...(input.nextPort === undefined ? {} : { nextPort: input.nextPort }),
+        ...(input.departedAt === undefined ? {} : { departedAt: input.departedAt }),
+        ...(input.arrivedAt === undefined ? {} : { arrivedAt: input.arrivedAt }),
+        ...(input.lastCarrierEvent === undefined ? {} : { lastCarrierEvent: input.lastCarrierEvent }),
+        ...(input.lastCarrierEventAt === undefined ? {} : { lastCarrierEventAt: input.lastCarrierEventAt }),
+        ...(input.delayReason === undefined ? {} : { delayReason: input.delayReason }),
+        updatedAt: new Date(),
+      })
       .where(eq(shipmentsTable.id, shipmentId))
       .returning();
     await db.insert(auditLogsTable).values({
