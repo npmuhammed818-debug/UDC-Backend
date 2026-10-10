@@ -33,7 +33,11 @@ PAYMENT_TERMS = ["DLC", "LC", "SBLC", "MT103", "TT", "T/T", "BG"]
 def _extract(text: str) -> dict[str, Any]:
     upper = text.upper()
     incoterms = sorted({term for term in INCOTERMS if re.search(rf"\b{re.escape(term)}\b", upper)})
-    payments = sorted({term for term in PAYMENT_TERMS if term in upper})
+    payments = sorted({
+        term
+        for term in PAYMENT_TERMS
+        if re.search(rf"\b{re.escape(term)}\b", upper)
+    })
     quantities = sorted({
         m.group(0).strip()
         for m in re.finditer(r"\b[\d,.]+\s*(?:MT|METRIC TONS?|TONNES?|KG|KGS)\b", upper)
@@ -57,7 +61,10 @@ def compare_documents(request: DocumentCompareRequest) -> DocumentCompareRespons
     for field in ["incoterms", "payment_terms", "quantities", "prices"]:
         values = {label: data[field] for label, data in extracted.items()}
         canonical = {tuple(value) for value in values.values()}
-        status = "consistent" if len(canonical) == 1 else "different"
+        if all(not value for value in values.values()):
+            status = "insufficient_data"
+        else:
+            status = "consistent" if len(canonical) == 1 else "different"
         findings.append(DocumentFinding(field=field, values=values, status=status))
 
     warnings = [
