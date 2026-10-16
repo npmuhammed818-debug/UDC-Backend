@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { akifResearchRunsTable, db } from "@workspace/db";
 import { scoreOpportunity } from "./opportunityScoring";
-import { unM49Code } from "./countryCodes";
+import { enrichMarketResearch } from "./freeDataSources";
+import { isoCountryCode, unM49Code } from "./countryCodes";
 import { isHermesAkifConfigured } from "./hermesClient";
 import { learnFromResearchRun } from "./hermesLearning";
 import {
@@ -140,6 +141,7 @@ export async function runMarketResearch(input: RunResearchInput) {
       complianceRisk: 0,
     });
 
+    const enrichment = await enrichMarketResearch(input.product, input.targetCountry, isoCountryCode(input.targetCountry));
     const evidence = [
       {
         provider: "un_comtrade",
@@ -147,11 +149,16 @@ export async function runMarketResearch(input: RunResearchInput) {
         retrievedAt: trade.retrieved_at,
         query: trade.query,
       },
+      ...enrichment.sources.map(source => ({
+        provider: source.provider, sourceUrl: source.sourceUrl,
+        retrievedAt: source.retrievedAt, query: {},
+      })),
     ];
 
     const result = {
       productInsight,
       tradeQuery: trade.query,
+      publicMarketContext: enrichment,
       market,
       opportunityAssessment: assessment,
       limitations: [

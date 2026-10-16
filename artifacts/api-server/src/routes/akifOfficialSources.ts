@@ -6,7 +6,25 @@ import {
   searchAkifGleifCompany,
 } from "../akif/intelligence/workerClient";
 
+import {
+  convertCurrency, searchTradeNews, getCountryIndicator,
+  fxSchema, newsSchema, indicatorsSchema,
+} from "../akif/intelligence/freeDataSources";
+
 const router: IRouter = Router();
+
+router.post("/admin/akif/economics/fx", requireRole("admin"), async (req, res) => {
+  try { res.json(await convertCurrency(fxSchema.parse(req.body))); }
+  catch (error) { res.status(error instanceof z.ZodError ? 400 : 502).json({ error: "akif_fx_request_failed" }); }
+});
+router.post("/admin/akif/news/search", requireRole("admin"), async (req, res) => {
+  try { res.json(await searchTradeNews(newsSchema.parse(req.body))); }
+  catch (error) { res.status(error instanceof z.ZodError ? 400 : 502).json({ error: "akif_news_request_failed" }); }
+});
+router.post("/admin/akif/market/indicators", requireRole("admin"), async (req, res) => {
+  try { res.json(await getCountryIndicator(indicatorsSchema.parse(req.body))); }
+  catch (error) { res.status(error instanceof z.ZodError ? 400 : 502).json({ error: "akif_indicators_request_failed" }); }
+});
 
 const gleifSchema = z.object({
   name: z.string().trim().min(2).max(300),
