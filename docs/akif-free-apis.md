@@ -10,6 +10,8 @@ New public-data calls run in the existing TypeScript API; no new service is requ
 | Frankfurter | POST `/admin/akif/economics/fx` | UDC admin session; no provider key |
 | GDELT | POST `/admin/akif/news/search` | UDC admin session; no provider key |
 | World Bank | POST `/admin/akif/market/indicators` | UDC admin session; no provider key |
+| Eurostat | POST `/admin/akif/market/eurostat/trade` | UDC admin session; no provider key |
+| Trade.gov CSL | POST `/admin/akif/compliance/csl/screen` | UDC admin session; free `TRADE_GOV_API_KEY` in API server environment |
 
 Example bodies:
 
@@ -81,7 +83,7 @@ change deliberately reuses the already implemented keyless preview.
 ## Validation for this change
 
 - Workspace TypeScript checks passed.
-- API test suite: 73 passed.
+- API test suite: 80 passed (including Eurostat and CSL coverage).
 - Worker Python test suite: 6 passed.
 - Full API build, including frontend build, passed.
 - Live Frankfurter USD/INR lookup succeeded from the development environment.
@@ -89,3 +91,47 @@ change deliberately reuses the already implemented keyless preview.
   upstream connectivity remains unverified. Mocked tests cover their response
   parsing and failure isolation.
 - Groq/Gemini calls were not sent; no provider keys were configured here.
+
+## Eurostat trade and Trade.gov CSL
+
+Eurostat request example:
+
+```json
+{"geo":"DE","year":2024,"flow":"imports","productGroup":"SITC0_1","partner":"WORLD"}
+```
+
+The fixed `ext_lt_intertrd` dataset uses annual broad SITC groups. Import/export/balance
+values are in **million ECU/EUR**, not currency per tonne. JSON-stat dimensions,
+observation statuses and missing values are preserved. The code does not convert
+SITC to HS codes or claim product-level buyer discovery. Responses are cached for
+one day. The live Eurostat dataset and dimension names were checked against its
+public API on 16 October 2026.
+
+CSL request example:
+
+```json
+{"name":"Example Trading","limit":20}
+```
+
+Set `TRADE_GOV_API_KEY` through the **UDC API server** secret environment, not the
+Python worker. Register and subscribe at https://developer.trade.gov/ to obtain a
+free subscription key. Status: GET `/api/admin/akif/compliance/csl/status`.
+Missing configuration returns 503. The key goes only in the `subscription-key`
+header; it is never returned in status, provenance or error bodies. Screening
+queries are not cached. Source: https://www.trade.gov/consolidated-screening-list.
+
+CSL covers US consolidated export restriction lists, not every jurisdiction.
+Candidate identities, original restrictions, ownership and applicability require
+human review. Both matches and no-match results set `humanReviewRequired: true`
+and `approvedToTrade: false`. Truncated results are explicitly marked. These are
+admin research endpoints; they never approve a party or change a deal's state.
+
+The ImpexQ sandbox is separate and remains inactive until its own key is supplied.
+None of the connectors guarantees an external service will remain free forever;
+respect provider terms, fair-use limits and attribution.
+
+Live smoke checks on 16 October 2026: Frankfurter, World Bank and Eurostat returned
+valid responses through the integrated clients. GDELT timed out within the bounded
+request timeout; research reports it as unavailable. CSL live authentication is
+unverified because no key was available in the test environment. Worker provider
+settings were not changed; existing Groq selection is preserved.
