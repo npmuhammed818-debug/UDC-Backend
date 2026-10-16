@@ -40,8 +40,9 @@ These feeds do not independently verify companies, sanctions or trade claims.
 
 ## Optional free-tier AI providers
 
-The existing worker LiteLLM gateway supports Groq and Gemini. Install the existing
-worker `agents` extra (`pip install '.[agents]'`). Configure ONE model explicitly:
+The existing worker LiteLLM gateway supports Groq and Gemini. LiteLLM is installed
+by the standard worker build (`pip install .`); the optional `agents` extra adds
+LangGraph orchestration. Configure ONE model explicitly:
 
 ```sh
 # Groq: select a currently available model within your account's free limits.
