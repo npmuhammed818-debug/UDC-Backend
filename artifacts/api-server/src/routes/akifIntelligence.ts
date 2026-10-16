@@ -1,3 +1,4 @@
+import { getCslStatus } from "../akif/intelligence/freeDataSources";
 import { getImpexqStatus } from "../akif/intelligence/impexqClient";
 import { Router, type IRouter } from "express";
 import { z } from "zod/v4";
@@ -81,7 +82,16 @@ router.get(
         connectedResearchProviders: akifProviderRegistry.list(),
         workerConfigured: isAkifWorkerConfigured(),
         impexq: getImpexqStatus(),
-        publicDataSources: ["un_comtrade", "gleif", "frankfurter", "gdelt", "world_bank"],
+        publicDataSources: [
+          "un_comtrade",
+          "gleif",
+          "frankfurter",
+          "gdelt",
+          "world_bank",
+          "eurostat",
+          "trade_gov_csl",
+        ],
+        csl: getCslStatus(),
         optionalWorkerModels: ["groq", "gemini"],
       },
     });
