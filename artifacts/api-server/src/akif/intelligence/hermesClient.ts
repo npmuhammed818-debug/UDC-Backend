@@ -1,3 +1,5 @@
+import { isAkifWorkerConversationEnabled, runAkifWorkerChat } from "./workerClient.ts";
+
 type HermesChatResponse = {
   choices?: Array<{
     message?: {
@@ -217,6 +219,16 @@ export async function runConversationChat(
           ? "timeout"
           : "provider_request_failed",
         ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+      });
+    }
+  }
+
+  if (isAkifWorkerConversationEnabled()) {
+    try {
+      return await runAkifWorkerChat(message, system, timeoutMs);
+    } catch (error) {
+      console.warn("AKIF worker conversation failed; trying existing fallback", {
+        reason: error instanceof Error && error.name === "AbortError" ? "timeout" : "provider_request_failed",
       });
     }
   }

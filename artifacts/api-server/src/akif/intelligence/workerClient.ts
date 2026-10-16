@@ -164,6 +164,7 @@ export function explainAkifTopic(input: Record<string, unknown>) {
   return requestWorker<Record<string, unknown>>("/learn/explain", {
     method: "POST",
     body: input,
+    timeoutMs: 25_000,
   });
 }
 
@@ -198,4 +199,54 @@ export function screenAkifOfac(input: {
     body: input,
     timeoutMs: 45_000,
   });
+}
+
+
+export function isAkifWorkerConversationEnabled() {
+  return process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" && isAkifWorkerConfigured();
+}
+
+export async function runAkifWorkerChat(message: string, system?: string, timeoutMs = 15_000) {
+  // Leave transport overhead within the caller's deadline; no retries at either layer.
+  const budget = Math.max(2_000, Math.min(25_000, timeoutMs));
+  const raw = await requestWorker<{
+    choices?: Array<{ message?: { content?: string | null } }>;
+  }>("/chat/completions", {
+    method: "POST", timeoutMs: budget,
+    body: {
+      messages: [...(system ? [{ role: "system", content: system }] : []), { role: "user", content: message }],
+      timeout_seconds: Math.max(1, Math.min(20, (budget - 1_000) / 1_000)),
+    },
+  });
+  const content = raw.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) throw new Error("AKIF worker returned no text response");
+  return { content, raw };
+}
+
+
+export function isAkifWorkerMediaEnabled() {
+  return process.env.AKIF_WORKER_MEDIA_ENABLED === "true" && isAkifWorkerConfigured();
+}
+
+export function transcribeAkifImage(input: { mime_type: string; base64: string }) {
+  return requestWorker<{ text: string }>("/media/image/transcribe", {
+    method: "POST", body: input, timeoutMs: 30_000,
+  });
+}
+
+export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: string }) {
+  const config = workerConfig();
+  if (!config || !isAkifWorkerMediaEnabled()) throw new Error("akif_audio_not_configured");
+  if (!input.bytes.length || input.bytes.length > 10 * 1024 * 1024) throw new Error("akif_audio_too_large");
+  const bytes = new Uint8Array(input.bytes.length); bytes.set(input.bytes);
+  const body = new FormData();
+  body.set("file", new Blob([bytes.buffer], { type: input.mimeType }), "voice");
+  const response = await fetch(`${config.baseUrl}/media/audio/transcribe`, {
+    method: "POST", headers: { "x-akif-worker-token": config.token }, body,
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!response.ok) throw new Error(`akif_audio_http_${response.status}`);
+  const result = await response.json() as { text?: unknown };
+  if (typeof result.text !== "string" || !result.text.trim()) throw new Error("akif_audio_empty");
+  return result.text.trim().slice(0, 30_000);
 }

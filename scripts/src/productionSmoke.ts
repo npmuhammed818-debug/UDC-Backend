@@ -1,6 +1,8 @@
 type Check = {
   name: string;
   url: string;
+  expectedStatus?: number;
+  method?: string;
 };
 
 export {};
@@ -9,6 +11,21 @@ const checks: Check[] = [
   {
     name: "UDC backend",
     url: `${(process.env.UDC_BACKEND_URL ?? "https://udc-backend.onrender.com").replace(/\/$/, "")}/api/health`,
+  },
+  {
+    name: "database connection",
+    url: `${(process.env.UDC_BACKEND_URL ?? "https://udc-backend.onrender.com").replace(/\/$/, "")}/api/db/healthz`,
+  },
+  {
+    name: "admin tools reject anonymous access",
+    url: `${(process.env.UDC_BACKEND_URL ?? "https://udc-backend.onrender.com").replace(/\/$/, "")}/api/admin/akif/intelligence/capabilities`,
+    expectedStatus: 401,
+  },
+  {
+    name: "legacy intake rejects anonymous writes",
+    url: `${(process.env.UDC_BACKEND_URL ?? "https://udc-backend.onrender.com").replace(/\/$/, "")}/api/whatsapp/buyer-intake`,
+    expectedStatus: 401,
+    method: "POST",
   },
   {
     name: "document extractor",
@@ -21,8 +38,8 @@ const checks: Check[] = [
 ];
 
 async function checkService(check: Check) {
-  const response = await fetch(check.url, { signal: AbortSignal.timeout(90_000) });
-  if (!response.ok) {
+  const response = await fetch(check.url, { method: check.method ?? "GET", signal: AbortSignal.timeout(90_000) });
+  if (response.status !== (check.expectedStatus ?? 200)) {
     throw new Error(`${check.name} returned HTTP ${response.status}`);
   }
   await response.body?.cancel();

@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { createNcndaDraft } from "../deals/ncndaDraft";
 import { createSpaDraft } from "../deals/spaDraft";
 import { createLoiDraft } from "../deals/loiDraft";
 import { createFcoDraft } from "../deals/fcoDraft";
@@ -197,6 +198,26 @@ router.get("/deals/:dealId", requireAuth, async (req, res) => {
     res.json({ deal });
   } catch {
     res.status(500).json({ error: "deal_fetch_failed" });
+  }
+});
+
+router.post("/deals/:dealId/ncnda-draft", requireAuth, async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    z.object({ confirmTerms: z.literal(true) }).strict().parse(req.body);
+    const [deal] = await db.select().from(dealsTable)
+      .where(and(eq(dealsTable.id, dealId), dealAccess(req.authUser!.id, req.authUser!.role))).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    // Parties remain explicit placeholders until their exact legal names are confirmed.
+    const draft = createNcndaDraft({ dealNumber: deal.dealNumber,
+      date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()) });
+    await db.insert(auditLogsTable).values({ actorUserId: req.authUser!.id,
+      action: "ncnda_draft_generated", entityType: "deal", entityId: deal.id,
+      metadata: { dealNumber: deal.dealNumber, draftVersion: 1 } });
+    res.json({ draft, dealNumber: deal.dealNumber, status: "draft_for_review" });
+  } catch (error) {
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "terms_confirmation_required_or_invalid_deal_id" }); return; }
+    res.status(500).json({ error: "ncnda_draft_generation_failed" });
   }
 });
 

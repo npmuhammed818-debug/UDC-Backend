@@ -5,6 +5,7 @@ import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, doc
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
+import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
@@ -891,14 +892,14 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
     for (const message of value?.messages ?? []) {
-      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string")) {
+      if (message.from && (typeof message.text?.body === "string" || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
           if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
@@ -907,6 +908,34 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");
           continue;
         }
+      }
+      if (message.from && typeof message.audio?.id === "string") {
+        if (!isAkifWorkerMediaEnabled()) {
+          await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
+          continue;
+        }
+        try {
+          const media = await downloadWhatsAppMedia(message.audio.id);
+          const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
+          const [speaker] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
+            .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
+          const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id) : null;
+          if (voiceDealId && speaker) {
+            await db.insert(dealConversationEventsTable).values({ dealId: voiceDealId, userId: speaker.id,
+              participantRole: speaker.role, intent: "voice_transcript_unconfirmed",
+              originalText: transcript, relayText: null, relayed: false });
+          }
+          await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
+          continue;
+        } catch {
+          await deliverWhatsAppReply(message.from, "I couldn’t read that voice note clearly. Please type the key details or send a shorter recording.");
+          continue;
+        }
+      }
+      if (typeof message.image?.id === "string") {
+        const mime = message.image.mime_type;
+        message.document = { id: message.image.id, mime_type: mime, caption: message.image.caption,
+          filename: mime === "image/png" ? "trade-image.png" : "trade-image.jpg" };
       }
       if (message.from && typeof message.document?.id === "string") {
         try {

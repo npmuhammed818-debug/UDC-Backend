@@ -34,7 +34,7 @@ def status() -> dict[str, Any]:
     }
 
 
-def complete(messages: list[dict[str, str]]) -> str:
+def complete(messages: list[dict[str, str]], timeout_seconds: float = 20) -> str:
     model, missing = _configuration()
     if not model:
         raise RuntimeError("AKIF_LLM_MODEL is not configured")
@@ -46,9 +46,24 @@ def complete(messages: list[dict[str, str]]) -> str:
     except ImportError as exc:
         raise RuntimeError("LiteLLM optional dependency is not installed") from exc
 
-    response = completion(model=model, messages=messages, timeout=20, max_retries=0,
+    response = completion(model=model, messages=messages, timeout=max(1, min(20, timeout_seconds)), max_retries=0,
                           max_tokens=2048)
     content = response.choices[0].message.content
     if not isinstance(content, str):
         raise RuntimeError("LLM returned no text content")
     return content
+
+
+def probe() -> dict[str, Any]:
+    """One fixed public prompt; never log secrets, model text, or exception messages."""
+    gateway = status()
+    result = {"model": gateway["model"], "configured": gateway["configured"]}
+    if not gateway["configured"]:
+        return {**result, "status": "not_configured",
+                "missing_configuration": gateway["missing_configuration"]}
+    try:
+        answer = complete([{"role": "user", "content": "Reply only with AKIF_READY."}],
+                          timeout_seconds=10)
+        return {**result, "status": "passed" if answer.strip() else "empty_response"}
+    except Exception as exc:
+        return {**result, "status": "failed", "error_type": type(exc).__name__}
