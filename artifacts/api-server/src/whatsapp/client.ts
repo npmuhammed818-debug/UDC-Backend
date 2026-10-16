@@ -177,6 +177,10 @@ export async function downloadWhatsAppMedia(mediaId: string) {
     throw new Error("whatsapp_media_url_missing");
   }
 
+  const maximumBytes = 25 * 1024 * 1024;
+  if (typeof metadata.file_size === "number" && metadata.file_size > maximumBytes) {
+    throw new Error("whatsapp_media_too_large");
+  }
   const fileResponse = await fetch(metadata.url, {
     headers: { authorization: `Bearer ${config.accessToken}` },
     signal: AbortSignal.timeout(20_000),
@@ -185,7 +189,26 @@ export async function downloadWhatsAppMedia(mediaId: string) {
     throw new Error(`whatsapp_media_download_failed http=${fileResponse.status}`);
   }
 
-  const bytes = new Uint8Array(await fileResponse.arrayBuffer());
+  if (Number(fileResponse.headers.get("content-length")) > maximumBytes) {
+    await fileResponse.body?.cancel();
+    throw new Error("whatsapp_media_too_large");
+  }
+  const reader = fileResponse.body?.getReader();
+  if (!reader) throw new Error("whatsapp_media_empty");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > maximumBytes) { await reader.cancel(); throw new Error("whatsapp_media_too_large"); }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   const mimeType = typeof metadata.mime_type === "string"
     ? metadata.mime_type
     : fileResponse.headers.get("content-type") ?? "application/octet-stream";

@@ -1,9 +1,11 @@
 import { Router, type IRouter } from "express";
 import { buyerIntakeSchema, recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 
+import { requireRole } from "../auth/middleware";
+
 const router: IRouter = Router();
 
-router.post("/whatsapp/buyer-intake", async (req, res) => {
+router.post("/whatsapp/buyer-intake", requireRole("admin"), async (req, res) => {
   const parsed = buyerIntakeSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ status: "invalid_request", errors: parsed.error.flatten().fieldErrors });

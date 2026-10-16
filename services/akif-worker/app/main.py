@@ -1,8 +1,15 @@
 import os
+import asyncio
+import json
+import logging
+from contextlib import asynccontextmanager, suppress
 import secrets
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 
+from .media import ImageRequest, transcribe_image, transcribe_audio, gemini_probe, MAX_AUDIO_BYTES
+from .chat import ChatRequest, chat_completion
+from .llm_gateway import probe as model_probe
 from .documents import extract_document
 from .company_identity import GleifCompanySearchRequest, GleifCompanySearchResponse, search_gleif
 from .compliance import OfacScreenRequest, OfacScreenResponse, screen_ofac
@@ -25,8 +32,22 @@ from .models import (
 from .orchestration import status as orchestration_status
 from .trade_data import preview_comtrade
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    task = asyncio.create_task(_startup_probe()) if os.getenv("AKIF_STARTUP_MODEL_PROBE") == "true" else None
+    try:
+        yield
+    finally:
+        if task and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+
 app = FastAPI(
     title="UDC AKIF Intelligence Worker",
+    lifespan=lifespan,
     version="0.1.0",
     docs_url=None,
     redoc_url=None,
@@ -98,6 +119,11 @@ def capabilities() -> dict:
             },
             "orchestration": orchestration_status(),
             "llm_gateway": llm_status(),
+            "media": {
+                "voice_transcription_configured": bool(os.getenv("GROQ_API_KEY")),
+                "gemini_image_configured": bool(os.getenv("GEMINI_API_KEY") and os.getenv("AKIF_GEMINI_MODEL") and os.getenv("AKIF_GEMINI_DATA_PROCESSING_ACCEPTED") == "true"),
+                "voice_requires_text_confirmation": True,
+            },
         },
         "guardrails": {
             "entity_match_is_verification": False,
@@ -221,3 +247,28 @@ def compliance_ofac_screen(
     request: OfacScreenRequest,
 ) -> OfacScreenResponse:
     return screen_ofac(request)
+
+
+async def _startup_probe() -> None:
+    result = await asyncio.to_thread(model_probe)
+    logging.getLogger("uvicorn.error").info("AKIF model startup probe: %s", json.dumps(result))
+    if os.getenv("AKIF_STARTUP_GEMINI_PROBE") == "true":
+        secondary = await asyncio.to_thread(gemini_probe)
+        logging.getLogger("uvicorn.error").info("AKIF Gemini startup probe: %s", json.dumps(secondary))
+
+
+
+@app.post("/chat/completions", dependencies=[Depends(require_internal_token)])
+def internal_chat_completion(request: ChatRequest) -> dict:
+    return chat_completion(request)
+
+
+@app.post("/media/image/transcribe", dependencies=[Depends(require_internal_token)])
+def image_transcription(request: ImageRequest) -> dict:
+    return transcribe_image(request)
+
+
+@app.post("/media/audio/transcribe", dependencies=[Depends(require_internal_token)])
+async def audio_transcription(file: UploadFile = File(...)) -> dict:
+    data = await file.read(MAX_AUDIO_BYTES + 1)
+    return await asyncio.to_thread(transcribe_audio, data, file.filename or "voice", file.content_type or "")

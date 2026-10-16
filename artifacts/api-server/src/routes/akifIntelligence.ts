@@ -9,6 +9,8 @@ import {
   dedupeAkifEntities,
   getAkifWorkerCapabilities,
   isAkifWorkerConfigured,
+  isAkifWorkerConversationEnabled,
+  isAkifWorkerMediaEnabled,
   previewAkifComtrade,
 } from "../akif/intelligence/workerClient";
 
@@ -81,6 +83,8 @@ router.get(
         ],
         connectedResearchProviders: akifProviderRegistry.list(),
         workerConfigured: isAkifWorkerConfigured(),
+        workerConversationEnabled: isAkifWorkerConversationEnabled(),
+        workerMediaEnabled: isAkifWorkerMediaEnabled(),
         impexq: getImpexqStatus(),
         publicDataSources: [
           "un_comtrade",

@@ -6,7 +6,8 @@ import {
 } from "@workspace/db";
 import { extractDocumentBytes } from "./documentExtractorClient";
 import { getAkifDealContext } from "./intelligence/dealContext";
-import { runHermesChat, runHermesMultimodal } from "./intelligence/hermesClient";
+import { isAkifWorkerMediaEnabled, transcribeAkifImage } from "./intelligence/workerClient";
+import { runConversationChat, runHermesMultimodal } from "./intelligence/hermesClient";
 
 function cleanJson(raw: string) {
   const value = raw
@@ -78,7 +79,7 @@ async function extractChunkFacts(input: {
     documentText: input.chunk,
   });
 
-  const { content } = await runHermesChat(prompt, system, 60_000);
+  const { content } = await runConversationChat(prompt, system, 60_000);
   const json = cleanJson(content);
   if (!json) throw new Error("document_ai_invalid_json");
   return JSON.parse(json) as Record<string, unknown>;
@@ -107,7 +108,7 @@ async function mergeChunkFacts(
     partialExtractions: parts,
   });
 
-  const { content } = await runHermesChat(prompt, system, 60_000);
+  const { content } = await runConversationChat(prompt, system, 60_000);
   const json = cleanJson(content);
   if (!json) throw new Error("document_ai_merge_invalid_json");
   return JSON.parse(json) as Record<string, unknown>;
@@ -118,6 +119,12 @@ async function transcribeVisionPage(input: {
   mimeType: string;
   base64: string;
 }) {
+  if (isAkifWorkerMediaEnabled()) {
+    try {
+      const result = await transcribeAkifImage({ mime_type: input.mimeType, base64: input.base64 });
+      if (result.text?.trim()) return result.text.trim();
+    } catch { /* Retain the existing configured vision fallback. */ }
+  }
   const system = [
     "You are AKIF's document transcription engine.",
     "Transcribe every legible word, number, table cell, stamp label and commercial term visible on the page.",

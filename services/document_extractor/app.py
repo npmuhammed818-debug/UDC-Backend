@@ -215,6 +215,19 @@ async def extract(
     mime = (file.content_type or "").lower()
 
     try:
+        if mime in ("image/jpeg", "image/png", "image/webp"):
+            from PIL import Image
+            image = Image.open(io.BytesIO(data))
+            if image.width * image.height > 25_000_000:
+                raise HTTPException(status_code=413, detail="image_dimensions_too_large")
+            image = image.convert("RGB")
+            image.thumbnail((2400, 2400))
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=85)
+            return ExtractionResponse(text="", page_count=1, extraction_method="image_for_vision",
+                warnings=["image_requires_vision_and_manual_review"], metadata={},
+                vision_pages=[{"page_number": 1, "mime_type": "image/jpeg",
+                               "base64": base64.b64encode(output.getvalue()).decode("ascii")}])
         if mime == "application/pdf" or name.endswith(".pdf"):
             return extract_pdf(data)
         if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or name.endswith(".docx"):
