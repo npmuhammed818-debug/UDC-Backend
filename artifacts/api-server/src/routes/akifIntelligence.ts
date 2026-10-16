@@ -81,6 +81,8 @@ router.get(
         connectedResearchProviders: akifProviderRegistry.list(),
         workerConfigured: isAkifWorkerConfigured(),
         impexq: getImpexqStatus(),
+        publicDataSources: ["un_comtrade", "gleif", "frankfurter", "gdelt", "world_bank"],
+        optionalWorkerModels: ["groq", "gemini"],
       },
     });
   },
