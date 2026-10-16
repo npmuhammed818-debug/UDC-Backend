@@ -61,7 +61,7 @@ export async function searchTradeNews(input: z.input<typeof newsSchema>) {
   const parsed = z.object({ articles: z.array(z.object({
     title: z.string(), url: z.string().url(), seendate: z.string().optional(),
     domain: z.string().optional(), sourcecountry: z.string().optional(),
-  })).default([]) }).parse(result.data);
+  })) }).parse(result.data);
   return {
     provider: "gdelt", sourceUrl, retrievedAt: result.retrievedAt,
     data: parsed.articles.filter(a => /^https?:\/\//i.test(a.url)).slice(0, limit),

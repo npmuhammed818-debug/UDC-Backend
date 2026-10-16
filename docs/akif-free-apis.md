@@ -81,11 +81,22 @@ change deliberately reuses the already implemented keyless preview.
 ## Validation for this change
 
 - Workspace TypeScript checks passed.
-- API test suite: 73 passed.
+- API test suite after review fixes: 75 passed.
 - Worker Python test suite: 6 passed.
 - Full API build, including frontend build, passed.
 - Live Frankfurter USD/INR lookup succeeded from the development environment.
-- Live GDELT and World Bank probes exceeded the eight-second timeout here;
-  upstream connectivity remains unverified. Mocked tests cover their response
-  parsing and failure isolation.
+- Live World Bank ARE import-indicator lookup passed (five observations).
+- Live GDELT probe exceeded the eight-second timeout here; its connectivity
+  remains unverified. Mocked tests cover response parsing and failure isolation.
 - Groq/Gemini calls were not sent; no provider keys were configured here.
+
+## Review notes
+
+The worker gateway currently accepts text messages. It can reason over extracted
+document text; direct image/PDF uploads to Gemini are not wired to this gateway.
+Selecting a worker model does not change the separate WhatsApp conversation
+provider chain. Admin reasoning/product tools use the worker gateway.
+
+Backend model-call deadlines allow 25 seconds for a single 20-second model call
+and 70 seconds for three sequential specialist calls. GDELT error objects are
+rejected rather than silently treated as successful empty searches.
