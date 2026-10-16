@@ -128,6 +128,7 @@ export function analyzeAkifProduct(input: Record<string, unknown>) {
   return requestWorker<Record<string, unknown>>("/product/analyze", {
     method: "POST",
     body: input,
+    timeoutMs: 25_000,
   });
 }
 
@@ -170,6 +171,8 @@ export function runAkifReasoning(input: Record<string, unknown>) {
   return requestWorker<Record<string, unknown>>("/reasoning/analyze", {
     method: "POST",
     body: input,
+    // Specialist review performs three sequential, bounded 20-second model calls.
+    timeoutMs: input.mode === "specialist_review" ? 70_000 : 25_000,
   });
 }
 

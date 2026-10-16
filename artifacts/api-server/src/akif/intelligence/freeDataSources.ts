@@ -135,8 +135,7 @@ export async function searchTradeNews(input: z.input<typeof newsSchema>) {
             domain: z.string().optional(),
             sourcecountry: z.string().optional(),
           }),
-        )
-        .default([]),
+        ),
     }),
     result.data,
   );

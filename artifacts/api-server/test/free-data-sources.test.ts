@@ -44,3 +44,7 @@ test("malformed upstream responses fail instead of calculating invalid prices", 
   globalThis.fetch = async () => Response.json({ date: "2026-10-15", rate: -1 });
   await assert.rejects(convertCurrency({ base: "GBP", quote: "AED" }));
 });
+test("a GDELT error object is not reported as a successful empty news search", async () => {
+  globalThis.fetch = async () => Response.json({ error: "invalid_query" });
+  await assert.rejects(searchTradeNews({ query: "unique malformed response test" }));
+});
