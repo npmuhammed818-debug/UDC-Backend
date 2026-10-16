@@ -1,3 +1,4 @@
+import { getImpexqStatus } from "../akif/intelligence/impexqClient";
 import { Router, type IRouter } from "express";
 import { z } from "zod/v4";
 import { requireRole } from "../auth/middleware";
@@ -79,6 +80,7 @@ router.get(
         ],
         connectedResearchProviders: akifProviderRegistry.list(),
         workerConfigured: isAkifWorkerConfigured(),
+        impexq: getImpexqStatus(),
       },
     });
   },
