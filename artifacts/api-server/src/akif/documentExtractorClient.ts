@@ -23,6 +23,16 @@ export async function extractDocumentBytes(input: {
   fileName: string;
   mimeType: string;
 }) {
+  if (process.env.AKIF_WORKER_MEDIA_ENABLED === "true" && ["image/jpeg", "image/png", "image/webp"].includes(input.mimeType)) {
+    if (!input.bytes.length || input.bytes.length > 5 * 1024 * 1024) throw new Error("image_size_invalid");
+    // Images go directly to the authenticated worker vision path. PDF/Office files
+    // retain the existing extractor service and its scanned-page fallback.
+    return {
+      text: "", page_count: 1, extraction_method: "image_for_worker_vision",
+      warnings: ["image_requires_vision_and_manual_review"], metadata: {},
+      vision_pages: [{ page_number: 1, mime_type: input.mimeType, base64: Buffer.from(input.bytes).toString("base64") }],
+    } satisfies DocumentExtractionResult;
+  }
   const { baseUrl, token } = config();
   // Copy into an ArrayBuffer-backed view before constructing a Blob. Incoming
   // Node buffers may be backed by SharedArrayBuffer, which is not a valid

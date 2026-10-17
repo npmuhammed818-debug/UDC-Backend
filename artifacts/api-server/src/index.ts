@@ -1,4 +1,5 @@
 import app from "./app";
+import { getAkifWorkerCapabilities, isAkifWorkerConfigured } from "./akif/intelligence/workerClient";
 import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
@@ -28,6 +29,16 @@ app.listen(port, (err) => {
   logger.info({ port }, "Server listening");
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
+  if (isAkifWorkerConfigured()) {
+    void getAkifWorkerCapabilities().then((worker) => {
+      const gateway = worker.capabilities.llm_gateway as { configured?: boolean; model?: string; missing_configuration?: string | null } | undefined;
+      logger.info({ workerReachable: true, modelConfigured: gateway?.configured === true,
+        model: gateway?.model ?? null, missingConfiguration: gateway?.missing_configuration ?? null,
+        conversationEnabled: process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" },
+        "AKIF worker connection check completed");
+    }).catch(() => logger.warn({ workerReachable: false }, "AKIF worker connection check failed"));
+  }
+
   void Promise.all([
     checkWhatsAppConnection(),
     ensureWhatsAppWebhookSubscription(),
