@@ -22,8 +22,8 @@ The following is a code audit, not a claim of production acceptance or zero defe
 | DLC/SGS | Fixed DLC workflow and evidence-gated completion | Bank/inspection evidence review; software does not issue bank instruments |
 | Commissions | Rules, calculations, allocations, recorded payout states | Reconciliation test; external bank transfers remain human-operated |
 | Feedback | Completion-gated ratings with moderation | Completed test deal and moderation test |
-| Admin | Users, deals, docs, finance, communications, audit, analytics | Signed-in UI walkthrough and live DB schema checks |
-| Buyer pooling | Pool creation, allocations and bank-review state | Bank-approved structure and allocation concurrency test |
+| Admin | Users, deals, docs, finance, communications, audit, analytics | Signed-in UI walkthrough; live schema and private storage checked |
+| Buyer pooling | Pool creation, allocations and bank-review state | Bank-approved structure; allocation concurrency test passes |
 | Akif research | Comtrade/GLEIF, FX, news, World Bank, Eurostat and CSL clients | Upstream keys where required, admin research acceptance |
 | Learn | Curated lessons plus model-backed beginner questions | Live tutor accuracy and language tests |
 | Privacy/operations | Consent, opt-out, role checks, deletion-review requests, signed documents | New-number consent and withdrawal test |
@@ -64,7 +64,16 @@ specific date. Keep all paid plans unchanged unless the owner authorizes spendin
 
 ## Validation of the launch preparation change
 
-Full release checks passed: production build and 85 backend tests.
+Full release checks passed: production build and 87 backend tests.
 19 Python worker/extractor tests passed. Tests cover chat
 request bounds, safe provider failures, Gemini processing gate, voice/image
 transcription mocks and tutoring. Live end-to-end acceptance is still pending.
+
+## Release follow-up
+
+Image uploads can route directly to the authenticated worker vision path, without
+requiring a separate extractor deployment. Buyer allocations lock their pool row
+and validate verified buyer status, capacity and audit writes in one transaction.
+The worker runtime is pinned through Render `PYTHON_VERSION=3.12.11` after
+Python 3.14/LiteLLM import failures were observed in live startup logs.
+API startup logs report worker connectivity and configuration without credentials.
