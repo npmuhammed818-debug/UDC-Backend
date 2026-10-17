@@ -64,7 +64,7 @@ specific date. Keep all paid plans unchanged unless the owner authorizes spendin
 
 ## Validation of the launch preparation change
 
-Full release checks passed: production build and 87 backend tests.
+Full release checks passed: production build and 99 backend tests.
 21 Python worker/extractor tests passed. Tests cover chat
 request bounds, safe provider failures, Gemini processing gate, voice/image
 transcription mocks and tutoring. Live end-to-end acceptance is still pending.
@@ -131,8 +131,35 @@ Use authorized buyer, seller, agent and admin test participants:
 8. Check referral attribution, agent chain, commission calculations and recorded
    payout states. Check pool capacity rejection and issuing-bank review state.
 9. Complete a test deal, submit feedback and inspect admin/audit history.
-10. Send STOP and confirm withdrawal is recorded and further processing stops.
+10. Send STOP and confirm optional notifications are disabled. Consent withdrawal
+    and deletion follow the separately documented support/review workflow; STOP
+    does not cancel existing deal obligations or erase records.
 
 Record expected/actual outcomes and deal/message/document IDs. Do not call the
 launch accepted until failures are resolved. These tests require the real number,
 authorized sessions and test participants; infrastructure probes cannot replace them.
+
+## Preparation without the new number — 17 October 2026
+
+- The general document list now uses the same current deal-membership predicate
+  as the deal room, as well as approval and explicit sharing grants. Stale grants
+  cannot issue new signed links after agent removal or for another deal. Existing
+  signed links retain their original five-minute expiry.
+- Isolated fixtures exercise actual Express routes and auth middleware: anonymous
+  and suspended requests, outsider reads/uploads, mediated-message privacy,
+  pending-document visibility, stale grants and agent removal. Running the suite
+  against the old document route fails the two stale-access regression checks.
+  These checks do not replace live authenticated DB and WhatsApp acceptance.
+- A live GDELT probe returned HTTP 429 with a five-second request-spacing notice.
+  Cache misses now have a per-process cooldown with bounded Retry-After handling.
+  Cached evidence remains usable; core research reports unavailable news rather
+  than waiting in a retry queue or fabricating results. Live news availability
+  still depends on GDELT and its shared-IP limits.
+- Public feed responses are streamed with a two-million-byte limit. Only validated
+  JSON evidence is cached; temporary error objects cannot poison FX/news/indicator
+  or Eurostat results for the cache lifetime. CSL uses the same response bound.
+  The public-evidence cache has an 8 MB serialized-data budget as well as its
+  200-entry limit, so large valid responses cannot accumulate without bound.
+- Full release verification passed: 99 backend tests, workspace typechecks and
+  frontend/backend production builds. Worker code is unchanged (21 Python tests
+  previously passed). No new WhatsApp number or production test accounts were used.

@@ -149,3 +149,12 @@ valid responses through the integrated clients. GDELT timed out within the bound
 request timeout; research reports it as unavailable. CSL live authentication is
 unverified because no key was available in the test environment. Worker provider
 settings were not changed; existing Groq selection is preserved.
+
+
+17 October hardening: GDELT returned HTTP 429 during a live probe. The API now
+spaces uncached news requests by at least five seconds per process and applies
+a bounded cooldown for rate-limit responses. Cached valid evidence is reusable
+during cooldown. Upstream JSON is validated before caching; all these public
+responses and CSL screening responses are limited while streaming to 2 MB.
+The public-data cache also has an 8 MB serialized-data budget.
+News availability remains unverified under sustained production traffic.
