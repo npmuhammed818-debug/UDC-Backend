@@ -1,7 +1,14 @@
 import os
 import sys
 from importlib.util import find_spec
+from importlib import import_module
 from typing import Any
+
+
+def initialize_sdk() -> None:
+    """Load the SDK on the server startup thread before request logging starts."""
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    import_module("litellm")
 
 
 def _configuration() -> tuple[str | None, str | None]:
