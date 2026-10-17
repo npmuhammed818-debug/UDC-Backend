@@ -69,8 +69,9 @@ and a 2,048-token output cap.
 Gemini free-tier content may be used for product improvement. The explicit flag
 acknowledges this processing; initially use public/dummy data only. This gate does
 not replace the operator's responsibility to select a suitable production data
-policy. Existing UDC model routing and WhatsApp behavior remain unchanged; these
-providers are available through the worker's existing reasoning/product tools.
+policy. The API can also enable this worker for WhatsApp conversations and media with
+the explicit flags described in `mvp-launch-readiness.md`. Existing deal rules
+and provider fallbacks remain in control.
 
 ## Activation and verification
 
@@ -80,7 +81,7 @@ services. Obtain Groq/Gemini keys separately to test live model inference. The
 Comtrade free registered key is optional for future larger-volume access; this
 change deliberately reuses the already implemented keyless preview.
 
-## Validation for this change
+## Initial integration validation (16 October 2026)
 
 - Workspace TypeScript checks passed.
 - API test suite after combined review fixes: 82 passed.
@@ -94,10 +95,12 @@ change deliberately reuses the already implemented keyless preview.
 
 ## Review notes
 
-The worker gateway currently accepts text messages. It can reason over extracted
-document text; direct image/PDF uploads to Gemini are not wired to this gateway.
-Selecting a worker model does not change the separate WhatsApp conversation
-provider chain. Admin reasoning/product tools use the worker gateway.
+The worker chat gateway accepts text messages and extracted document text. A
+separate authenticated media route transcribes images through the configured
+Gemini model. PDFs retain the existing extractor and scanned-page vision path.
+`AKIF_WORKER_CONVERSATION_ENABLED=true` connects worker chat to the existing
+WhatsApp conversation chain; `AKIF_WORKER_MEDIA_ENABLED=true` enables media.
+Admin reasoning/product tools also use the worker gateway.
 
 Backend model-call deadlines allow 25 seconds for a single 20-second model call
 and 70 seconds for three sequential specialist calls. GDELT error objects are

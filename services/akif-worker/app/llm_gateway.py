@@ -1,4 +1,6 @@
 import os
+import sys
+from importlib.util import find_spec
 from typing import Any
 
 
@@ -17,9 +19,8 @@ def _configuration() -> tuple[str | None, str | None]:
 
 def status() -> dict[str, Any]:
     try:
-        import litellm  # noqa: F401
-
-        installed = True
+        # Configuration checks must not import the SDK or fetch its remote model map.
+        installed = sys.modules.get("litellm") is not None or find_spec("litellm") is not None
     except ImportError:
         installed = False
 
@@ -44,7 +45,7 @@ def complete(messages: list[dict[str, str]], timeout_seconds: float = 20) -> str
     try:
         from litellm import completion
     except ImportError as exc:
-        raise RuntimeError("LiteLLM optional dependency is not installed") from exc
+        raise RuntimeError("LiteLLM dependency is not installed") from exc
 
     response = completion(model=model, messages=messages, timeout=max(1, min(20, timeout_seconds)), max_retries=0,
                           max_tokens=2048)
