@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 
 from .media import ImageRequest, transcribe_image, transcribe_audio, gemini_probe, MAX_AUDIO_BYTES
 from .chat import ChatRequest, chat_completion
-from .llm_gateway import probe as model_probe
+from .llm_gateway import probe as model_probe, initialize_sdk
 from .documents import extract_document
 from .company_identity import GleifCompanySearchRequest, GleifCompanySearchResponse, search_gleif
 from .compliance import OfacScreenRequest, OfacScreenResponse, screen_ofac
@@ -34,6 +34,10 @@ from .trade_data import preview_comtrade
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # LiteLLM installs global logging filters while importing. Importing it in a
+    # background thread can deadlock with request logging during a cold start.
+    # Complete initialization synchronously before yielding to the HTTP server.
+    initialize_sdk()
     task = asyncio.create_task(_startup_probe()) if os.getenv("AKIF_STARTUP_MODEL_PROBE") == "true" else None
     try:
         yield

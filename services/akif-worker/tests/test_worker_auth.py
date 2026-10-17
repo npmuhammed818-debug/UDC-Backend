@@ -27,3 +27,16 @@ def test_startup_reports_safe_failure_and_still_checks_gemini(monkeypatch, capsy
     assert '"error_type": "ValueError"' in output
     assert '"provider": "gemini", "status": "passed"' in output
     assert "private provider diagnostic" not in output
+
+
+def test_sdk_initializes_before_worker_accepts_requests(monkeypatch):
+    import asyncio
+    import app.main as worker
+    events = []
+    monkeypatch.delenv("AKIF_STARTUP_MODEL_PROBE", raising=False)
+    monkeypatch.setattr(worker, "initialize_sdk", lambda: events.append("sdk_ready"))
+    async def start():
+        async with worker.lifespan(worker.app):
+            events.append("requests_ready")
+    asyncio.run(start())
+    assert events == ["sdk_ready", "requests_ready"]
