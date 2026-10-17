@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { runConversationChat } from "../src/akif/intelligence/hermesClient.ts";
 
 const keys = [
+  "AKIF_WORKER_CONVERSATION_ENABLED",
   "AKIF_BRAIN_URL",
   "AKIF_BRAIN_API_KEY",
   "AKIF_BRAIN_MODEL",
@@ -29,6 +30,7 @@ function restoreEnv(oldEnv: Record<string, string | undefined>) {
 
 test("self-hosted AKIF brain is the first conversation provider", async () => {
   const oldEnv = snapshotEnv();
+  process.env.AKIF_WORKER_CONVERSATION_ENABLED = "false";
   const oldFetch = globalThis.fetch;
   const calls: string[] = [];
 
@@ -64,6 +66,7 @@ test("self-hosted AKIF brain is the first conversation provider", async () => {
 
 test("conversation falls back from AKIF brain to NVIDIA to OpenAI to Hermes", async () => {
   const oldEnv = snapshotEnv();
+  process.env.AKIF_WORKER_CONVERSATION_ENABLED = "false";
   const oldFetch = globalThis.fetch;
   const calls: string[] = [];
 
@@ -114,6 +117,7 @@ test("conversation falls back from AKIF brain to NVIDIA to OpenAI to Hermes", as
 
 test("NVIDIA is used before OpenAI when AKIF brain is unavailable", async () => {
   const oldEnv = snapshotEnv();
+  process.env.AKIF_WORKER_CONVERSATION_ENABLED = "false";
   const oldFetch = globalThis.fetch;
   const calls: string[] = [];
 
