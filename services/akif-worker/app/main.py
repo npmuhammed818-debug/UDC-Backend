@@ -1,7 +1,6 @@
 import os
 import asyncio
 import json
-import logging
 from contextlib import asynccontextmanager, suppress
 import secrets
 
@@ -250,11 +249,19 @@ def compliance_ofac_screen(
 
 
 async def _startup_probe() -> None:
-    result = await asyncio.to_thread(model_probe)
-    logging.getLogger("uvicorn.error").info("AKIF model startup probe: %s", json.dumps(result))
+    try:
+        result = await asyncio.to_thread(model_probe)
+    except Exception as exc:
+        result = {"status": "failed", "error_type": type(exc).__name__}
+    # Only these fixed safe fields are printed. Avoid SDK-installed logging filters:
+    # failed SDK initialization can leave those filters unable to log diagnostics.
+    print("AKIF model startup probe: " + json.dumps(result), flush=True)
     if os.getenv("AKIF_STARTUP_GEMINI_PROBE") == "true":
-        secondary = await asyncio.to_thread(gemini_probe)
-        logging.getLogger("uvicorn.error").info("AKIF Gemini startup probe: %s", json.dumps(secondary))
+        try:
+            secondary = await asyncio.to_thread(gemini_probe)
+        except Exception as exc:
+            secondary = {"status": "failed", "error_type": type(exc).__name__}
+        print("AKIF Gemini startup probe: " + json.dumps(secondary), flush=True)
 
 
 
