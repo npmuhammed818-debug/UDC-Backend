@@ -65,7 +65,7 @@ specific date. Keep all paid plans unchanged unless the owner authorizes spendin
 ## Validation of the launch preparation change
 
 Full release checks passed: production build and 87 backend tests.
-19 Python worker/extractor tests passed. Tests cover chat
+21 Python worker/extractor tests passed. Tests cover chat
 request bounds, safe provider failures, Gemini processing gate, voice/image
 transcription mocks and tutoring. Live end-to-end acceptance is still pending.
 
@@ -77,3 +77,62 @@ and validate verified buyer status, capacity and audit writes in one transaction
 The worker runtime is pinned through Render `PYTHON_VERSION=3.12.11` after
 Python 3.14/LiteLLM import failures were observed in live startup logs.
 API startup logs report worker connectivity and configuration without credentials.
+
+## Live verification — 17 October 2026
+
+- Backend release `aa63b73` deployed successfully; 87 backend tests, typechecks and
+  frontend/backend builds passed with worker conversation/media flags enabled.
+- Public backend and database health, document extractor and AKIF worker health
+  returned 200. Admin intelligence and legacy intake returned 401 anonymously.
+- Additional admin users/deals/commissions and buyer-pool endpoints returned 401
+  anonymously; the frontend entry returned 200 and referenced production assets.
+- Backend authenticated worker connectivity passed at 09:08 UTC: reachable, model
+  configured, conversation enabled and no missing configuration reported.
+- Meta phone-number access and WABA webhook subscription checks passed. These
+  checks do not prove real delivery or approval of the owner's new number.
+- Groq `groq/openai/gpt-oss-20b` and Gemini `gemini/gemini-3.1-flash-lite`
+  each passed live fixed-public-prompt probes at 09:06 UTC and again on the
+  fixed cold-start release `0c796de` at 09:20 UTC. The final worker deployment
+  is live, with SDK initialization completed before HTTP serving.
+- Pinning Python alone did not resolve the SDK import failure. Use the packaged
+  model map and initialize LiteLLM before serving HTTP requests (#80), avoiding
+  a cold-start deadlock with SDK-installed request logging filters. SDK logging
+  is restricted to ERROR; safe fixed-prompt diagnostics remain available.
+
+Actual new-number buyer/seller messages, private media, signed-in deal progression,
+referrals, commissions and opt-out still need persisted acceptance checks by
+authorized test participants. No full production acceptance or zero-defect claim
+is made from health checks and provider probes alone.
+
+## New-number handover and acceptance sequence
+
+Keep provider and Meta secrets in Render environment settings. Confirm the new
+number's `WHATSAPP_PHONE_NUMBER_ID` and usable `WHATSAPP_ACCESS_TOKEN`, plus
+`WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_APP_SECRET` and
+`WHATSAPP_WEBHOOK_VERIFY_TOKEN` on the API service. The Meta callback is
+`https://udc-backend.onrender.com/api/webhooks/whatsapp`. Subscribe the account
+and confirm the callback verification after Meta approves/registers the number.
+
+Use authorized buyer, seller, agent and admin test participants:
+
+1. Complete consent, onboarding and manual company verification. Confirm an
+   unverified participant cannot upload into or access a private deal.
+2. Submit a buyer requirement and seller offer in separate messages; confirm
+   product/specification, quantity, price, destination and Incoterms persist.
+3. Approve the match and open the deal room. Exchange messages through UDC;
+   verify party phone numbers and private admin notes are not disclosed.
+4. Send a PDF, JPEG/PNG image and voice note. Verify private storage, extraction,
+   sender/deal association and manual review. Voice terms require text confirmation.
+5. Generate LOI/ICPO/FCO/SPA/NCNDA drafts. Check recorded terms and visible
+   placeholders; no generated text should imply signature or legal approval.
+6. Request a meeting and record its authorized scheduling/meeting URL.
+7. Record inspection/shipment/customs/delivery milestones and supporting documents.
+   Confirm the fixed DLC/SGS workflow and admin-controlled banking evidence.
+8. Check referral attribution, agent chain, commission calculations and recorded
+   payout states. Check pool capacity rejection and issuing-bank review state.
+9. Complete a test deal, submit feedback and inspect admin/audit history.
+10. Send STOP and confirm withdrawal is recorded and further processing stops.
+
+Record expected/actual outcomes and deal/message/document IDs. Do not call the
+launch accepted until failures are resolved. These tests require the real number,
+authorized sessions and test participants; infrastructure probes cannot replace them.
