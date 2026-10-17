@@ -43,7 +43,7 @@ type Evidence<T> = {
 };
 const cache = new Map<
   string,
-  { expires: number; data: unknown; retrievedAt: string }
+  { expires: number; data: unknown; retrievedAt: string; bytes: number }
 >();
 const inFlight = new Map<
   string,
@@ -56,26 +56,86 @@ function readSourceData<T>(schema: z.ZodType<T>, data: unknown): T {
   return parsed.data;
 }
 
-// Fixed provider hosts only. Do not follow redirects or accept caller-supplied URLs.
-async function getJson(url: string, ttl: number) {
+const MAX_SOURCE_BYTES = 2_000_000;
+const MAX_CACHE_BYTES = 8_000_000;
+let cacheBytes = 0;
+function evictCache(key: string) {
+  const entry = cache.get(key);
+  if (entry) cacheBytes -= entry.bytes;
+  cache.delete(key);
+}
+let gdeltNextRequestAt = 0;
+
+async function readSourceJson(response: Response, prefix = "source"): Promise<unknown> {
+  if (Number(response.headers.get("content-length")) > MAX_SOURCE_BYTES) {
+    await response.body?.cancel();
+    throw new Error(`${prefix}_response_too_large`);
+  }
+  if (!response.body) throw new Error("source_invalid_response");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > MAX_SOURCE_BYTES) {
+        await reader.cancel();
+        throw new Error(`${prefix}_response_too_large`);
+      }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    return JSON.parse(body + decoder.decode()) as unknown;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// Fixed provider hosts only. Cache validated evidence, never provider error objects.
+async function getJson<T>(url: string, ttl: number, validate: (value: unknown) => T) {
   const previous = cache.get(url);
-  if (previous && previous.expires > Date.now()) return previous;
+  if (previous && previous.expires > Date.now())
+    return { data: validate(previous.data), retrievedAt: previous.retrievedAt };
+  if (previous) evictCache(url);
   const pending = inFlight.get(url);
-  if (pending) return pending;
+  if (pending) {
+    const result = await pending;
+    return { data: validate(result.data), retrievedAt: result.retrievedAt };
+  }
   const request = (async () => {
+    const gdelt = new URL(url).hostname === "api.gdeltproject.org";
+    if (gdelt) {
+      if (Date.now() < gdeltNextRequestAt) throw new Error("gdelt_cooldown_active");
+      // Fail fast rather than growing a queue or slowing the core research flow.
+      gdeltNextRequestAt = Date.now() + 5_000;
+    }
     const response = await fetch(url, {
       signal: AbortSignal.timeout(8_000),
       redirect: "error",
     });
-    if (!response.ok) throw new Error(`source_http_${response.status}`);
-    const body = await response.text();
-    if (body.length > 2_000_000) throw new Error("source_response_too_large");
+    if (!response.ok) {
+      if (gdelt && response.status === 429) {
+        const retry = response.headers.get("retry-after");
+        const seconds = retry && /^\d+$/.test(retry) ? Number(retry) * 1000
+          : retry ? Date.parse(retry) - Date.now() : 5_000;
+        // Bound memory/state duration even if an upstream sends an invalid header.
+        gdeltNextRequestAt = Math.max(gdeltNextRequestAt,
+          Date.now() + Math.max(5_000, Math.min(60_000, Number.isFinite(seconds) ? seconds : 5_000)));
+      }
+      await response.body?.cancel();
+      throw new Error(`source_http_${response.status}`);
+    }
     const entry = {
-      data: JSON.parse(body) as unknown,
+      data: validate(await readSourceJson(response)),
       retrievedAt: new Date().toISOString(),
     };
-    if (cache.size >= 200) cache.delete(cache.keys().next().value!);
-    cache.set(url, { ...entry, expires: Date.now() + ttl });
+    const bytes = Buffer.byteLength(JSON.stringify(entry.data), "utf8");
+    while (cache.size && (cache.size >= 200 || cacheBytes + bytes > MAX_CACHE_BYTES))
+      evictCache(cache.keys().next().value!);
+    cache.set(url, { ...entry, expires: Date.now() + ttl, bytes });
+    cacheBytes += bytes;
     return entry;
   })();
   inFlight.set(url, request);
@@ -89,11 +149,9 @@ async function getJson(url: string, ttl: number) {
 export async function convertCurrency(input: z.input<typeof fxSchema>) {
   const { base, quote, amount } = fxSchema.parse(input);
   const sourceUrl = `https://api.frankfurter.dev/v2/rate/${base}/${quote}`;
-  const result = await getJson(sourceUrl, 3_600_000);
-  const rate = readSourceData(
-    z.object({ date: z.string(), rate: z.number().finite().positive() }),
-    result.data,
-  );
+  const result = await getJson(sourceUrl, 3_600_000, (value) => readSourceData(
+    z.object({ date: z.string(), rate: z.number().finite().positive() }), value));
+  const rate = result.data;
   return {
     provider: "frankfurter",
     sourceUrl,
@@ -123,8 +181,7 @@ export async function searchTradeNews(input: z.input<typeof newsSchema>) {
     sort: "datedesc",
   });
   const sourceUrl = `https://api.gdeltproject.org/api/v2/doc/doc?${params}`;
-  const result = await getJson(sourceUrl, 900_000);
-  const parsed = readSourceData(
+  const result = await getJson(sourceUrl, 900_000, (value) => readSourceData(
     z.object({
       articles: z
         .array(
@@ -137,8 +194,9 @@ export async function searchTradeNews(input: z.input<typeof newsSchema>) {
           }),
         ),
     }),
-    result.data,
-  );
+    value,
+  ));
+  const parsed = result.data;
   return {
     provider: "gdelt",
     sourceUrl,
@@ -157,8 +215,7 @@ export async function getCountryIndicator(
 ) {
   const { country, indicator } = indicatorsSchema.parse(input);
   const sourceUrl = `https://api.worldbank.org/v2/country/${country}/indicator/${indicator}?format=json&mrnev=5&per_page=5`;
-  const result = await getJson(sourceUrl, 86_400_000);
-  const parsed = readSourceData(
+  const result = await getJson(sourceUrl, 86_400_000, (value) => readSourceData(
     z.tuple([
       z.object({}).passthrough(),
       z
@@ -171,8 +228,9 @@ export async function getCountryIndicator(
         )
         .nullable(),
     ]),
-    result.data,
-  );
+    value,
+  ));
+  const parsed = result.data;
   return {
     provider: "world_bank",
     sourceUrl,
@@ -283,14 +341,13 @@ export async function getEurostatTrade(
     partner: query.partner,
   });
   const sourceUrl = `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/ext_lt_intertrd?${params}`;
-  const result = await getJson(sourceUrl, 86_400_000);
-  const data = readSourceData(eurostatDataSchema, result.data);
-  if (
-    data.id.length !== data.size.length ||
-    !data.id.every((id) => id in data.dimension)
-  ) {
-    throw new Error("eurostat_invalid_dimensions");
-  }
+  const result = await getJson(sourceUrl, 86_400_000, (value) => {
+    const data = readSourceData(eurostatDataSchema, value);
+    if (data.id.length !== data.size.length || !data.id.every((id) => id in data.dimension))
+      throw new Error("eurostat_invalid_dimensions");
+    return data;
+  });
+  const data = result.data;
   return {
     provider: "eurostat",
     sourceUrl,
@@ -358,10 +415,11 @@ export async function screenCsl(input: z.input<typeof cslScreenSchema>) {
     signal: AbortSignal.timeout(8_000),
     redirect: "error",
   });
-  if (!response.ok) throw new Error(`csl_http_${response.status}`);
-  const text = await response.text();
-  if (text.length > 2_000_000) throw new Error("csl_response_too_large");
-  const data = readSourceData(cslDataSchema, JSON.parse(text));
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`csl_http_${response.status}`);
+  }
+  const data = readSourceData(cslDataSchema, await readSourceJson(response, "csl"));
   return {
     provider: "trade_gov_csl",
     sourceUrl,

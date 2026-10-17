@@ -2,7 +2,7 @@ import { Router, raw, type IRouter } from "express";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
@@ -11,25 +11,11 @@ import { createLoiDraft } from "../deals/loiDraft";
 import { createFcoDraft } from "../deals/fcoDraft";
 import { createIcpoDraft } from "../deals/icpoDraft";
 
+import { dealAccess } from "../deals/access";
+
 const router: IRouter = Router();
 const documentType = z.enum(["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA", "SGS", "BL", "CO", "COA", "trade_document", "company_registration", "business_license", "certificate", "invoice", "packing_list", "bill_of_lading", "inspection_report", "certificate_of_origin", "other"]);
 
-function dealAccess(userId: string, role: string) {
-  return role === "admin" ? sql`true` : or(
-    eq(dealsTable.buyerUserId, userId),
-    eq(dealsTable.sellerUserId, userId),
-    inArray(
-      dealsTable.id,
-      db.select({ dealId: dealParticipantsTable.dealId })
-        .from(dealParticipantsTable)
-        .where(and(
-          eq(dealParticipantsTable.userId, userId),
-          eq(dealParticipantsTable.participantRole, "agent"),
-          eq(dealParticipantsTable.status, "active"),
-        )),
-    ),
-  );
-}
 
 router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
   try {

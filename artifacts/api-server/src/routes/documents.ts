@@ -1,8 +1,10 @@
 import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
-import { db, documentAccessTable, documentsTable } from "@workspace/db";
+import { db, documentAccessTable, documentsTable, dealsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath } from "../supabase/storage";
+
+import { dealAccess } from "../deals/access";
 
 const router: IRouter = Router();
 
@@ -23,8 +25,10 @@ router.get("/documents", requireAuth, async (req, res) => {
         documentsTable,
         eq(documentAccessTable.documentId, documentsTable.id),
       )
+      .innerJoin(dealsTable, eq(documentsTable.dealId, dealsTable.id))
       .where(
         and(
+          dealAccess(req.authUser!.id, req.authUser!.role),
           eq(documentAccessTable.userId, req.authUser!.id),
           eq(documentsTable.status, "approved"),
         ),
