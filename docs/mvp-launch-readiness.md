@@ -163,3 +163,10 @@ authorized sessions and test participants; infrastructure probes cannot replace 
 - Full release verification passed: 99 backend tests, workspace typechecks and
   frontend/backend production builds. Worker code is unchanged (21 Python tests
   previously passed). No new WhatsApp number or production test accounts were used.
+
+Release #82 (`e82c33e`) deployed successfully at 09:37 UTC on 17 October. All six
+production smoke checks passed afterward. A read-only EXPLAIN of the membership-
+checked document query against the live database succeeded and used existing
+document-status, document/user grant, deal-primary-key and participant-user
+indexes. This plan check used a dummy ID, did not read trade records and made no
+data/schema changes. Authenticated real-user acceptance remains pending.
