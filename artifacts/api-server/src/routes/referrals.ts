@@ -1,3 +1,4 @@
+import { createAgentInvitation, agentReferralCode } from "../referrals/invitation";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { auditLogsTable, db, dealParticipantsTable, notificationsTable, referralsTable, usersTable, dealsTable } from "@workspace/db";
@@ -12,6 +13,18 @@ const referralRequestSchema = z.object({
   email: z.email().max(254).transform((email) => email.toLowerCase()),
   contactConsent: z.literal(true),
 }).strict();
+
+router.get("/agent/referral-link", requireAuth, async (req, res) => {
+  if (req.authUser!.role !== "agent" || req.authUser!.status !== "verified") {
+    res.status(403).json({ error: "verified_agent_required" }); return;
+  }
+  try {
+    const origin = new URL(process.env.UDC_PUBLIC_APP_URL ?? process.env.RENDER_EXTERNAL_URL ?? "");
+    if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("invalid_public_origin");
+    const token = createAgentInvitation(req.authUser!.id, process.env.WHATSAPP_APP_SECRET ?? "");
+    res.json({ referralCode: agentReferralCode(req.authUser!.id), referralUrl: `${origin.origin}/register?ref=${encodeURIComponent(token)}` });
+  } catch { res.status(503).json({ error: "referral_link_unavailable" }); }
+});
 
 router.post("/referrals/request", requireAuth, async (req, res) => {
   if (req.authUser!.role !== "agent" || !["verified", "active"].includes(req.authUser!.status)) {

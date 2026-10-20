@@ -33,3 +33,9 @@ Commission creation can calculate from an explicitly confirmed agreed percentage
 The five-case live run after numeric normalization passed all four buyer cases: complete copper/Jebel Ali, grade/delivery timing, missing-fact restraint and a contextual follow-up. The seller case was blocked by a buyer-only deliveryTime field in the wrong type. Intake now validates/persists only the fields allowed for the returned role; seller availability remains a separately validated text field. A further live run is required.
 
 Explicit WhatsApp agent/broker registration now creates one pending profile and a review notification after consent, without a model call. Repeated requests preserve status; existing trader roles never change automatically. Web registration now puts every role, including agents, into pending human review. Registration fixtures verify consent and session creation as well as these states.
+
+## Invitation links
+
+Verified agents can copy a personal invitation link and reference code. Links use a purpose-separated HMAC signature with the existing app secret and a configured HTTPS public app origin. A registrant must opt in to attach the introduction; registration rechecks the inviter's current verified agent status. Tampering, suspension and agent-to-agent signup cannot create an attribution. Attribution, registration consent and the new pending account are recorded in one transaction. No commission is inferred from a referral. The API registration contract and generated clients include the optional token.
+
+Additional actual route fixtures cover approved/verified matching, mismatched products/units, suspended parties, private participant creation and duplicate match/deal rejection. Shared workflow suites appear in multiple SoW sections, so section counts must not be summed.

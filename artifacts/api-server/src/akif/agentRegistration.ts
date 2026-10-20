@@ -13,7 +13,8 @@ export async function registerWhatsAppAgent(phone: string, fullName?: string) {
     const [existing] = await tx.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
     if (existing) {
       if (existing.role !== 'agent') return `Your account is registered as a ${existing.role}. UDC needs to review a role change before you can use agent access.`;
-      return existing.status === 'verified' || existing.status === 'active'
+      if (existing.status === 'active') return 'Your agent account is active. UDC verification is still needed before verified agent access.';
+      return existing.status === 'verified'
         ? 'Your agent account is already approved. You can submit introductions for UDC review.'
         : 'Your agent registration is already pending UDC review.';
     }

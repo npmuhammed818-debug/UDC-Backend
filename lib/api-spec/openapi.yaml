@@ -599,6 +599,7 @@ components:
         phone: { type: string }
         password: { type: string, minLength: 12 }
         role: { type: string, enum: [buyer, seller, agent] }
+        referral_token: { type: string, maxLength: 120 }
         accepted_terms: { type: boolean, enum: [true] }
         adult_business_user: { type: boolean, enum: [true] }
     LoginInput:
