@@ -107,6 +107,13 @@ function containsInternalLeak(text: string) {
     || /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i.test(text);
 }
 
+export function isExplicitSeparateTradeIntake(text: string) {
+  // A clearly labelled separate inquiry does not need an AI turn in an old deal.
+  // Do not infer this from a quantity, correction, hypothetical or negated request.
+  return /^(?:new|another|separate)(?:\s+(?:new|separate|test))*\s+(?:requirement|order|trade|deal|offer)\s*[:.-]/i.test(text.trim())
+    && looksLikeNewTradeIntake(text);
+}
+
 export function looksLikeNewTradeIntake(text: string) {
   const normalized = text.trim().toLowerCase();
   const quantity = /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b/i;

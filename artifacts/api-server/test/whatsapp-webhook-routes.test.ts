@@ -55,7 +55,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     return q;
   }
   const state: any = { tables, db: { select, insert }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
-    privacyReply: null, saved: null, decision: null, dealDecision: null,
+    privacyReply: null, saved: null, decision: null, dealDecision: null, dealCalls: 0,
     send: async (to: string, body: any) => { state.sent.push({ to, body }); return { delivered: true, messageId: randomUUID() }; },
     sign: async (path: string) => { state.signed.push(path); return `https://signed.example/${path}`; },
     upload: async (path: string) => { state.uploaded.push(path); return `storage://udc-documents/${path}`; },
@@ -70,7 +70,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
-    "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>s.dealDecision;",
+    "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
     "../akif/documentIntelligence": "export const processDocumentIntelligence=async()=>({status:'needs_review'});",
     "../supabase/storage": "export const createSignedDownloadUrl=s.sign;export const uploadDocumentBytes=s.upload;export const parseStoragePath=x=>x.startsWith('storage://udc-documents/')?x.slice('storage://udc-documents/'.length):null;",
     "../akif/whatsappIntakeStore": "export const loadWhatsAppIntakeDraft=async()=>s.saved;export const saveWhatsAppIntakeDraft=async x=>{s.saved={...x,lastProviderMessageId:x.providerMessageId};};export const clearWhatsAppIntakeDraft=async()=>{s.saved=null;};",
@@ -101,6 +101,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
+    state.dealCalls = 0;
   };
   function seedDeal() {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
@@ -143,6 +144,16 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ image: { id: "private-image", mime_type: "image/png" } });
       assert.deepEqual(state.uploaded, []);
       assert.match(state.sent.at(-1).body, /admin review/);
+    });
+    await t.test("explicitly separate inquiries use one intake call without old deal or draft memory", async () => {
+      reset(); seedDeal();
+      state.saved = { role: "buyer", draft: { product: "Sugar", quantity: 999, submittedRecordId: "old-submission" }, stale: false };
+      state.decision = { role: "buyer", newIntake: false, fields: { product: "Copper cathode", quantity: 100, targetPrice: 5900, destination: "Jebel Ali", incoterm: "CIF" }, reply: "I’ll send this for UDC review." };
+      await message({ text: { body: "New separate test requirement: I need 100 MT copper cathode, target USD 5900 per MT, CIF Jebel Ali." } });
+      assert.equal(state.dealCalls, 0); assert.equal(state.intake.length, 1);
+      assert.equal(state.intake[0].memory, null);
+      assert.equal(state.recorded.length, 1); assert.equal(state.recorded[0].quantity, 100);
+      assert.ok(state.sent.every((s: any) => s.to === "10000000001"));
     });
     await t.test("documents require review and explicit access before sharing", async () => {
       reset(); seedDeal();
