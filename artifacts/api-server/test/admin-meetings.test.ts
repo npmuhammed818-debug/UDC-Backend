@@ -15,7 +15,9 @@ test('admin meeting routes require verified counterparties and preserve human sc
   records.usersTable=[{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'}];
   const value=(x:any,r:any):any=>x?.column?r[x.column]:x;
   const predicate=(x:any,r:any):any=>x?.kind==='eq'?value(x.a,r)===value(x.b,r):x?.kind==='and'?x.args.every((c:any)=>predicate(c,r)):x?.kind==='in'?x.list.includes(value(x.a,r)):true;
+  let dbReads=0;
   function select(fields?:any) {
+    dbReads++;
     let table:any,condition:any,limit=Infinity;
     const q:any={from:(t:any)=>{table=t._table;return q},where:(c:any)=>{condition=c;return q},limit:(n:number)=>{limit=n;return q},orderBy:()=>q,
       then:(resolve:any,reject:any)=>Promise.resolve().then(()=>records[table].filter((r:any)=>predicate(condition,r)).slice(0,limit).map((r:any)=>fields?Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,value(v,r)])):{...r})).then(resolve,reject)};
@@ -32,7 +34,7 @@ test('admin meeting routes require verified counterparties and preserve human sc
   const state:any={tables,db:{select,insert:(t:any)=>mutation(t),update:(t:any)=>mutation(t,true)},user:null};
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
-  const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
+  const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
       orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=()=>true;export const ilike=()=>true;export const sql=()=>true;`,
@@ -48,7 +50,7 @@ test('admin meeting routes require verified counterparties and preserve human sc
   await writeFile(output,result.outputFiles[0].text);
   let server:any;
   try {
-    const {default:app}=await import(output);server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+    const {default:app,routes}=await import(output);server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
     const base=`http://127.0.0.1:${server.address().port}`;
     const input={scheduledAt:'2026-11-01T12:00:00Z',provider:'UDC video',meetingUrl:'https://example.invalid/synthetic-meeting'};
     const request=async(path:string,body:any=input,method='POST')=>{
@@ -60,6 +62,19 @@ test('admin meeting routes require verified counterparties and preserve human sc
         state.user=user;assert.equal((await request(path)).status,user?403:401);
       }
       assert.equal(records.dealMeetingsTable.length,0);assert.equal(records.auditLogsTable.length,0);
+    });
+    await t.test('every admin endpoint rejects anonymous, trader and suspended-admin access before database reads',async()=>{
+      assert.ok(routes.length>40);
+      const before=dbReads;
+      for(const user of [null,{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'},{id:'agent',role:'agent',status:'verified'},{id:'admin',role:'admin',status:'suspended'}]) {
+        state.user=user;
+        for(const route of routes){
+          const routePath=route.path.replace(/:[^/]+/g,dealId);
+          const response=await fetch(base+routePath,{method:route.method.toUpperCase(),headers:{'content-type':'application/json'},...(route.method==='get'?{}:{body:'{}'})});
+          assert.equal(response.status,user?403:401,`${route.method} ${route.path}`);await response.arrayBuffer();
+        }
+      }
+      assert.equal(dbReads,before);
     });
     state.user={id:'admin',role:'admin',status:'verified'};
     await t.test('pending, rejected, suspended, missing and wrong-role counterparties are blocked',async()=>{
