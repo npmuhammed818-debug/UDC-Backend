@@ -19,11 +19,11 @@ function hashSessionToken(token: string) {
   return createHmac("sha256", sessionSecret()).update(token).digest("hex");
 }
 
-export async function createSession(userId: string) {
+export async function createSession(userId: string, executor: Pick<typeof db, 'insert'> = db) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
-  await db.insert(authSessionsTable).values({
+  await executor.insert(authSessionsTable).values({
     userId,
     tokenHash: hashSessionToken(token),
     expiresAt,

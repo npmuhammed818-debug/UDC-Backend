@@ -65,6 +65,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   state.db.transaction = async (callback: any) => callback(state.db);
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
+    "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
@@ -128,6 +129,15 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply = "Reply AGREE";
       assert.equal((await message({ text: { body: "hello" } })).status, 200);
       assert.equal(state.sent[0].body, "Reply AGREE"); assert.deepEqual(state.intake, []);
+    });
+    await t.test('sign-in commands require a valid signed webhook, consent and a nonblocked sender',async()=>{
+      reset();state.signins=0;
+      const text={text:{body:'LOGIN AABBCCDDEEFF0011'}};
+      await message(text,false);assert.equal(state.signins,0);
+      state.privacyReply='Reply AGREE';await message(text);assert.equal(state.signins,0);
+      state.privacyReply=null;rows.usersTable.push({phone:'10000000001',status:'suspended'});
+      await message(text);assert.equal(state.signins,0);rows.usersTable=[];
+      await message(text);assert.equal(state.signins,1);assert.equal(state.sent.at(-1).body,'Fixture sign-in confirmation');assert.deepEqual(state.intake,[]);
     });
     await t.test("agent registration is consent-gated, pending, idempotent and never changes an existing trader role", async () => {
       reset(); state.privacyReply = "Reply AGREE";

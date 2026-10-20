@@ -94,7 +94,6 @@ router.post("/auth/register", async (req, res) => {
         .values({
           fullName: input.full_name,
           email: input.email,
-          phone: input.phone,
           passwordHash,
           role: input.role,
           status: "pending",

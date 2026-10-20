@@ -1,4 +1,5 @@
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
+import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
@@ -1054,6 +1055,12 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
 
       if (typeof message.text?.body !== "string") continue;
+
+      if (message.from && parseSigninCommand(message.text.body)) {
+        try { await deliverWhatsAppReply(message.from, (await handleWhatsAppSignin(message.from,message.text.body,fullName))!); }
+        catch { await deliverWhatsAppReply(message.from, 'Sign-in is unavailable just now. Please start a new request shortly.'); }
+        continue;
+      }
 
       if (message.from && isAgentRegistrationRequest(message.text.body)) {
         try { await deliverWhatsAppReply(message.from, await registerWhatsAppAgent(message.from, fullName)); }

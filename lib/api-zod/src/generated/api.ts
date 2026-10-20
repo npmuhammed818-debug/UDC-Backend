@@ -26,7 +26,6 @@ export const registerUserBodyReferralTokenMax = 120;
 export const RegisterUserBody = zod.object({
   "full_name": zod.string(),
   "email": zod.string(),
-  "phone": zod.string().optional(),
   "password": zod.string().min(registerUserBodyPasswordMin),
   "role": zod.enum(['buyer', 'seller', 'agent']),
   "referral_token": zod.string().max(registerUserBodyReferralTokenMax).optional(),

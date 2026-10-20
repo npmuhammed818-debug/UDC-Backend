@@ -26,7 +26,7 @@ const profileSchema = z
   .object({
     full_name: z.string().trim().min(2).max(200).optional(),
     email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
-    phone: z.string().trim().min(3).max(50).nullable().optional(),
+    phone: z.never().optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -58,7 +58,6 @@ router.put("/profile", requireAuth, async (req, res) => {
       .set({
         ...(input.full_name === undefined ? {} : { fullName: input.full_name }),
         ...(input.email === undefined ? {} : { email: input.email }),
-        ...(input.phone === undefined ? {} : { phone: input.phone }),
         updatedAt: new Date(),
       })
       .where(eq(usersTable.id, req.authUser!.id));

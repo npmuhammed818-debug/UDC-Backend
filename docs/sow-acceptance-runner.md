@@ -6,7 +6,7 @@ Run `pnpm run acceptance` from the repository root. It groups isolated regressio
 
 Set `UDC_ACCEPTANCE_RUN_ID` to a unique 8–80 character identifier. At startup a transactional advisory lock and audit-log claim allow only one run for that ID across restarts. A separate child receives only the existing worker URL/token and PATH. It receives no production database, WhatsApp, storage or paid-provider credentials and has no persistence or notification clients.
 
-It exercises the actual intake prompt/parser against the existing worker with synthetic copper and sugar inquiries: five calls maximum, 65 seconds between calls, no retries or paid fallbacks. Provider/validation failure stops the run as blocked. The parent enforces a seven-minute deadline. Only fixed case names, failed field names and statuses enter logs/audit records, never model text or credentials. Remove the run ID to disable. Reusing an ID never reruns it; a new ID authorizes a new bounded test run.
+It exercises the actual intake prompt/parser against the existing worker with synthetic copper and sugar inquiries: five cases maximum (four model calls after the deterministic follow-up fix), 65 seconds between model cases, no retries or paid fallbacks. Provider/validation failure stops the run as blocked. The parent enforces a seven-minute deadline. Only fixed case names, failed field names and statuses enter logs/audit records, never model text or credentials. Remove the run ID to disable. Reusing an ID never reruns it; a new ID authorizes a new bounded test run.
 
 This checks extraction and unnecessary questions. Separate isolated regression tests cover signed webhook routing, duplicate protection, term merging and actual writer mappings. It does not prove Meta delivery, real PostgreSQL transactions, human verification, document authenticity or completed trades.
 
@@ -59,3 +59,27 @@ A deterministic output guard blocks contact details and numeric private limits f
 The first media-mode API deploy exposed a test-harness issue: build tests inherited runtime probe configuration. The API test launcher now starts tests with a small environment allowlist and no runtime service credentials or probe flags. Release verification is also run with media probe flags set on the parent to reproduce that deployment condition safely.
 
 Local component server-render checks passed for execution controls, feedback and invitation cards. Full browser visual acceptance remains pending: the browser download was blocked in the coding environment. This limitation is separate from passing route tests and production builds.
+
+
+## Confirmed live service results — 20 October 2026
+
+API release PR96 / `5fd6e132245cd6265b39c524433b8888d3f7d42f` and worker PR95 / `1f57d50c05f21e1b1f3216a8a47d968b1882e0a7` passed the bounded service probes:
+
+- `intake_20261020_e`: all five cases passed, four model calls, exit 0. Copper CIF Jebel Ali, sugar grade/delivery, missing fields without invention, follow-up memory, and seller terms.
+- `media_20261020_a`: synthetic image transcription, voice transcription and PDF extraction all passed, three service requests, exit 0.
+
+Earlier failures above are retained as the reason for their fixes; these successful reruns supersede their pending service retest status. These probes do not send WhatsApp messages, create traders or trades, or prove two-party Meta delivery. They use the existing free service plans and configured providers; no paid plan, new paid service or paid fallback was added. Provider quotas can still limit availability.
+
+## WhatsApp-owned web access
+
+`/whatsapp-signin` creates a five-minute request with a separate private browser token. Send `LOGIN <code>` from the actual WhatsApp number, read the warning, then send `CONFIRM LOGIN <code>`. The signed Meta webhook enforces existing consent and blocked-account gates before this handler. Only the browser holding the separate secret can consume the approval and receive the existing HttpOnly session cookie. Tokens and codes are hashed at rest, kept out of URLs, and never returned by polling. Expired rows are purged after a day when the next request is created.
+
+Phone-only accounts retain their existing role/status. New accounts stay pending. Email/admin accounts cannot bypass their existing password login through anonymous phone sign-in. An eligible signed-in web account may link an unclaimed number through `/link-whatsapp`; the same initiating account is required when polling. Conflicting profiles require human review and are never merged automatically. Registration/profile APIs reject arbitrary phone fields. Existing legacy phone bindings are preserved and need individual review if disputed.
+
+After sign-in, the existing Profile & company page supports company details and private verification-document submission for admin review. WhatsApp-only users can reach this workflow without a paid SMS provider. This verifies control of a number, never company legitimacy. No auto-approval, bank action or payment execution is introduced.
+
+The additive challenge-table migration enables RLS and revokes public/anonymous/authenticated access, matching the server-only database architecture. Tests exercise the actual challenge service, session writer and HTTP routes with isolated relational fixtures, including wrong phones, two-step confirmation, expiry, replay, private-cookie issuance, role preservation, profile conflicts, suspension, initiating-session checks and rate limits. Signed webhook tests separately prove consent/signature/block gates.
+
+## Remaining acceptance before launch
+
+All eight SoW sections have automated coverage; this is not a claim that every feature has completed real-user acceptance. The remaining gates are actual test-number delivery between two authorized buyer/seller identities, all-role company verification and document review, multilingual text/media, approved matching and negotiation, invitations and agreed commission recording, verified-party meetings, shipment/customs/payment evidence/completion/feedback, admin reports/announcements, and browser visual checks. Use synthetic fixtures or expressly authorized test identities. Human verification, legal, banking, inspection and payout decisions remain human controlled. Connecting the final business number also requires its Meta configuration and delivery verification.

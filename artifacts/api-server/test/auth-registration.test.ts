@@ -26,6 +26,7 @@ test('web registration keeps roles pending and accepts only authorized, consente
     const post=async(body:any)=>fetch(`http://127.0.0.1:${server.address().port}/auth/register`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
     const base={full_name:'Synthetic Registrant',password:'Fixture-Password9!',accepted_terms:true,adult_business_user:true};
     for(const role of ['buyer','seller','agent']){const response=await post({...base,role,email:`${role}@example.invalid`});assert.equal(response.status,201);const body=await response.json();assert.equal(body.user.role,role);assert.equal(body.user.status,'pending');}
+    const phoneClaim=await post({...base,role:'buyer',email:'phone-claim@example.invalid',phone:'10000000001'});assert.equal(phoneClaim.status,400);assert.equal(state.users.length,3);
     assert.equal(state.sessions,3);assert.equal(state.audits.length,3);assert.equal(state.preferences.length,3);
     assert.ok(state.audits.every((row:any)=>row.metadata.termsAccepted&&row.metadata.adultBusinessUser));
     assert.ok(state.preferences.every((row:any)=>row.optionalWhatsApp===false&&row.announcements===false));
