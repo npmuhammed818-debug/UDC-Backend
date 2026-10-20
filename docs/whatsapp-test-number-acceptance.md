@@ -119,6 +119,24 @@ they exclude the raw response and trade values. Live inquiry persistence must
 still be verified after release. These changes reduce avoidable calls; they do
 not remove external quotas or repair rejected provider credentials.
 
+## Natural inquiry context follow-up
+
+A complete natural buyer inquiry without a `new requirement` prefix still
+entered the old active negotiation. The model compared its Jebel Ali destination
+with the old Dubai destination and incorrectly described this as an Incoterm
+change. This inquiry was not accepted as correct behavior.
+
+Complete, unquoted natural buyer inquiries now start fresh intake even if an old
+deal is active. Existing incomplete intake drafts retain their facts on followup;
+explicit corrections, quoted deal replies, hypotheticals and incomplete buying
+statements retain normal contextual handling. Exact repetitions of a submitted
+inquiry stay with that intake and do not create another submission. The old deal
+is not amended. Regression fixtures verify the reported natural inquiry saves
+Incoterm `CIF` and destination `Jebel Ali` independently of an old `Dubai` deal.
+Model instructions distinguish Incoterm from destination and acknowledge clear
+proposed delivery details without asking the sender to repeat them. Live reply
+quality and persisted inquiry acceptance remain to be verified after release.
+
 ## Switching to the business number
 
 Keep the same code and existing callback. Configure the business phone-number ID,

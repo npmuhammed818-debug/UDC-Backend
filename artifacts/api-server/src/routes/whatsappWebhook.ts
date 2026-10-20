@@ -11,7 +11,7 @@ import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
-import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake } from "../akif/dealDecisionSafety";
+import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
@@ -1053,8 +1053,6 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
       if (typeof message.text?.body !== "string") continue;
 
-      const explicitNewIntake = isExplicitSeparateTradeIntake(message.text.body);
-
       const pendingIntake = message.from
         ? await loadWhatsAppIntakeDraft(message.from)
         : null;
@@ -1064,6 +1062,11 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         && !pendingIntake.draft.submittedRecordId
         && Boolean(pendingIntake.draft.product || pendingIntake.draft.quantity),
       );
+      const repeatedSubmittedIntake = Boolean(pendingIntake && !pendingIntake.stale
+        && pendingIntake.draft.submittedRecordId
+        && pendingIntake.draft.conversation?.at(-1)?.message.trim().toLowerCase() === message.text.body.trim().toLowerCase());
+      const explicitNewIntake = isExplicitSeparateTradeIntake(message.text.body)
+        || (!hasPendingIntake && !repeatedSubmittedIntake && !message.context?.id && isStandaloneBuyerInquiry(message.text.body));
 
       if (
         message.from
@@ -1080,7 +1083,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
 
-      if (message.from && !hasPendingIntake && !explicitNewIntake) {
+      if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
         const dealMessage = await handleDealWhatsAppMessage(
           message.from,
           message.text.body,
@@ -1229,8 +1232,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
         continue;
       }
-      const intakeRole = intakeDecision.role;
-      const previousDraft = !explicitNewIntake && !intakeDecision.newIntake && savedIntake?.role === intakeRole
+      const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
+      const previousDraft = !explicitNewIntake && (repeatedSubmittedIntake || !intakeDecision.newIntake) && savedIntake?.role === intakeRole
         ? savedIntake.draft : null;
 
       const contactName =
