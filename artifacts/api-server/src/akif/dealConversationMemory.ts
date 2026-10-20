@@ -1,5 +1,16 @@
 type UnknownRecord = Record<string, unknown>;
 
+export function recentDealConversation<T extends { id: string; intent: string }>(history: T[], replyContextKind?: string): T[] {
+  const eligible = history.filter(event => event.intent !== "new_trade_intake");
+  const recent = eligible.slice(-24);
+  const quotedId = replyContextKind?.match(/^mediated_[a-z_]+:([0-9a-f-]{36})$/i)?.[1];
+  const quoted = quotedId ? eligible.find(event => event.id === quotedId) : undefined;
+  // A reply to an older delivered offer must retain that exact offer, rather than
+  // borrowing terms from a more recent conversation. Keep the total bounded.
+  return quoted && !recent.some(event => event.id === quoted.id)
+    ? [quoted, ...recent.slice(-23)] : recent;
+}
+
 function asRecord(value: unknown): UnknownRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord

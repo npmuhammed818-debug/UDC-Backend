@@ -78,6 +78,29 @@ For every case retain expected/actual results and associated message/deal/docume
 IDs in the authorized project records, without copying private content or secrets
 into the public repository. Mark each row passed only after the real test.
 
+## Live chat follow-up
+
+The owner's first greeting reached the signed webhook but exposed unapplied
+agent-chain columns on `deal_participants`. The existing
+`lib/db/migrations/0015_deal_agent_referral_chain.sql` was applied and verified.
+A catalog comparison of every exported application table/column then found no
+missing tables or columns. This check does not validate every runtime workflow.
+
+The next greeting passed persistence and outbound acknowledgement, but the worker
+returned HTTP 502 and the configured NVIDIA/OpenAI fallbacks returned 403/401.
+The owner received the explicit processing-failure reply. This is not a successful
+AI-conversation acceptance result.
+
+That deal had 152 history events; the old prompt retained an unbounded significant
+history. Limit the model conversation to the latest 24 eligible events, retaining
+the exact quoted delivered offer when it is older. Confirmed deal facts stay in
+structured memory; omitted history is not evidence of agreement or permission.
+Context-loading failures now produce a safe unprocessed result rather than an
+uncaught webhook error. Worker diagnostics log only exception class, numeric
+provider HTTP status and input lengths, never provider error bodies or user text.
+History growth is a confirmed issue; provider diagnostics must establish whether
+it caused the live model rejection before attributing that rejection to a quota.
+
 ## Switching to the business number
 
 Keep the same code and existing callback. Configure the business phone-number ID,

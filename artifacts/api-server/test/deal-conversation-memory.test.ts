@@ -1,6 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { conversationSafeDealMemory } from "../src/akif/dealConversationMemory.ts";
+import { conversationSafeDealMemory, recentDealConversation } from "../src/akif/dealConversationMemory.ts";
+
+test("long deal history is bounded while retaining the exact quoted offer", () => {
+  const quote = { id: "11111111-1111-4111-8111-111111111111", intent: "counteroffer", text: "USD 5900" };
+  const events = [quote, ...Array.from({ length: 151 }, (_, index) => ({ id: `event-${index}`, intent: "counteroffer", text: "later proposal" }))];
+  const recent = recentDealConversation(events);
+  assert.equal(recent.length, 24);
+  assert.equal(recent.at(-1)?.id, "event-150");
+  assert.ok(!recent.includes(quote));
+  const anchored = recentDealConversation(events, `mediated_counteroffer:${quote.id}`);
+  assert.equal(anchored.length, 24);
+  assert.equal(anchored[0], quote);
+  assert.equal(anchored.at(-1)?.id, "event-150");
+  assert.equal(recentDealConversation([...events, { id: "unrelated", intent: "new_trade_intake", text: "other deal" }]).length, 24);
+  assert.equal(recentDealConversation(events, "mediated_counteroffer:missing").length, 24);
+});
 
 test("conversation memory removes old cross-deal chat and internal extraction errors", () => {
   const snapshot = {
