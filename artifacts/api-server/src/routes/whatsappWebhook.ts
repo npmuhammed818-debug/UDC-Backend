@@ -969,6 +969,12 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
           if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
+          const [account] = await db.select({ status: usersTable.status }).from(usersTable)
+            .where(eq(usersTable.phone, message.from)).limit(1);
+          if (account?.status === "suspended" || account?.status === "rejected") {
+            await deliverWhatsAppReply(message.from, "Your UDC account needs admin review before I can process trade messages.");
+            continue;
+          }
         } catch {
           req.log.error({ flow: "privacy_consent", reason: "consent_check_failed" }, "UDC privacy check unavailable");
           await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");

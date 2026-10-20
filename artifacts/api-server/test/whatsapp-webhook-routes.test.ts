@@ -138,7 +138,10 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.decision = { role: "buyer", fields: {}, reply: "Which product do you need?" };
       await message({ text: { body: "What can I buy?" } }); assert.equal(state.intake.length, 1);
       rows.usersTable[0].status = "suspended";
+      state.saved = { role: "buyer", draft: { product: "Copper", quantity: 100 }, stale: false };
       await message({ text: { body: "I need copper USD 5900" } }); assert.equal(state.intake.length, 1);
+      await message({ image: { id: "private-image", mime_type: "image/png" } });
+      assert.deepEqual(state.uploaded, []);
       assert.match(state.sent.at(-1).body, /admin review/);
     });
     await t.test("documents require review and explicit access before sharing", async () => {
