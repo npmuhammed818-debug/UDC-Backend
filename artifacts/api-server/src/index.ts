@@ -1,3 +1,4 @@
+import { startAcceptanceProbe } from "./akif/acceptanceProbe";
 import app from "./app";
 import { getAkifWorkerCapabilities, isAkifWorkerConfigured } from "./akif/intelligence/workerClient";
 import { logger } from "./lib/logger";
@@ -27,6 +28,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  void startAcceptanceProbe();
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
   if (isAkifWorkerConfigured()) {

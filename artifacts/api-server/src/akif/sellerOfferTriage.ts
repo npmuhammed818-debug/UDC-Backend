@@ -1,5 +1,10 @@
 export type SellerOfferDraft = {
   product?: string;
+  specification?: string;
+  availability?: string;
+  inspectionTerms?: string;
+  monthlyCapacity?: number;
+  minimumOrderQuantity?: number;
   quantity?: number;
   unit?: string;
   price?: number;

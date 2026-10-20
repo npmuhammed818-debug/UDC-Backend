@@ -61,6 +61,10 @@ export function mergeBuyerRequirementDraft(
 ): BuyerRequirementDraft {
   const merged = {
     product: mergeProduct(previous?.product, current.product),
+    specification: current.specification ?? previous?.specification,
+    deliveryTime: current.deliveryTime ?? previous?.deliveryTime,
+    contractDuration: current.contractDuration ?? previous?.contractDuration,
+    inspectionRequirements: current.inspectionRequirements ?? previous?.inspectionRequirements,
     quantity: current.quantity ?? previous?.quantity,
     unit: current.unit ?? previous?.unit,
     destination: current.destination ?? previous?.destination,
@@ -93,6 +97,11 @@ export function mergeSellerOfferDraft(
 ): SellerOfferDraft {
   const merged = {
     product: current.product ?? previous?.product,
+    specification: current.specification ?? previous?.specification,
+    availability: current.availability ?? previous?.availability,
+    inspectionTerms: current.inspectionTerms ?? previous?.inspectionTerms,
+    monthlyCapacity: current.monthlyCapacity ?? previous?.monthlyCapacity,
+    minimumOrderQuantity: current.minimumOrderQuantity ?? previous?.minimumOrderQuantity,
     quantity: current.quantity ?? previous?.quantity,
     unit: current.unit ?? previous?.unit,
     price: current.price ?? previous?.price,

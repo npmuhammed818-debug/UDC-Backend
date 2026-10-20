@@ -26,9 +26,10 @@ test("intake validation accepts absent optional facts without coercing or loggin
   try {
     console.warn = (...args) => { logs.push(args); };
     const { parseIntakeConversation } = await import(output);
-    const valid = { role: "buyer", newIntake: true, fields: { product: "Copper", quantity: 100, targetPrice: 5900, currency: "USD", destination: "Jebel Ali", price: null, originCountry: null }, reply: "I’ll send this for UDC review." };
+    const valid = { role: "buyer", newIntake: true, fields: { product: "Copper", quantity: 100, targetPrice: 5900, currency: "USD", destination: "Jebel Ali", specification: "Grade A", deliveryTime: "30 days", monthlyCapacity: 1000, price: null, originCountry: null }, reply: "I’ll send this for UDC review." };
     const parsed = parseIntakeConversation(JSON.stringify(valid));
     assert.equal(parsed.fields.quantity, 100); assert.equal(parsed.fields.targetPrice, 5900);
+    assert.equal(parsed.fields.specification, "Grade A"); assert.equal(parsed.fields.deliveryTime, "30 days"); assert.equal(parsed.fields.monthlyCapacity, 1000);
     assert.equal(parsed.fields.price, undefined); assert.equal(parsed.fields.originCountry, undefined);
     assert.equal(logs.length, 0);
     assert.equal(parseIntakeConversation(JSON.stringify({ ...valid, fields: { quantity: "PRIVATE_TRADE_VALUE" } })), null);

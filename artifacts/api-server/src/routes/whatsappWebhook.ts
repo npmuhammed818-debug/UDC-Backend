@@ -1261,6 +1261,11 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               originCountry: sellerDraft.originCountry,
               destination: sellerDraft.destination,
               incoterm: sellerDraft.incoterm,
+              specification: sellerDraft.specification,
+              availability: sellerDraft.availability,
+              inspectionTerms: sellerDraft.inspectionTerms,
+              monthlyCapacity: sellerDraft.monthlyCapacity,
+              minimumOrderQuantity: sellerDraft.minimumOrderQuantity,
             })
           : null
         : buyerDraft && buyerDraft.missingFields.length === 0 && message.from
@@ -1274,6 +1279,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               currency: buyerDraft.currency ?? "USD",
               destination: buyerDraft.destination!,
               incoterm: buyerDraft.incoterm,
+              specification: buyerDraft.specification,
+              deliveryTime: buyerDraft.deliveryTime,
+              contractDuration: buyerDraft.contractDuration,
+              inspectionRequirements: buyerDraft.inspectionRequirements,
             })
           : null;
 
@@ -1288,6 +1297,11 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               originCountry: sellerDraft.originCountry,
               destination: sellerDraft.destination,
               incoterm: sellerDraft.incoterm,
+              specification: sellerDraft.specification,
+              availability: sellerDraft.availability,
+              inspectionTerms: sellerDraft.inspectionTerms,
+              monthlyCapacity: sellerDraft.monthlyCapacity,
+              minimumOrderQuantity: sellerDraft.minimumOrderQuantity,
             }
           : {
               product: buyerDraft?.product,
@@ -1297,6 +1311,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               currency: buyerDraft?.currency,
               destination: buyerDraft?.destination,
               incoterm: buyerDraft?.incoterm,
+              specification: buyerDraft?.specification,
+              deliveryTime: buyerDraft?.deliveryTime,
+              contractDuration: buyerDraft?.contractDuration,
+              inspectionRequirements: buyerDraft?.inspectionRequirements,
             };
 
         await saveWhatsAppIntakeDraft({
