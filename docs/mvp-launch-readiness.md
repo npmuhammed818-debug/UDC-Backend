@@ -136,8 +136,10 @@ Use authorized buyer, seller, agent and admin test participants:
     does not cancel existing deal obligations or erase records.
 
 Record expected/actual outcomes and deal/message/document IDs. Do not call the
-launch accepted until failures are resolved. These tests require the real number,
-authorized sessions and test participants; infrastructure probes cannot replace them.
+launch accepted until failures are resolved. These tests can run now using the
+connected Meta test number and authorized test recipients, sessions and participants.
+Repeat delivery and onboarding checks after switching to the business number.
+Infrastructure probes cannot replace these checks.
 
 ## Preparation without the new number — 17 October 2026
 
