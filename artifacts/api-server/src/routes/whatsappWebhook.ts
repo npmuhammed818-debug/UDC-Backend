@@ -809,6 +809,7 @@ async function handleDealWhatsAppMessage(
   const aiDecision = await interpretActiveDealConversation({
     dealId: deal.id,
     participantRole: sender.role,
+    participantUserId: sender.id,
     message: messageBody,
     replyContextKind,
   });

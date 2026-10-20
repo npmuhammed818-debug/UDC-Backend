@@ -8,7 +8,7 @@
     "build": "pnpm -w run typecheck:libs && pnpm run typecheck && pnpm run test && pnpm --filter @workspace/udc-app run build && node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node test/run.mjs"
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",

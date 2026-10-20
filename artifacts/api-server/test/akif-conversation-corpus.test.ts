@@ -163,7 +163,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "../akif/recordPendingSellerOffer":
       "export const recordPendingSellerOffer=async()=>({id:'offer-1'});",
     "./intelligence/dealContext":
-      "export const getAkifDealContext=async()=>{const s=globalThis.__udcChatTest;if(s.contextFailure)throw Error('PRIVATE_DATABASE_ERROR');return {deal:s.deal,product:{name:'Copper'},conversation:s.tables.dealConversationEventsTable,buyerRequest:{destination:'Dubai'},documents:[]}};",
+      "export const getAkifDealContext=async()=>{const s=globalThis.__udcChatTest;if(s.contextFailure)throw Error('PRIVATE_DATABASE_ERROR');return {deal:s.deal,product:{name:'Copper'},conversation:s.tables.dealConversationEventsTable,buyerRequest:{destination:'Dubai',targetPrice:'PRIVATE_REQUEST_LIMIT'},sellerListing:{price:'PRIVATE_SELLER_FLOOR'},documents:[]}};",
   };
   const output = fileURLToPath(
     new URL(`../.chat-test-${randomUUID()}.mjs`, import.meta.url),
@@ -371,10 +371,14 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     assert.equal(s.sent.at(-2).to, "111111111");
     const turn = JSON.parse(s.prompts.at(-1).messages[1].content);
     assert.equal(turn.participantRole, "seller");
+    assert.doesNotMatch(JSON.stringify(turn.dealMemory), /PRIVATE_REQUEST_LIMIT|PRIVATE_SELLER_FLOOR/);
+    const quotedPublicOffer = turn.recentConversation.find((event: any) => event.text === offer.body);
+    assert.ok(quotedPublicOffer); assert.doesNotMatch(quotedPublicOffer.text, /maximum|private|7,900/);
+
     assert.equal(turn.deal.destination, "Dubai");
     assert.ok(
-      turn.recentConversation.some(
-        (e: any) => e.intent === "coordinator_reply",
+      turn.recentConversation.every(
+        (e: any) => e.intent !== "coordinator_reply" || e.userId === s.deal.sellerUserId,
       ),
     );
     assert.match(

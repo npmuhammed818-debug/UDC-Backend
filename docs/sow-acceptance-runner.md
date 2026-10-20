@@ -49,3 +49,13 @@ Set `UDC_ACCEPTANCE_MODE=media` with a new run ID to opt into three bounded medi
 Worker image transcription supports an explicit `AKIF_VISION_MODEL`, including `groq/qwen/qwen3.8-27b` with the existing Groq key. The prior explicitly enabled Gemini path stays available when no override is set. Provider errors expose only exception class, numeric HTTP status, byte count and MIME type. Human document review and voice text confirmation remain mandatory. Configuration and live service acceptance still must pass before claiming media ready.
 
 Model selection was checked against Groq's official [vision documentation](https://console.groq.com/docs/vision), [Qwen model card](https://console.groq.com/docs/model/qwen/qwen3.8-27b) and [free-plan limits](https://console.groq.com/docs/rate-limits) on 20 October 2026. The media path uses instruct mode, no retry, and the existing service plans.
+
+## Participant model privacy and build isolation
+
+The customer-facing model now receives confirmed public deal fields, its participant's own history and only the actually delivered text from the counterparty. Another participant's undelivered messages and coordinator replies are excluded. Private request/listing prices, commissions and banking references are excluded. Document status can be visible to its owner, but extracted document facts enter the coordinator prompt only after review and access for both trading parties. Full internal/admin context remains available to authorized internal workflows.
+
+A deterministic output guard blocks contact details and numeric private limits from current or historical private clauses. A new exact offered-price instruction can explicitly release that same value as a proposal. These guards supplement input minimization; they do not certify arbitrary model answers or document authenticity. Tests inspect actual broker prompts as well as the projection and relay functions. The grant query was checked with a read-only EXPLAIN against existing indexes.
+
+The first media-mode API deploy exposed a test-harness issue: build tests inherited runtime probe configuration. The API test launcher now starts tests with a small environment allowlist and no runtime service credentials or probe flags. Release verification is also run with media probe flags set on the parent to reproduce that deployment condition safely.
+
+Local component server-render checks passed for execution controls, feedback and invitation cards. Full browser visual acceptance remains pending: the browser download was blocked in the coding environment. This limitation is separate from passing route tests and production builds.

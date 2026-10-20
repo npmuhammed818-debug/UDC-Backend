@@ -1,3 +1,4 @@
+import { containsContactDetails, violatesPrivateRelay } from "./dealConversationPrivacy.ts";
 import { triageBuyerRequirement } from "./buyerRequirementTriage.ts";
 
 export type DealConversationDecision = {
@@ -167,6 +168,7 @@ export function normalizeModelDecision(input: {
   content: string;
   participantRole: string;
   incomingMessage: string;
+  privateContext?: string[];
   replyContextKind?: string;
   deal: DealStateForReply;
 }): DealConversationDecision | null {
@@ -235,6 +237,7 @@ export function normalizeModelDecision(input: {
       && !narratesCounterparty(rawReply)
       && !looksLikePrecisionChatter(rawReply)
       && !looksStructured(rawReply)
+      && !containsContactDetails(rawReply)
       ? rawReply
       : null;
   if (!replyToSender) return null;
@@ -282,6 +285,10 @@ export function normalizeModelDecision(input: {
     && !looksStructured(rawRelay)
     ? rawRelay
     : null;
+
+  if (relayToCounterparty && violatesPrivateRelay(relayToCounterparty, [input.incomingMessage, ...(input.privateContext ?? [])], input.incomingMessage)) {
+    return { intent, replyToSender: "I’ll keep those details private. Send the terms you want shared with the other party.", relay: false, relayToCounterparty: null, newTradeIntake: false };
+  }
 
   return {
     intent,

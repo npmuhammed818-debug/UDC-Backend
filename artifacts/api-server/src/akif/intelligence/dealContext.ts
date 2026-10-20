@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   auditLogsTable,
   buyerRequestsTable,
@@ -11,6 +11,7 @@ import {
   dealsTable,
   documentExtractionsTable,
   documentsTable,
+  documentAccessTable,
   inspectionsTable,
   matchesTable,
   productsTable,
@@ -30,7 +31,7 @@ const safeUserSelection = {
   userType: usersTable.userType,
 };
 
-export async function getAkifDealContext(dealId: string) {
+export async function getAkifDealContext(dealId: string, viewerUserId?: string) {
   const [deal] = await db
     .select()
     .from(dealsTable)
@@ -54,6 +55,7 @@ export async function getAkifDealContext(dealId: string) {
     commissions,
     conversation,
     history,
+    documentGrants,
   ] = await Promise.all([
     db.select().from(productsTable).where(eq(productsTable.id, deal.productId)).limit(1),
     deal.buyerRequestId
@@ -73,6 +75,9 @@ export async function getAkifDealContext(dealId: string) {
     db.select().from(commissionsTable).where(eq(commissionsTable.dealId, dealId)).orderBy(asc(commissionsTable.createdAt)),
     db.select().from(dealConversationEventsTable).where(eq(dealConversationEventsTable.dealId, dealId)).orderBy(asc(dealConversationEventsTable.createdAt)),
     db.select().from(auditLogsTable).where(eq(auditLogsTable.entityId, dealId)).orderBy(asc(auditLogsTable.createdAt)),
+    viewerUserId ? db.select({ documentId: documentAccessTable.documentId, userId: documentAccessTable.userId }).from(documentAccessTable)
+      .innerJoin(documentsTable, eq(documentAccessTable.documentId, documentsTable.id))
+      .where(and(inArray(documentAccessTable.userId, [deal.buyerUserId, deal.sellerUserId]), eq(documentsTable.dealId, dealId))) : Promise.resolve([]),
   ]);
 
   const buyerCompanyId = buyerRequest[0]?.companyId;
@@ -98,6 +103,7 @@ export async function getAkifDealContext(dealId: string) {
 
   return {
     deal,
+    documentGrants,
     product: product[0] ?? null,
     buyerRequest: buyerRequest[0] ?? null,
     sellerListing: sellerListing[0] ?? null,
