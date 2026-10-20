@@ -1,5 +1,9 @@
 export type BuyerRequirementDraft = {
   product?: string;
+  specification?: string;
+  deliveryTime?: string;
+  contractDuration?: string;
+  inspectionRequirements?: string;
   quantity?: number;
   unit?: string;
   destination?: string;

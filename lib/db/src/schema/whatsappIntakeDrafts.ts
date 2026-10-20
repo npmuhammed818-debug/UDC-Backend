@@ -10,6 +10,14 @@ export type WhatsAppIntakeDraftPayload = {
   submittedRecordId?: string;
   conversation?: Array<{ message: string; reply: string }>;
   product?: string;
+  specification?: string;
+  deliveryTime?: string;
+  contractDuration?: string;
+  inspectionRequirements?: string;
+  availability?: string;
+  inspectionTerms?: string;
+  monthlyCapacity?: number;
+  minimumOrderQuantity?: number;
   quantity?: number;
   unit?: string;
   destination?: string;

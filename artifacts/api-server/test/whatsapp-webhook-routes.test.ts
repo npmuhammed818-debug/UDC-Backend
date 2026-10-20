@@ -159,10 +159,13 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       reset(); seedDeal(); rows.dealsTable[0].destination = "Dubai";
       const body = "I need 100 MT copper cathode, target USD 5,900 per MT, CIF Jebel Ali";
       state.saved = { role: "buyer", draft: { product: "Sugar", quantity: 999, destination: "Dubai", submittedRecordId: "old-submission" }, stale: false };
-      state.decision = { role: "buyer", newIntake: false, fields: { product: "Copper cathode", quantity: 100, targetPrice: 5900, currency: "USD", destination: "Jebel Ali", incoterm: "CIF" }, reply: "I’ll send this for UDC review." };
+      state.decision = { role: "buyer", newIntake: false, fields: { product: "Copper cathode", quantity: 100, targetPrice: 5900, currency: "USD", destination: "Jebel Ali", incoterm: "CIF", specification: "Grade A", deliveryTime: "30 days", contractDuration: "12 months", inspectionRequirements: "SGS at destination" }, reply: "I’ll send this for UDC review." };
       await message({ text: { body } });
       assert.equal(state.dealCalls, 0); assert.equal(state.intake[0].memory, null);
       assert.equal(state.recorded[0].destination, "Jebel Ali"); assert.equal(state.recorded[0].incoterm, "CIF");
+      assert.equal(state.recorded[0].specification, "Grade A");
+      assert.equal(state.recorded[0].deliveryTime, "30 days");
+
       assert.equal(rows.dealsTable[0].destination, "Dubai", "a fresh inquiry must not amend an old deal");
       state.decision.newIntake = true; // A model classification cannot duplicate an identical submitted inquiry.
       await message({ text: { body } });

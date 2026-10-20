@@ -10,7 +10,8 @@
     "test": "pnpm --filter @workspace/api-server run test",
     "verify": "pnpm run typecheck && pnpm run test",
     "release:verify": "pnpm run verify && pnpm --filter @workspace/api-server run build",
-    "smoke:production": "pnpm --filter @workspace/scripts run smoke:production"
+    "smoke:production": "pnpm --filter @workspace/scripts run smoke:production",
+    "acceptance": "node scripts/acceptance/run.mjs"
   },
   "private": true,
   "dependencies": {

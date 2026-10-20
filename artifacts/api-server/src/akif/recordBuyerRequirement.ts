@@ -6,6 +6,10 @@ import { hashPassword } from "../auth/passwords";
 import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 export const buyerIntakeSchema = z.object({
+  specification: z.string().min(1).max(2000).optional(),
+  deliveryTime: z.string().min(1).max(2000).optional(),
+  contractDuration: z.string().min(1).max(2000).optional(),
+  inspectionRequirements: z.string().min(1).max(2000).optional(),
   phone: z.string().min(7).max(32),
   fullName: z.string().min(2).max(120),
   product: z.string().min(2).max(120).default("Copper scrap"),
@@ -28,6 +32,10 @@ export async function recordPendingBuyerRequirement(input: z.infer<typeof buyerI
     buyerUserId: buyer.id, productId: product.id, quantity: String(input.quantity), unit: input.unit,
     targetPrice: input.targetPrice ? String(input.targetPrice) : undefined, currency: input.currency.toUpperCase(),
     destination: input.destination, preferredIncoterm: input.incoterm,
+    specification: input.specification,
+    additionalConditions: input.deliveryTime ? `Requested delivery: ${input.deliveryTime}` : undefined,
+    contractDuration: input.contractDuration,
+    inspectionRequirements: input.inspectionRequirements,
     paymentTerms: udcPaymentTerms, status: "pending_admin_review",
   }).returning({ id: buyerRequestsTable.id, status: buyerRequestsTable.status });
   return requirement;

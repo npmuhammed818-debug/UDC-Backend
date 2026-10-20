@@ -24,3 +24,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run release:verify
+      - run: pnpm run acceptance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sow-regression-report
+          path: .acceptance-results/
