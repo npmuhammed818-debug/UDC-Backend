@@ -35,6 +35,8 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "dealParticipantsTable",
     "dealsTable",
     "documentsTable",
+    "documentAccessTable",
+    "productsTable",
     "whatsappMessageContextsTable",
     "whatsappUserContextsTable",
     "whatsappIntakeDraftsTable",
@@ -146,7 +148,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
   const stubs: Record<string, string> = {
     "@workspace/db": `export const db=globalThis.__udcChatTest.db;${names.map((n) => `export const ${n}=new Proxy({_name:'${n}'},{get:(t,k)=>k==='_name'?t._name:{key:k}});`).join("")}`,
     "drizzle-orm":
-      `export const eq=(c,v)=>r=>r[c.key]===v;export const and=(...ps)=>r=>ps.every(p=>p(r));export const desc=x=>x;export const sql=(strings,...values)=>strings.join("").includes("fingerprint") ? (r=>r.metadata?.fingerprint===values.at(-1)) : {};`,
+      `export const eq=(c,v)=>r=>r[c.key]===v;export const and=(...ps)=>r=>ps.every(p=>p(r));export const or=(...ps)=>r=>ps.some(p=>p(r));export const inArray=()=>{throw Error('unexpected document lookup');};export const desc=x=>x;export const sql=(strings,...values)=>strings.join("").includes("fingerprint") ? (r=>r.metadata?.fingerprint===values.at(-1)) : {};`,
     "../auth/middleware": "export const requireRole=()=>()=>{};",
     "../akif/queueResearch":
       "export const queueWhatsAppResearch=async()=>null;",

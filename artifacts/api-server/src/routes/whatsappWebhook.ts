@@ -1,7 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq } from "drizzle-orm";
-import { db, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -19,6 +19,7 @@ import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intak
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
+import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraft } from "../deals/whatsappDraft";
 
 const router: IRouter = Router();
 
@@ -309,7 +310,10 @@ function requestedStoredDocumentType(text: string, replyContextKind?: string) {
   return null;
 }
 
-async function latestStoredDealDocument(dealId: string, documentType: string) {
+async function latestStoredDealDocument(dealId: string, documentType: string, senderId: string, recipientId: string) {
+  const sharedWith = (userId: string) => inArray(documentsTable.id,
+    db.select({ documentId: documentAccessTable.documentId }).from(documentAccessTable)
+      .where(eq(documentAccessTable.userId, userId)));
   const condition = documentType === "LATEST"
     ? eq(documentsTable.dealId, dealId)
     : and(
@@ -324,14 +328,35 @@ async function latestStoredDealDocument(dealId: string, documentType: string) {
       createdAt: documentsTable.createdAt,
     })
     .from(documentsTable)
-    .where(condition)
+    .where(and(condition,
+      // A deal association alone is not permission to read another party's file.
+      or(eq(documentsTable.uploadedBy, senderId),
+        and(eq(documentsTable.status, "approved"), sharedWith(senderId))),
+      // Forwarding requires human review and an explicit grant to the recipient.
+      ...(recipientId === senderId ? [] : [eq(documentsTable.status, "approved"), sharedWith(recipientId)]),
+    ))
     .orderBy(desc(documentsTable.createdAt))
     .limit(1);
 
   return document ?? null;
 }
 
-async function resolveActiveDealForUser(userId: string) {
+async function resolveActiveDealForUser(userId: string, replyToProviderMessageId?: string) {
+  if (replyToProviderMessageId) {
+    const [context] = await db.select({ dealId: whatsappMessageContextsTable.dealId })
+      .from(whatsappMessageContextsTable).where(and(
+        eq(whatsappMessageContextsTable.providerMessageId, replyToProviderMessageId),
+        eq(whatsappMessageContextsTable.recipientUserId, userId),
+      )).limit(1);
+    if (!context) return null;
+    const [participant] = await db.select({ dealId: dealParticipantsTable.dealId })
+      .from(dealParticipantsTable).where(and(
+        eq(dealParticipantsTable.dealId, context.dealId),
+        eq(dealParticipantsTable.userId, userId),
+        eq(dealParticipantsTable.status, "active"),
+      )).limit(1);
+    return participant?.dealId ?? null;
+  }
   const [saved] = await db
     .select({ activeDealId: whatsappUserContextsTable.activeDealId })
     .from(whatsappUserContextsTable)
@@ -368,6 +393,7 @@ async function handleWhatsAppDealDocument(
   from: string,
   document: { id: string; filename?: string; mime_type?: string; caption?: string },
   inboundProviderMessageId?: string,
+  replyToProviderMessageId?: string,
 ) {
   const [sender] = await db
     .select({ id: usersTable.id, status: usersTable.status })
@@ -379,7 +405,7 @@ async function handleWhatsAppDealDocument(
     return { reply: "I got the file, but this number isn’t verified for UDC documents yet." };
   }
 
-  const dealId = await resolveActiveDealForUser(sender.id);
+  const dealId = await resolveActiveDealForUser(sender.id, replyToProviderMessageId);
   if (!dealId) {
     return { reply: "I got the file, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
   }
@@ -423,6 +449,8 @@ async function handleWhatsAppDealDocument(
   if (!savedDocument) {
     throw new Error("document_record_not_created");
   }
+
+  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "owner" });
 
   void processDocumentIntelligence({
     documentId: savedDocument.id,
@@ -473,7 +501,6 @@ async function handleDealWhatsAppMessage(
   inboundProviderMessageId?: string,
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
-  const ruleIntent = classifyConversationIntent(text);
 
   const [sender] = await db
     .select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
@@ -482,13 +509,16 @@ async function handleDealWhatsAppMessage(
     .limit(1);
 
   if (!sender) {
-    return explicitMatch || ruleIntent || replyToProviderMessageId
+    return explicitMatch || replyToProviderMessageId
       ? { reply: "I don’t recognize this number yet. Make sure it’s linked to your UDC account.", deliveredToCounterparty: false }
       : null;
   }
 
   if (sender.status !== "verified") {
-    return explicitMatch || ruleIntent || replyToProviderMessageId
+    if (sender.status === "suspended" || sender.status === "rejected") {
+      return { reply: "Your UDC account needs admin review before I can process trade messages.", deliveredToCounterparty: false };
+    }
+    return explicitMatch || replyToProviderMessageId
       ? { reply: "I need your UDC account verified before I can handle this deal.", deliveredToCounterparty: false }
       : null;
   }
@@ -512,6 +542,8 @@ async function handleDealWhatsAppMessage(
     if (context) {
       resolvedDealId = context.dealId;
       replyContextKind = context.kind;
+    } else {
+      return { reply: "I couldn’t identify that deal message. Send the deal number so I can attach your reply safely.", deliveredToCounterparty: false };
     }
   }
 
@@ -577,6 +609,8 @@ async function handleDealWhatsAppMessage(
   const [deal] = await db
     .select({
       id: dealsTable.id,
+      dealNumber: dealsTable.dealNumber,
+      productId: dealsTable.productId,
       status: dealsTable.status,
       buyerUserId: dealsTable.buyerUserId,
       sellerUserId: dealsTable.sellerUserId,
@@ -643,10 +677,42 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
+  const draftRequest = requestedWhatsAppDraft(messageBody);
+  if (draftRequest) {
+    if (!mayPrepareWhatsAppDraft(draftRequest.type, sender.id === deal.buyerUserId)) {
+      return { reply: "That draft needs to be requested by the authorized party for this deal.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
+    const [product] = await db.select({ name: productsTable.name }).from(productsTable)
+      .where(eq(productsTable.id, deal.productId)).limit(1);
+    const terms = { dealNumber: deal.dealNumber,
+      date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
+      productName: product?.name ?? "", quantity: deal.quantity, unit: deal.unit,
+      agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination };
+    const confirmationKind = whatsappDraftConfirmation(draftRequest.type, terms);
+    if (!draftRequest.confirmed || replyContextKind !== confirmationKind) {
+      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? DLC goes directly to the seller, with payment after SGS at destination. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
+        deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: confirmationKind };
+    }
+    const draft = generateWhatsAppDraft(draftRequest.type, terms);
+    const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.txt`;
+    const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft, "utf8"), "text/plain");
+    await db.transaction(async tx => {
+      const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
+        documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
+      await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "owner" });
+      await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
+        entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
+    });
+    return { reply: `Prepared the ${draftRequest.type} draft for your review.`, deliveredToCounterparty: false,
+      dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
+        storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.txt`, draft: true } };
+  }
+
   const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
   if (requestedDocument) {
     const deliveryTarget = requestedDealDocumentDeliveryTarget(messageBody, sender.role);
-    const storedDocument = await latestStoredDealDocument(deal.id, requestedDocument);
+    const storedDocument = await latestStoredDealDocument(deal.id, requestedDocument, sender.id,
+      deliveryTarget === "counterparty" ? receiverUserId : sender.id);
 
     if (storedDocument) {
       const storageObjectPath = parseStoragePath(storedDocument.fileUrl);
@@ -655,12 +721,12 @@ async function handleDealWhatsAppMessage(
 
         if (deliveryTarget === "counterparty") {
           const [receiver] = await db
-            .select({ phone: usersTable.phone })
+            .select({ phone: usersTable.phone, status: usersTable.status })
             .from(usersTable)
             .where(eq(usersTable.id, receiverUserId))
             .limit(1);
 
-          if (!receiver?.phone) {
+          if (!receiver?.phone || receiver.status !== "verified") {
             return {
               reply: `I’ve got the ${storedDocument.documentType}, but it didn’t send. I’ll keep it here for now.`,
               deliveredToCounterparty: false,
@@ -727,10 +793,10 @@ async function handleDealWhatsAppMessage(
       }
     }
 
-    if (deliveryTarget === "counterparty") {
+    {
       const label = requestedDocument === "LATEST" ? "requested document" : requestedDocument;
       return {
-        reply: `I don’t have the ${label} yet. Send it here and I’ll pass it on.`,
+        reply: `I don’t have a reviewed ${label} cleared for sharing yet. UDC needs to review and approve access before I can send it.`,
         deliveredToCounterparty: false,
         dealId: deal.id,
         recipientUserId: sender.id,
@@ -903,6 +969,12 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
           if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); continue; }
+          const [account] = await db.select({ status: usersTable.status }).from(usersTable)
+            .where(eq(usersTable.phone, message.from)).limit(1);
+          if (account?.status === "suspended" || account?.status === "rejected") {
+            await deliverWhatsAppReply(message.from, "Your UDC account needs admin review before I can process trade messages.");
+            continue;
+          }
         } catch {
           req.log.error({ flow: "privacy_consent", reason: "consent_check_failed" }, "UDC privacy check unavailable");
           await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");
@@ -919,7 +991,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
           const [speaker] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
-          const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id) : null;
+          const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id, message.context?.id) : null;
           if (voiceDealId && speaker) {
             await db.insert(dealConversationEventsTable).values({ dealId: voiceDealId, userId: speaker.id,
               participantRole: speaker.role, intent: "voice_transcript_unconfirmed",
@@ -948,6 +1020,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               caption: message.document.caption,
             },
             message.id,
+            message.context?.id,
           );
           if ("duplicate" in documentResult && documentResult.duplicate) {
             req.log.info(
@@ -1042,7 +1115,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             }
 
             const replyBody = documentDelivered
-              ? `Sent the ${dealMessage.documentToSender.documentType}.`
+              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It’s a private draft for review. Complete the placeholders before sharing or signing." : ""}`
               : `I’ve got the ${dealMessage.documentToSender.documentType}, but it didn’t send. I’ll keep it here for now.`;
             const delivery = await deliverWhatsAppReply(message.from, replyBody);
 
