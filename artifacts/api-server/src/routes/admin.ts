@@ -15,7 +15,7 @@ const router: IRouter = Router();
 
 router.get("/admin/analytics", requireRole("admin"), async (_req, res) => {
   try {
-    const [stages, completedValues, products] = await Promise.all([
+    const [stages, completedValues, products, buyerCountries, sellerCountries, commissionPerformance] = await Promise.all([
       db.select({ status: dealsTable.status, count: sql<number>`count(*)::int` })
         .from(dealsTable).groupBy(dealsTable.status),
       db.select({
@@ -30,8 +30,17 @@ router.get("/admin/analytics", requireRole("admin"), async (_req, res) => {
       }).from(dealsTable).innerJoin(productsTable, eq(dealsTable.productId, productsTable.id))
         .groupBy(productsTable.id, productsTable.name)
         .orderBy(desc(sql`count(*)`)).limit(10),
+      db.select({ country: usersTable.country, dealCount: sql<number>`count(*)::int` })
+        .from(dealsTable).innerJoin(usersTable, eq(dealsTable.buyerUserId, usersTable.id))
+        .groupBy(usersTable.country).orderBy(desc(sql`count(*)`)).limit(10),
+      db.select({ country: usersTable.country, dealCount: sql<number>`count(*)::int` })
+        .from(dealsTable).innerJoin(usersTable, eq(dealsTable.sellerUserId, usersTable.id))
+        .groupBy(usersTable.country).orderBy(desc(sql`count(*)`)).limit(10),
+      db.select({ currency: commissionsTable.currency, status: commissionsTable.status,
+        count: sql<number>`count(*)::int`, amount: sql<string>`sum(${commissionsTable.amount})::text` })
+        .from(commissionsTable).groupBy(commissionsTable.currency, commissionsTable.status),
     ]);
-    res.json({ stages, completedValues, products });
+    res.json({ stages, completedValues, products, buyerCountries, sellerCountries, commissionPerformance });
   } catch {
     res.status(500).json({ error: "analytics_fetch_failed" });
   }
