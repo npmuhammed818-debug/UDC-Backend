@@ -11,7 +11,7 @@ const groups = [
   ['Private deal room', ['private-deal-routes', 'deal-document-routing', 'deal-conversation-memory', 'deal-decision-safety', 'deal-fact-reply', 'whatsapp-client'], 'Two-party text, image, PDF, voice and multilingual delivery need live acceptance.'],
   ['AI and document assistance', ['loi-draft', 'icpo-draft', 'fco-draft', 'spa-draft', 'ncnda-draft', 'whatsapp-draft', 'image-extractor-routing', 'worker-conversation', 'worker-timeouts', 'akif-brain-provider', 'decision-models', 'free-data-sources', 'official-trade-sources', 'impexq-client'], 'Real document extraction, translation and contract summaries need acceptance.'],
   ['Referrals and commissions', ['agent-referral-chain'], 'Referral attribution, commission calculation and payout recording need end-to-end acceptance.'],
-  ['Meetings', [], 'Verified-party meeting request, scheduling and in-person coordination lack automated workflow coverage.'],
+  ['Meetings', ['admin-meetings'], 'Real participant meeting requests, video delivery and in-person coordination need live acceptance.'],
   ['Post-deal operations', ['payment-policy', 'payment-milestone'], 'Shipment evidence, customs, delivery, feedback and commission distribution need workflow acceptance.'],
   ['Admin control and analytics', [], 'Admin role permissions, reports, announcements and analytics lack complete automated workflow coverage.'],
 ];

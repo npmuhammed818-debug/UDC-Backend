@@ -994,12 +994,19 @@ router.post("/admin/deals/:dealId/issues", requireRole("admin"), async (req: Aut
   }
 });
 
-const meetingInput = z.object({ scheduledAt: z.coerce.date(), provider: z.string().trim().min(2).max(50), meetingUrl: z.string().url().max(1000), agenda: z.string().trim().max(1000).optional() });
+const meetingUrlSchema = z.string().url().max(1000).refine(value => /^https?:\/\//i.test(value), { message: "Use an HTTP or HTTPS meeting link." });
+function meetingDetailsValid(input: { provider?: string | null; meetingUrl?: string | null; agenda?: string | null }) {
+  return input.provider === "in_person" ? Boolean(input.agenda?.trim()) : Boolean(input.provider && input.meetingUrl);
+}
+const meetingInput = z.object({ scheduledAt: z.coerce.date(), provider: z.string().trim().min(2).max(50), meetingUrl: meetingUrlSchema.optional(), agenda: z.string().trim().max(1000).optional() }).refine(meetingDetailsValid, { message: "Video meetings require a joining URL; in-person meetings require a location in the agenda." });
 router.post("/admin/deals/:dealId/meetings", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = meetingInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
-    const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
+    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
     if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    if (!await hasVerifiedCounterparties(deal.buyerUserId, deal.sellerUserId)) {
+      res.status(409).json({ error: "meeting_requires_verified_counterparties" }); return;
+    }
     const [meeting] = await db.insert(dealMeetingsTable).values({ dealId, requestedBy: req.authUser.id, scheduledBy: req.authUser.id, status: "scheduled", ...input }).returning();
     await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_scheduled", entityType: "deal", entityId: dealId, metadata: { meetingId: meeting.id, scheduledAt: meeting.scheduledAt, provider: meeting.provider } });
     await notifyDealCounterparties(dealId, "deal_meeting_scheduled", "Deal meeting scheduled", "A UDC deal meeting has been scheduled. Open the deal for the confirmed time and joining details.", `/deals/${dealId}`);
@@ -1013,9 +1020,16 @@ router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, re
 router.patch("/admin/meetings/:meetingId", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const id = z.string().uuid().parse(req.params["meetingId"]);
-    const input = z.object({ status: z.enum(["requested","scheduled","completed","cancelled"]).optional(), scheduledAt: z.coerce.date().optional(), provider: z.string().trim().max(80).optional(), meetingUrl: z.string().url().max(1000).optional(), agenda: z.string().trim().max(2000).optional(), adminNotes: z.string().trim().max(3000).optional() }).refine((v) => Object.keys(v).length > 0).parse(req.body);
+    const input = z.object({ status: z.enum(["requested","scheduled","completed","cancelled"]).optional(), scheduledAt: z.coerce.date().optional(), provider: z.string().trim().max(80).optional(), meetingUrl: meetingUrlSchema.optional(), agenda: z.string().trim().max(2000).optional(), adminNotes: z.string().trim().max(3000).optional() }).refine((v) => Object.keys(v).length > 0).parse(req.body);
     const [existing] = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.id, id)).limit(1);
     if (!existing) { res.status(404).json({ error: "meeting_not_found" }); return; }
+    if (input.status === "scheduled" || input.scheduledAt || input.provider || input.meetingUrl) {
+      if (!meetingDetailsValid({ ...existing, ...input })) { res.status(400).json({ error: "meeting_details_required" }); return; }
+      const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, existing.dealId)).limit(1);
+      if (!deal || !await hasVerifiedCounterparties(deal.buyerUserId, deal.sellerUserId)) {
+        res.status(409).json({ error: "meeting_requires_verified_counterparties" }); return;
+      }
+    }
     const [meeting] = await db.update(dealMeetingsTable).set({ ...input, completedAt: input.status === "completed" ? new Date() : existing.completedAt, updatedAt: new Date() }).where(eq(dealMeetingsTable.id, id)).returning();
     await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_updated", entityType: "deal", entityId: meeting.dealId, metadata: { meetingId: id, previousStatus: existing.status, newStatus: meeting.status } });
     res.json({ meeting });
