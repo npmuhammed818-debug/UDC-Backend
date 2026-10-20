@@ -1,3 +1,4 @@
+import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -327,10 +328,11 @@ const dealStatusSchema = z.object({
 const createCommissionSchema = z.object({
   dealId: z.string().uuid(),
   beneficiaryUserId: z.string().uuid(),
-  amount: z.coerce.number().positive(),
+  amount: z.union([z.number().positive(), z.string().regex(/^\d+(?:\.\d{1,6})?$/)]).optional(),
   currency: z.string().length(3).optional(),
   commissionType: z.enum(["percentage", "fixed_per_mt", "fixed_amount"]).optional(),
-  commissionRate: z.coerce.number().nonnegative().optional(),
+  commissionRate: z.union([z.number().nonnegative(), z.string().regex(/^\d+(?:\.\d{1,4})?$/)]).optional(),
+  confirmAgreedTerms: z.boolean().optional(),
 });
 
 const commissionStatusSchema = z.object({
@@ -1113,57 +1115,73 @@ router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
 router.post("/admin/commissions", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createCommissionSchema.parse(req.body);
-    const [deal] = await db.select({ id: dealsTable.id, currency: dealsTable.currency }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
-    const [beneficiary] = await db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
-    if (!deal || !beneficiary) {
-      res.status(404).json({ error: "commission_record_not_found" });
-      return;
-    }
-    if (beneficiary.role === "agent") {
-      const [assignment] = await db.select({ id: dealParticipantsTable.id }).from(dealParticipantsTable)
-        .where(and(
-          eq(dealParticipantsTable.dealId, deal.id),
-          eq(dealParticipantsTable.userId, beneficiary.id),
-          eq(dealParticipantsTable.participantRole, "agent"),
-          eq(dealParticipantsTable.status, "active"),
-        )).limit(1);
-      if (!assignment) {
-        res.status(409).json({ error: "agent_must_be_assigned_to_deal" });
+    const result = await db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'commission:' + input.dealId + ':' + input.beneficiaryUserId}))`);
+      const [deal] = await tx.select().from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
+      const [beneficiary] = await tx.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.beneficiaryUserId)).limit(1);
+      if (!deal || !beneficiary) {
+        res.status(404).json({ error: "commission_record_not_found" });
         return;
       }
-      const [existingReward] = await db.select({ id: commissionsTable.id }).from(commissionsTable)
-        .where(and(eq(commissionsTable.dealId, deal.id), eq(commissionsTable.beneficiaryUserId, beneficiary.id)))
-        .limit(1);
-      if (existingReward) {
-        res.status(409).json({ error: "agent_commission_already_recorded" });
-        return;
+      const method = input.commissionType ?? "fixed_amount";
+      if (method !== "fixed_amount" && input.confirmAgreedTerms !== true) {
+        res.status(400).json({ error: "commission_agreement_confirmation_required" }); return;
       }
-    }
+      if (method !== "fixed_amount" && input.currency && input.currency.toUpperCase() !== deal.currency.toUpperCase()) {
+        res.status(409).json({ error: "calculated_commission_uses_deal_currency" }); return;
+      }
+      const amount = calculateCommissionAmount({ method, quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: input.commissionRate, amount: input.amount });
+      if (method !== "fixed_amount" && input.amount !== undefined && calculateCommissionAmount({ method: "fixed_amount", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, amount: input.amount }) !== amount) {
+        res.status(409).json({ error: "commission_amount_does_not_match_rule" }); return;
+      }
+      if (beneficiary.role === "agent") {
+        const [assignment] = await tx.select({ id: dealParticipantsTable.id }).from(dealParticipantsTable)
+          .where(and(
+            eq(dealParticipantsTable.dealId, deal.id),
+            eq(dealParticipantsTable.userId, beneficiary.id),
+            eq(dealParticipantsTable.participantRole, "agent"),
+            eq(dealParticipantsTable.status, "active"),
+          )).limit(1);
+        if (!assignment) {
+          res.status(409).json({ error: "agent_must_be_assigned_to_deal" });
+          return;
+        }
+        const [existingReward] = await tx.select({ id: commissionsTable.id }).from(commissionsTable)
+          .where(and(eq(commissionsTable.dealId, deal.id), eq(commissionsTable.beneficiaryUserId, beneficiary.id)))
+          .limit(1);
+        if (existingReward) {
+          res.status(409).json({ error: "agent_commission_already_recorded" });
+          return;
+        }
+      }
 
-    const [commission] = await db.insert(commissionsTable).values({
-      dealId: deal.id,
-      beneficiaryUserId: beneficiary.id,
-      amount: String(input.amount),
-      currency: (input.currency ?? deal.currency).toUpperCase(),
-      status: "pending",
-      commissionType: input.commissionType,
-      commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
-      commissionAmount: String(input.amount),
-    }).returning();
-    await db.insert(auditLogsTable).values({
-      actorUserId: req.authUser.id, action: "commission_created",
-      entityType: "commission", entityId: commission.id,
-      metadata: { dealId: deal.id, beneficiaryUserId: beneficiary.id, amount: commission.amount, currency: commission.currency },
+      const [commission] = await tx.insert(commissionsTable).values({
+        dealId: deal.id,
+        beneficiaryUserId: beneficiary.id,
+        amount,
+        currency: (input.currency ?? deal.currency).toUpperCase(),
+        status: "pending",
+        commissionType: method,
+        commissionRate: method === "fixed_amount" ? undefined : String(input.commissionRate),
+        commissionAmount: amount,
+      }).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser.id, action: "commission_created",
+        entityType: "commission", entityId: commission.id,
+        metadata: { dealId: deal.id, beneficiaryUserId: beneficiary.id, amount: commission.amount, currency: commission.currency, method, rate: commission.commissionRate, agreedTermsConfirmed: method !== "fixed_amount", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice },
+      });
+      await tx.insert(notificationsTable).values({
+        userId: commission.beneficiaryUserId,
+        type: "commission_created",
+        title: "Commission recorded",
+        body: `A ${commission.currency} ${commission.amount} commission was recorded for your deal.`,
+        link: "/commissions",
+      });
+      return commission;
     });
-    await db.insert(notificationsTable).values({
-      userId: commission.beneficiaryUserId,
-      type: "commission_created",
-      title: "Commission recorded",
-      body: `A ${commission.currency} ${commission.amount} commission was recorded for your deal.`,
-      link: "/commissions",
-    });
-    res.status(201).json({ commission });
+    if (result) res.status(201).json({ commission: result });
   } catch (error) {
+    if (error instanceof CommissionCalculationError) { res.status(400).json({ error: error.message }); return; }
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "validation_error" });
       return;
@@ -1595,7 +1613,8 @@ router.post("/admin/inspections", requireRole("admin"), async (req: Authenticate
       res.status(404).json({ error: "deal_not_found" });
       return;
     }
-    const [inspection] = await db.insert(inspectionsTable).values({
+    const inspection = await db.transaction(async tx => {
+      const [inspection] = await tx.insert(inspectionsTable).values({
       dealId: deal.id,
       requestedBy: req.authUser.id,
       inspectorName: input.inspectorName,
@@ -1603,6 +1622,10 @@ router.post("/admin/inspections", requireRole("admin"), async (req: Authenticate
       resultSummary: input.resultSummary,
       status: input.scheduledAt ? "scheduled" : "requested",
     }).returning();
+      await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "inspection_created", entityType: "deal", entityId: deal.id, metadata: { inspectionId: inspection.id, status: inspection.status } });
+      return inspection;
+    });
+    await notifyDealCounterparties(deal.id, "inspection_created", "Inspection recorded", "An inspection has been recorded for your deal. Open the deal for its confirmed details.", `/deals/${deal.id}`);
     res.status(201).json({ inspection });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1674,11 +1697,16 @@ router.post("/admin/shipments", requireRole("admin"), async (req, res) => {
       res.status(404).json({ error: "deal_not_found" });
       return;
     }
-    const [shipment] = await db.insert(shipmentsTable).values({
+    const shipment = await db.transaction(async tx => {
+      const [shipment] = await tx.insert(shipmentsTable).values({
       dealId: deal.id, carrier: input.carrier, trackingNumber: input.trackingNumber,
       origin: input.origin, destination: input.destination, estimatedArrival: input.estimatedArrival,
       notes: input.notes, status: "planned",
     }).returning();
+      await tx.insert(auditLogsTable).values({ actorUserId: req.authUser!.id, action: "shipment_created", entityType: "deal", entityId: deal.id, metadata: { shipmentId: shipment.id, status: shipment.status } });
+      return shipment;
+    });
+    await notifyDealCounterparties(deal.id, "shipment_created", "Shipment recorded", "A shipment has been recorded for your deal. Open the deal for the carrier and tracking reference.", `/deals/${deal.id}`);
     res.status(201).json({ shipment });
   } catch (error) {
     if (error instanceof z.ZodError) {
