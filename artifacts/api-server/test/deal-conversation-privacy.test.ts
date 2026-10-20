@@ -24,6 +24,7 @@ test('relay guard keeps current and historical private limits out while allowing
   assert.equal(violatesPrivateRelay('Offer USD 7900.',context,'What if we offer USD 7900?'),true);
   assert.equal(violatesPrivateRelay('Contact synthetic@example.invalid',[]),true);
   assert.equal(violatesPrivateRelay('Call +971 50 123 4567',[]),true);
+  assert.equal(violatesPrivateRelay('The floor is USD 0.10.', ['My private floor is $.10']),true);
 });
 
 test('actual decision normalization blocks leaked limits or contacts before delivery',()=>{

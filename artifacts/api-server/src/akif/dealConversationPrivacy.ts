@@ -9,7 +9,7 @@ export function containsContactDetails(text: string) {
 }
 
 function numericValues(text: string) {
-  return (text.match(/(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?/g) ?? [])
+  return (text.match(/(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+/g) ?? [])
     .map(value => Number(value.replaceAll(',', ''))).filter(Number.isFinite);
 }
 
