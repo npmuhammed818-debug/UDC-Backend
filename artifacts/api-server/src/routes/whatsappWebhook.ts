@@ -1,3 +1,4 @@
+import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type IRouter, type Request } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
@@ -1052,6 +1053,12 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
 
       if (typeof message.text?.body !== "string") continue;
+
+      if (message.from && isAgentRegistrationRequest(message.text.body)) {
+        try { await deliverWhatsAppReply(message.from, await registerWhatsAppAgent(message.from, fullName)); }
+        catch { await deliverWhatsAppReply(message.from, "I couldn’t save the agent registration just now. Please try again shortly."); }
+        continue;
+      }
 
       const pendingIntake = message.from
         ? await loadWhatsAppIntakeDraft(message.from)

@@ -32,12 +32,23 @@ const fields = z.preprocess(value => value && typeof value === "object" && !Arra
   originCountry: z.string().min(2).max(120).optional(),
   incoterm: z.string().min(2).max(12).optional(),
 }));
-const decisionSchema = z.object({
+const allowedFields = {
+  buyer: new Set(["product", "quantity", "unit", "targetPrice", "currency", "destination", "incoterm", "specification", "deliveryTime", "contractDuration", "inspectionRequirements"]),
+  seller: new Set(["product", "quantity", "unit", "price", "currency", "destination", "originCountry", "incoterm", "specification", "availability", "monthlyCapacity", "minimumOrderQuantity", "inspectionTerms"]),
+};
+const decisionSchema = z.preprocess(value => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const raw = value as Record<string, unknown>;
+  const allowed = raw.role === "buyer" ? allowedFields.buyer : raw.role === "seller" ? allowedFields.seller : null;
+  if (!allowed || !raw.fields || typeof raw.fields !== "object" || Array.isArray(raw.fields)) return value;
+  // An irrelevant field must not reject a valid offer or be persisted to another role.
+  return { ...raw, fields: Object.fromEntries(Object.entries(raw.fields).filter(([key]) => allowed.has(key))) };
+}, z.object({
   role: z.enum(["buyer", "seller"]),
   fields,
   newIntake: z.boolean(),
   reply: z.string().min(1).max(1200),
-});
+}));
 
 export function parseIntakeConversation(content: string) {
   let raw: unknown;
@@ -78,6 +89,7 @@ export async function interpretIntakeConversation(input: {
         "Understand typos and follow-ups. Extract only facts explicitly supplied or corrected in this message, using memory to interpret them. Do not guess prices, quantities, currencies, destinations or units. Omit unknown fields rather than null. A question or hypothetical is not a new fact.",
         "Incoterm and destination are different fields: in 'CIF Jebel Ali', CIF is the Incoterm and Jebel Ali is the destination port. A named port can be more specific than a remembered city without contradicting it. Use a clearly stated latest destination for an unsubmitted draft; do not ask whether an already supplied term should be supplied or reconfirmed. Null memory means a fresh inquiry; never import an old deal's destination or terms.",
         "Keep the existing role unless the user explicitly switches. Set newIntake true only for an explicitly separate requirement or offer, never a follow-up or correction. Submitted requirements remain pending admin review; do not invent matches or claim a deal is arranged.",
+        "Use only fields belonging to the returned role: buyer uses targetPrice, deliveryTime, contractDuration, inspectionRequirements; seller uses price, originCountry, availability, monthlyCapacity, minimumOrderQuantity, inspectionTerms. DeliveryTime and availability are text with the explicitly supplied units, such as '14 days', never a bare number. Do not output buyer-only fields for a seller or seller-only fields for a buyer.",
         "Preserve explicitly supplied grade/specification, deliveryTime, contractDuration and inspectionRequirements for buyers; preserve specification, availability (including delivery timing), monthlyCapacity, minimumOrderQuantity and inspectionTerms for sellers. Do not invent optional terms or ask for all of them before accepting an otherwise complete inquiry.",
         "Buyer essentials are product, quantity, targetPrice, destination; seller essentials are product, quantity, price. Use memory plus new fields to determine what is missing. Once complete, say it is going for UDC review. If already submitted, answer from memory without submitting it again. Subsequent corrections remain notes for UDC review, not an amendment to the submitted record.",
         "UDC's only payment flow is DLC issued directly to the seller, payment released after SGS inspection at destination. Never ask for payment-method selection or offer an alternative. Explain this briefly only when relevant.",

@@ -8,7 +8,7 @@ import { build } from "esbuild";
 // Exercise the real signed webhook, including route ordering and DB predicates.
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("WhatsApp webhook intake and private media acceptance", async (t) => {
-  const names = ["auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
+  const names = ["notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
     "documentAccessTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
@@ -19,6 +19,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     if (node?.kind === "eq") return evaluate(node.a, row) === evaluate(node.b, row);
     if (node?.kind === "and") return node.args.every((n: any) => evaluate(n, row));
     if (node?.kind === "or") return node.args.some((n: any) => evaluate(n, row));
+    if (node?.kind === "in" && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
     if (node?.kind === "in") return node.query.run().some((r: any) => Object.values(r)[0] === evaluate(node.a, row));
     return node;
   };
@@ -44,9 +45,9 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     const run = () => {
       if (inserted) return inserted;
       if (ignoreConflict && rows[table._tableName].some(r => r.providerMessageId === input.providerMessageId && input.providerMessageId)) return inserted = [];
-      const record = { id: randomUUID(), ...input };
-      rows[table._tableName].push(record);
-      return inserted = [record];
+      const records = (Array.isArray(input) ? input : [input]).map(item => ({ id: randomUUID(), ...item }));
+      rows[table._tableName].push(...records);
+      return inserted = records;
     };
     const q: any = { values(v: any) { input = v; return q; },
       onConflictDoNothing() { ignoreConflict = true; return q; }, onConflictDoUpdate() { return q; },
@@ -60,6 +61,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     sign: async (path: string) => { state.signed.push(path); return `https://signed.example/${path}`; },
     upload: async (path: string) => { state.uploaded.push(path); return `storage://udc-documents/${path}`; },
   };
+  state.db.execute = async () => [];
   state.db.transaction = async (callback: any) => callback(state.db);
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
@@ -89,7 +91,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents:
         'const s=globalThis.__whatsappRoutes;' + (args.path === "db"
           ? 'export const db=s.db;' + names.map(n => `export const ${n}=s.tables.${n};`).join("")
-          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const desc=x=>x;'
+          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const desc=x=>x;'
           : fixtures[args.path]) }));
     } }],
   });
@@ -126,6 +128,24 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply = "Reply AGREE";
       assert.equal((await message({ text: { body: "hello" } })).status, 200);
       assert.equal(state.sent[0].body, "Reply AGREE"); assert.deepEqual(state.intake, []);
+    });
+    await t.test("agent registration is consent-gated, pending, idempotent and never changes an existing trader role", async () => {
+      reset(); state.privacyReply = "Reply AGREE";
+      await message({ text: { body: "Register me as an agent" } }); assert.equal(rows.usersTable.length, 0);
+      state.privacyReply = null;
+      rows.usersTable.push({ id: "admin", role: "admin", status: "verified" });
+      await message({ text: { body: "Register me as an agent" } });
+      const agent = rows.usersTable.find(user => user.phone === "10000000001");
+      assert.equal(agent.role, "agent"); assert.equal(agent.status, "pending");
+      assert.equal(rows.auditLogsTable.filter(row => row.action === "agent_registration_requested").length, 1);
+      assert.equal(rows.notificationsTable[0].userId, "admin"); assert.deepEqual(state.intake, []); assert.equal(state.dealCalls, 0);
+      await message({ text: { body: "I'm a broker" } }); assert.equal(rows.usersTable.length, 2);
+      assert.equal(rows.auditLogsTable.filter(row => row.action === "agent_registration_requested").length, 1);
+      assert.match(state.sent.at(-1).body, /already pending/);
+      agent.status = "verified"; await message({ text: { body: "I am an agent" } }); assert.match(state.sent.at(-1).body, /already approved/);
+      reset(); seedDeal(); await message({ text: { body: "Register me as an agent" } });
+      assert.equal(rows.usersTable[0].role, "buyer"); assert.equal(rows.usersTable[0].status, "verified");
+      assert.match(state.sent.at(-1).body, /review a role change/); assert.deepEqual(state.intake, []);
     });
     await t.test("first buyer inquiry with a price is captured, not blocked as negotiation", async () => {
       reset(); state.decision = { role: "buyer", newIntake: true, fields: { product: "Copper cathode", quantity: 100, targetPrice: 5900, destination: "Jebel Ali", incoterm: "CIF" }, reply: "I’ll send this for UDC review." };

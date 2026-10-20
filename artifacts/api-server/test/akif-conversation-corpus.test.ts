@@ -29,7 +29,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
   };
   const names = [
     "usersTable",
-    "auditLogsTable",
+    "notificationsTable", "auditLogsTable",
     "notificationPreferencesTable",
     "dealConversationEventsTable",
     "dealParticipantsTable",

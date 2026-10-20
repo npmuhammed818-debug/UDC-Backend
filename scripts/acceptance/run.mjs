@@ -6,7 +6,7 @@ import path from 'node:path';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const api = path.join(root, 'artifacts/api-server');
 const groups = [
-  ['Registration and verification', ['privacy-consent', 'whatsapp-webhook-routes'], 'Human approval/rejection and all three registration roles need live acceptance.'],
+  ['Registration and verification', ['auth-registration', 'privacy-consent', 'whatsapp-webhook-routes'], 'Human approval/rejection and all three registration roles need live acceptance.'],
   ['Inquiry, offers and matching', ['acceptance-supervisor', 'acceptance-probe', 'trade-intake-triage', 'intake-model-response', 'whatsapp-intake-conversation', 'akif-conversation-corpus', 'match-scoring', 'buyer-pool-concurrency', 'intake-persistence'], 'Live model quality and approved buyer/seller matching need acceptance.'],
   ['Private deal room', ['private-deal-routes', 'deal-document-routing', 'deal-conversation-memory', 'deal-decision-safety', 'deal-fact-reply', 'whatsapp-client'], 'Two-party text, image, PDF, voice and multilingual delivery need live acceptance.'],
   ['AI and document assistance', ['loi-draft', 'icpo-draft', 'fco-draft', 'spa-draft', 'ncnda-draft', 'whatsapp-draft', 'image-extractor-routing', 'worker-conversation', 'worker-timeouts', 'akif-brain-provider', 'decision-models', 'free-data-sources', 'official-trade-sources', 'impexq-client'], 'Real document extraction, translation and contract summaries need acceptance.'],
