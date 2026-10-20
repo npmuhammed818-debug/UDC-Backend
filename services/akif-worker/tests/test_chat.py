@@ -45,6 +45,25 @@ def test_chat_bounds_payload_and_timeout():
         chat.ChatRequest(messages=[chat.ChatMessage(role="user", content="x" * 80_000)] * 2)
 
 
+def test_chat_failure_diagnostics_exclude_provider_messages_and_user_text(monkeypatch, capsys):
+    monkeypatch.setattr(chat, "status", lambda: {"configured": True, "model": "test"})
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    def fail(*args, **kwargs):
+        raise RateLimitError("SECRET_KEY_AND_PROVIDER_RESPONSE")
+
+    monkeypatch.setattr(chat, "complete", fail)
+    with pytest.raises(HTTPException):
+        chat.chat_completion(chat.ChatRequest(messages=[chat.ChatMessage(role="user", content="PRIVATE_TRADE_TEXT")]))
+    output = capsys.readouterr().out
+    assert '"error_type": "RateLimitError"' in output
+    assert '"http_status": 429' in output
+    assert '"input_characters": 18' in output
+    assert "SECRET" not in output and "PRIVATE" not in output
+
+
 def test_probe_sends_only_fixed_text_and_hides_provider_errors(monkeypatch):
     monkeypatch.setattr(llm_gateway, "status", lambda: {"configured": True, "model": "test"})
     def fail(messages, timeout_seconds):

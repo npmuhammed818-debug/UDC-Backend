@@ -1,3 +1,5 @@
+import json
+
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal
@@ -30,6 +32,13 @@ def chat_completion(request: ChatRequest) -> dict:
                            timeout_seconds=request.timeout_seconds)
     except Exception as exc:
         # Do not return provider error messages; they can contain request data or secrets.
+        provider_status = getattr(exc, "status_code", None)
+        print("AKIF chat provider failure: " + json.dumps({
+            "error_type": type(exc).__name__,
+            "http_status": provider_status if type(provider_status) is int else None,
+            "message_count": len(request.messages),
+            "input_characters": sum(len(message.content) for message in request.messages),
+        }), flush=True)
         raise HTTPException(status_code=502, detail="akif_model_request_failed") from exc
     if not content.strip():
         raise HTTPException(status_code=502, detail="akif_model_empty_response")

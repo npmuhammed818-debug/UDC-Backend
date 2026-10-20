@@ -163,7 +163,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "../akif/recordPendingSellerOffer":
       "export const recordPendingSellerOffer=async()=>({id:'offer-1'});",
     "./intelligence/dealContext":
-      "export const getAkifDealContext=async()=>{const s=globalThis.__udcChatTest;return {deal:s.deal,product:{name:'Copper'},conversation:s.tables.dealConversationEventsTable,buyerRequest:{destination:'Dubai'},documents:[]}};",
+      "export const getAkifDealContext=async()=>{const s=globalThis.__udcChatTest;if(s.contextFailure)throw Error('PRIVATE_DATABASE_ERROR');return {deal:s.deal,product:{name:'Copper'},conversation:s.tables.dealConversationEventsTable,buyerRequest:{destination:'Dubai'},documents:[]}};",
   };
   const output = fileURLToPath(
     new URL(`../.chat-test-${randomUUID()}.mjs`, import.meta.url),
@@ -415,6 +415,12 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     await send("111111111", "Please ask about arrival", "Rate limit exceeded");
     assert.equal(s.sent.length, failed + 1);
     assert.match(s.sent.at(-1).body, /haven’t passed anything on/);
+    s.contextFailure = true;
+    const callsBeforeContextFailure = s.prompts.length;
+    await send("111111111", "Hi", undefined);
+    assert.equal(s.prompts.length, callsBeforeContextFailure);
+    assert.match(s.sent.at(-1).body, /haven’t passed anything on/);
+    assert.doesNotMatch(s.sent.at(-1).body, /PRIVATE_DATABASE_ERROR/);
   } finally {
     globalThis.fetch = oldFetch;
     for (const [k, v] of Object.entries(oldEnv))
