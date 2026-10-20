@@ -1,3 +1,5 @@
+import { triageBuyerRequirement } from "./buyerRequirementTriage.ts";
+
 export type DealConversationDecision = {
   intent: string;
   replyToSender: string;
@@ -114,6 +116,17 @@ export function isExplicitSeparateTradeIntake(text: string) {
     && looksLikeNewTradeIntake(text);
 }
 
+export function isStandaloneBuyerInquiry(text: string) {
+  const value = text.trim();
+  // A fresh, unquoted buying statement can be an inquiry even when this account
+  // has an old active deal. Corrections/recollections/questions stay in that deal.
+  return /^(?:i|we)\s+(?:need|require|want(?:\s+to\s+buy)?|am\s+looking\s+for|are\s+looking\s+for)\b/i.test(value)
+    && !/[?]/.test(value)
+    && !/\b(?:change|update|instead|already|remember|agreed|same|current|this\s+deal|that\s+deal)\b/i.test(value)
+    && looksLikeNewTradeIntake(value)
+    && triageBuyerRequirement(value).missingFields.length === 0;
+}
+
 export function looksLikeNewTradeIntake(text: string) {
   const normalized = text.trim().toLowerCase();
   const quantity = /\b\d+(?:\.\d+)?\s*(?:mt|ton|tons|kg|kgs|container|containers)\b/i;
@@ -123,7 +136,7 @@ export function looksLikeNewTradeIntake(text: string) {
     return true;
   }
 
-  if (!/\b(?:need|want|buy|supply|sell|offer|deliver|delivered)\b/.test(normalized)) {
+  if (!/\b(?:need|require|want|buy|supply|sell|offer|deliver|delivered)\b/.test(normalized)) {
     return false;
   }
 

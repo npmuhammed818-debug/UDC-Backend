@@ -4,7 +4,13 @@ import { build } from "esbuild";
 import { writeFile, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { isExplicitSeparateTradeIntake } from "../src/akif/dealDecisionSafety.ts";
+import { isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../src/akif/dealDecisionSafety.ts";
+
+test("complete natural inquiries stand alone while corrections and partial followups retain context", () => {
+  assert.equal(isStandaloneBuyerInquiry("I need 100 MT copper cathode, target USD 5,900 per MT, CIF Jebel Ali"), true);
+  assert.equal(isStandaloneBuyerInquiry("We require 200 MT sugar at USD 500 per MT to Mombasa"), true);
+  for (const message of ["I need 100 MT copper", "I need the same 100 MT copper at USD 5900 CIF Jebel Ali", "I need 100 MT copper at USD 5900 CIF Jebel Ali for this deal", "Can you change it to 100 MT copper at USD 5900 CIF Jebel Ali?", "I need 100 MT copper at USD 5900 CIF Jebel Ali instead"]) assert.equal(isStandaloneBuyerInquiry(message), false);
+});
 
 test("separate-intake routing requires an explicit new inquiry, not a correction or hypothetical", () => {
   assert.equal(isExplicitSeparateTradeIntake("New separate test requirement: I need 100 MT copper cathode, USD 5900, CIF Jebel Ali."), true);
