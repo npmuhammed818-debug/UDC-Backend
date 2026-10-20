@@ -158,7 +158,6 @@ export const RegisterInputRole = {
 export interface RegisterInput {
   full_name: string;
   email: string;
-  phone?: string;
   /** @minLength 12 */
   password: string;
   role: RegisterInputRole;

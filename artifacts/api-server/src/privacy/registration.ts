@@ -14,7 +14,7 @@ export const registrationSchema = z.object({
     .trim()
     .email()
     .transform((value) => value.toLowerCase()),
-  phone: z.string().trim().min(3).max(50).optional(),
+  phone: z.never().optional(),
   password: passwordSchema,
   role: z.enum(["buyer", "seller", "agent"]),
   referral_token: z.string().min(1).max(120).optional(),
