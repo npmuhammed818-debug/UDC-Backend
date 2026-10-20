@@ -13,14 +13,26 @@ test('admin meeting routes require verified counterparties and preserve human sc
   const dealId='11111111-1111-4111-8111-111111111111';
   records.dealsTable=[{id:dealId,buyerUserId:'buyer',sellerUserId:'seller'}];
   records.usersTable=[{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'}];
-  const value=(x:any,r:any):any=>x?.column?r[x.column]:x;
+  const value=(x:any,r:any):any=>x?.column?(r[x.table] ?? r)[x.column]:x;
   const predicate=(x:any,r:any):any=>x?.kind==='eq'?value(x.a,r)===value(x.b,r):x?.kind==='and'?x.args.every((c:any)=>predicate(c,r)):x?.kind==='in'?x.list.includes(value(x.a,r)):true;
   let dbReads=0;
   function select(fields?:any) {
     dbReads++;
-    let table:any,condition:any,limit=Infinity;
-    const q:any={from:(t:any)=>{table=t._table;return q},where:(c:any)=>{condition=c;return q},limit:(n:number)=>{limit=n;return q},orderBy:()=>q,
-      then:(resolve:any,reject:any)=>Promise.resolve().then(()=>records[table].filter((r:any)=>predicate(condition,r)).slice(0,limit).map((r:any)=>fields?Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,value(v,r)])):{...r})).then(resolve,reject)};
+    let table:any,condition:any,limit=Infinity,groups:any[]=[],joins:any[]=[];
+    const run=()=>{
+      let rows=records[table].map((r:any)=>({[table]:r}));
+      for(const join of joins) rows=rows.flatMap((r:any)=>records[join.table].map((v:any)=>({...r,[join.table]:v})).filter((r:any)=>predicate(join.on,r)));
+      rows=rows.filter((r:any)=>predicate(condition,r));
+      const project=(r:any,bucket:any[]=[])=>fields?Object.fromEntries(Object.entries(fields).map(([k,v]:any)=>[k,v?.kind==='sql'?(v.parts.join('').includes('sum(')?String(bucket.reduce((total:number,row:any)=>total+v.values.map((c:any)=>Number(value(c,row))).reduce((a:number,b:number)=>a*b,1),0)):bucket.length):value(v,r)])):{...r[table]};
+      if(groups.length){
+        const buckets=new Map<string,any[]>();
+        for(const row of rows){const key=JSON.stringify(groups.map(g=>value(g,row)));buckets.set(key,[...(buckets.get(key)??[]),row]);}
+        return [...buckets.values()].map(bucket=>project(bucket[0],bucket)).sort((a:any,b:any)=>(b.dealCount??b.count??0)-(a.dealCount??a.count??0)).slice(0,limit);
+      }
+      return rows.slice(0,limit).map((r:any)=>project(r));
+    };
+    const q:any={from:(t:any)=>{table=t._table;return q},where:(c:any)=>{condition=c;return q},limit:(n:number)=>{limit=n;return q},orderBy:()=>q,groupBy:(...g:any[])=>{groups=g;return q},innerJoin:(t:any,on:any)=>{joins.push({table:t._table,on});return q},
+      then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};
     return q;
   }
   function mutation(table:any,update=false) {
@@ -37,7 +49,7 @@ test('admin meeting routes require verified counterparties and preserve human sc
   const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
-      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=()=>true;export const ilike=()=>true;export const sql=()=>true;`,
+      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=()=>true;export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});`,
       sessions:'export const getAuthenticatedUser=async()=>null;',
       whatsapp:'export const sendWhatsAppText=async()=>({delivered:false});',
       storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
@@ -83,6 +95,22 @@ test('admin meeting routes require verified counterparties and preserve human sc
       seller.status='verified';seller.role='agent';assert.equal((await request(path)).status,409);
       seller.role='seller';records.usersTable.pop();assert.equal((await request(path)).status,409);records.usersTable.push(seller);
       assert.equal(records.dealMeetingsTable.length,0);assert.equal(records.notificationsTable.length,0);
+    });
+    await t.test('analytics keeps currencies, payout statuses and unknown countries separate',async()=>{
+      const saved={deals:records.dealsTable,users:records.usersTable,commissions:records.commissionsTable,products:records.productsTable};
+      records.usersTable=[{id:'b1',country:'UAE'},{id:'b2',country:null},{id:'s1',country:'Brazil'}];
+      records.productsTable=[{id:'sugar',name:'Sugar'}];
+      records.dealsTable=[{id:'d1',buyerUserId:'b1',sellerUserId:'s1',productId:'sugar',status:'completed',currency:'USD',quantity:'100',agreedPrice:'500'},{id:'d2',buyerUserId:'b2',sellerUserId:'s1',productId:'sugar',status:'completed',currency:'EUR',quantity:'50',agreedPrice:'400'}];
+      records.commissionsTable=[{currency:'USD',status:'pending',amount:'100'},{currency:'USD',status:'paid',amount:'200'},{currency:'EUR',status:'paid',amount:'300'}];
+      try {
+        const response=await fetch(base+'/admin/analytics');assert.equal(response.status,200);const data=await response.json();
+        assert.deepEqual(data.completedValues.map((r:any)=>[r.currency,r.value]).sort(),[['EUR','20000'],['USD','50000']]);
+        assert.deepEqual(data.sellerCountries,[{country:'Brazil',dealCount:2}]);
+        assert.equal(data.buyerCountries.find((r:any)=>r.country===null).dealCount,1);
+        assert.equal(data.commissionPerformance.length,3);
+        assert.equal(data.commissionPerformance.find((r:any)=>r.currency==='USD'&&r.status==='paid').amount,'200');
+        assert.equal(data.products[0].product,'Sugar');assert.equal(data.products[0].dealCount,2);
+      } finally {records.dealsTable=saved.deals;records.usersTable=saved.users;records.commissionsTable=saved.commissions;records.productsTable=saved.products;}
     });
     let id:string;
     await t.test('verified buyer and seller allow one audited admin booking',async()=>{

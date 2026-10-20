@@ -684,7 +684,7 @@ function AgentAdmin({ user }: { user: AnyRecord }) {
 function Admin() {
   const me = useGetCurrentUser();
   const allowed = ['admin', 'administrator'].includes(me.data?.user?.role || '');
-  const analytics = useQuery({ queryKey: ['admin-analytics'], queryFn: () => loadAgentRecords<{ stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[] }>('/api/admin/analytics'), enabled: allowed });
+  const analytics = useQuery({ queryKey: ['admin-analytics'], queryFn: () => loadAgentRecords<{ stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[]; buyerCountries: AnyRecord[]; sellerCountries: AnyRecord[]; commissionPerformance: AnyRecord[] }>('/api/admin/analytics'), enabled: allowed });
   const opportunities = useQuery({ queryKey: ['akif-opportunities'], queryFn: () => loadAgentRecords<{ signals: AnyRecord[]; disclaimer: string }>('/api/admin/akif/opportunities?limit=30'), enabled: allowed });
   const documents = useQuery({ queryKey: ['admin-documents'], queryFn: () => loadAgentRecords<{ documents: AnyRecord[] }>('/api/admin/documents'), enabled: allowed });
   const users = useQuery({ queryKey: ['admin-pending-users'], queryFn: () => loadAgentRecords<{ users: AnyRecord[] }>('/api/admin/users/pending-verification'), enabled: allowed });
@@ -769,6 +769,9 @@ function Admin() {
         <div><strong>Deal stages</strong><div className="data-list">{analytics.data?.stages.map((item) => <div className="data-row" key={item.status}><span>{formatStatus(item.status)}</span><strong>{item.count}</strong></div>)}</div></div>
         <div><strong>Completed deal value</strong><div className="data-list">{analytics.data?.completedValues.map((item) => <div className="data-row" key={item.currency}><span>{item.currency}</span><strong>{item.value}</strong></div>)}</div><p className="text-xs mt-2">Values are grouped by currency; no conversion is applied.</p></div>
         <div><strong>Top products by deal count</strong><div className="data-list">{analytics.data?.products.map((item) => <div className="data-row" key={item.product}><span>{item.product}</span><strong>{item.dealCount}</strong></div>)}</div></div>
+        <div><strong>Top buyer countries</strong><div className="data-list">{analytics.data?.buyerCountries?.map((item) => <div className="data-row" key={item.country || 'unknown'}><span>{item.country || 'Country not recorded'}</span><strong>{item.dealCount}</strong></div>)}</div></div>
+        <div><strong>Top seller countries</strong><div className="data-list">{analytics.data?.sellerCountries?.map((item) => <div className="data-row" key={item.country || 'unknown'}><span>{item.country || 'Country not recorded'}</span><strong>{item.dealCount}</strong></div>)}</div></div>
+        <div><strong>Recorded commissions</strong><div className="data-list">{analytics.data?.commissionPerformance?.map((item) => <div className="data-row" key={`${item.currency}-${item.status}`}><span>{item.currency} · {formatStatus(item.status)} · {item.count} records</span><strong>{item.amount}</strong></div>)}</div><p className="text-xs mt-2">Amounts stay separate by currency and recorded payout status. Country rankings use saved profiles across all deals.</p></div>
       </div>}
     </section>
     <form className="panel mt-5" onSubmit={sendAnnouncement} data-testid="admin-announcement-form">
