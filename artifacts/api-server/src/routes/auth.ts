@@ -1,9 +1,11 @@
+import { verifyAgentInvitation, agentReferralCode } from "../referrals/invitation";
 import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import {
   auditLogsTable,
+  referralsTable,
   notificationPreferencesTable,
   usersTable,
 } from "@workspace/db";
@@ -77,6 +79,14 @@ router.post("/auth/register", async (req, res) => {
       return;
     }
 
+    let referringAgentId: string | null = null;
+    if (input.referral_token) {
+      const id = verifyAgentInvitation(input.referral_token, process.env.WHATSAPP_APP_SECRET ?? "");
+      const [agent] = id ? await db.select({ id: usersTable.id }).from(usersTable)
+        .where(and(eq(usersTable.id, id), eq(usersTable.role, "agent"), eq(usersTable.status, "verified"))).limit(1) : [];
+      if (!agent || input.role === "agent") { res.status(400).json({ error: "invalid_referral_invitation" }); return; }
+      referringAgentId = agent.id;
+    }
     const passwordHash = await hashPassword(input.password);
     const user = await db.transaction(async (tx) => {
       const [created] = await tx
@@ -113,6 +123,10 @@ router.post("/auth/register", async (req, res) => {
           reminders: false,
           announcements: false,
         });
+      if (referringAgentId) {
+        const [referral] = await tx.insert(referralsTable).values({ agentUserId: referringAgentId, referredUserId: created.id, referralCode: agentReferralCode(referringAgentId), status: "pending" }).returning({ id: referralsTable.id });
+        await tx.insert(auditLogsTable).values({ actorUserId: created.id, action: "referral_invitation_accepted", entityType: "referral", entityId: referral.id, metadata: { agentUserId: referringAgentId, referredUserId: created.id, introductionAcceptedByRegistrant: true, requiresAdminReview: true } });
+      }
       return created;
     });
 

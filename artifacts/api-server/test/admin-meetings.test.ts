@@ -5,7 +5,7 @@ import { readFile, writeFile, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-test('admin meeting routes require verified counterparties and preserve human scheduling', async t => {
+test('admin trade workflows preserve verification, ownership, review and payment controls', async t => {
   const source=await readFile(new URL('../src/routes/admin.ts',import.meta.url),'utf8');
   const dealSource=await readFile(new URL('../src/routes/deals.ts',import.meta.url),'utf8');
   const names=[...new Set((source+dealSource).match(/\b\w+Table\b/g))];
@@ -115,6 +115,28 @@ test('admin meeting routes require verified counterparties and preserve human sc
         assert.equal(data.commissionPerformance.find((r:any)=>r.currency==='USD'&&r.status==='paid').amount,'200');
         assert.equal(data.products[0].product,'Sugar');assert.equal(data.products[0].dealCount,2);
       } finally {records.dealsTable=saved.deals;records.usersTable=saved.users;records.commissionsTable=saved.commissions;records.productsTable=saved.products;}
+    });
+    await t.test('approved verified matching creates one private deal with both participants',async()=>{
+      const saved=Object.fromEntries(['buyerRequestsTable','sellerListingsTable','matchesTable','dealsTable','dealParticipantsTable','notificationsTable','auditLogsTable'].map(name=>[name,records[name]]));
+      try {
+        const requirementId=randomUUID(),offerId=randomUUID(),productId=randomUUID();
+        records.buyerRequestsTable=[{id:requirementId,buyerUserId:'buyer',productId,quantity:'100',unit:'MT',targetPrice:'500',currency:'USD',destination:'Mombasa',status:'pending_admin_review'}];
+        records.sellerListingsTable=[{id:offerId,sellerUserId:'seller',productId,quantity:'100',unit:'MT',price:'490',currency:'USD',incoterm:'CIF',status:'approved'}];
+        records.matchesTable=[];records.dealsTable=[];records.dealParticipantsTable=[];records.notificationsTable=[];records.auditLogsTable=[];
+        const input={buyerRequestId:requirementId,sellerListingId:offerId};
+        assert.equal((await request('/admin/matches',input)).status,409);
+        records.buyerRequestsTable[0].status='approved';records.sellerListingsTable[0].productId='another-product';assert.equal((await request('/admin/matches',input)).status,409);
+        records.sellerListingsTable[0].productId=productId;records.usersTable[1].status='pending';assert.equal((await request('/admin/matches',input)).status,409);
+        records.usersTable[1].status='verified';const matched=await request('/admin/matches',input);assert.equal(matched.status,201);assert.equal(matched.data.match.status,'approved');
+        assert.equal((await request('/admin/matches',input)).status,409);
+        const terms={matchId:matched.data.match.id,quantity:100,agreedPrice:490};
+        records.sellerListingsTable[0].unit='kg';assert.equal((await request('/admin/deals',terms)).status,409);records.sellerListingsTable[0].unit='MT';
+        records.usersTable[1].status='suspended';assert.equal((await request('/admin/deals',terms)).status,409);records.usersTable[1].status='verified';
+        const created=await request('/admin/deals',terms);assert.equal(created.status,201);assert.equal(created.data.deal.destination,'Mombasa');assert.equal(created.data.deal.incoterm,'CIF');assert.equal(created.data.deal.status,'initiated');
+        assert.deepEqual(records.dealParticipantsTable.map((r:any)=>[r.userId,r.participantRole,r.status]),[['buyer','buyer','active'],['seller','seller','active']]);
+        assert.equal((await request('/admin/deals',terms)).status,409);assert.equal(records.dealsTable.length,1);
+        assert.ok(records.auditLogsTable.some((r:any)=>r.action==='match_created'));assert.ok(records.auditLogsTable.some((r:any)=>r.action==='deal_created'));
+      } finally {for(const [name,rows] of Object.entries(saved))records[name]=rows;records.usersTable[1].status='verified';}
     });
     let id:string;
     await t.test('verified buyer and seller allow one audited admin booking',async()=>{

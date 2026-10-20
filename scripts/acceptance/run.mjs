@@ -7,10 +7,10 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const api = path.join(root, 'artifacts/api-server');
 const groups = [
   ['Registration and verification', ['auth-registration', 'privacy-consent', 'whatsapp-webhook-routes'], 'Human approval/rejection and all three registration roles need live acceptance.'],
-  ['Inquiry, offers and matching', ['acceptance-supervisor', 'acceptance-probe', 'trade-intake-triage', 'intake-model-response', 'whatsapp-intake-conversation', 'akif-conversation-corpus', 'match-scoring', 'buyer-pool-concurrency', 'intake-persistence'], 'Live model quality and approved buyer/seller matching need acceptance.'],
+  ['Inquiry, offers and matching', ['admin-meetings', 'acceptance-supervisor', 'acceptance-probe', 'trade-intake-triage', 'intake-model-response', 'whatsapp-intake-conversation', 'akif-conversation-corpus', 'match-scoring', 'buyer-pool-concurrency', 'intake-persistence'], 'Live model quality and approved buyer/seller matching need acceptance.'],
   ['Private deal room', ['private-deal-routes', 'deal-document-routing', 'deal-conversation-memory', 'deal-decision-safety', 'deal-fact-reply', 'whatsapp-client'], 'Two-party text, image, PDF, voice and multilingual delivery need live acceptance.'],
   ['AI and document assistance', ['loi-draft', 'icpo-draft', 'fco-draft', 'spa-draft', 'ncnda-draft', 'whatsapp-draft', 'image-extractor-routing', 'worker-conversation', 'worker-timeouts', 'akif-brain-provider', 'decision-models', 'free-data-sources', 'official-trade-sources', 'impexq-client'], 'Real document extraction, translation and contract summaries need acceptance.'],
-  ['Referrals and commissions', ['agent-referral-chain', 'commission-amount', 'admin-meetings'], 'Referral attribution, commission calculation and payout recording need end-to-end acceptance.'],
+  ['Referrals and commissions', ['agent-referral-chain', 'referral-invitation', 'auth-registration', 'commission-amount', 'admin-meetings'], 'Referral attribution, commission calculation and payout recording need end-to-end acceptance.'],
   ['Meetings', ['admin-meetings'], 'Real participant meeting requests, video delivery and in-person coordination need live acceptance.'],
   ['Post-deal operations', ['payment-policy', 'payment-milestone', 'admin-meetings'], 'Shipment evidence, customs, delivery, feedback and commission distribution need workflow acceptance.'],
   ['Admin control and analytics', ['admin-meetings'], 'All admin route access controls are covered; reports, announcements and analytics still need workflow acceptance.'],
@@ -39,5 +39,5 @@ const report = { generatedAt: new Date().toISOString(), mode: 'isolated regressi
 const directory = path.resolve(root, process.argv[2] ?? '.acceptance-results');
 await mkdir(directory, { recursive: true });
 await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2) + '\n');
-await writeFile(path.join(directory, 'report.md'), '# SoW regression coverage\n\nThese are isolated code checks, not proof of completed production workflows.\n\n| Feature | Regression result | Passed checks | Remaining acceptance |\n| --- | --- | ---: | --- |\n' + results.map(r => `| ${r.feature} | ${r.status} | ${r.passed} | ${r.remaining} |`).join('\n') + '\n');
+await writeFile(path.join(directory, 'report.md'), '# SoW regression coverage\n\nThese are isolated code checks, not proof of completed production workflows. Some suites cover multiple sections; do not add section counts together.\n\n| Feature | Regression result | Passed checks | Remaining acceptance |\n| --- | --- | ---: | --- |\n' + results.map(r => `| ${r.feature} | ${r.status} | ${r.passed} | ${r.remaining} |`).join('\n') + '\n');
 if (results.some(r => r.status === 'failed')) process.exitCode = 1;

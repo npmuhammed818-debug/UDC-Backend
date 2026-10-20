@@ -162,6 +162,8 @@ export interface RegisterInput {
   /** @minLength 12 */
   password: string;
   role: RegisterInputRole;
+  /** @maxLength 120 */
+  referral_token?: string;
   accepted_terms: true;
   adult_business_user: true;
 }
