@@ -11,7 +11,7 @@ import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
-import { looksLikeNewTradeIntake } from "../akif/dealDecisionSafety";
+import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake } from "../akif/dealDecisionSafety";
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
@@ -1053,6 +1053,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
       if (typeof message.text?.body !== "string") continue;
 
+      const explicitNewIntake = isExplicitSeparateTradeIntake(message.text.body);
+
       const pendingIntake = message.from
         ? await loadWhatsAppIntakeDraft(message.from)
         : null;
@@ -1078,7 +1080,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
 
-      if (message.from && !hasPendingIntake) {
+      if (message.from && !hasPendingIntake && !explicitNewIntake) {
         const dealMessage = await handleDealWhatsAppMessage(
           message.from,
           message.text.body,
@@ -1214,6 +1216,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
       const hasSavedDraft = Boolean(
         savedIntake
+        && !explicitNewIntake
         && !savedIntake.stale
         && Object.keys(savedIntake.draft ?? {}).length > 0,
       );
@@ -1227,7 +1230,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
       const intakeRole = intakeDecision.role;
-      const previousDraft = !intakeDecision.newIntake && savedIntake?.role === intakeRole
+      const previousDraft = !explicitNewIntake && !intakeDecision.newIntake && savedIntake?.role === intakeRole
         ? savedIntake.draft : null;
 
       const contactName =

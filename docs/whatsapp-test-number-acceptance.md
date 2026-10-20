@@ -101,6 +101,24 @@ provider HTTP status and input lengths, never provider error bodies or user text
 History growth is a confirmed issue; provider diagnostics must establish whether
 it caused the live model rejection before attributing that rejection to a quota.
 
+## Rate-limit and inquiry follow-up
+
+The greeting subsequently generated `Hi!` through a worker HTTP 200. A later
+casual follow-up produced a confirmed Groq `RateLimitError` with HTTP 429 for a
+12,810-character prompt. NVIDIA/OpenAI fallbacks returned 403/401. The free
+provider's quota is a real remaining capacity constraint; a successful greeting
+does not establish full intake acceptance or a functioning backup provider.
+
+Explicitly labelled separate inquiries now bypass the old-deal model turn and
+start with fresh intake memory, using one extraction call instead of two model
+calls. Quantity corrections, hypothetical inquiries and negated requests do not
+trigger this shortcut. Missing optional model fields represented as null are
+treated as absent, while incorrect types and unsafe output still fail closed.
+Intake rejection diagnostics include only schema paths/codes or a fixed reason;
+they exclude the raw response and trade values. Live inquiry persistence must
+still be verified after release. These changes reduce avoidable calls; they do
+not remove external quotas or repair rejected provider credentials.
+
 ## Switching to the business number
 
 Keep the same code and existing callback. Configure the business phone-number ID,

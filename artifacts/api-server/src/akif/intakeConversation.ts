@@ -3,7 +3,8 @@ import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
 import { intakeDecisionHint } from "./decisionModels";
 
-const fields = z.object({
+const fields = z.preprocess(value => value && typeof value === "object" && !Array.isArray(value)
+  ? Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null)) : value, z.object({
   product: z.string().min(2).max(120).optional(),
   quantity: z.number().positive().optional(),
   unit: z.string().min(1).max(24).optional(),
@@ -13,13 +14,36 @@ const fields = z.object({
   destination: z.string().min(2).max(120).optional(),
   originCountry: z.string().min(2).max(120).optional(),
   incoterm: z.string().min(2).max(12).optional(),
-});
+}));
 const decisionSchema = z.object({
   role: z.enum(["buyer", "seller"]),
   fields,
   newIntake: z.boolean(),
   reply: z.string().min(1).max(1200),
 });
+
+export function parseIntakeConversation(content: string) {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+  } catch {
+    console.warn("AKIF intake response rejected", { reason: "invalid_json" });
+    return null;
+  }
+  const result = decisionSchema.safeParse(raw);
+  if (!result.success) {
+    // Only schema paths/codes are logged; model text and trade values stay private.
+    console.warn("AKIF intake response rejected", { reason: "invalid_schema",
+      issues: result.error.issues.slice(0, 8).map(issue => ({ code: issue.code,
+        path: issue.path.filter(part => typeof part === "string" && ["role", "fields", "newIntake", "reply", "product", "quantity", "unit", "targetPrice", "price", "currency", "destination", "originCountry", "incoterm"].includes(part)) })) });
+    return null;
+  }
+  if (!isSafeConversationText(result.data.reply)) {
+    console.warn("AKIF intake response rejected", { reason: "unsafe_reply" });
+    return null;
+  }
+  return result.data;
+}
 
 export async function interpretIntakeConversation(input: {
   message: string;
@@ -43,16 +67,9 @@ export async function interpretIntakeConversation(input: {
       ].join(" "),
       15_000,
     );
-    const parsed = decisionSchema.parse(
-      JSON.parse(
-        content
-          .trim()
-          .replace(/^```(?:json)?\s*/i, "")
-          .replace(/\s*```$/, ""),
-      ),
-    );
-    return isSafeConversationText(parsed.reply) ? parsed : null;
+    return parseIntakeConversation(content);
   } catch {
+    console.warn("AKIF intake unavailable", { reason: "model_request_failed" });
     return null;
   }
 }
