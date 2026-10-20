@@ -23,6 +23,7 @@ test('acceptance supervisor claims each run once and isolates child credentials'
   try {
     const {startAcceptanceProbe}=await import(output);
     delete process.env.UDC_ACCEPTANCE_RUN_ID;
+    delete process.env.UDC_ACCEPTANCE_MODE;
     await startAcceptanceProbe();assert.equal(locks,0);
     process.env.UDC_ACCEPTANCE_RUN_ID='synthetic_run_123';
     process.env.AKIF_WORKER_URL='https://worker.invalid';process.env.AKIF_WORKER_TOKEN='synthetic-worker';

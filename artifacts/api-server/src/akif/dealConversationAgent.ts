@@ -1,3 +1,4 @@
+import { participantConversation } from "./dealConversationPrivacy";
 import { getAkifDealContext } from "./intelligence/dealContext";
 import { normalizeModelDecision, type DealConversationDecision } from "./dealDecisionSafety";
 import { conversationSafeDealMemory, recentDealConversation } from "./dealConversationMemory";
@@ -26,16 +27,28 @@ function formatTradeMoney(currency: string, value: string | number) {
 export async function interpretActiveDealConversation(input: {
   dealId: string;
   participantRole: string;
+  participantUserId: string;
   message: string;
   replyContextKind?: string;
 }): Promise<DealConversationDecision | null> {
-  const context = await getAkifDealContext(input.dealId).catch(() => {
+  const context = await getAkifDealContext(input.dealId, input.participantUserId).catch(() => {
     console.warn("AKIF deal context unavailable", { reason: "context_load_failed" });
     return null;
   });
   if (!context) return null;
   const { deal, conversation: history } = context;
-  const dealMemory = conversationSafeDealMemory(context);
+  const participantRole = input.participantUserId === deal.buyerUserId ? "buyer" : input.participantUserId === deal.sellerUserId ? "seller" : null;
+  if (!participantRole) return null;
+  const visibleHistory = participantConversation(history, input.participantUserId);
+  const privateContext = history.filter(event => event.userId === input.participantUserId).map(event => event.originalText);
+  const counterpartyUserId = participantRole === "buyer" ? deal.sellerUserId : deal.buyerUserId;
+  const documentGrants: Array<{ documentId: string; userId: string }> = context.documentGrants ?? [];
+  const dealMemory = conversationSafeDealMemory(context, {
+    userId: input.participantUserId,
+    documentIds: documentGrants.filter(grant => grant.userId === input.participantUserId).map(grant => grant.documentId),
+    counterpartyUserId,
+    counterpartyDocumentIds: documentGrants.filter(grant => grant.userId === counterpartyUserId).map(grant => grant.documentId),
+  });
 
   const system = [
     "You are UDC's human trade coordinator inside an active WhatsApp deal, not a chatbot. Understand natural language, typos, frustration, corrections and short follow-ups. Text like a capable broker/coordinator: concise, relaxed, context-aware and direct. Usually one short sentence; two only when genuinely needed. Mirror the sender's language and conversational register when reliable, including mixed-language chat, without announcing translation. Never use robotic acknowledgements or customer-service filler. Speak as UDC in first person. No markdown, decorative symbols, menus, labels, repeated deal numbers or internal process narration.",
@@ -53,7 +66,7 @@ export async function interpretActiveDealConversation(input: {
   ].join(" ");
 
   const user = JSON.stringify({
-    participantRole: input.participantRole,
+    participantRole,
     deal: {
       dealNumber: deal.dealNumber,
       status: deal.status,
@@ -65,7 +78,7 @@ export async function interpretActiveDealConversation(input: {
       destination: deal.destination,
     },
     dealMemory,
-    recentConversation: recentDealConversation(history, input.replyContextKind)
+    recentConversation: recentDealConversation(visibleHistory, input.replyContextKind)
       .map((event) => ({
         eventId: event.id,
         role: event.participantRole,
@@ -90,8 +103,9 @@ export async function interpretActiveDealConversation(input: {
     const { content } = await runConversationChat(user, system, 15_000);
     return normalizeModelDecision({
       content,
-      participantRole: input.participantRole,
+      participantRole,
       incomingMessage: input.message,
+      privateContext,
       replyContextKind: input.replyContextKind,
       deal: {
         status: deal.status,

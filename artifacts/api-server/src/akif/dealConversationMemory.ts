@@ -21,14 +21,22 @@ function safeArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-export function conversationSafeDealMemory(snapshot: unknown) {
+export function conversationSafeDealMemory(snapshot: unknown, viewer?: { userId: string; documentIds: string[]; counterpartyUserId: string; counterpartyDocumentIds: string[] }) {
   const source = asRecord(snapshot);
   if (!source) return null;
+
+  const visibleDocuments = safeArray(source.documents).map(asRecord).filter((item): item is UnknownRecord => Boolean(item))
+    .filter(item => !viewer || item.uploadedBy === viewer.userId || (item.status === "approved" && viewer.documentIds.includes(String(item.id))));
+  const sharedFactIds = new Set(visibleDocuments.filter(item => !viewer || (item.status === "approved" && (item.uploadedBy === viewer.counterpartyUserId || viewer.counterpartyDocumentIds.includes(String(item.id))))).map(item => item.id));
+  const pick = (value: unknown, keys: string[]) => {
+    const record = asRecord(value); return record ? Object.fromEntries(keys.filter(key => key in record).map(key => [key, record[key]])) : null;
+  };
+  const publicRows = (value: unknown, keys: string[]) => safeArray(value).map(item => pick(item, keys));
 
   const extractionSummaries = safeArray(source.documentExtractions)
     .map(asRecord)
     .filter((item): item is UnknownRecord => Boolean(item))
-    .filter((item) => item.status === "completed" || item.status === "needs_review")
+    .filter((item) => (!viewer || sharedFactIds.has(item.documentId)) && (item.status === "completed" || item.status === "needs_review"))
     .map((item) => ({
       documentId: item.documentId ?? null,
       status: item.status,
@@ -36,9 +44,7 @@ export function conversationSafeDealMemory(snapshot: unknown) {
       confidence: item.confidence ?? null,
     }));
 
-  const documents = safeArray(source.documents)
-    .map(asRecord)
-    .filter((item): item is UnknownRecord => Boolean(item))
+  const documents = visibleDocuments
     .map((item) => ({
       id: item.id ?? null,
       documentType: item.documentType ?? null,
@@ -47,15 +53,15 @@ export function conversationSafeDealMemory(snapshot: unknown) {
     }));
 
   return {
-    deal: source.deal ?? null,
-    product: source.product ?? null,
-    buyerRequest: source.buyerRequest ?? null,
-    sellerListing: source.sellerListing ?? null,
+    deal: viewer ? pick(source.deal, ["dealNumber", "status", "quantity", "unit", "agreedPrice", "currency", "incoterm", "destination"]) : source.deal ?? null,
+    product: viewer ? pick(source.product, ["name", "category", "description"]) : source.product ?? null,
+    buyerRequest: viewer ? null : source.buyerRequest ?? null,
+    sellerListing: viewer ? null : source.sellerListing ?? null,
     documents,
     documentExtractions: extractionSummaries,
-    financials: source.financials ?? [],
-    inspections: source.inspections ?? [],
-    shipments: source.shipments ?? [],
-    commissions: source.commissions ?? [],
+    financials: viewer ? publicRows(source.financials, ["instrumentType", "status"]) : source.financials ?? [],
+    inspections: viewer ? publicRows(source.inspections, ["inspectorName", "status", "scheduledAt", "resultSummary"]) : source.inspections ?? [],
+    shipments: viewer ? publicRows(source.shipments, ["carrier", "trackingNumber", "status", "origin", "destination", "estimatedArrival", "notes"]) : source.shipments ?? [],
+    commissions: viewer ? [] : source.commissions ?? [],
   };
 }
