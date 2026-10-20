@@ -29,11 +29,15 @@ test("intake validation normalizes exact numeric strings and rejects unsafe coer
     const valid = { role: "buyer", newIntake: true, fields: { product: "Copper", quantity: 100, targetPrice: 5900, currency: "USD", destination: "Jebel Ali", specification: "Grade A", deliveryTime: "30 days", monthlyCapacity: 1000, price: null, originCountry: null }, reply: "I’ll send this for UDC review." };
     const parsed = parseIntakeConversation(JSON.stringify(valid));
     assert.equal(parsed.fields.quantity, 100); assert.equal(parsed.fields.targetPrice, 5900);
-    assert.equal(parsed.fields.specification, "Grade A"); assert.equal(parsed.fields.deliveryTime, "30 days"); assert.equal(parsed.fields.monthlyCapacity, 1000);
+    assert.equal(parsed.fields.specification, "Grade A"); assert.equal(parsed.fields.deliveryTime, "30 days"); assert.equal(parsed.fields.monthlyCapacity, undefined);
     assert.equal(parsed.fields.price, undefined); assert.equal(parsed.fields.originCountry, undefined);
     const quotedNumbers = parseIntakeConversation(JSON.stringify({ ...valid, fields: { ...valid.fields, quantity: "100", targetPrice: "5,900.50", monthlyCapacity: "1,000", minimumOrderQuantity: "50" } }));
     assert.equal(quotedNumbers.fields.quantity, 100); assert.equal(quotedNumbers.fields.targetPrice, 5900.5);
-    assert.equal(quotedNumbers.fields.monthlyCapacity, 1000); assert.equal(quotedNumbers.fields.minimumOrderQuantity, 50);
+    assert.equal(quotedNumbers.fields.monthlyCapacity, undefined); assert.equal(quotedNumbers.fields.minimumOrderQuantity, undefined);
+    const seller = parseIntakeConversation(JSON.stringify({ ...valid, role: "seller", fields: { product: "Sugar", quantity: "100", price: "490", availability: "14 days", monthlyCapacity: "1,000", minimumOrderQuantity: "50", deliveryTime: 14, targetPrice: "not a seller field" } }));
+    assert.equal(seller.fields.price, 490); assert.equal(seller.fields.availability, "14 days");
+    assert.equal(seller.fields.monthlyCapacity, 1000); assert.equal(seller.fields.minimumOrderQuantity, 50);
+    assert.equal(seller.fields.deliveryTime, undefined); assert.equal(seller.fields.targetPrice, undefined);
     assert.equal(logs.length, 0);
     for (const quantity of ["", " ", "100 MT", "USD 100", "1e2", "0x64", "1,00", "1,000,00", "Infinity", "NaN", "-1", "0", true, false]) {
       assert.equal(parseIntakeConversation(JSON.stringify({ ...valid, fields: { quantity } })), null);
