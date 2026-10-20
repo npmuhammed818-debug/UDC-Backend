@@ -7,6 +7,7 @@ import { logger } from '../lib/logger';
 // Operator opt-in: one bounded synthetic run per ID, even across restarts.
 export async function startAcceptanceProbe() {
   const runId = process.env.UDC_ACCEPTANCE_RUN_ID;
+  logger.info({ enabled: Boolean(runId), validRunId: Boolean(runId && /^[a-zA-Z0-9_-]{8,80}$/.test(runId)), workerConfigured: Boolean(process.env.AKIF_WORKER_URL && process.env.AKIF_WORKER_TOKEN) }, 'Acceptance probe configuration checked');
   if (!runId || !/^[a-zA-Z0-9_-]{8,80}$/.test(runId)) return;
   if (!process.env.AKIF_WORKER_URL || !process.env.AKIF_WORKER_TOKEN) return;
   try {
@@ -21,6 +22,7 @@ export async function startAcceptanceProbe() {
       return true;
     });
     if (!claimed) return;
+    logger.info({ runId, budget: 5 }, 'Acceptance probe started');
     const apiRoot = process.cwd().endsWith('api-server') ? process.cwd() : resolve(process.cwd(),'artifacts/api-server');
     const child = spawn(process.execPath,[resolve(apiRoot,'acceptance/live-intake.mjs')],{
       cwd:apiRoot, stdio:['ignore','pipe','ignore'],
