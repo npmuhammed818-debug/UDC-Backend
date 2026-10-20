@@ -1232,8 +1232,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
         continue;
       }
-      const intakeRole = intakeDecision.role;
-      const previousDraft = !explicitNewIntake && !intakeDecision.newIntake && savedIntake?.role === intakeRole
+      const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
+      const previousDraft = !explicitNewIntake && (repeatedSubmittedIntake || !intakeDecision.newIntake) && savedIntake?.role === intakeRole
         ? savedIntake.draft : null;
 
       const contactName =

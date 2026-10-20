@@ -164,6 +164,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.dealCalls, 0); assert.equal(state.intake[0].memory, null);
       assert.equal(state.recorded[0].destination, "Jebel Ali"); assert.equal(state.recorded[0].incoterm, "CIF");
       assert.equal(rows.dealsTable[0].destination, "Dubai", "a fresh inquiry must not amend an old deal");
+      state.decision.newIntake = true; // A model classification cannot duplicate an identical submitted inquiry.
       await message({ text: { body } });
       assert.equal(state.dealCalls, 0); assert.equal(state.recorded.length, 1, "repeating the submitted inquiry must not create another record");
       assert.equal(state.intake[1].memory.submittedRecordId, "requirement");
