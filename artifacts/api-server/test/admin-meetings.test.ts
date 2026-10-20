@@ -7,14 +7,15 @@ import { fileURLToPath } from 'node:url';
 
 test('admin meeting routes require verified counterparties and preserve human scheduling', async t => {
   const source=await readFile(new URL('../src/routes/admin.ts',import.meta.url),'utf8');
-  const names=[...new Set(source.match(/\b\w+Table\b/g))];
+  const dealSource=await readFile(new URL('../src/routes/deals.ts',import.meta.url),'utf8');
+  const names=[...new Set((source+dealSource).match(/\b\w+Table\b/g))];
   const tables:any=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{get:(t,k)=>k==='_table'?name:{column:k,table:name}})]));
   const records:any=Object.fromEntries(names.map(name=>[name,[]]));
   const dealId='11111111-1111-4111-8111-111111111111';
   records.dealsTable=[{id:dealId,buyerUserId:'buyer',sellerUserId:'seller'}];
   records.usersTable=[{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'}];
   const value=(x:any,r:any):any=>x?.column?(r[x.table] ?? r)[x.column]:x;
-  const predicate=(x:any,r:any):any=>x?.kind==='eq'?value(x.a,r)===value(x.b,r):x?.kind==='and'?x.args.every((c:any)=>predicate(c,r)):x?.kind==='in'?x.list.includes(value(x.a,r)):true;
+  const predicate=(x:any,r:any):any=>x?.kind==='eq'?value(x.a,r)===value(x.b,r):x?.kind==='and'?x.args.every((c:any)=>predicate(c,r)):x?.kind==='or'?x.args.some((c:any)=>predicate(c,r)):x?.kind==='in'?x.list.includes(value(x.a,r)):true;
   let dbReads=0;
   function select(fields?:any) {
     dbReads++;
@@ -36,23 +37,26 @@ test('admin meeting routes require verified counterparties and preserve human sc
     return q;
   }
   function mutation(table:any,update=false) {
-    let input:any,condition:any,done:any;
-    const run=()=>{if(done)return done; if(update){done=records[table._table].filter((r:any)=>predicate(condition,r));done.forEach((r:any)=>Object.assign(r,input));}
+    let input:any,condition:any,done:any,conflict:any;
+    const run=()=>{if(done)return done; if(table._table==='dealFeedbackTable' && !update && records[table._table].some((r:any)=>r.dealId===input.dealId && r.authorUserId===input.authorUserId)) throw new Error('fixture_unique_author_deal'); if(update){done=records[table._table].filter((r:any)=>predicate(condition,r));done.forEach((r:any)=>Object.assign(r,input));}
+      else if(conflict && records[table._table].some((r:any)=>r.dealId===input.dealId)){done=records[table._table].filter((r:any)=>r.dealId===input.dealId);done.forEach((r:any)=>Object.assign(r,conflict.set));}
       else {done=(Array.isArray(input)?input:[input]).map((r:any)=>({id:randomUUID(),...r}));records[table._table].push(...done);}return done;};
-    const q:any={values:(v:any)=>{input=v;return q},set:(v:any)=>{input=v;return q},where:(c:any)=>{condition=c;return q},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};
+    const q:any={onConflictDoUpdate:(v:any)=>{conflict=v;return q},values:(v:any)=>{input=v;return q},set:(v:any)=>{input=v;return q},where:(c:any)=>{condition=c;return q},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};
     return q;
   }
   const key='__adminMeetingFixture';
   const state:any={tables,db:{select,insert:(t:any)=>mutation(t),update:(t:any)=>mutation(t,true)},user:null};
+  state.db.locks=[];state.db.execute=async(query:any)=>{state.db.locks.push(query.values?.[0]);};
+  state.db.transaction=async(f:any)=>f(state.db);
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
-  const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
+  const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
-      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=()=>true;export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});`,
+      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});`,
       sessions:'export const getAuthenticatedUser=async()=>null;',
       whatsapp:'export const sendWhatsAppText=async()=>({delivered:false});',
-      storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
+      storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
       intelligence:'export const processDocumentIntelligence=async()=>null;export const refreshDealIntelligenceSnapshot=async()=>null;',
     };
     for(const [pattern,name] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/auth\/sessions$|^\.\/sessions$/,'sessions'],[/whatsapp\/client$/,'whatsapp'],[/supabase\/storage$/,'storage'],[/akif\/documentIntelligence$/,'intelligence']] as const)
@@ -131,6 +135,75 @@ test('admin meeting routes require verified counterparties and preserve human sc
       assert.equal((await request(`/admin/meetings/${id}`,{status:'scheduled'},'PATCH')).status,409);
       assert.equal((await request(`/admin/meetings/${id}`,{status:'cancelled'},'PATCH')).status,200);
       assert.equal(records.dealMeetingsTable[0].status,'cancelled');
+    });
+    await t.test('payment milestones need matching DLC, SGS, passed inspection and explicit destination review',async()=>{
+      records.dealsTable[0].status='delivery';
+      const route=`/admin/deals/${dealId}/status`;
+      assert.equal((await request(route,{status:'payment',confirmDestinationSgs:true},'PATCH')).status,409);
+      records.dealFinancialsTable=[{id:'dlc',dealId:'another-deal',instrumentType:'DLC',status:'confirmed'}];
+      records.inspectionsTable=[{id:'inspection',dealId:'another-deal',status:'passed'}];
+      records.documentsTable=[{id:'sgs',dealId:'another-deal',documentType:'SGS',status:'approved'}];
+      assert.equal((await request(route,{status:'payment',confirmDestinationSgs:true},'PATCH')).status,409);
+      for(const name of ['dealFinancialsTable','inspectionsTable','documentsTable']) records[name][0].dealId=dealId;
+      assert.equal((await request(route,{status:'payment'},'PATCH')).status,409);
+      assert.equal((await request(route,{status:'payment',confirmDestinationSgs:true},'PATCH')).status,200);
+      assert.equal(records.dealsTable[0].status,'payment');
+      const audit=records.auditLogsTable.find((r:any)=>r.action==='deal_status_updated');
+      assert.equal(audit.metadata.destinationSgsConfirmedByAdmin,true);assert.equal(audit.metadata.paymentEvidence.approvedSgsDocumentId,'sgs');
+    });
+    await t.test('commissions calculate agreed rules, reject mismatches and lock duplicate agent rewards',async()=>{
+      Object.assign(records.dealsTable[0],{quantity:'100.000000',agreedPrice:'5900.00',unit:'MT',currency:'USD'});
+      const agentId=randomUUID();records.usersTable.push({id:agentId,role:'agent',status:'verified'});
+      records.dealParticipantsTable.push({id:randomUUID(),dealId,userId:agentId,participantRole:'agent',status:'active'});
+      const input={dealId,beneficiaryUserId:agentId,commissionType:'percentage',commissionRate:'1.25'};
+      assert.equal((await request('/admin/commissions',input)).status,400);
+      assert.equal((await request('/admin/commissions',{...input,confirmAgreedTerms:true,currency:'EUR'})).status,409);
+      assert.equal((await request('/admin/commissions',{...input,confirmAgreedTerms:true,amount:'1'})).status,409);
+      const response=await request('/admin/commissions',{...input,confirmAgreedTerms:true});assert.equal(response.status,201);
+      assert.equal(response.data.commission.amount,'7375.00');assert.equal(response.data.commission.currency,'USD');assert.equal(response.data.commission.status,'pending');
+      assert.equal((await request('/admin/commissions',{...input,confirmAgreedTerms:true})).status,409);
+      assert.ok(state.db.locks.includes(`commission:${dealId}:${agentId}`));
+      const audit=records.auditLogsTable.find((r:any)=>r.action==='commission_created');assert.equal(audit.metadata.method,'percentage');assert.equal(audit.metadata.agreedTermsConfirmed,true);
+      const perMtAgent=randomUUID();records.usersTable.push({id:perMtAgent,role:'agent',status:'verified'});records.dealParticipantsTable.push({id:randomUUID(),dealId,userId:perMtAgent,participantRole:'agent',status:'active'});
+      const perMt={dealId,beneficiaryUserId:perMtAgent,commissionType:'fixed_per_mt',commissionRate:'2.50',confirmAgreedTerms:true};
+      records.dealsTable[0].unit='kg';assert.equal((await request('/admin/commissions',perMt)).status,400);
+      records.dealsTable[0].unit='MT';assert.equal((await request('/admin/commissions',perMt)).data.commission.amount,'250.00');
+    });
+    await t.test('commission payout records require a completed deal',async()=>{
+      const id=randomUUID();records.commissionsTable=[{id,dealId,beneficiaryUserId:'agent',currency:'USD',amount:'100',status:'pending'}];
+      assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,409);
+      assert.equal(records.commissionsTable[0].status,'pending');
+      assert.equal((await request(`/admin/deals/${dealId}/status`,{status:'completed',confirmDestinationSgs:true},'PATCH')).status,200);
+      assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,200);
+      assert.ok(records.commissionsTable[0].paidAt);assert.equal(records.commissionsTable[0].status,'paid');
+    });
+    await t.test('inspection, shipment and customs records use existing audited operations',async()=>{
+      const inspection=await request('/admin/inspections',{dealId,inspectorName:'Synthetic SGS',scheduledAt:'2026-11-01T10:00:00Z'});assert.equal(inspection.status,201);
+      assert.equal((await request(`/admin/inspections/${inspection.data.inspection.id}`,{status:'passed',resultSummary:'Synthetic reviewed evidence'},'PATCH')).status,200);
+      const shipment=await request('/admin/shipments',{dealId,carrier:'Synthetic carrier',trackingNumber:'TEST-ONLY',origin:'Santos',destination:'Mombasa'});assert.equal(shipment.status,201);
+      assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit',notes:'Synthetic confirmed departure'},'PATCH')).status,200);
+      assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'submitted',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
+      assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'cleared',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
+      assert.equal(records.customsClearanceTable.length,1);assert.equal(records.customsClearanceTable[0].status,'cleared');assert.ok(records.customsClearanceTable[0].clearedAt);
+      for(const action of ['inspection_created','shipment_created','inspection_status_updated','shipment_status_updated','customs_status_updated'])assert.ok(records.auditLogsTable.some((r:any)=>r.action===action),action);
+    });
+    await t.test('completed counterparties submit one feedback record and only reviewed feedback is shared',async()=>{
+      const route=`/deals/${dealId}/feedback`;
+      state.user={id:'outsider',role:'buyer',status:'verified'};
+      assert.equal((await request(route,{rating:5})).status,404);
+      state.user={id:'buyer',role:'buyer',status:'verified'};
+      records.dealsTable[0].status='shipment';assert.equal((await request(route,{rating:5})).status,409);
+      records.dealsTable[0].status='completed';assert.equal((await request(route,{rating:0})).status,400);
+      const response=await request(route,{rating:5,comment:'Synthetic trade review'});assert.equal(response.status,201);
+      assert.equal(response.data.feedback.status,'pending_review');
+      assert.equal((await request(route,{rating:4})).status,409);
+      let execution=await fetch(base+`/deals/${dealId}/execution`);assert.equal(execution.status,200);assert.deepEqual((await execution.json()).feedback,[]);
+      state.user={id:'admin',role:'admin',status:'verified'};
+      assert.equal((await request(`/admin/feedback/${response.data.feedback.id}/status`,{status:'approved'},'PATCH')).status,200);
+      state.user={id:'seller',role:'seller',status:'verified'};
+      execution=await fetch(base+`/deals/${dealId}/execution`);const data=await execution.json();assert.equal(data.feedback.length,1);assert.equal(data.feedback[0].comment,'Synthetic trade review');
+      assert.equal(data.feedback[0].authorUserId,undefined);
+      state.user={id:'admin',role:'admin',status:'verified'};
     });
   } finally {if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));await unlink(output);delete (globalThis as any)[key];}
 });

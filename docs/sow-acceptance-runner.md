@@ -21,3 +21,9 @@ End-to-end acceptance remains for all registration roles and verification, two-p
 ## Live finding: quoted numeric facts (20 October 2026)
 
 Synthetic copper probes reached the worker successfully (HTTP 200), but the returned quantity and target price failed numeric schema validation. Intake now normalizes only exact decimal strings and correctly grouped thousands separators. Units, scientific notation, booleans, empty/negative/zero values and malformed grouping remain rejected. The prompt explicitly requests JSON numbers. A live retest is required before calling the issue resolved in production.
+
+## Operations coverage added
+
+Deal operations now exposes the existing inspection, shipment and customs records. Participants can view their authorized meetings, tracking, customs, cases and reviewed feedback, and completed counterparties can submit feedback for review. Inspection/shipment creation writes an audit record atomically and notifies counterparties. Route fixtures cover payment evidence ownership, destination confirmation, completion-gated payout recording, customs upserts and review-gated feedback.
+
+Commission creation can calculate from an explicitly confirmed agreed percentage or per-MT rate, as well as a fixed amount. Exact decimal arithmetic rounds once to cents. Calculated rates use the deal currency; unknown unit conversions and mismatched supplied totals are rejected. A per-deal/beneficiary transaction lock protects duplicate agent rewards. No rate is invented and no bank transfer is executed. Automatic creation of new liabilities from a referral alone is not implemented: a human must record the agreed commission rule.

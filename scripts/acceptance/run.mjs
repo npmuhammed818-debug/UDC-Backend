@@ -10,9 +10,9 @@ const groups = [
   ['Inquiry, offers and matching', ['acceptance-supervisor', 'acceptance-probe', 'trade-intake-triage', 'intake-model-response', 'whatsapp-intake-conversation', 'akif-conversation-corpus', 'match-scoring', 'buyer-pool-concurrency', 'intake-persistence'], 'Live model quality and approved buyer/seller matching need acceptance.'],
   ['Private deal room', ['private-deal-routes', 'deal-document-routing', 'deal-conversation-memory', 'deal-decision-safety', 'deal-fact-reply', 'whatsapp-client'], 'Two-party text, image, PDF, voice and multilingual delivery need live acceptance.'],
   ['AI and document assistance', ['loi-draft', 'icpo-draft', 'fco-draft', 'spa-draft', 'ncnda-draft', 'whatsapp-draft', 'image-extractor-routing', 'worker-conversation', 'worker-timeouts', 'akif-brain-provider', 'decision-models', 'free-data-sources', 'official-trade-sources', 'impexq-client'], 'Real document extraction, translation and contract summaries need acceptance.'],
-  ['Referrals and commissions', ['agent-referral-chain'], 'Referral attribution, commission calculation and payout recording need end-to-end acceptance.'],
+  ['Referrals and commissions', ['agent-referral-chain', 'commission-amount', 'admin-meetings'], 'Referral attribution, commission calculation and payout recording need end-to-end acceptance.'],
   ['Meetings', ['admin-meetings'], 'Real participant meeting requests, video delivery and in-person coordination need live acceptance.'],
-  ['Post-deal operations', ['payment-policy', 'payment-milestone'], 'Shipment evidence, customs, delivery, feedback and commission distribution need workflow acceptance.'],
+  ['Post-deal operations', ['payment-policy', 'payment-milestone', 'admin-meetings'], 'Shipment evidence, customs, delivery, feedback and commission distribution need workflow acceptance.'],
   ['Admin control and analytics', ['admin-meetings'], 'All admin route access controls are covered; reports, announcements and analytics still need workflow acceptance.'],
 ];
 const available = new Set((await readdir(path.join(api, 'test'))).filter(n => n.endsWith('.test.ts')));
