@@ -7,6 +7,9 @@ import { logger } from '../lib/logger';
 // Operator opt-in: one bounded synthetic run per ID, even across restarts.
 export async function startAcceptanceProbe() {
   const runId = process.env.UDC_ACCEPTANCE_RUN_ID;
+  const mode = process.env.UDC_ACCEPTANCE_MODE ?? 'intake';
+  if (mode !== 'intake' && mode !== 'media') return;
+  const budget = mode === 'media' ? 3 : 5;
   logger.info({ enabled: Boolean(runId), validRunId: Boolean(runId && /^[a-zA-Z0-9_-]{8,80}$/.test(runId)), workerConfigured: Boolean(process.env.AKIF_WORKER_URL && process.env.AKIF_WORKER_TOKEN) }, 'Acceptance probe configuration checked');
   if (!runId || !/^[a-zA-Z0-9_-]{8,80}$/.test(runId)) return;
   if (!process.env.AKIF_WORKER_URL || !process.env.AKIF_WORKER_TOKEN) return;
@@ -18,15 +21,15 @@ export async function startAcceptanceProbe() {
         sql`${auditLogsTable.metadata}->>'runId' = ${runId}`,
       )).limit(1);
       if (existing.length) return false;
-      await tx.insert(auditLogsTable).values({ action:'acceptance_probe_started',entityType:'acceptance_probe',metadata:{runId,budget:5} });
+      await tx.insert(auditLogsTable).values({ action:'acceptance_probe_started',entityType:'acceptance_probe',metadata:{runId,budget,mode} });
       return true;
     });
     if (!claimed) return;
-    logger.info({ runId, budget: 5 }, 'Acceptance probe started');
+    logger.info({ runId, budget, mode }, 'Acceptance probe started');
     const apiRoot = process.cwd().endsWith('api-server') ? process.cwd() : resolve(process.cwd(),'artifacts/api-server');
-    const child = spawn(process.execPath,[resolve(apiRoot,'acceptance/live-intake.mjs')],{
+    const child = spawn(process.execPath,[resolve(apiRoot,mode === 'media' ? 'acceptance/live-media.mjs' : 'acceptance/live-intake.mjs')],{
       cwd:apiRoot, stdio:['ignore','pipe','ignore'],
-      env:{PATH:process.env.PATH,AKIF_WORKER_URL:process.env.AKIF_WORKER_URL,AKIF_WORKER_TOKEN:process.env.AKIF_WORKER_TOKEN},
+      env:{PATH:process.env.PATH,AKIF_WORKER_URL:process.env.AKIF_WORKER_URL,AKIF_WORKER_TOKEN:process.env.AKIF_WORKER_TOKEN,...(mode === 'media' ? { UDC_DOCUMENT_EXTRACTOR_URL: process.env.UDC_DOCUMENT_EXTRACTOR_URL, UDC_DOCUMENT_EXTRACTOR_TOKEN: process.env.UDC_DOCUMENT_EXTRACTOR_TOKEN } : {})},
     });
     let buffer='';
     child.stdout.on('data',chunk=> { if(buffer.length<32_000) buffer+=String(chunk); });
@@ -38,7 +41,7 @@ export async function startAcceptanceProbe() {
         const line=buffer.split('\n').find(line=>line.startsWith('UDC_ACCEPTANCE_RESULT '));
         const parsed=line?JSON.parse(line.slice('UDC_ACCEPTANCE_RESULT '.length)):null;
         // Only the bounded probe's fixed case names/statuses, never model text or credentials.
-        const summary={runId,exitCode:code,calls:parsed?.calls??0,results:parsed?.results??[],completed:Boolean(parsed)};
+        const summary={runId,mode,budget,exitCode:code,calls:parsed?.calls??0,modelCalls:parsed?.modelCalls??null,results:parsed?.results??[],completed:Boolean(parsed)};
         logger.info({acceptance:summary},'UDC acceptance probe completed');
         await db.insert(auditLogsTable).values({action:'acceptance_probe_completed',entityType:'acceptance_probe',metadata:summary});
       })().catch(()=>logger.warn({runId},'Acceptance probe result could not be saved'));

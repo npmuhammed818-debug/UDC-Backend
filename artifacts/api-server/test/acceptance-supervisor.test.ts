@@ -37,6 +37,15 @@ test('acceptance supervisor claims each run once and isolates child credentials'
     await new Promise(resolve=>setImmediate(resolve));
     const completed=records.find(r=>r.action==='acceptance_probe_completed');assert.equal(completed.metadata.calls,1);assert.equal(completed.metadata.completed,true);
     assert.doesNotMatch(JSON.stringify(records),/synthetic-worker|synthetic-database|synthetic-meta|synthetic-paid/);
+    records.length=0;
+    process.env.UDC_ACCEPTANCE_MODE='media';process.env.UDC_ACCEPTANCE_RUN_ID='synthetic_media_123';
+    process.env.UDC_DOCUMENT_EXTRACTOR_URL='https://extractor.invalid';process.env.UDC_DOCUMENT_EXTRACTOR_TOKEN='synthetic-extractor';
+    await startAcceptanceProbe();assert.equal(children.length,2);
+    assert.match(children[1][1][0],/acceptance\/live-media\.mjs$/);
+    assert.deepEqual(Object.keys(children[1][2].env).sort(),['AKIF_WORKER_TOKEN','AKIF_WORKER_URL','PATH','UDC_DOCUMENT_EXTRACTOR_TOKEN','UDC_DOCUMENT_EXTRACTOR_URL']);
+    assert.equal(records[0].metadata.budget,3);assert.equal(records[0].metadata.mode,'media');
+    child.emit('close',1);await new Promise(resolve=>setImmediate(resolve));
+
   } finally {
     for(const key of Object.keys(process.env))if(!(key in previous))delete process.env[key];Object.assign(process.env,previous);
     child.emit('close',1);await unlink(output);delete (globalThis as any).__acceptanceSupervisor;

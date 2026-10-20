@@ -25,7 +25,15 @@ test("intake validation normalizes exact numeric strings and rejects unsafe coer
   const logs: unknown[][] = [];
   try {
     console.warn = (...args) => { logs.push(args); };
-    const { parseIntakeConversation } = await import(output);
+    const { parseIntakeConversation, interpretIntakeConversation } = await import(output);
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    try {
+      globalThis.fetch = async () => { requests++; throw new Error("unexpected_synthetic_network"); };
+      const decision = await interpretIntakeConversation({ message: "USD 500 per MT, CIF Mombasa", role: "buyer", memory: { product: "Sugar", quantity: 100, unit: "MT" } });
+      assert.equal(decision.fields.targetPrice, 500); assert.equal(decision.fields.destination, "Mombasa");
+      assert.equal(decision.newIntake, false); assert.doesNotMatch(decision.reply, /\?/); assert.equal(requests, 0);
+    } finally { globalThis.fetch = originalFetch; }
     const valid = { role: "buyer", newIntake: true, fields: { product: "Copper", quantity: 100, targetPrice: 5900, currency: "USD", destination: "Jebel Ali", specification: "Grade A", deliveryTime: "30 days", monthlyCapacity: 1000, price: null, originCountry: null }, reply: "I’ll send this for UDC review." };
     const parsed = parseIntakeConversation(JSON.stringify(valid));
     assert.equal(parsed.fields.quantity, 100); assert.equal(parsed.fields.targetPrice, 5900);
