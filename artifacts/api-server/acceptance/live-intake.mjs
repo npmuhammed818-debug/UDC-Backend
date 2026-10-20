@@ -7,11 +7,28 @@ import { fileURLToPath } from 'node:url';
 const output = fileURLToPath(new URL(`./probe-${randomUUID()}.mjs`, import.meta.url));
 const results = [];
 let calls = 0;
+let diagnostic = {};
+// Capture only the parser's fixed diagnostic codes; never its input/model text.
+console.warn = (_message, detail) => {
+  if (['invalid_json','invalid_schema','unsafe_reply','model_request_failed'].includes(detail?.reason))
+    diagnostic = { ...diagnostic, reason: detail.reason, ...(detail.issues ? { issues: detail.issues } : {}) };
+};
 try {
   if (!process.env.AKIF_WORKER_URL || !process.env.AKIF_WORKER_TOKEN) throw new Error('worker_configuration_missing');
   const built = await build({ entryPoints: [fileURLToPath(new URL('../src/akif/intakeConversation.ts', import.meta.url))], bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, plugins: [{name:'worker-only', setup(b) {
     b.onResolve({filter:/\/intelligence\/hermesClient$/}, () => ({path:'bridge',namespace:'bridge'}));
-    b.onLoad({filter:/.*/,namespace:'bridge'}, () => ({contents:`export {runAkifWorkerChat as runConversationChat} from ${JSON.stringify(fileURLToPath(new URL('../src/akif/intelligence/workerClient.ts', import.meta.url)))};`,resolveDir:fileURLToPath(new URL('../',import.meta.url))}));
+    b.onLoad({filter:/.*/,namespace:'bridge'}, () => ({contents:`import {runAkifWorkerChat} from ${JSON.stringify(fileURLToPath(new URL('../src/akif/intelligence/workerClient.ts', import.meta.url)))};
+      export async function runConversationChat(...args) {
+        try {
+          const result = await runAkifWorkerChat(...args);
+          globalThis.__udcProbeResponseShape = { length: result.content.length, startsJson: result.content.trim().startsWith('{'), endsJson: result.content.trim().endsWith('}'), fenced: result.content.trim().startsWith('\x60\x60\x60') };
+          return result;
+        } catch(error) {
+          const match = String(error?.message ?? '').match(/HTTP (\\d{3})/);
+          globalThis.__udcProbeHttpStatus = match ? Number(match[1]) : null;
+          throw error;
+        }
+      }`,resolveDir:fileURLToPath(new URL('../',import.meta.url))}));
     b.onResolve({filter:/\/decisionModels$/}, () => ({path:'hints',namespace:'hints'}));
     b.onLoad({filter:/.*/,namespace:'hints'}, () => ({contents:'export const intakeDecisionHint = async () => null;'}));
   }}]});
@@ -27,8 +44,9 @@ try {
   for (const c of cases) {
     if (calls) await new Promise(resolve=>setTimeout(resolve,65_000));
     calls++;
+    diagnostic = {};
     const decision = await interpretIntakeConversation({message:c.message,role:c.role,memory:c.memory});
-    if (!decision) { results.push({name:c.name,status:'blocked',reason:'provider_or_response_validation_failed'});break; }
+    if (!decision) { results.push({name:c.name,status:'blocked',reason:diagnostic.reason ?? 'provider_or_response_validation_failed', ...(diagnostic.issues ? { issues: diagnostic.issues } : {}), httpStatus:globalThis.__udcProbeHttpStatus ?? null, shape:globalThis.__udcProbeResponseShape ?? null});break; }
     const failures=[];
     if(decision.role!==c.role) failures.push('role');
     for(const [key,value] of Object.entries(c.expect)) if(value instanceof RegExp ? !value.test(String(decision.fields[key]??'')) : decision.fields[key]!==value) failures.push(key);
