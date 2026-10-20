@@ -6,7 +6,7 @@ import secrets
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 
-from .media import ImageRequest, transcribe_image, transcribe_audio, gemini_probe, MAX_AUDIO_BYTES
+from .media import ImageRequest, transcribe_image, transcribe_audio, gemini_probe, MAX_AUDIO_BYTES, vision_status
 from .chat import ChatRequest, chat_completion
 from .llm_gateway import probe as model_probe, initialize_sdk
 from .documents import extract_document
@@ -123,6 +123,7 @@ def capabilities() -> dict:
             "orchestration": orchestration_status(),
             "llm_gateway": llm_status(),
             "media": {
+                "image_transcription": vision_status(),
                 "voice_transcription_configured": bool(os.getenv("GROQ_API_KEY")),
                 "gemini_image_configured": bool(os.getenv("GEMINI_API_KEY") and os.getenv("AKIF_GEMINI_MODEL") and os.getenv("AKIF_GEMINI_DATA_PROCESSING_ACCEPTED") == "true"),
                 "voice_requires_text_confirmation": True,

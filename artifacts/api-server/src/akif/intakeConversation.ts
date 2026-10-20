@@ -1,3 +1,4 @@
+import { explicitBuyerPriceFollowup } from "./explicitIntakeFollowup";
 import { z } from "zod/v4";
 import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
@@ -79,6 +80,17 @@ export async function interpretIntakeConversation(input: {
   memory: Record<string, unknown> | null;
 }) {
   try {
+    const explicit = input.role === "buyer" && input.memory && !input.memory.submittedRecordId
+      ? explicitBuyerPriceFollowup(input.message) : null;
+    if (explicit) {
+      const known: Record<string, unknown> = { ...input.memory, ...explicit };
+      if (typeof known.product === "string" && known.product.trim().length >= 2
+        && typeof known.quantity === "number" && Number.isFinite(known.quantity) && known.quantity > 0
+        && typeof known.destination === "string" && known.destination.trim().length >= 2) {
+        return { role: "buyer" as const, fields: explicit, newIntake: false,
+          reply: "Got it. I’ll send this requirement for UDC review." };
+      }
+    }
     const hint = await intakeDecisionHint(input.message);
     const { content } = await runConversationChat(
       JSON.stringify({ ...input, ...(hint ? { advisoryIntent: hint } : {}) }),

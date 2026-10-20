@@ -49,3 +49,7 @@ Thumbs.db
 .local/
 
 .acceptance-results/
+
+# Python test/bytecode caches
+__pycache__/
+*.py[cod]

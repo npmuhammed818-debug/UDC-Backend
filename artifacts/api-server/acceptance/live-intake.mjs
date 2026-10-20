@@ -20,6 +20,7 @@ try {
     b.onLoad({filter:/.*/,namespace:'bridge'}, () => ({contents:`import {runAkifWorkerChat} from ${JSON.stringify(fileURLToPath(new URL('../src/akif/intelligence/workerClient.ts', import.meta.url)))};
       export async function runConversationChat(...args) {
         try {
+          globalThis.__udcProbeModelCalls = (globalThis.__udcProbeModelCalls ?? 0) + 1;
           const result = await runAkifWorkerChat(...args);
           globalThis.__udcProbeResponseShape = { length: result.content.length, startsJson: result.content.trim().startsWith('{'), endsJson: result.content.trim().endsWith('}'), fenced: result.content.trim().startsWith('\x60\x60\x60') };
           return result;
@@ -56,5 +57,5 @@ try {
   }
 } catch { results.push({name:'probe_runtime',status:'blocked',reason:'configuration_or_runtime_failure'}); }
 finally { await unlink(output).catch(()=>{}); }
-console.log('UDC_ACCEPTANCE_RESULT '+JSON.stringify({mode:'synthetic_live_intake',calls,budget:5,results}));
+console.log('UDC_ACCEPTANCE_RESULT '+JSON.stringify({mode:'synthetic_live_intake',calls,modelCalls:globalThis.__udcProbeModelCalls??0,budget:5,results}));
 process.exitCode=results.some(r=>r.status!=='passed')?1:0;
