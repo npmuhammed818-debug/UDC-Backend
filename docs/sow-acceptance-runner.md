@@ -17,3 +17,7 @@ WhatsApp buyer drafts/submissions preserve supplied specification/grade, contrac
 ## Remaining gates
 
 End-to-end acceptance remains for all registration roles and verification, two-party matching/deal rooms, documents/voice, referrals/payouts, verified-party meetings, shipment/customs/delivery/feedback, and admin permissions/analytics. The report tracks these gaps rather than equating individual code checks with the whole SoW.
+
+## Live finding: quoted numeric facts (20 October 2026)
+
+Synthetic copper probes reached the worker successfully (HTTP 200), but the returned quantity and target price failed numeric schema validation. Intake now normalizes only exact decimal strings and correctly grouped thousands separators. Units, scientific notation, booleans, empty/negative/zero values and malformed grouping remain rejected. The prompt explicitly requests JSON numbers. A live retest is required before calling the issue resolved in production.

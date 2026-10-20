@@ -37,7 +37,7 @@ test('live acceptance stops after provider failure without retries or paid fallb
 });
 
 test('live acceptance distinguishes model schema errors without logging model text', async () => {
-  const content=JSON.stringify({role:'buyer',newIntake:true,fields:{product:'PRIVATE_MODEL_TEXT',quantity:'100'},reply:'I’ll send this for review.'});
+  const content=JSON.stringify({role:'buyer',newIntake:true,fields:{product:'PRIVATE_MODEL_TEXT',quantity:'100 MT'},reply:'I’ll send this for review.'});
   const server=createServer((req,res)=>{req.resume();res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({choices:[{message:{content}}]}));});
   await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
   try {
