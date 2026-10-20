@@ -545,6 +545,10 @@ function DealOperations({ user }: { user: AnyRecord }) {
   const [confirmDestinationSgs, setConfirmDestinationSgs] = useState(false);
   const [stageBusy, setStageBusy] = useState(false);
   const [stageError, setStageError] = useState('');
+  const [meetingForm, setMeetingForm] = useState({ scheduledAt: '', provider: 'video', meetingUrl: '', agenda: '' });
+  const [meetingBusy, setMeetingBusy] = useState(false);
+  const [meetingError, setMeetingError] = useState('');
+  const [meetingSaved, setMeetingSaved] = useState(false);
   const qc = useQueryClient();
   const selected = deals.data?.deals.find((deal) => deal.id === dealId);
   const room = useQuery({ queryKey: ['admin-deal-room', dealId], queryFn: () => loadAgentRecords<AnyRecord>(`/api/admin/deals/${dealId}/room`), enabled: allowed && !!dealId });
@@ -572,12 +576,28 @@ function DealOperations({ user }: { user: AnyRecord }) {
     } catch (cause) { setStageError(cause instanceof Error ? cause.message : 'Stage update failed.'); }
     finally { setStageBusy(false); }
   };
+  const scheduleMeeting = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!dealId || !meetingForm.scheduledAt) return;
+    setMeetingBusy(true); setMeetingError(''); setMeetingSaved(false);
+    try {
+      const response = await fetch(`/api/admin/deals/${dealId}/meetings`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...meetingForm, scheduledAt: new Date(meetingForm.scheduledAt).toISOString(), meetingUrl: meetingForm.provider === 'in_person' ? undefined : meetingForm.meetingUrl }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error === 'meeting_requires_verified_counterparties' ? 'Verify both the buyer and seller before scheduling this meeting.' : 'Check the meeting time, joining link or location and try again.');
+      setMeetingSaved(true); setMeetingForm({ scheduledAt: '', provider: 'video', meetingUrl: '', agenda: '' });
+      await qc.invalidateQueries({ queryKey: ['admin-deal-room', dealId] });
+    } catch (cause) { setMeetingError(cause instanceof Error ? cause.message : 'Meeting could not be scheduled.'); }
+    finally { setMeetingBusy(false); }
+  };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Deal operations" /><EmptyState title="Admin access required" body="UDC administrators review transaction milestones." /></>;
   const latest = (items?: AnyRecord[]) => items?.[0]?.status || 'not recorded';
   const approvedSgs = documents.data?.documents.some((item) => item.documentType === 'SGS' && item.status === 'approved');
   return <><PageHeader eyebrow="UDC / EXECUTION" title="Deal operations" body="Review the deal, its documents, inspection, shipment, and DLC record together before changing its stage." />
     <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">ACTIVE FILE</div><h2>Choose a deal</h2></div></div>
-      {deals.isError ? <Failure retry={() => deals.refetch()} /> : deals.isLoading ? <LoadingRows /> : <select className="select" value={dealId} onChange={(e) => { setDealId(e.target.value); setNextStage(''); setConfirmDestinationSgs(false); setStageError(''); }}><option value="">Select deal</option>{deals.data?.deals.map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.status}</option>)}</select>}
+      {deals.isError ? <Failure retry={() => deals.refetch()} /> : deals.isLoading ? <LoadingRows /> : <select className="select" value={dealId} onChange={(e) => { setDealId(e.target.value); setNextStage(''); setConfirmDestinationSgs(false); setStageError(''); setMeetingError(''); setMeetingSaved(false); setMeetingForm({ scheduledAt: '', provider: 'video', meetingUrl: '', agenda: '' }); }}><option value="">Select deal</option>{deals.data?.deals.map((item) => <option key={item.id} value={item.id}>{item.dealNumber} · {item.status}</option>)}</select>}
       {selected && <div className="mt-4"><div className="data-row"><div className="row-main"><strong>{selected.dealNumber}</strong><span>{selected.quantity} {selected.unit} · {selected.currency} {selected.agreedPrice}/{selected.unit} · {selected.destination || 'Destination pending'}</span></div><StatusPill status={selected.status} /><Link href={`/deals/${selected.id}`} className="text-link">Open deal</Link></div>
         <p className="text-sm mt-4">DLC: {latest(instruments.data?.instruments)} · Inspection: {latest(inspections.data?.inspections)} · Shipment: {latest(shipments.data?.shipments)} · Approved SGS document: {approvedSgs ? 'yes' : 'not recorded'}</p>
         {room.isLoading ? <div className="mt-4"><LoadingRows /></div> : room.isError ? <div className="mt-4"><Failure retry={() => room.refetch()} /></div> : room.data ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -590,6 +610,16 @@ function DealOperations({ user }: { user: AnyRecord }) {
           <div className="stat-card"><span>Timeline events</span><strong>{room.data.timeline?.length || 0}</strong></div>
           <div className="stat-card"><span>Documents</span><strong>{room.data.documents?.length || 0}</strong></div>
         </div> : null}
+        <form className="mt-5 border-t border-border pt-4" onSubmit={scheduleMeeting} data-testid="admin-schedule-meeting">
+          <h3>Schedule a meeting</h3><p className="text-sm mt-2">Confirm the time and details with both verified parties before scheduling. Times below use your local timezone.</p>
+          <div className="form-two mt-3"><Field label="Date and time (your local timezone)"><Input required type="datetime-local" value={meetingForm.scheduledAt} onChange={e => setMeetingForm({ ...meetingForm, scheduledAt: e.target.value })} /></Field>
+          <Field label="Meeting type"><select className="select" value={meetingForm.provider} onChange={e => setMeetingForm({ ...meetingForm, provider: e.target.value })}><option value="video">Video meeting</option><option value="in_person">Face-to-face meeting</option></select></Field></div>
+          {meetingForm.provider !== 'in_person' && <Field label="Confirmed joining link"><Input required type="url" maxLength={1000} value={meetingForm.meetingUrl} onChange={e => setMeetingForm({ ...meetingForm, meetingUrl: e.target.value })} /></Field>}
+          <Field label={meetingForm.provider === 'in_person' ? 'Confirmed location and agenda' : 'Agenda (optional)'}><textarea className="textarea" required={meetingForm.provider === 'in_person'} maxLength={1000} value={meetingForm.agenda} onChange={e => setMeetingForm({ ...meetingForm, agenda: e.target.value })} /></Field>
+          <Button type="submit" disabled={meetingBusy}>{meetingBusy ? 'Scheduling…' : 'Schedule meeting'}</Button>
+          {meetingError && <div className="error-banner mt-3">{meetingError}</div>}{meetingSaved && <div className="success-banner mt-3">Meeting scheduled.</div>}
+        </form>
+        <div className="data-list mt-4">{room.data?.meetings?.map((item: AnyRecord) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.provider === 'in_person' ? 'Face-to-face meeting' : 'Video meeting'} · {formatStatus(item.status)}</strong><span>{item.scheduledAt ? new Date(item.scheduledAt).toLocaleString() : 'Time pending'}{item.agenda ? ` · ${item.agenda}` : ''}</span></div>{item.meetingUrl && item.provider !== 'in_person' && <a href={item.meetingUrl} target="_blank" rel="noreferrer" className="text-link">Join meeting</a>}</div>)}</div>
         <div className="data-list mt-4">{documents.data?.documents.map((item) => <a href={item.fileUrl} target="_blank" rel="noreferrer" className="data-row data-row-link" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Document for {selected.dealNumber}</span></div><StatusPill status={item.status} /><ArrowDownToLine size={16} /></a>)}</div>
         <p className="text-xs mt-4">UDC's DLC is issued directly to the seller. Payment release follows SGS inspection at destination, subject to bank and contract requirements. Confirm the evidence with the responsible parties before marking milestones complete.</p>
         <div className="mt-4 border-t border-border pt-4"><Field label="Update deal stage"><select className="select" value={nextStage || selected.status} onChange={(event) => { setNextStage(event.target.value); setStageError(''); setConfirmDestinationSgs(false); }}>{stageOptions.map((stage) => <option key={stage} value={stage}>{formatStatus(stage)}</option>)}</select></Field>
