@@ -1,6 +1,7 @@
+import { handbookVersion, udcHandbook, trustedGuidanceAnswer, validateGuidanceReply, scopeAnswer } from '../akif/udcHandbook';
 import { createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { db, whatsappChatSessionsTable as sessions } from '@workspace/db';
+import { db, usersTable, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { runConversationChat } from '../akif/intelligence/hermesClient';
 
 // A separate key domain keeps tutoring history out of registration/trade drafts.
@@ -11,7 +12,7 @@ export function guidanceKey(phone: string) {
 }
 export function isGuidanceQuestion(text: string) {
   if (/^deal\s+UDC-/i.test(text.trim())) return false;
-  return /\?|^(?:what|why|how|which|can you|could you|do you|does|explain|teach|tell me|even (?:for|to)|speak|talk|answer|i (?:don.t|do not) understand)\b|^(?:dlc|sblc|cif|fob|sgs|incoterms)[.! ]*$|malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்/i.test(text.trim());
+  return /\?|^(?:what|why|how|which|can you|could you|do you|does|explain|teach|tell me|even (?:for|to)|speak|talk|answer|i (?:don.t|do not) understand)\b|^(?:dlc|sblc|cif|fob|sgs|incoterms)[.! ]*$|malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்|\b(?:udc|updowncircle|akif|website|founder|verification documents)\b/i.test(text.trim());
 }
 export function guidancePrompt(history: {role:string;content:string}[], message: string, voice: boolean) {
   return JSON.stringify({ history, currentMessage: message, source: voice ? 'voice_transcript' : 'text' });
@@ -24,14 +25,22 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
   if (onlyWithHistory && !fresh) return null;
   if (messageId && fresh?.lastMessageId === messageId) return '';
   let history: {role:string;content:string}[] = [];
-  try { history = JSON.parse(fresh?.data.history ?? '[]'); } catch { /* Empty history remains usable. */ }
+  try { history = JSON.parse(fresh?.data.handbookVersion === handbookVersion ? fresh.data.history ?? '[]' : '[]'); } catch { /* Empty history remains usable. */ }
   const language = /(?:speak|talk|reply|answer|in)\s+(?:in\s+)?(malayalam|english|tamil|hindi|arabic)/i.exec(text)?.[1]?.toLowerCase()
     ?? fresh?.data.language ?? '';
-  const response = await runConversationChat(guidancePrompt(history, text.slice(0, 4000), voice), guidanceSystem + (language ? ` Preferred reply language: ${language}.` : ''));
-  const reply = response.content.trim();
-  if (reply === 'TRADE_ACTION') return null;
-  if (!reply || reply.length > 4000) throw new Error('guidance_reply_invalid');
-  const data = { __kind: 'akif_guidance', language, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
+  const [account] = await db.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+  const trusted = trustedGuidanceAnswer(text, account?.role);
+  const useEnglish = !language || language === 'english';
+  let reply: string;
+  if (trusted && useEnglish) reply = trusted;
+  else {
+    const response = await runConversationChat(JSON.stringify({ ...JSON.parse(guidancePrompt(history,text.slice(0,4000),voice)), authorizedAccount: account ? {role:account.role,status:account.status} : null, ...(trusted ? {approvedAnswer:trusted} : {}) }),
+      udcHandbook + ' ' + guidanceSystem + ' If approvedAnswer is supplied, translate it faithfully into the preferred language; do not add facts or change its meaning.' + (language ? ` Preferred reply language: ${language}.` : ''), 25000);
+    reply = response.content.trim();
+    if (reply === 'TRADE_ACTION') return null;
+    if (!validateGuidanceReply(reply)) reply = trusted ?? scopeAnswer;
+  }
+  const data = { __kind: 'akif_guidance', handbookVersion, language, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
   // Existing DB constraint permits only form purposes. The distinct HMAC namespace
   // and data marker isolate tutoring state; this does not create a buyer or trade.
   const values = { id: randomUUID(), phoneHash, purpose:'buyer', step:0, data, lastMessageId:messageId ?? null, expiresAt:new Date(Date.now()+24*60*60_000), updatedAt:new Date() };
