@@ -132,12 +132,12 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(sellerPhone,ui('offer'));assert.match(last(),/in your own words/i);assert.match(last(),/one question at a time/i);
       state.modelOutput=JSON.stringify({product:'Copper cathode',quantity:'100'});
       await m.handleChatUi(sellerPhone,{id:'seller-natural-partial',text:{body:'I can supply 100 MT copper cathode.'}});assert.match(last(),/what unit/i);assert.doesNotMatch(last(),/price.*origin.*incoterm/i);
-      state.modelOutput=JSON.stringify({product:'Copper cathode',quantity:'100',unit:'MT',price:'5900',currency:'AED',origin:'Oman',incoterm:'CIF',destination:'Jebel Ali'});
-      await m.handleChatUi(sellerPhone,{id:'seller-natural-offer',text:{body:'AED 5,900 per MT from Oman, CIF Jebel Ali.'}});
+      state.modelOutput=JSON.stringify({product:'Copper cathode',quantity:'100',unit:'MT',price:'5900',currency:'AED',origin:'Oman',incoterm:'CIF'});
+      await m.handleChatUi(sellerPhone,{id:'seller-natural-offer',text:{body:'AED 5,900 per MT from Oman, CIF.'}});
       assert.equal(rows.whatsappChatSessionsTable[0].data.currency,'AED');assert.equal(rows.whatsappChatSessionsTable[0].data.unit,'MT');
       assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:submit');
       await m.handleChatUi(sellerPhone,ui('submit'));
-      assert.equal(rows.sellerListingsTable.at(-1).currency,'AED');assert.equal(rows.sellerListingsTable.at(-1).unit,'MT');assert.equal(rows.sellerListingsTable.at(-1).price,'5900');
+      assert.equal(rows.sellerListingsTable.at(-1).currency,'AED');assert.equal(rows.sellerListingsTable.at(-1).unit,'MT');assert.equal(rows.sellerListingsTable.at(-1).price,'5900');assert.equal(rows.sellerListingsTable.at(-1).destination,undefined);
     });
     await t.test('editing a paragraph keeps the details already supplied',async()=>{
       await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{id:randomUUID(),text:{body:'product: Test goods; quantity: 100; destination: Mombasa; incoterm: CIF; target_price: 490'}});
