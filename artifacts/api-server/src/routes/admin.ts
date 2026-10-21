@@ -747,7 +747,8 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
     }
 
     const agreedTerms = await acceptedMatchTerms(tx, match.id, buyerRequest, sellerOffer);
-    if ((sellerOffer.paymentTerms || udcPaymentTerms) !== udcPaymentTerms && !agreedTerms) {
+    const [requiresReview]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,match.id),inArray(auditLogsTable.action,['match_terms_proposed','automatic_rematch_selected','automatic_match_selected']))).limit(1);
+    if (((sellerOffer.paymentTerms || udcPaymentTerms) !== udcPaymentTerms || requiresReview) && !agreedTerms) {
       throw new AgreementError("explicit_buyer_terms_agreement_required");
     }
     if (agreedTerms && (Number(agreedTerms.quantity)!==input.quantity || Number(agreedTerms.price)!==input.agreedPrice

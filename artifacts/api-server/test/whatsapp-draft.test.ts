@@ -34,4 +34,5 @@ test("draft confirmation expires when recorded commercial terms change", () => {
  const terms={dealNumber:'UDC-TEST',date:'21 October 2026',productName:'Test goods',quantity:'100',unit:'MT',agreedPrice:'490',currency:'USD',incoterm:'EXW',destination:'Agreed warehouse',paymentTerms:'30% advance and 70% on delivery',inspectionTerms:'Independent inspection before loading'};
  for(const type of ['LOI','ICPO','FCO','SPA'] as const){const draft=generateWhatsAppDraft(type,terms);assert.match(draft,/30% advance and 70% on delivery/);assert.doesNotMatch(draft,/Payment framework: DLC|commercial framework recorded.*documentary letter/);}
  assert.notEqual(whatsappDraftConfirmation('SPA',terms),whatsappDraftConfirmation('SPA',{...terms,paymentTerms:'100% advance'}));
+ const recommended=generateWhatsAppDraft('SPA',{...terms,paymentTerms:'DLC issued directly to the seller; payment after SGS inspection at destination'});assert.match(recommended,/non-transferable, irrevocable, non-divisible and non-assignable/);assert.match(recommended,/SGS inspection at destination/);
  });

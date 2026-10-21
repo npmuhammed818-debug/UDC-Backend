@@ -14,7 +14,7 @@ import {
 } from "@workspace/db";
 import { sendWhatsAppInteractive, sendWhatsAppText } from "../whatsapp/client";
 import { udcPaymentTerms } from "./paymentPolicy";
-import { scoreTradeMatch } from "./matchScoring";
+import { scoreTradeMatch, canAutomaticallyPresentOffer } from "./matchScoring";
 
 type Executor = Pick<typeof db, "select" | "insert" | "update" | "execute">;
 export class AgreementError extends Error {}
@@ -66,7 +66,7 @@ async function context(tx: Executor, matchId: string) {
     buyer.unit !== seller.unit
   )
     throw new AgreementError("approved_compatible_records_required");
-  if (['EXW','FCA','FAS','FOB','CPT','CIP'].includes(seller.incoterm||'') && !seller.destination?.trim()) throw new AgreementError('seller_named_delivery_place_required');
+  if(!seller.destination?.trim())throw new AgreementError('seller_named_delivery_place_required');
   const users = await tx
     .select()
     .from(usersTable)
@@ -105,7 +105,7 @@ async function lock(tx: Executor, id: string) {
     sql`select pg_advisory_xact_lock(hashtext(${"match_terms:" + id}))`,
   );
 }
-export async function requestTermsReview(matchId: string, actorUserId: string) {
+export async function requestTermsReview(matchId: string, actorUserId: string, source: "admin" | "automatic_rematch" | "automatic_initial_match" = "admin") {
   const proposal = await db.transaction(
     async (tx) => {
       await lock(tx, matchId);
@@ -153,6 +153,7 @@ export async function requestTermsReview(matchId: string, actorUserId: string) {
           action: "match_terms_proposed",
           metadata: {
             fingerprint,
+            source,
             terms: c.terms,
             expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
           },
@@ -165,12 +166,13 @@ export async function requestTermsReview(matchId: string, actorUserId: string) {
   const reference="Offer "+proposal.id.slice(0,8).toUpperCase();
   const description = `${proposal.productName}: ${t.quantity} ${t.unit} at ${t.currency} ${t.price}/${t.unit}; ${t.incoterm || "delivery term not stated"} ${t.destination || ""}.\nOrigin: ${t.origin || "not stated"}; grade/specification: ${t.specification || "not stated"}.\nPayment: ${t.paymentTerms}\nInspection: ${t.inspectionTerms || "not stated"}.`;
   // Never truncate the exact terms the buyer is asked to accept.
-  for (let offset = 0; offset < description.length; offset += 3000)
-    await sendWhatsAppText(
+  for (let offset = 0; offset < description.length; offset += 3000){
+    const sent=await sendWhatsAppText(
       proposal.buyerUser.phone!,
       reference+" · "+description.slice(offset, offset + 3000),
-    );
-  await sendWhatsAppInteractive(proposal.buyerUser.phone!, {
+    );if(!sent.delivered)throw new AgreementError("proposal_delivery_unavailable");
+  }
+  const delivered=await sendWhatsAppInteractive(proposal.buyerUser.phone!, {
     type: "button",
     body: {
       text: `${reference}: do you agree to the exact proposal shown with this reference? UDC recommends DLC direct to seller after SGS at destination. Verification cannot guarantee delivery or protect an advance. No payment is made by agreeing.`,
@@ -194,6 +196,7 @@ export async function requestTermsReview(matchId: string, actorUserId: string) {
       ],
     },
   });
+  if(!delivered.delivered)throw new AgreementError("proposal_delivery_unavailable");
   return { proposalId: proposal.id };
 }
 export async function acceptedMatchTerms(
@@ -311,6 +314,7 @@ export async function respondToTerms(
           },
         });
       let suggestedId: string | undefined;
+      let automatic=false;
       if (!accept) {
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtext(${"rematch:" + c.buyer.id}))`,
@@ -363,18 +367,22 @@ export async function respondToTerms(
           )
           .map((o) => ({ offer: o, ...scoreTradeMatch(c.buyer, o) }))
           .filter((o) => o.score >= 60)
-          .sort((a, b) => b.score - a.score);
-        if (ranked[0]) {
+          .sort((a, b) => {const preferred=(c.buyer.paymentTerms||udcPaymentTerms).trim().toLowerCase();const fit=(item:typeof a)=>(item.offer.paymentTerms||udcPaymentTerms).trim().toLowerCase()===preferred?1:0;return fit(b)-fit(a)||b.score-a.score;});
+        const immediate=ranked.find(item=>canAutomaticallyPresentOffer(c.buyer,item.offer));
+        const chosen=immediate??ranked[0];
+        if (chosen) {
+          automatic=Boolean(immediate);
           suggestedId = randomUUID();
           await tx
             .insert(matchesTable)
             .values({
               id: suggestedId,
               buyerRequestId: c.buyer.id,
-              sellerListingId: ranked[0].offer.id,
-              status: "suggested",
-              matchScore: String(ranked[0].score),
+              sellerListingId: chosen.offer.id,
+              status: automatic ? "approved" : "suggested",
+              matchScore: String(chosen.score),
             });
+          await tx.insert(auditLogsTable).values({actorUserId:actor.id,action:automatic?'automatic_rematch_selected':'rematch_needs_review',entityType:'match',entityId:suggestedId,metadata:{buyerRequestId:c.buyer.id,sellerListingId:chosen.offer.id,previousMatchId:c.match.id,automaticPresentation:automatic,dealApprovalRequired:true}});
         }
       }
       const admins = await tx
@@ -399,18 +407,62 @@ export async function respondToTerms(
               body: accept
                 ? "Exact proposal accepted; review before opening the deal."
                 : suggestedId
-                  ? "Next verified seller suggested for admin review. Original requirement retained."
+                  ? automatic ? "Next eligible verified offer selected for buyer review. Deal approval is still required." : "Next verified seller suggested for admin review. Original requirement retained."
                   : "No further suitable verified seller found. Original requirement retained.",
               link: "/matches",
             })),
           );
-      return accept
+      return {message:accept
         ? "Your agreement to these exact terms is recorded. UDC will review the next step. No payment has been made."
         : suggestedId
-          ? "I kept your requirement unchanged and found another verified seller for UDC review. I will update you here."
-          : "I kept your requirement unchanged. No further suitable verified seller is available yet; UDC has been notified.";
+          ? automatic ? "I kept your requirement unchanged. Here is the next eligible verified offer for you to review." : "I kept your requirement unchanged. Another verified offer needs UDC review before I can present it."
+          : "I kept your requirement unchanged. No further suitable verified seller is available yet; UDC has been notified.",nextMatchId:automatic?suggestedId:undefined,actorUserId:actor.id};
     },
     { isolationLevel: "serializable" },
   );
-  await sendWhatsAppText(phone, reply);
+  if(typeof reply==='string'){await sendWhatsAppText(phone,reply);return;}
+  try{await sendWhatsAppText(phone,reply.message);}catch{/* The next exact proposal still gets its own delivery attempt. */}
+  if(reply.nextMatchId)try{await requestTermsReview(reply.nextMatchId,reply.actorUserId,'automatic_rematch');}catch{
+    await db.insert(auditLogsTable).values({actorUserId:reply.actorUserId,action:'rematch_proposal_delivery_needs_review',entityType:'match',entityId:reply.nextMatchId,metadata:{requiresAdminReview:true}});
+    const admins=await db.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await db.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'rematch_delivery_failed',title:'Next offer needs delivery review',body:'The buyer requested another seller. The next exact proposal is saved but was not accepted by the messaging provider.',link:'/matches'})));
+    try{await sendWhatsAppText(phone,'The next offer could not be delivered just now. Your requirement is saved and UDC can resend the offer.');}catch{/* Do not claim delivery. */}
+  }
+}
+
+// Reuse the same eligibility and consent gates for a newly approved requirement.
+export async function presentInitialVerifiedOffer(requirementId:string){
+ const selected=await db.transaction(async tx=>{
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'rematch:'+requirementId}))`);
+  const [buyer]=await tx.select().from(buyerRequestsTable).where(and(eq(buyerRequestsTable.id,requirementId),eq(buyerRequestsTable.status,'approved'))).limit(1);
+  if(!buyer)return null;
+  const [user]=await tx.select().from(usersTable).where(and(eq(usersTable.id,buyer.buyerUserId),eq(usersTable.role,'buyer'),eq(usersTable.status,'verified'))).limit(1);
+  if(!user)return null;
+  const attempts=await tx.select().from(matchesTable).where(eq(matchesTable.buyerRequestId,buyer.id));
+  if(attempts.some(match=>['approved','suggested'].includes(match.status)))return null;
+  const [deal]=await tx.select({id:dealsTable.id}).from(dealsTable).where(eq(dealsTable.buyerRequestId,buyer.id)).limit(1);
+  if(deal)return null;
+  const offers=await tx.select().from(sellerListingsTable).where(and(eq(sellerListingsTable.productId,buyer.productId),eq(sellerListingsTable.status,'approved'))).orderBy(desc(sellerListingsTable.updatedAt)).limit(100);
+  const ranked=[];
+  for(const offer of offers){
+   if(attempts.some(match=>match.sellerListingId===offer.id)||!await verifiedCounterparties(buyer.buyerUserId,offer.sellerUserId,tx))continue;
+   ranked.push({offer,...scoreTradeMatch(buyer,offer)});
+  }
+  const preferred=(buyer.paymentTerms||udcPaymentTerms).trim().toLowerCase();
+  ranked.sort((a,b)=>Number((b.offer.paymentTerms||udcPaymentTerms).trim().toLowerCase()===preferred)-Number((a.offer.paymentTerms||udcPaymentTerms).trim().toLowerCase()===preferred)||b.score-a.score);
+  const immediate=ranked.find(item=>item.score>=60&&canAutomaticallyPresentOffer(buyer,item.offer));
+  const chosen=immediate??ranked.find(item=>item.score>=60);
+  if(!chosen)return null;
+  const id=randomUUID(),automatic=Boolean(immediate);
+  await tx.insert(matchesTable).values({id,buyerRequestId:buyer.id,sellerListingId:chosen.offer.id,status:automatic?'approved':'suggested',matchScore:String(chosen.score)});
+  await tx.insert(auditLogsTable).values({actorUserId:buyer.buyerUserId,action:'automatic_match_selected',entityType:'match',entityId:id,metadata:{buyerRequestId:buyer.id,sellerListingId:chosen.offer.id,automaticPresentation:automatic,dealApprovalRequired:true}});
+  if(!automatic){const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_needs_review',title:'Offer needs review before presentation',body:'Verified supply was found, but a requirement or offer condition needs review.',link:'/matches'})));}
+  return {id,buyerUserId:buyer.buyerUserId,automatic};
+ },{isolationLevel:'serializable'});
+ if(!selected)return false;
+ if(selected.automatic)try{await requestTermsReview(selected.id,selected.buyerUserId,'automatic_initial_match');}catch{
+  await db.insert(auditLogsTable).values({actorUserId:selected.buyerUserId,action:'match_proposal_delivery_needs_review',entityType:'match',entityId:selected.id,metadata:{requiresAdminReview:true}});
+  const admins=await db.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));
+  if(admins.length)await db.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_delivery_failed',title:'Offer delivery needs review',body:'The exact proposal is saved but could not be accepted by the messaging provider.',link:'/matches'})));
+ }
+ return true;
 }
