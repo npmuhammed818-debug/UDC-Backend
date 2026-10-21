@@ -65,6 +65,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   state.db.transaction = async (callback: any) => callback(state.db);
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
+    "../whatsapp/chatUi": "export const sendChatHome=async()=>{};export const handleChatUi=async(phone,message)=>{if(message.interactive){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};",
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
@@ -129,6 +130,15 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply = "Reply AGREE";
       assert.equal((await message({ text: { body: "hello" } })).status, 200);
       assert.equal(state.sent[0].body, "Reply AGREE"); assert.deepEqual(state.intake, []);
+    });
+    await t.test('button, list and form replies pass through signature, consent and blocked-account checks',async()=>{
+      reset();state.uiCalls=0;
+      for(const interactive of [{type:'button_reply',button_reply:{id:'udc:buyer'}},{type:'list_reply',list_reply:{id:'udc:deals'}},{type:'nfm_reply',nfm_reply:{response_json:'{}'}}]){
+        await message({interactive},false);assert.equal(state.uiCalls,0);
+        state.privacyReply='Reply AGREE';await message({interactive});assert.equal(state.uiCalls,0);
+        state.privacyReply=null;rows.usersTable=[{phone:'10000000001',status:'suspended'}];await message({interactive});assert.equal(state.uiCalls,0);rows.usersTable=[];
+      }
+      await message({interactive:{type:'list_reply',list_reply:{id:'udc:deals'}}});assert.equal(state.uiCalls,1);assert.deepEqual(state.intake,[]);
     });
     await t.test('sign-in commands require a valid signed webhook, consent and a nonblocked sender',async()=>{
       reset();state.signins=0;

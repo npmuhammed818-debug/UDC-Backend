@@ -1,3 +1,4 @@
+import { startChatFlowSetup } from './whatsapp/setupFlows';
 import { startAcceptanceProbe } from "./akif/acceptanceProbe";
 import app from "./app";
 import { getAkifWorkerCapabilities, isAkifWorkerConfigured } from "./akif/intelligence/workerClient";
@@ -28,6 +29,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  startChatFlowSetup(logger);
   void startAcceptanceProbe();
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();

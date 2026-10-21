@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { checkWhatsAppConnection, sendWhatsAppDocument, sendWhatsAppText } from "../src/whatsapp/client.ts";
+import { checkWhatsAppConnection, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppInteractive } from "../src/whatsapp/client.ts";
 
 const originalFetch = globalThis.fetch;
 const token = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -16,6 +16,12 @@ function configure() {
   process.env.WHATSAPP_ACCESS_TOKEN = " test-token ";
   process.env.WHATSAPP_PHONE_NUMBER_ID = " 123 ";
 }
+test('sends native interactive menus and rejects invalid button limits before Meta',async()=>{
+  configure();let calls=0;
+  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(String(init?.body));assert.equal(body.type,'interactive');assert.equal(body.interactive.type,'list');assert.equal(body.interactive.action.sections[0].rows[0].id,'udc:deals');return new Response('{"messages":[{"id":"synthetic-menu"}]}');};
+  assert.deepEqual(await sendWhatsAppInteractive('recipient',{type:'list',body:{text:'Your menu'},action:{button:'Open menu',sections:[{title:'Features',rows:[{id:'udc:deals',title:'My deals'}]}]}}),{delivered:true,messageId:'synthetic-menu'});
+  await assert.rejects(sendWhatsAppInteractive('recipient',{type:'button',body:{text:'bad'},action:{buttons:Array.from({length:4},()=>({type:'reply' as const,reply:{id:'x',title:'x'}}))}}),/buttons_invalid/);assert.equal(calls,1);
+});
 test("missing configuration never calls Meta", async () => {
   delete process.env.WHATSAPP_ACCESS_TOKEN;
   globalThis.fetch = async () => { throw new Error("must not call"); };

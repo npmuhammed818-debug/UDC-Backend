@@ -21,14 +21,14 @@ export const buyerIntakeSchema = z.object({
   incoterm: z.string().min(2).max(12).optional(),
 });
 
-export async function recordPendingBuyerRequirement(input: z.infer<typeof buyerIntakeSchema>) {
-  const [buyer] = await db.insert(usersTable).values({
+export async function recordPendingBuyerRequirement(input: z.infer<typeof buyerIntakeSchema>, executor: Pick<typeof db, "select" | "insert"> = db) {
+  const [buyer] = await executor.insert(usersTable).values({
     phone: input.phone, fullName: input.fullName, role: "buyer", status: "pending",
     passwordHash: await hashPassword(randomUUID()),
   }).onConflictDoUpdate({ target: usersTable.phone, set: { fullName: input.fullName, updatedAt: new Date() } }).returning();
-  const existing = await db.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.name, input.product)).limit(1);
-  const [product] = existing.length ? existing : await db.insert(productsTable).values({ name: input.product, category: "commodity" }).returning({ id: productsTable.id });
-  const [requirement] = await db.insert(buyerRequestsTable).values({
+  const existing = await executor.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.name, input.product)).limit(1);
+  const [product] = existing.length ? existing : await executor.insert(productsTable).values({ name: input.product, category: "commodity" }).returning({ id: productsTable.id });
+  const [requirement] = await executor.insert(buyerRequestsTable).values({
     buyerUserId: buyer.id, productId: product.id, quantity: String(input.quantity), unit: input.unit,
     targetPrice: input.targetPrice ? String(input.targetPrice) : undefined, currency: input.currency.toUpperCase(),
     destination: input.destination, preferredIncoterm: input.incoterm,
