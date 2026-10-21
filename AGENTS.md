@@ -255,17 +255,10 @@ Later AKIF can extract information, compare documents to stored terms, identify 
 Do not treat automated document analysis as final legal or authenticity verification.
 
 ## 11. Payment and Banking Workflow
-UDC's transaction workflow uses DLC only.
 
-Platform policy:
-- Instrument type: DLC
-- Release condition: after SGS inspection at destination
-- Do not offer or create TT, MT103, SBLC, BG, escrow, cash-on-delivery, or another payment route as an alternative UDC workflow
-- Do not ask buyers or sellers to choose a payment method
+Owner update (21 October 2026): DLC directly to seller, with payment after SGS at destination, is UDC's recommendation rather than an exclusive route. Sellers may propose other payment and delivery terms. An alternative requires the buyer's explicit, recorded agreement to those exact terms; verification does not guarantee safety. If seller and buyer cannot agree, continue matching the unchanged requirement to another suitable verified seller. Support all Incoterms, with the named place recorded separately. Do not silently replace existing deal terms, issue bank instruments or execute payments.
 
-Store the DLC status and relevant evidence for each deal.
-
-The fixed UDC workflow does not make UDC a bank, issuer, confirming bank, escrow provider, inspector, or legal authority. Actual DLC wording, bank acceptance, compliant presentation, SGS evidence, and release remain subject to the issuing/handling banks, transaction documents, and applicable law.
+Implementation must preserve human verification and record explicit buyer agreement before enabling alternate payment execution. Existing DLC records and release checks must remain valid during this transition.
 
 ## 12. Inspection and Shipment
 Track, where relevant:
