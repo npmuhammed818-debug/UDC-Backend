@@ -1,3 +1,4 @@
+import { startGuidedDraftCleanup } from './whatsapp/guidedChat';
 import { startChatFlowSetup } from './whatsapp/setupFlows';
 import { startAcceptanceProbe } from "./akif/acceptanceProbe";
 import app from "./app";
@@ -30,6 +31,7 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startChatFlowSetup(logger);
+  startGuidedDraftCleanup();
   void startAcceptanceProbe();
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();

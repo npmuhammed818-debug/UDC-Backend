@@ -1,3 +1,5 @@
+import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
+import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { z } from 'zod/v4';
@@ -12,7 +14,7 @@ import { publishedFlowId } from './setupFlows';
 import { agentReferralCode } from '../referrals/invitation';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
-const actions=['buyer','seller','agent','menu','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting'] as const;
+const actions=['buyer','seller','agent','menu','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','submit','restart','cancel'] as const;
 export function chatAction(message:ChatMessage){
   const i=message.interactive;
   if(i?.type==='button_reply'||i?.type==='list_reply'){
@@ -45,13 +47,12 @@ export async function sendChatHome(phone:string){
 async function sendForm(phone:string,purpose:FlowPurpose){
   const kind=purpose==='profile_agent'?'agent':purpose.startsWith('profile_')?'profile':purpose as 'buyer'|'seller';
   const flow=await publishedFlowId(kind);
-  if(!flow){await sendWhatsAppText(phone,'The in-chat form is being activated. You can still type your trade requirement or offer naturally. Type Menu to return.');return;}
+  if(!flow){await startGuidedChat(phone,purpose);return;}
   const profile=kind==='profile'||kind==='agent';
   await sendWhatsAppInteractive(phone,{type:'flow',body:{text:profile?'Complete your UDC details here in WhatsApp. Your registration requires UDC review.':'Fill in your trade details. Nothing is shared as an approved offer until UDC reviews it.'},action:{name:'flow',parameters:{flow_message_version:'3',flow_id:flow,flow_token:issueFlowToken(phone,purpose),flow_cta:profile?'Your details':'Open form',flow_action:'navigate',flow_action_payload:{screen:'START'}}}});
 }
 const optional=(value:unknown)=>typeof value==='string'&&value.trim()?value.trim():undefined;
-const personalDomains=new Set(['gmail.com','googlemail.com','yahoo.com','yahoo.co.in','hotmail.com','outlook.com','live.com','icloud.com','aol.com','proton.me','protonmail.com','mail.com','yandex.com','gmx.com','rediffmail.com']);
-export function businessEmail(email:string){return !personalDomains.has(email.toLowerCase().split('@')[1]);}
+
 
 export async function submitChatFlow(phone:string,raw:unknown){
   if(typeof raw!=='string'||raw.length>16000)return 'This form response is invalid. Open a new form from Menu.';
@@ -82,7 +83,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      reply='Your details are saved for UDC review. Type Menu, then Upload documents to send company evidence here. Agents can use their menu after UDC approval.';
+      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.':'Your company details are saved for UDC review. Type Menu, then Upload documents to send your company PDF here.';
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
@@ -127,7 +128,14 @@ async function companyDocument(phone:string,message:ChatMessage){
 
 export async function handleChatUi(phone:string,message:ChatMessage){
   if(await companyDocument(phone,message))return true;
-  const action=chatAction(message);if(!action)return false;
+  const action=chatAction(message);
+  if(!action || ['submit','restart','cancel'].includes(action)){
+    const handled=await continueGuidedChat(phone,message,action,submitChatFlow);
+    if(handled)return true;
+    if(!action)return false;
+    await sendChatHome(phone);return true;
+  }
+  if(action!=='flow')await clearGuidedChat(phone);
   if(action==='menu'){await sendChatHome(phone);return true;}
   if(action==='flow'){await sendWhatsAppText(phone,await submitChatFlow(phone,message.interactive?.nfm_reply?.response_json));return true;}
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
