@@ -163,7 +163,7 @@ export async function requestTermsReview(matchId: string, actorUserId: string) {
   );
   const t = proposal.terms;
   const reference="Offer "+proposal.id.slice(0,8).toUpperCase();
-  const description = `${reference} · ${proposal.productName}: ${t.quantity} ${t.unit} at ${t.currency} ${t.price}/${t.unit}; ${t.incoterm || "delivery term not stated"} ${t.destination || ""}.\nOrigin: ${t.origin || "not stated"}; grade/specification: ${t.specification || "not stated"}.\nPayment: ${t.paymentTerms}\nInspection: ${t.inspectionTerms || "not stated"}.`;
+  const description = `${proposal.productName}: ${t.quantity} ${t.unit} at ${t.currency} ${t.price}/${t.unit}; ${t.incoterm || "delivery term not stated"} ${t.destination || ""}.\nOrigin: ${t.origin || "not stated"}; grade/specification: ${t.specification || "not stated"}.\nPayment: ${t.paymentTerms}\nInspection: ${t.inspectionTerms || "not stated"}.`;
   // Never truncate the exact terms the buyer is asked to accept.
   for (let offset = 0; offset < description.length; offset += 3000)
     await sendWhatsAppText(
