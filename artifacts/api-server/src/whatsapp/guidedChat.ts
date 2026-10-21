@@ -89,7 +89,7 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     if(session.data.__paragraph==='1'){
       // A concurrent edit/menu must never apply extraction to a different draft.
       if(!snapshot||snapshot.id!==session.id||snapshot.step!==session.step||JSON.stringify(snapshot.data)!==JSON.stringify(session.data))return {kind:'question' as const,purpose,step:session.step,data:session.data};
-      const data={...session.data,__started:'1'};
+      const data:Record<string,string>={...session.data,__started:'1'};
       for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details. */}}}
       const complete=questions.every(q=>q.optional||data[q.name]);
       const step=complete?questions.length:0;
