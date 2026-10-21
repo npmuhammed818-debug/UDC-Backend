@@ -162,6 +162,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;",
     "../akif/recordBuyerRequirement":
       "export const recordPendingBuyerRequirement=async(v)=>{globalThis.__udcChatTest.records.push(v);return {id:'requirement-1',status:'pending_admin_review'}};",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=()=>false;export const answerGuidance=async()=>null;",
     "../akif/recordPendingSellerOffer":
       "export const recordPendingSellerOffer=async()=>({id:'offer-1'});",
     "./intelligence/dealContext":

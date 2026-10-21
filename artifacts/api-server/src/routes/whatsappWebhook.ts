@@ -1,3 +1,4 @@
+import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
@@ -987,6 +988,16 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           continue;
         }
       }
+      // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
+      if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
+        try {
+          const reply = await answerGuidance(message.from, message.text.body, message.id);
+          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+        } catch {
+          await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
+          continue;
+        }
+      }
       if (message.from) {
         try { if (await handleChatUi(message.from, message)) continue; }
         catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Please type Menu and try again.'); continue; }
@@ -999,6 +1010,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         try {
           const media = await downloadWhatsAppMedia(message.audio.id);
           const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
+          const guidance = await answerGuidance(message.from, transcript, message.id, true);
+          if (guidance !== null) { if (guidance) await deliverWhatsAppReply(message.from, guidance); continue; }
           const [speaker] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
           const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id, message.context?.id) : null;
@@ -1106,6 +1119,15 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
 
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
+        // Short follow-ups such as “and FOB” remain in the tutoring conversation.
+        // Explicit trade commands still return to the authorized deal workflow.
+        try {
+          const reply = await answerGuidance(message.from, message.text.body, message.id, false, true);
+          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+        } catch {
+          await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
+          continue;
+        }
         const dealMessage = await handleDealWhatsAppMessage(
           message.from,
           message.text.body,
