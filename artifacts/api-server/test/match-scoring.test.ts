@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scoreTradeMatch } from "../src/marketplace/matchScoring.ts";
+import { scoreTradeMatch, canAutomaticallyPresentOffer } from "../src/marketplace/matchScoring.ts";
 
 const buyer = {
   quantity: "100",
@@ -56,4 +56,11 @@ test("penalizes incompatible units and unmet minimum orders", () => {
 test("does not compare prices across different currencies", () => {
   const match = scoreTradeMatch(buyer, { ...seller, currency: "EUR", price: "5000" });
   assert.ok(!match.reasons.some((reason) => reason.includes("target price")));
+});
+
+test('automatic presentation stays within quantity, budget, delivery and stated grade constraints',()=>{
+ const compatible={...seller,specification:buyer.specification};assert.equal(canAutomaticallyPresentOffer(buyer,compatible),true);
+ for(const changed of [{price:'6500'},{currency:'EUR'},{quantity:'50',monthlyCapacity:null},{minimumOrderQuantity:'250'},{destination:'Rotterdam'},{destination:null},{specification:'Different grade'},{specification:null},{incoterm:'UNKNOWN'}])assert.equal(canAutomaticallyPresentOffer(buyer,{...compatible,...changed}),false);
+ assert.equal(canAutomaticallyPresentOffer(buyer,{...compatible,incoterm:'EXW',destination:'Named seller warehouse'}),true);
+ assert.equal(canAutomaticallyPresentOffer({...buyer,additionalConditions:'Delivery within seven days'},compatible),false);assert.equal(canAutomaticallyPresentOffer({...buyer,inspectionRequirements:'SGS at destination'},compatible),false);
 });

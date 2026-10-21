@@ -1,4 +1,7 @@
 type BuyerTerms = {
+  contractDuration?: string | null;
+  additionalConditions?: string | null;
+  inspectionRequirements?: string | null;
   quantity: string;
   unit: string;
   targetPrice: string | null;
@@ -9,6 +12,7 @@ type BuyerTerms = {
 };
 
 type SellerTerms = {
+  inspectionTerms?: string | null;
   quantity: string;
   monthlyCapacity: string | null;
   minimumOrderQuantity: string | null;
@@ -113,4 +117,21 @@ export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
   }
 
   return { score: Math.max(0, Math.min(100, score)), reasons };
+}
+
+// Automatically present only an offer that can cover the recorded requirement.
+// Presenting is a proposal, never buyer consent or permission to create a deal.
+export function canAutomaticallyPresentOffer(buyer: BuyerTerms, seller: SellerTerms) {
+  if(buyer.contractDuration?.trim()||buyer.additionalConditions?.trim())return false;
+  if(buyer.inspectionRequirements?.trim()&&(!seller.inspectionTerms||normalize(buyer.inspectionRequirements)!==normalize(seller.inspectionTerms)))return false;
+  const quantity=Number(buyer.quantity),capacity=Math.max(Number(seller.quantity),Number(seller.monthlyCapacity??0));
+  const price=Number(seller.price),minimum=Number(seller.minimumOrderQuantity??0);
+  if(buyer.unit!==seller.unit||!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(capacity)||capacity<quantity||minimum>quantity||!Number.isFinite(price)||price<=0)return false;
+  if(buyer.targetPrice!==null&&buyer.targetPrice!==undefined){const target=Number(buyer.targetPrice);if(!Number.isFinite(target)||price>target||buyer.currency.toUpperCase()!==seller.currency.toUpperCase())return false;}
+  const term=seller.incoterm?.toUpperCase();
+  if(!term||!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))return false;
+  if(!seller.destination?.trim())return false;
+  if(['CFR','CIF','DAP','DPU','DDP'].includes(term)&&!destinationsOverlap(buyer.destination,seller.destination))return false;
+  if(buyer.specification){if(!seller.specification)return false;const requested=normalize(buyer.specification),offered=normalize(seller.specification);if(requested!==offered&&(requested.length<4||!offered.includes(requested)))return false;}
+  return true;
 }

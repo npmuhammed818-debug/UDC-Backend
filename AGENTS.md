@@ -73,6 +73,8 @@ WhatsApp can eventually deliver:
 
 Do not expose unnecessary backend complexity to users.
 
+Owner UX decision (21 October 2026): Start with Agent, Buyer and Seller options. Keep customer registration, documents, requirements/offers and deal tracking inside real WhatsApp; the web workspace is for administrators. Ask for details in one short natural paragraph, retain supplied details and ask only for missing fields. Buyers and sellers need company email and company evidence; agents may use personal or business email. Pending trade submissions stay private until human verification/review. AI document screening is assistive and never grants verification. Eligible approved offers may be presented automatically after verification and on buyer rejection, but exact buyer agreement and human deal/payment review remain required. Uncertain matches stay with admins.
+
 ## 4. Main Roles
 - Buyer
 - Seller
