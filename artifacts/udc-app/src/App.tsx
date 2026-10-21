@@ -100,8 +100,6 @@ function Shell({ children, user }: { children: ReactNode; user: AnyRecord }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [location, setLocation] = useLocation();
   const logout = useLogoutUser();
-  const unread = useListNotifications();
-  const unreadCount = (unread.data?.notifications || []).filter((n: AnyRecord) => !n.read).length;
   const isAdmin = ['admin', 'administrator'].includes(user?.role);
   const activePath = location.split('#')[0];
   const close = () => setMobileOpen(false);
@@ -126,14 +124,12 @@ function Shell({ children, user }: { children: ReactNode; user: AnyRecord }) {
       })}</nav>}
       <div className="sidebar-spacer" />
       <nav className="sidebar-nav sidebar-bottom">
-        <Link href="/notifications" onClick={close} className={`nav-item ${location === '/notifications' ? 'nav-active' : ''}`} data-testid="link-nav-notifications"><Bell size={17} /><span>Notifications</span>{unreadCount > 0 && <span className="notification-count">{unreadCount}</span>}</Link>
-        <Link href="/profile" onClick={close} className={`nav-item ${location === '/profile' ? 'nav-active' : ''}`} data-testid="link-nav-profile"><Settings2 size={17} /><span>Profile & company</span></Link>
         {!isAdmin && <Link href="/admin" onClick={close} className={`nav-item ${location === '/admin' ? 'nav-active' : ''}`} data-testid="link-nav-admin"><ShieldCheck size={17} /><span>Admin review</span></Link>}
       </nav>
       <div className="sidebar-user"><div className="avatar">{initials(user?.fullName)}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold">{user?.fullName || 'Workspace user'}</div><div className="truncate text-[11px] text-sidebar-foreground/60">{user?.email || user?.role}</div></div><button onClick={() => logout.mutate()} className="icon-btn text-sidebar-foreground/60 hover:text-sidebar-foreground" data-testid="button-logout" aria-label="Sign out" title="Sign out"><LogOut size={16} /></button></div>
     </aside>
     <main className="main-shell" id="main-content" tabIndex={-1}>
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded={mobileOpen} data-testid="button-open-menu"><Menu size={21} /></button><div className="breadcrumb"><span>UDC / Admin /</span><strong>{activePath === '/admin/deals' ? 'Deals' : activePath === '/admin/agents' ? 'Agents' : 'Overview'}</strong></div><div className="topbar-actions"><Link href="/notifications" className="icon-btn relative" aria-label="Notifications" data-testid="button-topbar-notifications"><Bell size={18} />{unreadCount > 0 && <span className="notification-dot" />}</Link><div className="topbar-user"><div className="avatar avatar-small">{initials(user?.fullName)}</div><span>{user?.fullName || 'Operator'}</span></div></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded={mobileOpen} data-testid="button-open-menu"><Menu size={21} /></button><div className="breadcrumb"><span>UDC / Admin /</span><strong>{activePath === '/admin/deals' ? 'Deals' : activePath === '/admin/agents' ? 'Agents' : 'Overview'}</strong></div><div className="topbar-actions"><div className="topbar-user"><div className="avatar avatar-small">{initials(user?.fullName)}</div><span>{user?.fullName || 'Operator'}</span></div></div></header>
       <div className="page-wrap">{children}</div>
     </main>
   </div>;
