@@ -7,8 +7,8 @@ const allowed: Record<string, string[]> = {
   profile_agent: ['full_name','email'],
   profile_buyer: ['full_name','email','company_name','country','registration_number'],
   profile_seller: ['full_name','email','company_name','country','registration_number'],
-  buyer: ['product','quantity','specification','destination','incoterm','target_price','delivery_time'],
-  seller: ['product','quantity','specification','price','origin','incoterm','availability'],
+  buyer: ['product','quantity','specification','destination','incoterm','target_price','delivery_time','payment_terms'],
+  seller: ['product','quantity','specification','price','origin','incoterm','availability','destination','payment_terms'],
 };
 export async function extractParagraph(purpose: FlowPurpose, message: string): Promise<Record<string,string>> {
   if (!message.trim() || message.length > 6000) return {};

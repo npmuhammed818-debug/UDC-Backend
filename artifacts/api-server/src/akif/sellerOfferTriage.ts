@@ -1,5 +1,6 @@
 export type SellerOfferDraft = {
   product?: string;
+  paymentTerms?: string;
   specification?: string;
   availability?: string;
   inspectionTerms?: string;
@@ -15,7 +16,7 @@ export type SellerOfferDraft = {
   missingFields: Array<"product" | "quantity" | "price">;
 };
 
-const incoterms = ["CIF", "FOB", "CFR", "EXW", "DAP", "DDP"];
+const incoterms = ["EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"];
 
 export function isSellerOffer(text: string) {
   const normalized = text.trim();

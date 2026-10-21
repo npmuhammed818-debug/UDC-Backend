@@ -1,3 +1,4 @@
+import { respondToTerms } from '../marketplace/termAgreement';
 import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
 import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -98,10 +99,10 @@ export async function submitChatFlow(phone:string,raw:unknown){
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
       if(token.purpose==='buyer'){
-        const input=buyerIntakeSchema.parse({phone,fullName:user.fullName||'WhatsApp buyer',product:data.product,quantity:data.quantity,unit:'MT',currency:'USD',destination:data.destination,incoterm:data.incoterm,specification:optional(data.specification),targetPrice:optional(data.target_price),deliveryTime:optional(data.delivery_time)});
+        const input=buyerIntakeSchema.parse({phone,fullName:user.fullName||'WhatsApp buyer',product:data.product,quantity:data.quantity,unit:'MT',currency:'USD',destination:data.destination,incoterm:data.incoterm,specification:optional(data.specification),targetPrice:optional(data.target_price),deliveryTime:optional(data.delivery_time),paymentTerms:optional(data.payment_terms)});
         await recordPendingBuyerRequirement(input,tx);reply='Your requirement is saved for UDC review. I will keep you updated here in WhatsApp.';
       }else{
-        const input=sellerOfferSchema.parse({phone,fullName:user.fullName||'WhatsApp seller',product:data.product,quantity:data.quantity,unit:'MT',currency:'USD',price:data.price,originCountry:data.origin,incoterm:data.incoterm,specification:optional(data.specification),availability:optional(data.availability)});
+        const input=sellerOfferSchema.parse({phone,fullName:user.fullName||'WhatsApp seller',product:data.product,quantity:data.quantity,unit:'MT',currency:'USD',price:data.price,originCountry:data.origin,incoterm:data.incoterm,specification:optional(data.specification),availability:optional(data.availability),destination:optional(data.destination),paymentTerms:optional(data.payment_terms)});
         await recordPendingSellerOffer(input,tx);reply='Your offer is saved for UDC review. It is not an approved offer yet.';
       }
     }
@@ -137,6 +138,9 @@ async function companyDocument(phone:string,message:ChatMessage){
 }
 
 export async function handleChatUi(phone:string,message:ChatMessage){
+  const termId=message.interactive?.button_reply?.id;
+  const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
+  if(termAction){await respondToTerms(phone,termAction[2],termAction[1]==='accept');return true;}
   if(await companyDocument(phone,message))return true;
   const action=chatAction(message);
   if(!action || ['submit','restart','cancel'].includes(action)){

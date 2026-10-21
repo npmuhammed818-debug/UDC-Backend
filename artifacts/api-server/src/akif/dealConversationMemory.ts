@@ -52,7 +52,10 @@ export function conversationSafeDealMemory(snapshot: unknown, viewer?: { userId:
       createdAt: item.createdAt ?? null,
     }));
 
+  const recorded = safeArray(source.history).map(asRecord).find(event=>event?.action==='deal_created');
+  const agreed = asRecord(asRecord(recorded?.metadata)?.agreedTerms);
   return {
+    agreedTerms: agreed ? pick(agreed,['paymentTerms','inspectionTerms']) : null,
     deal: viewer ? pick(source.deal, ["dealNumber", "status", "quantity", "unit", "agreedPrice", "currency", "incoterm", "destination"]) : source.deal ?? null,
     product: viewer ? pick(source.product, ["name", "category", "description"]) : source.product ?? null,
     buyerRequest: viewer ? null : source.buyerRequest ?? null,

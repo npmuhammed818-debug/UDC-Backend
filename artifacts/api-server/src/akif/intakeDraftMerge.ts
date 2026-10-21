@@ -61,6 +61,7 @@ export function mergeBuyerRequirementDraft(
 ): BuyerRequirementDraft {
   const merged = {
     product: mergeProduct(previous?.product, current.product),
+    paymentTerms: current.paymentTerms ?? previous?.paymentTerms,
     specification: current.specification ?? previous?.specification,
     deliveryTime: current.deliveryTime ?? previous?.deliveryTime,
     contractDuration: current.contractDuration ?? previous?.contractDuration,
@@ -97,6 +98,7 @@ export function mergeSellerOfferDraft(
 ): SellerOfferDraft {
   const merged = {
     product: current.product ?? previous?.product,
+    paymentTerms: current.paymentTerms ?? previous?.paymentTerms,
     specification: current.specification ?? previous?.specification,
     availability: current.availability ?? previous?.availability,
     inspectionTerms: current.inspectionTerms ?? previous?.inspectionTerms,

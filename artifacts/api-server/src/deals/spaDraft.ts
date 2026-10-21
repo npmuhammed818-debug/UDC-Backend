@@ -10,6 +10,8 @@ export type SpaDraftInput = {
   currency: string;
   incoterm?: string | null;
   destination?: string | null;
+  paymentTerms?: string | null;
+  inspectionTerms?: string | null;
 };
 
 function safe(value: string | null | undefined, fallback: string) {
@@ -45,7 +47,7 @@ export function createSpaDraft(input: SpaDraftInput) {
     "Shipment schedule, loading point, destination details, title and risk transfer, insurance and required transport documents: [COMPLETE].",
     "",
     "4. PAYMENT AND INSPECTION FRAMEWORK",
-    "The commercial framework recorded for this transaction is a documentary letter of credit (DLC) issued directly to the Seller. The DLC is to be non-transferable, irrevocable, non-divisible and non-assignable. Payment is released after SGS inspection at destination.",
+    input.paymentTerms ? `Recorded buyer-accepted payment terms: ${safe(input.paymentTerms, "[PAYMENT TERMS]")}. Inspection terms: ${safe(input.inspectionTerms, "[CONFIRM INSPECTION TERMS]")}.` : "The commercial framework recorded for this transaction is a documentary letter of credit (DLC) issued directly to the Seller. The DLC is to be non-transferable, irrevocable, non-divisible and non-assignable. Payment is released after SGS inspection at destination.",
     "The parties must have their banks and independent advisers confirm the complete instrument wording, issuing and advising banks, amount, expiry, presentation requirements, inspection scope, inspector appointment, costs, notice periods and discrepancy process before signing. This draft does not issue or verify any bank instrument or inspection.",
     "",
     "5. DOCUMENTS AND ACCEPTANCE",

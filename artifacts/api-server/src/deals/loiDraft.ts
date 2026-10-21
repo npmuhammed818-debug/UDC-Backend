@@ -20,7 +20,7 @@ export function createLoiDraft(input: SpaDraftInput) {
     `Indicative unit price recorded in UDC: ${safe(input.currency, "[CURRENCY]")} ${safe(input.agreedPrice, "[PRICE]")} per ${safe(input.unit, "[UNIT]")}`,
     `Delivery: ${safe(input.incoterm, "[INCOTERM]")} ${safe(input.destination, "[NAMED DESTINATION]")}`,
     "Origin, quality specification, shipment schedule and document list: [CONFIRM WITH THE PARTIES].",
-    "Payment framework: DLC issued directly to the seller, with payment after SGS inspection at destination. Exact bank and inspection conditions require review and agreement.",
+    input.paymentTerms ? `Recorded buyer-accepted payment terms: ${safe(input.paymentTerms, "[PAYMENT TERMS]")}. Inspection: ${safe(input.inspectionTerms, "[CONFIRM INSPECTION TERMS]")}. Subject to independent review.` : "Payment framework: DLC issued directly to the seller, with payment after SGS inspection at destination. Exact bank and inspection conditions require review and agreement.",
     "",
     "This is a non-binding discussion draft. It is not an ICPO, purchase order, bank instrument, guarantee or commitment to buy. No transaction is concluded until authorized parties agree and sign definitive documents.",
     "Authorized buyer representative: [NAME, TITLE AND SIGNATURE AFTER REVIEW]",

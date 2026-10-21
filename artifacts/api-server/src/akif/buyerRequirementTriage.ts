@@ -1,5 +1,6 @@
 export type BuyerRequirementDraft = {
   product?: string;
+  paymentTerms?: string;
   specification?: string;
   deliveryTime?: string;
   contractDuration?: string;
@@ -13,7 +14,7 @@ export type BuyerRequirementDraft = {
   missingFields: Array<"product" | "quantity" | "targetPrice" | "destination">;
 };
 
-const incoterms = ["CIF", "FOB", "CFR", "EXW", "DAP", "DDP"];
+const incoterms = ["EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"];
 
 export function triageBuyerRequirement(text: string): BuyerRequirementDraft {
   const normalized = text.trim();

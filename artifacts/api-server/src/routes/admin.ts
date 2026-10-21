@@ -1,3 +1,7 @@
+import { verifiedCounterparties } from '../marketplace/verifiedCounterparties';
+import { recordedDealTerms } from '../deals/recordedTerms';
+import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
+import { udcPaymentTerms } from '../marketplace/paymentPolicy';
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
@@ -323,6 +327,8 @@ const createDealSchema = z.object({
 const dealStatusSchema = z.object({
   status: z.enum(["initiated", "negotiation", "verification", "loi", "icpo", "fco_sco", "contract", "banking", "inspection", "loading", "shipment", "delivery", "payment", "commission", "completed", "on_hold", "cancelled", "rejected", "disputed"]),
   confirmDestinationSgs: z.boolean().optional(),
+  confirmAlternativePaymentReview: z.boolean().optional(),
+  paymentEvidenceDocumentId: z.string().uuid().optional(),
 });
 
 const createCommissionSchema = z.object({
@@ -424,13 +430,7 @@ const financialInstrumentStatusSchema = z.object({
   provider: z.string().max(160).optional(),
 });
 
-async function hasVerifiedCounterparties(buyerUserId: string, sellerUserId: string) {
-  const users = await db.select({ id: usersTable.id, role: usersTable.role })
-    .from(usersTable)
-    .where(and(inArray(usersTable.id, [buyerUserId, sellerUserId]), eq(usersTable.status, "verified")));
-  return users.some((user) => user.id === buyerUserId && user.role === "buyer")
-    && users.some((user) => user.id === sellerUserId && user.role === "seller");
-}
+const hasVerifiedCounterparties = verifiedCounterparties;
 
 async function notifyDealCounterparties(
   dealId: string,
@@ -671,16 +671,16 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
       return;
     }
 
-    const [existingMatch] = await db.select({ id: matchesTable.id }).from(matchesTable).where(and(
+    const [existingMatch] = await db.select({ id: matchesTable.id, status: matchesTable.status }).from(matchesTable).where(and(
       eq(matchesTable.buyerRequestId, buyerRequest.id),
       eq(matchesTable.sellerListingId, sellerOffer.id),
     )).limit(1);
-    if (existingMatch) {
+    if (existingMatch && existingMatch.status !== "suggested") {
       res.status(409).json({ error: "match_already_exists", matchId: existingMatch.id });
       return;
     }
 
-    const [match] = await db.insert(matchesTable).values({
+    const [match] = existingMatch ? await db.update(matchesTable).set({status:"approved",updatedAt:new Date()}).where(eq(matchesTable.id,existingMatch.id)).returning() : await db.insert(matchesTable).values({
       buyerRequestId: buyerRequest.id,
       sellerListingId: sellerOffer.id,
       matchScore: String(scoreTradeMatch(buyerRequest, sellerOffer).score),
@@ -719,40 +719,53 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
   }
 });
 
+router.post("/admin/matches/:matchId/terms-review", requireRole("admin"), async (req,res)=>{
+ try {const matchId=z.string().uuid().parse(req.params.matchId);res.json(await requestTermsReview(matchId,req.authUser!.id));}
+ catch(error){res.status(error instanceof z.ZodError?400:error instanceof AgreementError?409:500).json({error:error instanceof AgreementError?error.message:'terms_review_failed'});}
+});
+
 router.post("/admin/deals", requireRole("admin"), async (req, res) => {
   try {
     const input = createDealSchema.parse(req.body);
-    const [match] = await db.select().from(matchesTable).where(eq(matchesTable.id, input.matchId)).limit(1);
+    const deal=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'match_terms:'+input.matchId}))`);
+    const [match] = await tx.select().from(matchesTable).where(eq(matchesTable.id, input.matchId)).limit(1);
     if (!match || match.status !== "approved") {
-      res.status(409).json({ error: "deal_requires_approved_match" });
-      return;
+      throw new AgreementError("deal_requires_approved_match");
     }
 
-    const [buyerRequest] = await db.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.id, match.buyerRequestId)).limit(1);
-    const [sellerOffer] = await db.select().from(sellerListingsTable).where(eq(sellerListingsTable.id, match.sellerListingId)).limit(1);
+    const [buyerRequest] = await tx.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.id, match.buyerRequestId)).limit(1);
+    const [sellerOffer] = await tx.select().from(sellerListingsTable).where(eq(sellerListingsTable.id, match.sellerListingId)).limit(1);
     if (!buyerRequest || !sellerOffer || buyerRequest.status !== "approved" || sellerOffer.status !== "approved") {
-      res.status(409).json({ error: "deal_records_require_admin_approval" });
-      return;
+      throw new AgreementError("deal_records_require_admin_approval");
     }
     if (buyerRequest.productId !== sellerOffer.productId || buyerRequest.unit !== sellerOffer.unit) {
-      res.status(409).json({ error: "deal_terms_do_not_match" });
-      return;
+      throw new AgreementError("deal_terms_do_not_match");
     }
-    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, sellerOffer.sellerUserId)) {
-      res.status(409).json({ error: "deal_requires_verified_counterparties" });
-      return;
+    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, sellerOffer.sellerUserId, tx)) {
+      throw new AgreementError("deal_requires_verified_counterparties");
     }
 
-    const [existingDeal] = await db.select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
+    const agreedTerms = await acceptedMatchTerms(tx, match.id, buyerRequest, sellerOffer);
+    if ((sellerOffer.paymentTerms || udcPaymentTerms) !== udcPaymentTerms && !agreedTerms) {
+      throw new AgreementError("explicit_buyer_terms_agreement_required");
+    }
+    if (agreedTerms && (Number(agreedTerms.quantity)!==input.quantity || Number(agreedTerms.price)!==input.agreedPrice
+      || agreedTerms.currency.toUpperCase()!==(input.currency??sellerOffer.currency).toUpperCase()
+      || agreedTerms.incoterm!==(input.incoterm??sellerOffer.incoterm??buyerRequest.preferredIncoterm??null)
+      || agreedTerms.destination!==(input.destination??agreedTerms.destination))) {
+      throw new AgreementError("deal_differs_from_buyer_accepted_terms");
+    }
+
+    const [existingDeal] = await tx.select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
       .from(dealsTable)
       .where(and(eq(dealsTable.buyerRequestId, buyerRequest.id), eq(dealsTable.sellerListingId, sellerOffer.id)))
       .limit(1);
     if (existingDeal) {
-      res.status(409).json({ error: "deal_already_exists", dealId: existingDeal.id, dealNumber: existingDeal.dealNumber });
-      return;
+      throw new AgreementError("deal_already_exists");
     }
 
-    const [deal] = await db.insert(dealsTable).values({
+    const [deal] = await tx.insert(dealsTable).values({
       buyerUserId: buyerRequest.buyerUserId,
       sellerUserId: sellerOffer.sellerUserId,
       buyerRequestId: buyerRequest.id,
@@ -763,18 +776,20 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       agreedPrice: String(input.agreedPrice),
       currency: (input.currency ?? sellerOffer.currency).toUpperCase(),
       incoterm: input.incoterm ?? sellerOffer.incoterm ?? buyerRequest.preferredIncoterm,
-      destination: input.destination ?? buyerRequest.destination ?? sellerOffer.destination,
+      destination: input.destination ?? agreedTerms?.destination ?? buyerRequest.destination ?? sellerOffer.destination,
       dealValue: String(input.quantity * input.agreedPrice),
       status: "initiated",
     }).returning();
-    await db.insert(dealParticipantsTable).values([
+    await tx.insert(dealParticipantsTable).values([
       { dealId: deal.id, userId: deal.buyerUserId, participantRole: "buyer", status: "active" },
       { dealId: deal.id, userId: deal.sellerUserId, participantRole: "seller", status: "active" },
     ]);
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id, action: "deal_created", entityType: "deal", entityId: deal.id,
-      metadata: { dealNumber: deal.dealNumber, buyerUserId: deal.buyerUserId, sellerUserId: deal.sellerUserId },
+      metadata: { dealNumber: deal.dealNumber, buyerUserId: deal.buyerUserId, sellerUserId: deal.sellerUserId, agreedTerms: agreedTerms ?? null },
     });
+      return deal;
+    },{isolationLevel:"serializable"});
     await notifyDealCounterparties(
       deal.id,
       "deal_created",
@@ -788,6 +803,7 @@ router.post("/admin/deals", requireRole("admin"), async (req, res) => {
       res.status(400).json({ error: "validation_error" });
       return;
     }
+    if(error instanceof AgreementError){res.status(409).json({error:error.message});return;}
     res.status(500).json({ error: "deal_creation_failed" });
   }
 });
@@ -923,8 +939,15 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       res.status(404).json({ error: "deal_not_found" });
       return;
     }
-    let paymentEvidence: { confirmedDlcId: string; passedInspectionId: string; approvedSgsDocumentId: string } | undefined;
+    let paymentEvidence: Record<string,string> | undefined;
+    const agreedTerms=await recordedDealTerms(dealId);
+    const alternative=Boolean(agreedTerms && agreedTerms.paymentTerms!==udcPaymentTerms);
     if (paymentMilestoneStages.has(input.status) && existingDeal.status !== input.status) {
+      if(alternative){
+        const [evidence]=input.paymentEvidenceDocumentId ? await db.select({id:documentsTable.id}).from(documentsTable).where(and(eq(documentsTable.id,input.paymentEvidenceDocumentId),eq(documentsTable.dealId,dealId),eq(documentsTable.status,'approved'))).limit(1) : [];
+        if(!input.confirmAlternativePaymentReview||!evidence){res.status(409).json({error:'alternate_payment_review_and_approved_evidence_required'});return;}
+        paymentEvidence={approvedPaymentEvidenceDocumentId:evidence.id,paymentTerms:agreedTerms!.paymentTerms};
+      }else{
       const [[dlc], [inspection], [sgsDocument]] = await Promise.all([
         db.select({ id: dealFinancialsTable.id }).from(dealFinancialsTable)
           .where(and(eq(dealFinancialsTable.dealId, dealId), eq(dealFinancialsTable.instrumentType, "DLC"), eq(dealFinancialsTable.status, "confirmed"))).limit(1),
@@ -939,6 +962,7 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       });
       if (missing.length) { res.status(409).json({ error: "payment_evidence_required", missing }); return; }
       paymentEvidence = { confirmedDlcId: dlc.id, passedInspectionId: inspection.id, approvedSgsDocumentId: sgsDocument.id };
+      }
     }
     const [deal] = await db.update(dealsTable)
       .set({ status: input.status, updatedAt: new Date() })
@@ -949,7 +973,7 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       action: "deal_status_updated",
       entityType: "deal",
       entityId: deal.id,
-      metadata: { previousStatus: existingDeal.status, newStatus: deal.status, ...(paymentEvidence ? { destinationSgsConfirmedByAdmin: true, paymentEvidence } : {}) },
+      metadata: { previousStatus: existingDeal.status, newStatus: deal.status, ...(paymentEvidence ? { ...(alternative?{alternativePaymentReviewedByAdmin:true}:{destinationSgsConfirmedByAdmin:true}), paymentEvidence } : {}) },
     });
     if (existingDeal.status !== deal.status) {
       await notifyDealCounterparties(
@@ -1585,9 +1609,11 @@ router.get("/admin/buyer-requests/:requirementId/match-recommendations", require
   const offers = await db.select().from(sellerListingsTable)
     .where(and(eq(sellerListingsTable.status, "approved"), eq(sellerListingsTable.productId, buyerRequest.productId)))
     .orderBy(desc(sellerListingsTable.updatedAt));
+  const attempted = await db.select().from(matchesTable).where(eq(matchesTable.buyerRequestId,buyerRequest.id));
   const recommendations = [];
 
   for (const offer of offers) {
+    if(attempted.some(m=>m.sellerListingId===offer.id))continue;
     if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, offer.sellerUserId)) continue;
     const { score, reasons } = scoreTradeMatch(buyerRequest, offer);
     recommendations.push({ sellerOffer: offer, score, reasons });

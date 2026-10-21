@@ -14,6 +14,8 @@ test('admin trade workflows preserve verification, ownership, review and payment
   const dealId='11111111-1111-4111-8111-111111111111';
   records.dealsTable=[{id:dealId,buyerUserId:'buyer',sellerUserId:'seller'}];
   records.usersTable=[{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'}];
+  records.companiesTable=[{id:'buyer-company',ownerUserId:'buyer',verificationStatus:'verified'},{id:'seller-company',ownerUserId:'seller',verificationStatus:'verified'}];
+  records.companyVerificationDocumentsTable=[{id:'buyer-proof',companyId:'buyer-company',status:'approved'},{id:'seller-proof',companyId:'seller-company',status:'approved'}];
   const value=(x:any,r:any):any=>x?.column?(r[x.table] ?? r)[x.column]:x;
   const predicate=(x:any,r:any):any=>x?.kind==='eq'?value(x.a,r)===value(x.b,r):x?.kind==='and'?x.args.every((c:any)=>predicate(c,r)):x?.kind==='or'?x.args.some((c:any)=>predicate(c,r)):x?.kind==='in'?x.list.includes(value(x.a,r)):true;
   let dbReads=0;
@@ -46,16 +48,16 @@ test('admin trade workflows preserve verification, ownership, review and payment
   }
   const key='__adminMeetingFixture';
   const state:any={tables,db:{select,insert:(t:any)=>mutation(t),update:(t:any)=>mutation(t,true)},user:null};
-  state.db.locks=[];state.db.execute=async(query:any)=>{state.db.locks.push(query.values?.[0]);};
+  state.sent=[];state.db.locks=[];state.db.execute=async(query:any)=>{state.db.locks.push(query.values?.[0]);};
   state.db.transaction=async(f:any)=>{const before=structuredClone(records);try{return await f(state.db);}catch(error){for(const name of Object.keys(records))records[name]=before[name];throw error;}};
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
-  const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
+  const result=await build({stdin:{contents:`import express from 'express';export { respondToTerms } from '../src/marketplace/termAgreement';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
       orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});`,
       sessions:'export const getAuthenticatedUser=async()=>null;',
-      whatsapp:'export const sendWhatsAppText=async()=>({delivered:false});',
+      whatsapp:'export const sendWhatsAppText=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};export const sendWhatsAppInteractive=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};',
       storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
       intelligence:'export const processDocumentIntelligence=async()=>null;export const refreshDealIntelligenceSnapshot=async()=>null;',
     };
@@ -66,7 +68,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
   await writeFile(output,result.outputFiles[0].text);
   let server:any;
   try {
-    const {default:app,routes}=await import(output);server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+    const {default:app,routes,respondToTerms}=await import(output);server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
     const base=`http://127.0.0.1:${server.address().port}`;
     const input={scheduledAt:'2026-11-01T12:00:00Z',provider:'UDC video',meetingUrl:'https://example.invalid/synthetic-meeting'};
     const request=async(path:string,body:any=input,method='POST')=>{
@@ -152,7 +154,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
         assert.equal((await request('/admin/matches',input)).status,409);
         records.buyerRequestsTable[0].status='approved';records.sellerListingsTable[0].productId='another-product';assert.equal((await request('/admin/matches',input)).status,409);
         records.sellerListingsTable[0].productId=productId;records.usersTable[1].status='pending';assert.equal((await request('/admin/matches',input)).status,409);
-        records.usersTable[1].status='verified';const matched=await request('/admin/matches',input);assert.equal(matched.status,201);assert.equal(matched.data.match.status,'approved');
+        records.usersTable[1].status='verified';records.companiesTable[1].verificationStatus='pending';assert.equal((await request('/admin/matches',input)).status,409);records.companiesTable[1].verificationStatus='verified';records.companyVerificationDocumentsTable[1].status='rejected';assert.equal((await request('/admin/matches',input)).status,409);records.companyVerificationDocumentsTable[1].status='approved';const matched=await request('/admin/matches',input);assert.equal(matched.status,201);assert.equal(matched.data.match.status,'approved');
         assert.equal((await request('/admin/matches',input)).status,409);
         const terms={matchId:matched.data.match.id,quantity:100,agreedPrice:490};
         records.sellerListingsTable[0].unit='kg';assert.equal((await request('/admin/deals',terms)).status,409);records.sellerListingsTable[0].unit='MT';
@@ -162,6 +164,41 @@ test('admin trade workflows preserve verification, ownership, review and payment
         assert.equal((await request('/admin/deals',terms)).status,409);assert.equal(records.dealsTable.length,1);
         assert.ok(records.auditLogsTable.some((r:any)=>r.action==='match_created'));assert.ok(records.auditLogsTable.some((r:any)=>r.action==='deal_created'));
       } finally {for(const [name,rows] of Object.entries(saved))records[name]=rows;records.usersTable[1].status='verified';}
+    });
+    await t.test('alternate seller terms require exact buyer agreement; reject retains demand and suggests verified supply',async()=>{
+      const saved=structuredClone(records);state.user={id:'admin',role:'admin',status:'verified'};
+      try {
+        const productId=randomUUID(),requestId=randomUUID(),offerId=randomUUID(),matchId=randomUUID();
+        records.usersTable=[{id:'buyer',phone:'10000000001',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'},{id:'next-seller',role:'seller',status:'verified'},{id:'admin',role:'admin',status:'verified'}];
+        records.buyerRequestsTable=[{id:requestId,buyerUserId:'buyer',productId,quantity:'100',unit:'MT',targetPrice:'500',currency:'USD',destination:'Mombasa',status:'approved'}];
+        records.sellerListingsTable=[{id:offerId,sellerUserId:'seller',productId,quantity:'100',unit:'MT',price:'490',currency:'USD',incoterm:'EXW',destination:'Agreed warehouse',paymentTerms:'30% advance, 70% on delivery',status:'approved'},{id:randomUUID(),sellerUserId:'next-seller',productId,quantity:'200',unit:'MT',price:'480',currency:'USD',incoterm:'CIF',status:'approved'}];
+        records.companiesTable=[{id:'bc',ownerUserId:'buyer',verificationStatus:'verified'},{id:'sc',ownerUserId:'seller',verificationStatus:'verified'},{id:'nc',ownerUserId:'next-seller',verificationStatus:'verified'}];records.companyVerificationDocumentsTable=[{companyId:'bc',status:'approved'},{companyId:'sc',status:'approved'},{companyId:'nc',status:'approved'}];
+        records.matchesTable=[{id:matchId,buyerRequestId:requestId,sellerListingId:offerId,status:'approved'}];records.dealsTable=[];records.auditLogsTable=[];
+        const terms={matchId,quantity:100,agreedPrice:490};
+        assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required');
+        let review=await request(`/admin/matches/${matchId}/terms-review`,{});assert.equal(review.status,200);
+        const proposalId=review.data.proposalId;
+        await respondToTerms('10000000002',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);
+        records.sellerListingsTable[0].price='495';await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);records.sellerListingsTable[0].price='490';
+        const savedExpiry=records.auditLogsTable[0].metadata.expiresAt;records.auditLogsTable[0].metadata.expiresAt=new Date(0).toISOString();await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);records.auditLogsTable[0].metadata.expiresAt=savedExpiry;
+        await respondToTerms('10000000001',proposalId,true);await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,1);
+        assert.equal((await request('/admin/deals',{...terms,agreedPrice:489})).data.error,'deal_differs_from_buyer_accepted_terms');
+        state.failAudit=true;assert.equal((await request('/admin/deals',terms)).status,500);assert.equal(records.dealsTable.length,0);
+        const opened=await request('/admin/deals',terms);assert.equal(opened.status,201);const dealId=opened.data.deal.id;
+        assert.equal(records.auditLogsTable.find((r:any)=>r.action==='deal_created').metadata.agreedTerms.paymentTerms,'30% advance, 70% on delivery');
+        assert.equal((await request(`/admin/deals/${dealId}/status`,{status:'payment',confirmDestinationSgs:true},'PATCH')).status,409);
+        const evidenceId=randomUUID();records.documentsTable=[{id:evidenceId,dealId,status:'approved',documentType:'Payment evidence'}];
+        assert.equal((await request(`/admin/deals/${dealId}/status`,{status:'payment',confirmAlternativePaymentReview:true,paymentEvidenceDocumentId:evidenceId},'PATCH')).status,200);
+        const reviewAudit=records.auditLogsTable.find((r:any)=>r.action==='deal_status_updated');assert.equal(reviewAudit.metadata.alternativePaymentReviewedByAdmin,true);assert.equal(reviewAudit.metadata.destinationSgsConfirmedByAdmin,undefined);
+        records.dealsTable=[];
+        records.sellerListingsTable[0].paymentTerms='100% advance';assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required');
+        // New revision supersedes previous consent; rejection excludes this seller and preserves the requirement.
+        records.auditLogsTable=[];review=await request(`/admin/matches/${matchId}/terms-review`,{});const before=structuredClone(records.buyerRequestsTable[0]);
+        state.failAudit=true;await assert.rejects(respondToTerms('10000000001',review.data.proposalId,false),/audit_failure/);assert.equal(records.matchesTable[0].status,'approved');
+        await respondToTerms('10000000001',review.data.proposalId,false);
+        assert.deepEqual(records.buyerRequestsTable[0],before);assert.equal(records.matchesTable[0].status,'declined');assert.equal(records.matchesTable[1].status,'suggested');assert.equal(records.matchesTable[1].sellerListingId,records.sellerListingsTable[1].id);
+        await respondToTerms('10000000001',review.data.proposalId,false);assert.equal(records.matchesTable.length,2);
+      } finally {for(const name of Object.keys(records))records[name]=saved[name];}
     });
     let id:string;
     await t.test('verified buyer and seller allow one audited admin booking',async()=>{
