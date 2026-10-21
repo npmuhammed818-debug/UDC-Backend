@@ -38,7 +38,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
   }
   function mutation(table:any,update=false) {
     let input:any,condition:any,done:any,conflict:any;
-    const run=()=>{if(done)return done; if(table._table==='dealFeedbackTable' && !update && records[table._table].some((r:any)=>r.dealId===input.dealId && r.authorUserId===input.authorUserId)) throw new Error('fixture_unique_author_deal'); if(update){done=records[table._table].filter((r:any)=>predicate(condition,r));done.forEach((r:any)=>Object.assign(r,input));}
+    const run=()=>{if(done)return done; if((globalThis as any).__adminMeetingFixture?.failAudit && table._table==='auditLogsTable'){(globalThis as any).__adminMeetingFixture.failAudit=false;throw new Error('synthetic_audit_failure');} if(table._table==='dealFeedbackTable' && !update && records[table._table].some((r:any)=>r.dealId===input.dealId && r.authorUserId===input.authorUserId)) throw new Error('fixture_unique_author_deal'); if(update){done=records[table._table].filter((r:any)=>predicate(condition,r));done.forEach((r:any)=>Object.assign(r,input));}
       else if(conflict && records[table._table].some((r:any)=>r.dealId===input.dealId)){done=records[table._table].filter((r:any)=>r.dealId===input.dealId);done.forEach((r:any)=>Object.assign(r,conflict.set));}
       else {done=(Array.isArray(input)?input:[input]).map((r:any)=>({id:randomUUID(),...r}));records[table._table].push(...done);}return done;};
     const q:any={onConflictDoUpdate:(v:any)=>{conflict=v;return q},values:(v:any)=>{input=v;return q},set:(v:any)=>{input=v;return q},where:(c:any)=>{condition=c;return q},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};
@@ -47,7 +47,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
   const key='__adminMeetingFixture';
   const state:any={tables,db:{select,insert:(t:any)=>mutation(t),update:(t:any)=>mutation(t,true)},user:null};
   state.db.locks=[];state.db.execute=async(query:any)=>{state.db.locks.push(query.values?.[0]);};
-  state.db.transaction=async(f:any)=>f(state.db);
+  state.db.transaction=async(f:any)=>{const before=structuredClone(records);try{return await f(state.db);}catch(error){for(const name of Object.keys(records))records[name]=before[name];throw error;}};
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
   const result=await build({stdin:{contents:`import express from 'express';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
@@ -115,6 +115,31 @@ test('admin trade workflows preserve verification, ownership, review and payment
         assert.equal(data.commissionPerformance.find((r:any)=>r.currency==='USD'&&r.status==='paid').amount,'200');
         assert.equal(data.products[0].product,'Sugar');assert.equal(data.products[0].dealCount,2);
       } finally {records.dealsTable=saved.deals;records.usersTable=saved.users;records.commissionsTable=saved.commissions;records.productsTable=saved.products;}
+    });
+    await t.test('all trading roles enter human verification; agents can be approved without granting admin access',async()=>{
+      const saved=Object.fromEntries(['usersTable','auditLogsTable','notificationsTable'].map(name=>[name,records[name]]));
+      try {
+        records.usersTable=[{id:'pending-agent',role:'agent',status:'pending'},{id:'pending-buyer',role:'buyer',status:'under_review'},{id:'pending-seller',role:'seller',status:'active'},{id:'admin-account',role:'admin',status:'active'},{id:'blocked-agent',role:'agent',status:'suspended'}];
+        records.auditLogsTable=[];records.notificationsTable=[];
+        const response=await fetch(base+'/admin/users/pending-verification');assert.equal(response.status,200);
+        assert.deepEqual((await response.json()).users.map((u:any)=>u.id).sort(),['pending-agent','pending-buyer','pending-seller']);
+        const path='/admin/users/pending-agent/verification';
+        for(const user of [null,{id:'pending-agent',role:'agent',status:'verified'},{id:'admin',role:'admin',status:'suspended'}]){
+          state.user=user;assert.equal((await request(path,{status:'verified'},'PATCH')).status,user?403:401);
+        }
+        assert.equal(records.usersTable[0].status,'pending');assert.equal(records.auditLogsTable.length,0);
+        state.user={id:'admin',role:'admin',status:'verified'};
+        let result=await request(path,{status:'under_review'},'PATCH');assert.equal(result.status,200);assert.equal(result.data.user.role,'agent');
+        result=await request(path,{status:'verified'},'PATCH');assert.equal(result.status,200);assert.equal(result.data.user.status,'verified');assert.equal(result.data.user.role,'agent');
+        assert.equal(records.auditLogsTable.at(-1).metadata.previousStatus,'under_review');assert.equal(records.auditLogsTable.at(-1).metadata.newStatus,'verified');assert.equal(records.notificationsTable.at(-1).userId,'pending-agent');
+        assert.ok(state.db.locks.some((v:any)=>v==='user_verification:pending-agent'));
+        const notifications=records.notificationsTable.length;
+        assert.equal((await request(path,{status:'verified'},'PATCH')).status,200);assert.equal(records.notificationsTable.length,notifications);
+        assert.equal((await request('/admin/users/admin-account/verification',{status:'verified'},'PATCH')).status,409);
+        assert.equal((await request(path,{status:'admin'},'PATCH')).status,400);assert.equal((await request('/admin/users/unknown/verification',{status:'verified'},'PATCH')).status,404);
+        result=await request(path,{status:'rejected'},'PATCH');assert.equal(result.status,200);assert.equal(records.usersTable[0].status,'rejected');
+        const beforeAudit=records.auditLogsTable.length,beforeNotify=records.notificationsTable.length;state.failAudit=true;result=await request(path,{status:'verified'},'PATCH');assert.equal(result.status,500);assert.equal(records.usersTable[0].status,'rejected');assert.equal(records.auditLogsTable.length,beforeAudit);assert.equal(records.notificationsTable.length,beforeNotify);
+      } finally {for(const [name,rows] of Object.entries(saved))records[name]=rows;state.user={id:'admin',role:'admin',status:'verified'};}
     });
     await t.test('approved verified matching creates one private deal with both participants',async()=>{
       const saved=Object.fromEntries(['buyerRequestsTable','sellerListingsTable','matchesTable','dealsTable','dealParticipantsTable','notificationsTable','auditLogsTable'].map(name=>[name,records[name]]));

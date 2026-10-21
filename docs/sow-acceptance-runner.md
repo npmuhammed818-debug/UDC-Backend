@@ -83,3 +83,12 @@ The additive challenge-table migration enables RLS and revokes public/anonymous/
 ## Remaining acceptance before launch
 
 All eight SoW sections have automated coverage; this is not a claim that every feature has completed real-user acceptance. The remaining gates are actual test-number delivery between two authorized buyer/seller identities, all-role company verification and document review, multilingual text/media, approved matching and negotiation, invitations and agreed commission recording, verified-party meetings, shipment/customs/payment evidence/completion/feedback, admin reports/announcements, and browser visual checks. Use synthetic fixtures or expressly authorized test identities. Human verification, legal, banking, inspection and payout decisions remain human controlled. Connecting the final business number also requires its Meta configuration and delivery verification.
+
+
+## Agent approval completion
+
+Pending agents now appear alongside buyers/sellers in the existing admin verification queue, and the same admin-only status route accepts all three trading roles. Admin identities remain excluded; this never grants an admin role. Status changes, their audit trail and in-app notification share a transaction with a per-user lock. Repeating the same status does not repeat notifications. Regression fixtures cover pending-list filtering, authorization, agent review/approval/rejection, invalid/missing accounts and rollback if the audit write fails. New and existing agent roles/statuses never change automatically.
+
+The WhatsApp sign-in page now uses an explicit responsive, bounded layout and native readable role control, rather than relying on undefined page layout classes. Full browser visual acceptance remains pending.
+
+A cloud browser became available for public-screen review after the earlier local browser-download failure. The live desktop login screen confirmed that its layout classes were missing, so login/registration now have responsive form and visual-panel styles using the existing theme tokens. Authenticated admin screens and a full mobile-browser pass still require separate acceptance.
