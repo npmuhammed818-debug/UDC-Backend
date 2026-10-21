@@ -104,6 +104,23 @@ export async function sendWhatsAppText(to: string, body: string) {
     : { delivered: true as const };
 }
 
+export type WhatsAppInteractive =
+  | { type: 'button'; body: { text: string }; action: { buttons: Array<{type:'reply';reply:{id:string;title:string}}> } }
+  | { type: 'list'; body: { text: string }; action: { button: string; sections: Array<{title:string;rows:Array<{id:string;title:string;description?:string}>}> } }
+  | { type: 'flow'; body: { text: string }; action: { name:'flow'; parameters: Record<string,unknown> } };
+
+export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppInteractive) {
+  if (interactive.body.text.length > 1024) throw new Error('interactive_body_too_long');
+  if (interactive.type === 'button' && (interactive.action.buttons.length < 1 || interactive.action.buttons.length > 3 || interactive.action.buttons.some(b=>b.reply.title.length>20))) throw new Error('interactive_buttons_invalid');
+  if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
+  const config=getConfig();
+  if(!config)return {delivered:false as const,reason:'not_configured' as const};
+  const response=await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
+  if(!response.ok){const error=await providerError(response);throw new Error(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`);}
+  const result=await response.json().catch(()=>null) as {messages?:Array<{id?:string}>}|null;
+  return {delivered:true as const,...(result?.messages?.[0]?.id?{messageId:result.messages[0].id}:{})};
+}
+
 
 export async function sendWhatsAppDocument(
   to: string,

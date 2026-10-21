@@ -23,16 +23,16 @@ export const sellerOfferSchema = z.object({
   incoterm: z.string().min(2).max(12).optional(),
 });
 
-export async function recordPendingSellerOffer(input: z.infer<typeof sellerOfferSchema>) {
-  const [seller] = await db.insert(usersTable).values({
+export async function recordPendingSellerOffer(input: z.infer<typeof sellerOfferSchema>, executor: Pick<typeof db, "select" | "insert"> = db) {
+  const [seller] = await executor.insert(usersTable).values({
     phone: input.phone, fullName: input.fullName, role: "seller", status: "pending",
     passwordHash: await hashPassword(randomUUID()),
   }).onConflictDoUpdate({ target: usersTable.phone, set: { fullName: input.fullName, updatedAt: new Date() } }).returning();
 
-  const existing = await db.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.name, input.product)).limit(1);
-  const [product] = existing.length ? existing : await db.insert(productsTable).values({ name: input.product, category: "commodity" }).returning({ id: productsTable.id });
+  const existing = await executor.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.name, input.product)).limit(1);
+  const [product] = existing.length ? existing : await executor.insert(productsTable).values({ name: input.product, category: "commodity" }).returning({ id: productsTable.id });
 
-  const [offer] = await db.insert(sellerListingsTable).values({
+  const [offer] = await executor.insert(sellerListingsTable).values({
     sellerUserId: seller.id, productId: product.id, quantity: String(input.quantity), unit: input.unit,
     price: String(input.price), currency: input.currency.toUpperCase(), originCountry: input.originCountry,
     destination: input.destination, incoterm: input.incoterm,
