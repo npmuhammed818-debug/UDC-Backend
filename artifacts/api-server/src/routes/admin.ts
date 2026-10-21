@@ -1383,7 +1383,7 @@ router.get("/admin/users/pending-verification", requireRole("admin"), async (_re
     updatedAt: usersTable.updatedAt,
   }).from(usersTable)
     .where(and(
-      inArray(usersTable.role, ["buyer", "seller"]),
+      inArray(usersTable.role, ["buyer", "seller", "agent"]),
       inArray(usersTable.status, ["active", "pending", "under_review"]),
     ))
     .orderBy(desc(usersTable.updatedAt));
@@ -1411,30 +1411,33 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       res.status(404).json({ error: "user_not_found" });
       return;
     }
-    if (!["buyer", "seller"].includes(existingUser.role)) {
+    if (!["buyer", "seller", "agent"].includes(existingUser.role)) {
       res.status(409).json({ error: "user_is_not_trade_counterparty" });
       return;
     }
-    const [user] = await db.update(usersTable)
-      .set({ status: input.status, updatedAt: new Date() })
-      .where(eq(usersTable.id, userId))
-      .returning({ id: usersTable.id, role: usersTable.role, status: usersTable.status, updatedAt: usersTable.updatedAt });
-    await db.insert(auditLogsTable).values({
-      actorUserId: req.authUser!.id,
-      action: "user_verification_status_updated",
-      entityType: "user",
-      entityId: user.id,
-      metadata: { previousStatus: existingUser.status, newStatus: user.status },
-    });
-    if (existingUser.status !== user.status) {
-      await db.insert(notificationsTable).values({
-        userId: user.id,
-        type: "verification_status_updated",
-        title: "Verification status updated",
-        body: `Your UDC verification status is now ${user.status}.`,
-        link: "/profile",
+    const { user, changed } = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'user_verification:' + userId}))`);
+      const [current] = await tx.select({ status: usersTable.status }).from(usersTable)
+        .where(eq(usersTable.id, userId)).limit(1);
+      if (!current) throw new Error("user_not_found");
+      const [updated] = await tx.update(usersTable)
+        .set({ status: input.status, updatedAt: new Date() })
+        .where(eq(usersTable.id, userId))
+        .returning({ id: usersTable.id, role: usersTable.role, status: usersTable.status, updatedAt: usersTable.updatedAt });
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "user_verification_status_updated",
+        entityType: "user",
+        entityId: updated.id,
+        metadata: { previousStatus: current.status, newStatus: updated.status },
       });
-
+      if (current.status !== updated.status) await tx.insert(notificationsTable).values({
+        userId: updated.id, type: "verification_status_updated", title: "Verification status updated",
+        body: `Your UDC verification status is now ${updated.status}.`, link: "/profile",
+      });
+      return { user: updated, changed: current.status !== updated.status };
+    });
+    if (changed) {
       if (existingUser.phone) {
         try {
           const delivery = await sendWhatsAppText(
