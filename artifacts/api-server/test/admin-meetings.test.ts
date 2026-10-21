@@ -59,9 +59,10 @@ test('admin trade workflows preserve verification, ownership, review and payment
       sessions:'export const getAuthenticatedUser=async()=>null;',
       whatsapp:'export const sendWhatsAppText=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};export const sendWhatsAppInteractive=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};',
       storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
+      screening:'export const companyProfileFingerprint=company=>JSON.stringify([company.companyName,company.registrationNumber||null,company.country||null]);export const screenCompanyEvidence=async()=>{globalThis.__adminMeetingFixture.screeningCalls=(globalThis.__adminMeetingFixture.screeningCalls||0)+1;return {status:"needs_human_review",authenticityVerified:false,observations:[],comparisons:[],confidence:0};};',
       intelligence:'export const processDocumentIntelligence=async()=>null;export const refreshDealIntelligenceSnapshot=async()=>null;',
     };
-    for(const [pattern,name] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/auth\/sessions$|^\.\/sessions$/,'sessions'],[/whatsapp\/client$/,'whatsapp'],[/supabase\/storage$/,'storage'],[/akif\/documentIntelligence$/,'intelligence']] as const)
+    for(const [pattern,name] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/auth\/sessions$|^\.\/sessions$/,'sessions'],[/whatsapp\/client$/,'whatsapp'],[/supabase\/storage$/,'storage'],[/akif\/companyScreening$/,'screening'],[/akif\/documentIntelligence$/,'intelligence']] as const)
       b.onResolve({filter:pattern},()=>({path:name,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:mocks[args.path]}));
   }}]});
@@ -199,6 +200,16 @@ test('admin trade workflows preserve verification, ownership, review and payment
         assert.deepEqual(records.buyerRequestsTable[0],before);assert.equal(records.matchesTable[0].status,'declined');assert.equal(records.matchesTable[1].status,'suggested');assert.equal(records.matchesTable[1].sellerListingId,records.sellerListingsTable[1].id);
         await respondToTerms('10000000001',review.data.proposalId,false);assert.equal(records.matchesTable.length,2);
       } finally {for(const name of Object.keys(records))records[name]=saved[name];}
+    });
+    await t.test('company AI screening is admin-only, cached and cannot approve company evidence',async()=>{
+      const saved=structuredClone(records);
+      try{
+        const documentId=randomUUID(),companyId=randomUUID();records.companyVerificationDocumentsTable=[{id:documentId,companyId,status:'pending',fileUrl:'storage://private/companies/test.pdf'}];records.companiesTable=[{id:companyId,companyName:'Synthetic Company',verificationStatus:'pending'}];records.auditLogsTable=[];
+        const endpoint=`/admin/company-verification-documents/${documentId}/analyze`;const before=state.screeningCalls||0;
+        state.user={id:'buyer',role:'buyer',status:'verified'};assert.equal((await request(endpoint,{})).status,403);assert.equal(state.screeningCalls||0,before);
+        state.user={id:'admin',role:'admin',status:'verified'};assert.equal((await request(endpoint,{})).status,200);assert.equal((await request(endpoint,{})).status,200);assert.equal(state.screeningCalls,before+1);
+        assert.equal(records.companyVerificationDocumentsTable[0].status,'pending');assert.equal(records.companiesTable[0].verificationStatus,'pending');assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='company_document_screened').length,1);
+      }finally{for(const name of Object.keys(records))records[name]=saved[name];state.user={id:'admin',role:'admin',status:'verified'};}
     });
     let id:string;
     await t.test('verified buyer and seller allow one audited admin booking',async()=>{

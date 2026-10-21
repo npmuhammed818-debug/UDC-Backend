@@ -74,7 +74,7 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     const purpose=session.purpose as FlowPurpose;
     if(!['profile_buyer','profile_seller','profile_agent','buyer','seller'].includes(purpose)){await tx.delete(sessions).where(eq(sessions.id,session.id));return {kind:'expired' as const};}
     if(action==='cancel'||/^(?:cancel|stop)$/i.test(raw??'')){await tx.delete(sessions).where(eq(sessions.id,session.id));return {kind:'cancelled' as const};}
-    if(action==='restart'||/^edit$/i.test(raw??'')){await tx.update(sessions).set({step:0,data:{__paragraph:'1'},lastMessageId:message.id,expiresAt:expiry()}).where(eq(sessions.id,session.id));return {kind:'question' as const,purpose,step:0,data:{__paragraph:'1'}};}
+    if(action==='restart'||/^edit$/i.test(raw??'')){const data=session.data.__paragraph==='1'?{...session.data}:{__paragraph:'1'};await tx.update(sessions).set({step:0,data,lastMessageId:message.id,expiresAt:expiry()}).where(eq(sessions.id,session.id));return {kind:'question' as const,purpose,step:0,data};}
     const questions=guidedQuestions(purpose);
     if(session.step>=questions.length){
       if(action==='submit'||/^submit$/i.test(raw??''))return {kind:'submit' as const,purpose,id:session.id,data:session.data};

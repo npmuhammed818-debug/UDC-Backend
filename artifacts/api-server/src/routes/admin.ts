@@ -1,3 +1,4 @@
+import { screenCompanyEvidence, companyProfileFingerprint } from '../akif/companyScreening';
 import { verifiedCounterparties } from '../marketplace/verifiedCounterparties';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
@@ -17,6 +18,12 @@ import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "..
 import { canAllocateCommissionShare, nextReferralPosition } from "../referrals/agentChain";
 
 const router: IRouter = Router();
+
+async function notifyCompanyOwnerOnWhatsApp(userId:string,body:string){
+  const [owner]=await db.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,userId)).limit(1);
+  if(owner?.phone&&!['suspended','rejected'].includes(owner.status))try{await sendWhatsAppText(owner.phone,body);}catch{/* Review remains recorded; delivery can be retried separately. */}
+}
+
 
 router.get("/admin/analytics", requireRole("admin"), async (_req, res) => {
   try {
@@ -163,6 +170,8 @@ router.get("/admin/company-verification-documents", requireRole("admin"), async 
       id: companyVerificationDocumentsTable.id,
       companyId: companyVerificationDocumentsTable.companyId,
       companyName: companiesTable.companyName,
+      registrationNumber:companiesTable.registrationNumber,
+      country:companiesTable.country,
       ownerName: usersTable.fullName,
       ownerEmail: usersTable.email,
       documentType: companyVerificationDocumentsTable.documentType,
@@ -176,9 +185,34 @@ router.get("/admin/company-verification-documents", requireRole("admin"), async 
       .orderBy(desc(companyVerificationDocumentsTable.createdAt));
     res.json({ documents: await Promise.all(rows.map(async (item) => {
       const path = parseStoragePath(item.fileUrl);
-      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : null };
+      const [screening]=await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,item.id),eq(auditLogsTable.action,'company_document_screened'))).orderBy(desc(auditLogsTable.createdAt)).limit(1);
+      return { ...item, screening:(screening?.metadata as any)?.profileFingerprint===companyProfileFingerprint(item)?screening!.metadata:null, fileUrl: path ? await createSignedDownloadUrl(path) : null };
     })) });
   } catch { res.status(500).json({ error: "company_verification_documents_fetch_failed" }); }
+});
+
+router.post("/admin/company-verification-documents/:documentId/analyze", requireRole("admin"), async(req,res)=>{
+  try {
+    const documentId=z.string().uuid().parse(req.params.documentId);
+    const [document]=await db.select().from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.id,documentId)).limit(1);
+    if(!document){res.status(404).json({error:'company_document_not_found'});return;}
+    const [company]=await db.select().from(companiesTable).where(eq(companiesTable.id,document.companyId)).limit(1);
+    if(!company){res.status(404).json({error:'company_not_found'});return;}
+    const profileFingerprint=companyProfileFingerprint(company);
+    const cached=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_screening:'+documentId}))`);
+      const [previous]=await tx.select().from(auditLogsTable).where(and(eq(auditLogsTable.entityId,documentId),eq(auditLogsTable.action,'company_document_screened'))).orderBy(desc(auditLogsTable.createdAt)).limit(1);
+      if((previous?.metadata as any)?.profileFingerprint===profileFingerprint)return previous!.metadata;
+      const [running]=await tx.select().from(auditLogsTable).where(and(eq(auditLogsTable.entityId,documentId),eq(auditLogsTable.action,'company_document_screening_started'))).orderBy(desc(auditLogsTable.createdAt)).limit(1);
+      if(running&&(running.metadata as any)?.profileFingerprint===profileFingerprint&&Date.now()-new Date(running.createdAt).getTime()<5*60_000)return {inProgress:true};
+      await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'company_document_screening_started',entityType:'company_verification_document',entityId:documentId,metadata:{manualAdminRequest:true,profileFingerprint}});
+      return null;
+    });
+    if(cached){res.status((cached as any).inProgress?202:200).json({screening:cached});return;}
+    const screening={...await screenCompanyEvidence(document,company),profileFingerprint};
+    await db.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'company_document_screened',entityType:'company_verification_document',entityId:documentId,metadata:screening});
+    res.json({screening});
+  } catch(error){res.status(error instanceof z.ZodError?400:503).json({error:'company_screening_unavailable_manual_review_required'});}
 });
 
 router.patch("/admin/company-verification-documents/:documentId/status", requireRole("admin"), async (req, res) => {
@@ -224,6 +258,7 @@ router.patch("/admin/company-verification-documents/:documentId/status", require
       body: `Your ${document.status === "approved" ? "company evidence was approved" : "company evidence needs attention"}.${document.reviewNote ? ` Note: ${document.reviewNote}` : ""}`,
       link: "/profile",
     });
+    if(company&&existing.status!==document.status)await notifyCompanyOwnerOnWhatsApp(company.ownerUserId,`Your company document was ${document.status} by UDC.${document.reviewNote?` Note: ${document.reviewNote}`:''} Document approval alone does not verify your company. Type Menu to check verification status.`);
     res.json({ document });
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error", details: error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })) }); return; }
@@ -289,6 +324,7 @@ router.patch(
           link: "/company",
         });
       }
+      if(existing.verificationStatus!==company.verificationStatus)await notifyCompanyOwnerOnWhatsApp(existing.ownerUserId,`Your company review status is now ${company.verificationStatus}. Type Menu to check your account and company verification status.`);
       res.json({ company });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -500,7 +536,7 @@ router.post("/admin/deal-escalations/run", requireRole("admin"), async (req, res
       if (existing.length) continue;
 
       const title = `Action check: ${deal.dealNumber}`;
-      const body = `Your UDC deal is still at ${deal.status.replaceAll("_", " ")}. Please review the deal room for the next required action.`;
+      const body = `Your UDC deal is still at ${deal.status.replaceAll("_", " ")}. Reply here for the next required action.`;
       await notifyDealCounterparties(deal.id, type, title, body, `/deals/${deal.id}`);
       created += 2;
       await db.insert(auditLogsTable).values({

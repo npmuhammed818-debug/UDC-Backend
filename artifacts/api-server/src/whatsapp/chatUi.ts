@@ -1,3 +1,4 @@
+import { handleWhatsAppIntroduction } from '../referrals/whatsappIntroduction';
 import { respondToTerms } from '../marketplace/termAgreement';
 import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
 import { businessEmail } from './registrationEmail';
@@ -33,7 +34,7 @@ export function menuForRole(role?:string){
   const common=[row('profile','My profile','Register or update your company details'),row('verification','Verification status'),row('documents','Upload documents','Company verification PDF'),row('ask','Ask Akif','Trade guidance and learning')];
   if(role==='buyer')return [row('requirement','Submit requirement'),row('deals','Offers & my deals'),row('meeting','Request a meeting'),...common];
   if(role==='seller')return [row('offer','Add an offer'),row('deals','Enquiries & my deals'),row('meeting','Request a meeting'),...common];
-  if(role==='agent')return [row('invite','Invite someone'),row('referrals','Track referrals'),row('commissions','My commissions'),row('deals','Assigned deals'),...common];
+  if(role==='agent')return [row('invite','Invite someone'),row('referrals','Track referrals'),row('commissions','My commissions'),row('deals','Assigned deals'),...common.filter(item=>item.id!=='udc:documents')];
   return [];
 }
 export async function sendChatHome(phone:string){
@@ -138,6 +139,7 @@ async function companyDocument(phone:string,message:ChatMessage){
 }
 
 export async function handleChatUi(phone:string,message:ChatMessage){
+  if(await handleWhatsAppIntroduction(phone,message))return true;
   const termId=message.interactive?.button_reply?.id;
   const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
   if(termAction){await respondToTerms(phone,termAction[2],termAction[1]==='accept');return true;}
@@ -188,14 +190,14 @@ export async function handleChatUi(phone:string,message:ChatMessage){
   if(action==='meeting'){await sendWhatsAppText(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
     if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppText(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
-    if(action==='invite'){await sendWhatsAppText(phone,`Your referral code is ${agentReferralCode(user.id)}. Ask the person you introduce to message UDC directly and mention this code. UDC will review the introduction with their consent. No commission is agreed automatically.`);return true;}
+    if(action==='invite'){await sendWhatsAppText(phone,`Your referral code is ${agentReferralCode(user.id)}. Ask the person you introduce to register here, then send Referral ${agentReferralCode(user.id)} and confirm your introduction. UDC reviews it with their consent. No commission is agreed automatically.`);return true;}
     if(action==='referrals'){const rows=await db.select({code:referralsTable.referralCode,status:referralsTable.status}).from(referralsTable).where(eq(referralsTable.agentUserId,user.id)).orderBy(desc(referralsTable.createdAt)).limit(10);await sendWhatsAppText(phone,rows.length?rows.map(r=>`${r.code}: ${r.status}`).join('\n'):'No referrals have been recorded for you yet.');return true;}
     const rows=await db.select({amount:commissionsTable.amount,currency:commissionsTable.currency,status:commissionsTable.status}).from(commissionsTable).where(eq(commissionsTable.beneficiaryUserId,user.id)).orderBy(desc(commissionsTable.createdAt)).limit(10);await sendWhatsAppText(phone,rows.length?rows.map(r=>`${r.currency} ${r.amount}: ${r.status}`).join('\n'):'No agreed commissions have been recorded for you yet.');return true;
   }
   if(action==='deals'||action.startsWith('deal:')){
     if(user.status!=='verified'){await sendWhatsAppText(phone,'Your registration is pending UDC approval. Deal access starts after verification.');return true;}
     const fields={id:dealsTable.id,number:dealsTable.dealNumber,status:dealsTable.status};
-    const rows=user.role==='agent'?await db.select(fields).from(dealsTable).innerJoin(dealParticipantsTable,eq(dealParticipantsTable.dealId,dealsTable.id)).where(and(eq(dealParticipantsTable.userId,user.id),eq(dealParticipantsTable.participantRole,'agent'))).orderBy(desc(dealsTable.updatedAt)).limit(10):await db.select(fields).from(dealsTable).where(or(eq(dealsTable.buyerUserId,user.id),eq(dealsTable.sellerUserId,user.id))).orderBy(desc(dealsTable.updatedAt)).limit(10);
+    const rows=user.role==='agent'?await db.select(fields).from(dealsTable).innerJoin(dealParticipantsTable,eq(dealParticipantsTable.dealId,dealsTable.id)).where(and(eq(dealParticipantsTable.userId,user.id),eq(dealParticipantsTable.participantRole,'agent'),eq(dealParticipantsTable.status,'active'))).orderBy(desc(dealsTable.updatedAt)).limit(10):await db.select(fields).from(dealsTable).where(or(eq(dealsTable.buyerUserId,user.id),eq(dealsTable.sellerUserId,user.id))).orderBy(desc(dealsTable.updatedAt)).limit(10);
     if(action.startsWith('deal:')){const selected=rows.find(r=>r.id===action.slice(5));if(!selected){await sendWhatsAppText(phone,'That deal is unavailable. Open My deals again.');return true;}await db.insert(whatsappUserContextsTable).values({userId:user.id,activeDealId:selected.id}).onConflictDoUpdate({target:whatsappUserContextsTable.userId,set:{activeDealId:selected.id,updatedAt:new Date()}});await sendWhatsAppText(phone,`${selected.number}: ${selected.status}. Your next trade message will use this deal. Ask for its documents, status or a meeting here.`);return true;}
     if(!rows.length){await sendWhatsAppText(phone,'No approved deals are assigned to you yet. UDC will notify you when there is an update.');return true;}
     await sendWhatsAppInteractive(phone,{type:'list',body:{text:'Choose one of your authorized deals.'},action:{button:'My deals',sections:[{title:'Your deals',rows:rows.map(r=>row('deal:'+r.id,r.number.slice(0,24),r.status))}]}});return true;

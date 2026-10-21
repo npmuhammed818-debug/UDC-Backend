@@ -29,7 +29,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
   const output=fileURLToPath(new URL(`./chat-ui-${randomUUID()}.mjs`,import.meta.url));
   const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
     const fixtures:any={hermes:"export const runConversationChat=async()=>{const s=globalThis.__chatUiFixture;s.modelCalls++;return {content:s.modelOutput};};",db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const inArray=(a,list)=>({kind:'in',a,list});export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';"};
-    for(const [filter,path] of [[/intelligence\/hermesClient$/,'hermes'],[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
+    for(const [filter,path] of [[/intelligence\/hermesClient$/,'hermes'],[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/whatsapp\/client$|^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
   }}]});
   await writeFile(output,bundle.outputFiles[0].text);const previous=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='synthetic-chat-ui-secret-at-least-32';
@@ -73,7 +73,8 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,ui('deal:'+own));assert.equal(rows.whatsappUserContextsTable[0].activeDealId,own);
       const agent=rows.usersTable.find((u:any)=>u.role==='agent');await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/Verified agent approval/);agent.status='verified';
       rows.commissionsTable=[{beneficiaryUserId:agent.id,currency:'USD',amount:'50',status:'pending'},{beneficiaryUserId:'other',currency:'USD',amount:'999999',status:'paid'}];await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/50/);assert.doesNotMatch(last(),/999999/);
-      rows.dealParticipantsTable=[{dealId:own,userId:agent.id,participantRole:'agent'}];await m.handleChatUi(agent.phone,ui('deals'));assert.equal(state.interactive.at(-1).body.action.sections[0].rows.length,1);
+      rows.dealParticipantsTable=[{dealId:own,userId:agent.id,participantRole:'agent',status:'active'}];await m.handleChatUi(agent.phone,ui('deals'));assert.equal(state.interactive.at(-1).body.action.sections[0].rows.length,1);
+      rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);
     });
     await t.test('company PDFs need an owned quoted request and remain private, reviewed and idempotent',async()=>{
       const buyer=rows.usersTable.find((u:any)=>u.phone===phone);await m.handleChatUi(phone,ui('documents'));const request=state.sent.length;
@@ -125,6 +126,20 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,message);assert.equal(state.modelCalls,calls+1);assert.equal(rows.buyerRequestsTable.length,before);assert.equal(rows.whatsappChatSessionsTable[0].data.verification,undefined);
       await m.handleChatUi(phone,message);assert.equal(state.modelCalls,calls+1);await m.handleChatUi(phone,ui('cancel'));
       await m.handleChatUi(phone,ui('requirement'));state.modelOutput='not json';await m.handleChatUi(phone,{id:'invalid-model-output',text:{body:'some trade details'}});assert.equal(rows.whatsappChatSessionsTable[0].step,0);assert.match(last(),/product/);await m.handleChatUi(phone,ui('cancel'));
+    });
+    await t.test('editing a paragraph keeps the details already supplied',async()=>{
+      await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{id:randomUUID(),text:{body:'product: Test goods; quantity: 100; destination: Mombasa; incoterm: CIF; target_price: 490'}});
+      await m.handleChatUi(phone,ui('restart'));assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');assert.match(last(),/details you want to change/);
+      await m.handleChatUi(phone,{id:randomUUID(),text:{body:'target_price: 480'}});assert.equal(rows.whatsappChatSessionsTable[0].data.product,'Test goods');assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');assert.equal(rows.whatsappChatSessionsTable[0].data.target_price,'480');await m.handleChatUi(phone,ui('cancel'));
+    });
+    await t.test('WhatsApp introductions require registrant consent, verified agents and never replace attribution',async()=>{
+      const id=randomUUID(),phone='10000000023';rows.usersTable.push({id,phone:'10000000024',role:'agent',status:'verified',fullName:'Synthetic Agent'},{id:'referred-buyer',phone,role:'buyer',status:'pending'});
+      await m.handleChatUi(phone,{text:{body:'Referral UDC-'+id}});assert.equal(rows.referralsTable.some((r:any)=>r.referredUserId==='referred-buyer'),false);
+      const button=state.interactive.at(-1).body.action.buttons[0].reply.id;
+      await m.handleChatUi('10000000009',{interactive:{type:'button_reply',button_reply:{id:button}}});assert.equal(rows.referralsTable.some((r:any)=>r.referredUserId==='referred-buyer'),false);
+      await m.handleChatUi(phone,{interactive:{type:'button_reply',button_reply:{id:button}}});await m.handleChatUi(phone,{interactive:{type:'button_reply',button_reply:{id:button}}});
+      const refs=rows.referralsTable.filter((r:any)=>r.referredUserId==='referred-buyer');assert.equal(refs.length,1,last());assert.equal(refs[0].status,'pending');assert.equal(refs[0].agentUserId,id);assert.equal(refs[0].commissionRate,undefined);
+      await m.handleChatUi(phone,{text:{body:'Referral UDC-'+id}});assert.match(last(),/already recorded/);
     });
     await t.test('seller payment proposal is preserved without changing a buyer requirement',async()=>{
       const sellerPhone='10000000022';rows.usersTable.push({id:'proposing-seller',phone:sellerPhone,role:'seller',status:'pending',fullName:'Synthetic Seller'});
