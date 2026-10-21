@@ -13,6 +13,8 @@ def test_general_tutor_uses_fixed_udc_flow_and_handles_provider_failure(monkeypa
     monkeypatch.setattr(learn, "llm_status", lambda: {"configured": True})
     def complete(messages):
         assert "DLC" in messages[0]["content"]
+        assert "explicit buyer agreement" in messages[0]["content"]
+        assert "uses only DLC" not in messages[0]["content"]
         assert "SGS at destination" in messages[0]["content"]
         return "MOQ is the smallest order a seller accepts."
     monkeypatch.setattr(learn, "complete", complete)

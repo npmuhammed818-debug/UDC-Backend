@@ -10,6 +10,7 @@ import {
   usersTable,
   notificationsTable,
   dealsTable,
+  productsTable,
 } from "@workspace/db";
 import { sendWhatsAppInteractive, sendWhatsAppText } from "../whatsapp/client";
 import { udcPaymentTerms } from "./paymentPolicy";
@@ -88,7 +89,9 @@ async function context(tx: Executor, matchId: string) {
     !(await verifiedCounterparties(buyer.buyerUserId, seller.sellerUserId, tx))
   )
     throw new AgreementError("verified_counterparties_required");
+  const [product]=await tx.select({name:productsTable.name}).from(productsTable).where(eq(productsTable.id,buyer.productId)).limit(1);
   return {
+    productName:product?.name ?? "your requested product",
     match,
     buyer,
     seller,
@@ -159,17 +162,18 @@ export async function requestTermsReview(matchId: string, actorUserId: string) {
     { isolationLevel: "serializable" },
   );
   const t = proposal.terms;
-  const description = `Seller proposal: ${t.quantity} ${t.unit} at ${t.currency} ${t.price}/${t.unit}; ${t.incoterm || "delivery term not stated"} ${t.destination || ""}.\nOrigin: ${t.origin || "not stated"}; grade/specification: ${t.specification || "not stated"}.\nPayment: ${t.paymentTerms}\nInspection: ${t.inspectionTerms || "not stated"}.`;
+  const reference="Offer "+proposal.id.slice(0,8).toUpperCase();
+  const description = `${proposal.productName}: ${t.quantity} ${t.unit} at ${t.currency} ${t.price}/${t.unit}; ${t.incoterm || "delivery term not stated"} ${t.destination || ""}.\nOrigin: ${t.origin || "not stated"}; grade/specification: ${t.specification || "not stated"}.\nPayment: ${t.paymentTerms}\nInspection: ${t.inspectionTerms || "not stated"}.`;
   // Never truncate the exact terms the buyer is asked to accept.
   for (let offset = 0; offset < description.length; offset += 3000)
     await sendWhatsAppText(
       proposal.buyerUser.phone!,
-      description.slice(offset, offset + 3000),
+      reference+" · "+description.slice(offset, offset + 3000),
     );
   await sendWhatsAppInteractive(proposal.buyerUser.phone!, {
     type: "button",
     body: {
-      text: "Do you agree to the exact seller proposal above? UDC recommends DLC direct to seller after SGS at destination. Verification cannot guarantee delivery or protect an advance. No payment is made by agreeing.",
+      text: `${reference}: do you agree to the exact proposal shown with this reference? UDC recommends DLC direct to seller after SGS at destination. Verification cannot guarantee delivery or protect an advance. No payment is made by agreeing.`,
     },
     action: {
       buttons: [
