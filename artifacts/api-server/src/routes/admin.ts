@@ -1,5 +1,5 @@
 import { screenCompanyEvidence, companyProfileFingerprint } from '../akif/companyScreening';
-import { verifiedCounterparties } from '../marketplace/verifiedCounterparties';
+import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/verifiedCounterparties';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
 import { udcPaymentTerms } from '../marketplace/paymentPolicy';
@@ -18,6 +18,15 @@ import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "..
 import { canAllocateCommissionShare, nextReferralPosition } from "../referrals/agentChain";
 
 const router: IRouter = Router();
+
+async function downgradeCompanyOwner(tx:Pick<typeof db,'select'|'update'|'insert'>,ownerUserId:string,actorUserId:string){
+  const [owner]=await tx.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,ownerUserId)).limit(1);
+  if(owner&&['buyer','seller'].includes(owner.role)&&owner.status==='verified'){
+    await tx.update(usersTable).set({status:'under_review',updatedAt:new Date()}).where(eq(usersTable.id,ownerUserId));
+    await tx.insert(auditLogsTable).values({actorUserId,action:'user_verification_status_updated',entityType:'user',entityId:ownerUserId,metadata:{previousStatus:'verified',newStatus:'under_review',reason:'company_evidence_requires_review'}});
+  }
+}
+
 
 async function notifyCompanyOwnerOnWhatsApp(userId:string,body:string){
   const [owner]=await db.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,userId)).limit(1);
@@ -137,7 +146,7 @@ router.get("/admin/audit-log", requireRole("admin"), async (req, res) => {
 });
 
 const verificationSchema = z.object({
-  verification_status: z.enum(["pending", "verified", "rejected"]),
+  verification_status: z.enum(["pending", "under_review", "verified", "rejected"]),
 });
 
 router.get("/admin/companies/pending-verification", requireRole("admin"), async (_req, res) => {
@@ -224,42 +233,28 @@ router.patch("/admin/company-verification-documents/:documentId/status", require
   try {
     const input = schema.parse(req.body);
     const documentId = z.string().uuid().parse(req.params["documentId"]);
-    const [existing] = await db.select({
-      id: companyVerificationDocumentsTable.id,
-      companyId: companyVerificationDocumentsTable.companyId,
-      status: companyVerificationDocumentsTable.status,
-    }).from(companyVerificationDocumentsTable)
-      .where(eq(companyVerificationDocumentsTable.id, documentId)).limit(1);
-    if (!existing) { res.status(404).json({ error: "company_document_not_found" }); return; }
-    const [document] = await db.update(companyVerificationDocumentsTable).set({
-      status: input.status,
-      reviewNote: input.reviewNote || null,
-      reviewedBy: req.authUser!.id,
-      reviewedAt: new Date(),
-      updatedAt: new Date(),
-    }).where(eq(companyVerificationDocumentsTable.id, documentId)).returning({
-      id: companyVerificationDocumentsTable.id,
-      companyId: companyVerificationDocumentsTable.companyId,
-      status: companyVerificationDocumentsTable.status,
-      reviewNote: companyVerificationDocumentsTable.reviewNote,
-    });
-    await db.insert(auditLogsTable).values({
-      actorUserId: req.authUser!.id,
-      action: "company_verification_document_reviewed",
-      entityType: "company_verification_document",
-      entityId: document.id,
-      metadata: { companyId: document.companyId, previousStatus: existing.status, newStatus: document.status, reviewNote: document.reviewNote },
-    });
-    const [company] = await db.select({ ownerUserId: companiesTable.ownerUserId }).from(companiesTable).where(eq(companiesTable.id, document.companyId)).limit(1);
-    if (company) await db.insert(notificationsTable).values({
-      userId: company.ownerUserId,
-      type: "company_verification_document_reviewed",
-      title: "Company evidence reviewed",
-      body: `Your ${document.status === "approved" ? "company evidence was approved" : "company evidence needs attention"}.${document.reviewNote ? ` Note: ${document.reviewNote}` : ""}`,
-      link: "/profile",
-    });
-    if(company&&existing.status!==document.status)await notifyCompanyOwnerOnWhatsApp(company.ownerUserId,`Your company document was ${document.status} by UDC.${document.reviewNote?` Note: ${document.reviewNote}`:''} Document approval alone does not verify your company. Type Menu to check verification status.`);
-    res.json({ document });
+    const result=await db.transaction(async tx=>{
+      const [lookup]=await tx.select({companyId:companyVerificationDocumentsTable.companyId}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.id,documentId)).limit(1);
+      if(!lookup)return {error:'company_document_not_found',status:404} as const;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_verification:'+lookup.companyId}))`);
+      const [existing]=await tx.select().from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.id,documentId)).limit(1);
+      if(!existing)return {error:'company_document_not_found',status:404} as const;
+      const [company]=await tx.select().from(companiesTable).where(eq(companiesTable.id,existing.companyId)).limit(1);
+      if(!company)return {error:'company_not_found',status:404} as const;
+      const changed=existing.status!==input.status;
+      if(!changed&&(existing.reviewNote||null)===(input.reviewNote||null))return {document:existing,ownerUserId:company.ownerUserId,changed:false};
+      const [document]=await tx.update(companyVerificationDocumentsTable).set({status:input.status,reviewNote:input.reviewNote||null,reviewedBy:req.authUser!.id,reviewedAt:new Date(),updatedAt:new Date()}).where(eq(companyVerificationDocumentsTable.id,documentId)).returning();
+      await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'company_verification_document_reviewed',entityType:'company_verification_document',entityId:document.id,metadata:{companyId:company.id,previousStatus:existing.status,newStatus:document.status,reviewNote:document.reviewNote}});
+      if(input.status==='rejected'&&company.verificationStatus==='verified'){
+        const [remaining]=await tx.select({id:companyVerificationDocumentsTable.id}).from(companyVerificationDocumentsTable).where(and(eq(companyVerificationDocumentsTable.companyId,company.id),eq(companyVerificationDocumentsTable.status,'approved'))).limit(1);
+        if(!remaining){await tx.update(companiesTable).set({verificationStatus:'under_review',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));await downgradeCompanyOwner(tx,company.ownerUserId,req.authUser!.id);await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'company_verification_status_updated',entityType:'company',entityId:company.id,metadata:{previousStatus:'verified',newStatus:'under_review',reason:'approved_evidence_rejected'}});}
+      }
+      if(changed)await tx.insert(notificationsTable).values({userId:company.ownerUserId,type:'company_verification_document_reviewed',title:'Company evidence reviewed',body:`Your company document was ${document.status}.${document.reviewNote?` Note: ${document.reviewNote}`:''} Check your verification status.`,link:'/profile'});
+      return {document,ownerUserId:company.ownerUserId,changed};
+    },{isolationLevel:'serializable'});
+    if('error' in result){res.status(result.status ?? 500).json({error:result.error});return;}
+    if(result.changed)await notifyCompanyOwnerOnWhatsApp(result.ownerUserId,`Your company document was ${result.document.status} by UDC.${result.document.reviewNote?` Note: ${result.document.reviewNote}`:''} Type Menu to check your account and company verification status.`);
+    res.json({document:result.document});
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error", details: error.issues.map((issue) => ({ field: issue.path.join("."), message: issue.message })) }); return; }
     res.status(500).json({ error: "company_document_review_failed" });
@@ -277,55 +272,24 @@ router.patch(
         res.status(400).json({ error: "invalid_company_id" });
         return;
       }
-      const [existing] = await db.select({
-        id: companiesTable.id,
-        ownerUserId: companiesTable.ownerUserId,
-        verificationStatus: companiesTable.verificationStatus,
-      }).from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
-      if (!existing) {
-        res.status(404).json({ error: "company_not_found" });
-        return;
-      }
-      if (verification_status === "verified") {
-        const [approvedDocument] = await db.select({ id: companyVerificationDocumentsTable.id })
-          .from(companyVerificationDocumentsTable)
-          .where(and(eq(companyVerificationDocumentsTable.companyId, companyId), eq(companyVerificationDocumentsTable.status, "approved")))
-          .limit(1);
-        if (!approvedDocument) {
-          res.status(409).json({ error: "approved_company_document_required" });
-          return;
+      const result=await db.transaction(async tx=>{
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_verification:'+companyId}))`);
+        const [existing]=await tx.select().from(companiesTable).where(eq(companiesTable.id,companyId)).limit(1);
+        if(!existing)return {error:'company_not_found',status:404} as const;
+        if(verification_status==='verified'){
+          const [approved]=await tx.select({id:companyVerificationDocumentsTable.id}).from(companyVerificationDocumentsTable).where(and(eq(companyVerificationDocumentsTable.companyId,companyId),eq(companyVerificationDocumentsTable.status,'approved'))).limit(1);
+          if(!approved)return {error:'approved_company_document_required',status:409} as const;
         }
-      }
-      const [company] = await db
-        .update(companiesTable)
-        .set({
-          verificationStatus: verification_status,
-          updatedAt: new Date(),
-        })
-        .where(eq(companiesTable.id, companyId))
-        .returning({
-          id: companiesTable.id,
-          verificationStatus: companiesTable.verificationStatus,
-          updatedAt: companiesTable.updatedAt,
-        });
-      await db.insert(auditLogsTable).values({
-        actorUserId: req.authUser!.id,
-        action: "company_verification_status_updated",
-        entityType: "company",
-        entityId: company.id,
-        metadata: { previousStatus: existing.verificationStatus, newStatus: company.verificationStatus },
-      });
-      if (existing.verificationStatus !== company.verificationStatus) {
-        await db.insert(notificationsTable).values({
-          userId: existing.ownerUserId,
-          type: "company_verification_status_updated",
-          title: "Company verification updated",
-          body: `Your company verification status is now ${company.verificationStatus}.`,
-          link: "/company",
-        });
-      }
-      if(existing.verificationStatus!==company.verificationStatus)await notifyCompanyOwnerOnWhatsApp(existing.ownerUserId,`Your company review status is now ${company.verificationStatus}. Type Menu to check your account and company verification status.`);
-      res.json({ company });
+        if(existing.verificationStatus===verification_status)return {company:existing,ownerUserId:existing.ownerUserId,changed:false};
+        const [company]=await tx.update(companiesTable).set({verificationStatus:verification_status,updatedAt:new Date()}).where(eq(companiesTable.id,companyId)).returning();
+        await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'company_verification_status_updated',entityType:'company',entityId:companyId,metadata:{previousStatus:existing.verificationStatus,newStatus:verification_status}});
+        if(verification_status!=='verified')await downgradeCompanyOwner(tx,existing.ownerUserId,req.authUser!.id);
+        await tx.insert(notificationsTable).values({userId:existing.ownerUserId,type:'company_verification_status_updated',title:'Company verification updated',body:`Your company verification status is now ${verification_status}.`,link:'/company'});
+        return {company,ownerUserId:existing.ownerUserId,changed:true};
+      },{isolationLevel:'serializable'});
+      if('error' in result){res.status(result.status ?? 500).json({error:result.error});return;}
+      if(result.changed)await notifyCompanyOwnerOnWhatsApp(result.ownerUserId,`Your company review status is now ${result.company.verificationStatus}. Type Menu to check your account and company verification status.`);
+      res.json({company:result.company});
     } catch (error) {
       if (error instanceof z.ZodError) {
         res.status(400).json({
@@ -1480,6 +1444,7 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       const [current] = await tx.select({ status: usersTable.status }).from(usersTable)
         .where(eq(usersTable.id, userId)).limit(1);
       if (!current) throw new Error("user_not_found");
+      if(input.status==='verified'&&['buyer','seller'].includes(existingUser.role)&&!await approvedCompanyEvidence(userId,tx))throw new AgreementError('verified_company_and_approved_document_required');
       const [updated] = await tx.update(usersTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(usersTable.id, userId))
@@ -1496,7 +1461,7 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
         body: `Your UDC verification status is now ${updated.status}.`, link: "/profile",
       });
       return { user: updated, changed: current.status !== updated.status };
-    });
+    },{isolationLevel:"serializable"});
     if (changed) {
       if (existingUser.phone) {
         try {
@@ -1531,6 +1496,7 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       res.status(400).json({ error: "validation_error" });
       return;
     }
+    if(error instanceof AgreementError){res.status(409).json({error:error.message});return;}
     res.status(500).json({ error: "user_verification_failed" });
   }
 });

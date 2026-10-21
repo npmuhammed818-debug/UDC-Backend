@@ -211,6 +211,28 @@ test('admin trade workflows preserve verification, ownership, review and payment
         assert.equal(records.companyVerificationDocumentsTable[0].status,'pending');assert.equal(records.companiesTable[0].verificationStatus,'pending');assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='company_document_screened').length,1);
       }finally{for(const name of Object.keys(records))records[name]=saved[name];state.user={id:'admin',role:'admin',status:'verified'};}
     });
+    await t.test('company review is atomic and a trader cannot stay verified after losing approved evidence',async()=>{
+      const saved=structuredClone(records);state.user={id:'admin',role:'admin',status:'verified'};
+      try{
+        const companyId=randomUUID(),documentId=randomUUID();records.usersTable=[{id:'buyer',role:'buyer',status:'pending'}];records.companiesTable=[{id:companyId,ownerUserId:'buyer',companyName:'Synthetic Company',verificationStatus:'pending'}];records.companyVerificationDocumentsTable=[{id:documentId,companyId,status:'pending',reviewNote:null}];records.auditLogsTable=[];records.notificationsTable=[];
+        const companyPath=`/admin/companies/${companyId}/verification`,documentPath=`/admin/company-verification-documents/${documentId}/status`;
+        let response=await request(companyPath,{verification_status:'under_review'},'PATCH');assert.equal(response.status,200);assert.equal(records.companiesTable[0].verificationStatus,'under_review');
+        assert.equal((await request('/admin/users/buyer/verification',{status:'verified'},'PATCH')).status,409);assert.equal(records.usersTable[0].status,'pending');
+        assert.equal((await request(companyPath,{verification_status:'verified'},'PATCH')).status,409);
+        const before=records.auditLogsTable.length;state.failAudit=true;assert.equal((await request(documentPath,{status:'approved'},'PATCH')).status,500);assert.equal(records.companyVerificationDocumentsTable[0].status,'pending');assert.equal(records.auditLogsTable.length,before);
+        assert.equal((await request(documentPath,{status:'approved'},'PATCH')).status,200);const audited=records.auditLogsTable.length,notified=records.notificationsTable.length;
+        assert.equal((await request(documentPath,{status:'approved'},'PATCH')).status,200);assert.equal(records.auditLogsTable.length,audited);assert.equal(records.notificationsTable.length,notified);
+        state.failAudit=true;assert.equal((await request(companyPath,{verification_status:'verified'},'PATCH')).status,500);assert.equal(records.companiesTable[0].verificationStatus,'under_review');
+        assert.equal((await request(companyPath,{verification_status:'verified'},'PATCH')).status,200);assert.equal((await request('/admin/users/buyer/verification',{status:'verified'},'PATCH')).status,200);assert.equal(records.usersTable[0].status,'verified');
+        assert.equal((await request(documentPath,{status:'rejected'},'PATCH')).status,400);
+        state.failAudit=true;assert.equal((await request(documentPath,{status:'rejected',reviewNote:'Evidence inconsistent'},'PATCH')).status,500);assert.equal(records.companyVerificationDocumentsTable[0].status,'approved');assert.equal(records.usersTable[0].status,'verified');
+        assert.equal((await request(documentPath,{status:'rejected',reviewNote:'Evidence inconsistent'},'PATCH')).status,200);assert.equal(records.companyVerificationDocumentsTable[0].status,'rejected');assert.equal(records.companiesTable[0].verificationStatus,'under_review');assert.equal(records.usersTable[0].status,'under_review');
+        assert.equal((await request(companyPath,{verification_status:'verified'},'PATCH')).status,409);
+        // Another approved company document keeps the evidence requirement satisfied.
+        records.companiesTable[0].verificationStatus='verified';records.usersTable[0].status='verified';records.companyVerificationDocumentsTable[0].status='approved';records.companyVerificationDocumentsTable.push({id:randomUUID(),companyId,status:'approved'});
+        assert.equal((await request(documentPath,{status:'rejected',reviewNote:'Replace this evidence'},'PATCH')).status,200);assert.equal(records.companiesTable[0].verificationStatus,'verified');assert.equal(records.usersTable[0].status,'verified');
+      }finally{for(const name of Object.keys(records))records[name]=saved[name];}
+    });
     let id:string;
     await t.test('verified buyer and seller allow one audited admin booking',async()=>{
       const r=await request(path);assert.equal(r.status,201);id=r.data.meeting.id;

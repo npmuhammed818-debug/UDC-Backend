@@ -25,31 +25,13 @@ export async function verifiedCounterparties(
     !users.some((u) => u.id === sellerId && u.role === "seller")
   )
     return false;
-  const companies = await executor
-    .select()
-    .from(companiesTable)
-    .where(
-      and(
-        inArray(companiesTable.ownerUserId, [buyerId, sellerId]),
-        eq(companiesTable.verificationStatus, "verified"),
-      ),
-    );
-  for (const id of [buyerId, sellerId]) {
-    const owned = companies
-      .filter((c) => c.ownerUserId === id)
-      .map((c) => c.id);
-    if (!owned.length) return false;
-    const [evidence] = await executor
-      .select({ id: companyVerificationDocumentsTable.id })
-      .from(companyVerificationDocumentsTable)
-      .where(
-        and(
-          inArray(companyVerificationDocumentsTable.companyId, owned),
-          eq(companyVerificationDocumentsTable.status, "approved"),
-        ),
-      )
-      .limit(1);
-    if (!evidence) return false;
-  }
+  for(const id of [buyerId,sellerId])if(!await approvedCompanyEvidence(id,executor))return false;
   return true;
+}
+
+export async function approvedCompanyEvidence(userId:string,executor:Pick<typeof db,'select'>=db){
+  const companies=await executor.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.ownerUserId,userId),eq(companiesTable.verificationStatus,'verified')));
+  if(!companies.length)return false;
+  const [evidence]=await executor.select({id:companyVerificationDocumentsTable.id}).from(companyVerificationDocumentsTable).where(and(inArray(companyVerificationDocumentsTable.companyId,companies.map(c=>c.id)),eq(companyVerificationDocumentsTable.status,'approved'))).limit(1);
+  return Boolean(evidence);
 }
