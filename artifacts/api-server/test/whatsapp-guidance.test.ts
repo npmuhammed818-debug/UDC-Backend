@@ -6,14 +6,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 test('Akif guidance remembers language and follow-ups without verification or trade writes; voice actions stay unconfirmed', async()=>{
- const state:any={rows:new Map(), calls:[], reply:'അതെ, മലയാളത്തിൽ സംസാരിക്കാം.'};
+ const state:any={rows:new Map(), calls:[], reply:'അതെ, മലയാളത്തിൽ സംസാരിക്കാം.', modelFailure:false};
  const query:any={from:(table:any)=>{query.table=table;return query;},where:(x:any)=>{query.key=x.b;return query;},limit:async()=>query.table?.phone==='phone'?(state.account?[state.account]:[]):state.rows.has(query.key)?[state.rows.get(query.key)]:[]};
  state.db={select:()=>query,insert:()=>({values:(v:any)=>({onConflictDoUpdate:async()=>{assert.ok(['profile_buyer','profile_seller','profile_agent','buyer','seller'].includes(v.purpose),'must respect the deployed SQL CHECK constraint');if(state.saveFailure)throw Error('PRIVATE_DATABASE_FAILURE');state.rows.set(v.phoneHash,v);}})})};
  (globalThis as any).__guidance=state;
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';export * from '../src/akif/udcHandbook';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
  b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient$/},a=>({path:a.path,namespace:'fixture'}));
- b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{globalThis.__guidance.calls.push({message,system});return {content:globalThis.__guidance.reply};};"}));
+ b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
  }}]});await writeFile(path,result.outputFiles[0].text);
  const secret=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='test-guidance-secret-123';
  try{
@@ -46,5 +46,14 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  state.account={role:'agent',status:'pending'};assert.match(await answerGuidance('phone-public','What documents do I need for verification?','public-9'),/personal or business email/);state.account=null;
  state.reply='The safest choice is guaranteed safe.';assert.doesNotMatch(await answerGuidance('phone-public','Explain export insurance?','public-10'),/guaranteed safe/);
  state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','Explain export insurance?','7',true),state.reply);assert.equal(state.rows.size,3);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
+ state.saveFailure=false;state.modelFailure=false;state.reply='I can speak Malayalam.';
+ await answerGuidance('phone-offline','Can you speak in Malayalam?','offline-language');
+ state.modelFailure=true;
+ const offlineDlc=await answerGuidance('phone-offline','What is DLC?','offline-dlc');
+ assert.match(offlineDlc,/bank’s undertaking to pay/);
+ assert.match(offlineDlc,/answering in English for now/);
+ const offlineGeneral=await answerGuidance('phone-offline','Explain export insurance?','offline-general');
+ assert.match(offlineGeneral,/detailed trade-answer service is temporarily unavailable/);
+ assert.doesNotMatch(offlineGeneral,/couldn’t prepare that answer just now/);
  }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
 });

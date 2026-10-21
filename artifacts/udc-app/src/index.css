@@ -425,6 +425,18 @@ button, input, select, textarea { font: inherit; }
 .brand-mark { width: 2rem; height: 2rem; display: inline-grid; place-items: center; border: 2px solid currentColor; border-radius: .6rem; transform: rotate(-8deg); }
 .brand-mark > span { width: .7rem; height: .7rem; background: currentColor; border-radius: .2rem; }
 .error-banner { display: flex; gap: .65rem; padding: .9rem; margin-bottom: 1rem; border: 1px solid hsl(var(--destructive)); border-radius: .65rem; color: hsl(var(--destructive)); background: hsl(var(--destructive) / .05); }
+.admin-review-overview { display: grid; grid-template-columns: minmax(12rem,.8fr) minmax(0,2fr); gap: 1rem; margin-top: 1.25rem; padding: 1rem; border: 1px solid hsl(var(--border)); border-radius: .9rem; background: hsl(var(--card)); }
+.admin-review-total { display: flex; flex-direction: column; justify-content: center; padding: .75rem 1rem; border-right: 1px solid hsl(var(--border)); }
+.admin-review-total > span,.admin-review-total > small { color: hsl(var(--muted-foreground)); font-size: .8rem; }
+.admin-review-total > strong { margin-block: .15rem; font-size: 2.25rem; line-height: 1; letter-spacing: -.05em; }
+.admin-review-nav { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: .5rem; align-items: stretch; }
+.admin-review-nav a { display: flex; flex-direction: column; justify-content: space-between; gap: .75rem; min-height: 4.5rem; padding: .75rem; border: 1px solid hsl(var(--border)); border-radius: .7rem; color: hsl(var(--foreground)); background: hsl(var(--background)); text-decoration: none; font-size: .75rem; }
+.admin-review-nav a:hover { border-color: hsl(var(--primary)); }
+.admin-review-nav b { font-size: 1.1rem; }
+.admin-queue-count { flex: none; color: hsl(var(--muted-foreground)); font-size: .75rem; white-space: nowrap; }
+.admin-review-section { scroll-margin-top: 1.5rem; }
+@media (max-width: 900px) { .admin-review-overview { grid-template-columns: 1fr; } .admin-review-total { border-right: 0; border-bottom: 1px solid hsl(var(--border)); padding: .25rem .25rem .85rem; } .admin-review-nav { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media (max-width: 520px) { .admin-review-nav { grid-template-columns: repeat(2,minmax(0,1fr)); } .admin-review-nav a { min-height: 4rem; } }
 @media (max-width: 850px) {
   .auth-page { grid-template-columns: minmax(0,1fr); }
   .auth-visual { padding: 1.5rem; gap: 1rem; }

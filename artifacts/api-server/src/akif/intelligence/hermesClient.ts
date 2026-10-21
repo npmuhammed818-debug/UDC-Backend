@@ -227,8 +227,12 @@ export async function runConversationChat(
     try {
       return await runAkifWorkerChat(message, system, timeoutMs);
     } catch (error) {
+      const statusMatch = error instanceof Error
+        ? error.message.match(/AKIF worker returned HTTP (\d{3})/)
+        : null;
       console.warn("AKIF worker conversation failed; trying existing fallback", {
         reason: error instanceof Error && error.name === "AbortError" ? "timeout" : "provider_request_failed",
+        ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
       });
     }
   }
