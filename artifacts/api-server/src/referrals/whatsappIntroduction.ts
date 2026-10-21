@@ -5,7 +5,7 @@ import { sendWhatsAppInteractive, sendWhatsAppText } from '../whatsapp/client';
 import { agentReferralCode } from './invitation';
 
 export async function handleWhatsAppIntroduction(phone:string,message:{text?:{body?:string};interactive?:{button_reply?:{id?:string}}}){
- const code=/^referral\s+UDC-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.exec(message.text?.body?.trim()??'');
+ const code=/^referral\s+UDC-([a-f0-9-]{8,36})$/i.exec(message.text?.body?.trim()??'');
  const button=/^udc:referral:(accept|decline):([a-f0-9-]{36})$/.exec(message.interactive?.button_reply?.id??'');
  if(!code&&!button)return false;
  const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
@@ -13,8 +13,12 @@ export async function handleWhatsAppIntroduction(phone:string,message:{text?:{bo
   await sendWhatsAppText(phone,'Register as a buyer or seller from Menu first, then send the referral code here.');return true;
  }
  if(code){
-  const [agent]=await db.select().from(usersTable).where(and(eq(usersTable.id,code[1].toLowerCase()),eq(usersTable.role,'agent'),eq(usersTable.status,'verified'))).limit(1);
-  if(!agent||agent.id===user.id){await sendWhatsAppText(phone,'That verified agent referral is unavailable.');return true;}
+  const normalized=code[1].replaceAll('-','').toLowerCase();
+  const candidates=normalized.length===32
+   ? await db.select().from(usersTable).where(and(eq(usersTable.id,code[1].toLowerCase()),eq(usersTable.role,'agent'),eq(usersTable.status,'verified'))).limit(2)
+   : await db.select().from(usersTable).where(and(sql`${usersTable.id}::text LIKE ${normalized+'%'}`,eq(usersTable.role,'agent'),eq(usersTable.status,'verified'))).limit(2);
+  const agent=candidates.length===1?candidates[0]:undefined;
+  if(!agent||agent.id===user.id){await sendWhatsAppText(phone,candidates.length>1?'That referral code is ambiguous. Ask the agent to share their current code.':'That verified agent referral is unavailable.');return true;}
   const [existing]=await db.select({id:referralsTable.id}).from(referralsTable).where(eq(referralsTable.referredUserId,user.id)).limit(1);
   if(existing){await sendWhatsAppText(phone,'An introduction is already recorded for your account. Ask UDC to review any correction.');return true;}
   const id=randomUUID();await db.insert(auditLogsTable).values({id,actorUserId:user.id,action:'whatsapp_referral_requested',entityType:'user',entityId:user.id,metadata:{agentUserId:agent.id,expiresAt:new Date(Date.now()+24*60*60_000).toISOString()}});

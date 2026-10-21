@@ -12,13 +12,16 @@ const q=(name:string,label:string,options:Omit<Question,'name'|'label'>={}):Ques
 export function guidedQuestions(purpose:FlowPurpose):Question[]{
   if(purpose.startsWith('profile_'))return [q('full_name','What is your full name?'),q('email',purpose==='profile_agent'?'What email should UDC use? Personal or business email is fine.':'What is your company email?',{kind:'email',max:254}),...(purpose==='profile_agent'?[]:[q('company_name','What is your registered company name?',{max:200}),q('country','In which country is your company registered?'),q('registration_number','What is your company registration number?',{optional:true,max:100})])];
   if(purpose==='buyer')return [q('product','What product do you need?'),q('quantity','How many metric tonnes (MT) do you need?',{kind:'positive'}),q('specification','What grade or specification do you need?',{optional:true,max:2000}),q('destination','What is the destination port?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('target_price','What is your target price in USD per MT?',{kind:'positive',optional:true}),q('delivery_time','When do you need delivery?',{optional:true,max:500}),q('payment_terms','What payment terms do you prefer?',{optional:true,max:2000})];
-  return [q('product','What product can you supply?'),q('quantity','How many metric tonnes (MT) can you supply?',{kind:'positive'}),q('specification','What grade or specification can you supply?',{optional:true,max:2000}),q('price','What is your price in USD per MT?',{kind:'positive'}),q('origin','What is the origin country?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('availability','When is the product available for delivery?',{optional:true,max:500}),q('destination','What is the delivery port or named place?',{max:120}),q('payment_terms','What payment terms do you propose?',{optional:true,max:2000})];
+  return [q('product','What product can you supply?'),q('quantity','What quantity can you supply?',{kind:'positive'}),q('unit','What unit is that quantity and price based on? (for example, MT, kg or pieces)',{max:24}),q('specification','What grade or specification can you supply?',{optional:true,max:2000}),q('price','What price are you offering?',{kind:'positive'}),q('currency','What currency is that price in? (for example, USD, AED or EUR)',{max:3}),q('origin','What is the origin country?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('availability','When is the product available for delivery?',{optional:true,max:500}),q('destination','What is the delivery port or named place?',{max:120}),q('payment_terms','What payment terms do you propose?',{optional:true,max:2000})];
 }
 function phoneHash(phone:string){const key=process.env.WHATSAPP_APP_SECRET;if(!key||key.length<16)throw new Error('chat_draft_signing_unavailable');return createHmac('sha256',key).update('UDC_GUIDED_CHAT_V1\0'+phone).digest('hex');}
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
   if(data.__paragraph==='1'){
-    const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>({full_name:'your full name',email:purpose==='profile_agent'?'your email':'company email',company_name:'registered company name',country:'registration country',product:'product',quantity:'quantity in MT',destination:'destination port or location',incoterm:'delivery term',price:'price in USD per MT'}[q.name]??q.name));
+    if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppText(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
+    const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
+    if(next){await sendWhatsAppText(phone,next.label);return;}
+    const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>q.label);
     if(!labels.length){await sendWhatsAppText(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
     await sendWhatsAppText(phone,`Send ${labels.join(', ')} together in one short message.${purpose.startsWith('profile_')?'':' You can include grade, timing, payment terms and the delivery place too.'}`);return;
   }
@@ -48,11 +51,14 @@ function validate(question:Question,text:string,purpose:FlowPurpose){
   if(question.kind==='positive'){
     if(! /^\d+(?:\.\d+)?$/.test(text)||!Number.isFinite(Number(text))||Number(text)<=0)throw new Error('Send a positive number only, for example 100 or 5900.50.');return text;
   }
+  if(question.name==='currency'){
+    if(!/^[A-Za-z]{3}$/.test(text))throw new Error('Send the three-letter currency code, for example USD, AED or EUR.');return text.toUpperCase();
+  }
   if(question.kind==='incoterm'){const term=text.toUpperCase();if(!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))throw new Error('Choose EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP.');return term;}
   if(question.name==='full_name'&&text.length<2)throw new Error('Please send your full name.');return text;
 }
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
-  const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity (MT)',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price USD/MT',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
+  const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
   const summary=Object.entries(data).filter(([k,v])=>v&&!k.startsWith('__')).map(([key,value])=>`${label[key]??key}: ${value}`).join('\n');
   await sendWhatsAppText(phone,'Please review:\n'+summary+(purpose.startsWith('profile_')?'\nRegistration needs UDC approval.':'\nUDC recommends DLC directly to seller, after SGS at destination. Other terms require explicit buyer agreement. Submission needs UDC review.'));
   try{await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Are these details correct?'},action:{buttons:[['submit','Submit for review'],['restart','Edit details'],['cancel','Cancel']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});}catch{await sendWhatsAppText(phone,'Reply Submit to send for UDC review, Edit to start again, or Cancel.');}
@@ -83,7 +89,7 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     if(session.data.__paragraph==='1'){
       // A concurrent edit/menu must never apply extraction to a different draft.
       if(!snapshot||snapshot.id!==session.id||snapshot.step!==session.step||JSON.stringify(snapshot.data)!==JSON.stringify(session.data))return {kind:'question' as const,purpose,step:session.step,data:session.data};
-      const data={...session.data};
+      const data={...session.data,__started:'1'};
       for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details. */}}}
       const complete=questions.every(q=>q.optional||data[q.name]);
       const step=complete?questions.length:0;

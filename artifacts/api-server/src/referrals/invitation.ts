@@ -18,4 +18,8 @@ export function verifyAgentInvitation(token: string, secret: string) {
     return supplied.length === expected.length && timingSafeEqual(supplied, expected) ? parts[1] : null;
   } catch { return null; }
 }
-export function agentReferralCode(agentId: string) { return `UDC-${agentId.toUpperCase()}`; }
+// A short, stable code is easier to share in WhatsApp. The first 12 UUID
+// characters provide 48 bits of uniqueness; the handler rejects collisions.
+export function agentReferralCode(agentId: string) {
+  return `UDC-${agentId.replaceAll('-', '').slice(0, 12).toUpperCase()}`;
+}

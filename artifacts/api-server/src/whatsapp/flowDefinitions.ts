@@ -14,11 +14,11 @@ export const flowDefinitions={
     {type:'TextBody',text:'Payment: DLC directly to seller, released after SGS at destination. Submission needs UDC review.'},
   ],['product','quantity','specification','destination','incoterm','target_price','delivery_time'])},
   seller:{name:'UDC_Seller_Offer_v1',json:definition('Your offer',[
-    input('product','Product'),input('quantity','Quantity (MT)',true,'number'),input('specification','Grade / spec',false),input('price','Price USD / MT',true,'number'),input('origin','Origin country'),
+    input('product','Product'),input('quantity','Quantity',true,'number'),input('unit','Unit / price basis (e.g. MT)',true),input('specification','Grade / spec',false),input('price','Price',true,'number'),input('currency','Currency code (e.g. USD)',true),input('origin','Origin country'),
     {type:'Dropdown',name:'incoterm',label:'Incoterm',required:true,'data-source':['CIF','CFR','FOB','EXW','FCA','DAP'].map(id=>({id,title:id}))},
     input('availability','Availability',false),
     {type:'TextBody',text:'Payment: DLC directly to seller, released after SGS at destination. Submission needs UDC review.'},
-  ],['product','quantity','specification','price','origin','incoterm','availability'])},
+  ],['product','quantity','unit','specification','price','currency','origin','incoterm','availability'])},
   agent:{name:'UDC_Agent_Profile_v1',json:definition('Agent registration',[
     {type:'TextBody',text:'You may use a personal or business email. Agent access starts after UDC approval.'},
     input('full_name','Your full name'),input('email','Email',true,'email'),

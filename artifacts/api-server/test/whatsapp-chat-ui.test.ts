@@ -113,11 +113,11 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,ui('edit_profile'));assert.match(last(),/details you want to change/);assert.ok(rows.whatsappChatSessionsTable[0].data.email);await m.handleChatUi(phone,ui('cancel'));
       await m.handleChatUi(phone,ui('requirement'));const before=rows.buyerRequestsTable.length;
       const first={id:'paragraph-first',text:{body:'product: Copper cathode; quantity: 100; destination: Jebel Ali; target price: 5900'}};
-      await m.handleChatUi(phone,first);assert.match(last(),/delivery term/);assert.doesNotMatch(last(),/quantity/);assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');
+      await m.handleChatUi(phone,first);assert.match(last(),/incoterm/);assert.doesNotMatch(last(),/quantity/);assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');
       await m.handleChatUi(phone,first);assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');
       await m.handleChatUi(phone,{id:'paragraph-final',text:{body:'incoterm: DPU; specification: Grade A'}});assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:submit');assert.equal(rows.buyerRequestsTable.length,before);
       await m.handleChatUi(phone,ui('submit'));assert.equal(rows.buyerRequestsTable.length,before+1);assert.equal(rows.buyerRequestsTable.at(-1).preferredIncoterm,'DPU');
-      await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{id:'paragraph-invalid',text:{body:'product: Sugar; quantity: -4; destination: Mombasa; incoterm: CIF'}});assert.match(last(),/quantity/);assert.doesNotMatch(last(),/product/);await m.handleChatUi(phone,ui('cancel'));
+      await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{id:'paragraph-invalid',text:{body:'product: Sugar; quantity: -4; destination: Mombasa; incoterm: CIF'}});assert.match(last(),/metric tonnes/);assert.doesNotMatch(last(),/product/);await m.handleChatUi(phone,ui('cancel'));
     });
     await t.test('natural paragraph extraction validates fields and skips duplicate model calls',async()=>{
       await m.handleChatUi(phone,ui('requirement'));const before=rows.buyerRequestsTable.length,calls=state.modelCalls;
@@ -126,6 +126,18 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,message);assert.equal(state.modelCalls,calls+1);assert.equal(rows.buyerRequestsTable.length,before);assert.equal(rows.whatsappChatSessionsTable[0].data.verification,undefined);
       await m.handleChatUi(phone,message);assert.equal(state.modelCalls,calls+1);await m.handleChatUi(phone,ui('cancel'));
       await m.handleChatUi(phone,ui('requirement'));state.modelOutput='not json';await m.handleChatUi(phone,{id:'invalid-model-output',text:{body:'some trade details'}});assert.equal(rows.whatsappChatSessionsTable[0].step,0);assert.match(last(),/product/);await m.handleChatUi(phone,ui('cancel'));
+    });
+    await t.test('seller can describe an offer naturally and the draft keeps the stated unit and currency',async()=>{
+      const sellerPhone='10000000028';rows.usersTable.push({id:'seller-natural',phone:sellerPhone,role:'seller',status:'verified',fullName:'Natural Seller'});
+      await m.handleChatUi(sellerPhone,ui('offer'));assert.match(last(),/in your own words/i);assert.match(last(),/one question at a time/i);
+      state.modelOutput=JSON.stringify({product:'Copper cathode',quantity:'100'});
+      await m.handleChatUi(sellerPhone,{id:'seller-natural-partial',text:{body:'I can supply 100 MT copper cathode.'}});assert.match(last(),/what unit/i);assert.doesNotMatch(last(),/price.*origin.*incoterm/i);
+      state.modelOutput=JSON.stringify({product:'Copper cathode',quantity:'100',unit:'MT',price:'5900',currency:'AED',origin:'Oman',incoterm:'CIF',destination:'Jebel Ali'});
+      await m.handleChatUi(sellerPhone,{id:'seller-natural-offer',text:{body:'AED 5,900 per MT from Oman, CIF Jebel Ali.'}});
+      assert.equal(rows.whatsappChatSessionsTable[0].data.currency,'AED');assert.equal(rows.whatsappChatSessionsTable[0].data.unit,'MT');
+      assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:submit');
+      await m.handleChatUi(sellerPhone,ui('submit'));
+      assert.equal(rows.sellerListingsTable.at(-1).currency,'AED');assert.equal(rows.sellerListingsTable.at(-1).unit,'MT');assert.equal(rows.sellerListingsTable.at(-1).price,'5900');
     });
     await t.test('editing a paragraph keeps the details already supplied',async()=>{
       await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{id:randomUUID(),text:{body:'product: Test goods; quantity: 100; destination: Mombasa; incoterm: CIF; target_price: 490'}});

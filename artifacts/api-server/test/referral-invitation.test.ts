@@ -11,7 +11,7 @@ test('agent invitation signatures bind the exact agent and a separate signing pu
   assert.equal(verifyAgentInvitation(token.replace(id,'22222222-2222-4222-8222-222222222222'),secret),null);
   assert.equal(verifyAgentInvitation('v1.'+id+'.'+createHmac('sha256',secret).update(id).digest('base64url'),secret),null);
   for(const value of ['',token+'.extra','v2'+token.slice(2),token.slice(0,-1),token+'x'])assert.equal(verifyAgentInvitation(value,secret),null);
-  assert.equal(agentReferralCode(id),'UDC-'+id.toUpperCase());
+  assert.equal(agentReferralCode(id),'UDC-'+id.replaceAll('-','').slice(0,12).toUpperCase());
   assert.throws(()=>createAgentInvitation(id,''),/unavailable/);
   assert.throws(()=>createAgentInvitation('not-an-id',secret),/invalid_agent/);
 });
