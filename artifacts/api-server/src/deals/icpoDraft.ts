@@ -18,7 +18,7 @@ export function createIcpoDraft(input: SpaDraftInput) {
     `Indicative unit price recorded in UDC: ${safe(input.currency, "[CURRENCY]")} ${safe(input.agreedPrice, "[PRICE]")} per ${safe(input.unit, "[UNIT]")}`,
     `Delivery: ${safe(input.incoterm, "[INCOTERM]")} ${safe(input.destination, "[NAMED DESTINATION]")}`,
     "Origin, quality tolerance, shipment schedule, required documents, order validity and authorized buyer details: [COMPLETE AND CONFIRM].",
-    "Payment framework: DLC issued directly to the seller, with payment after SGS inspection at destination. Exact bank and inspection conditions require review and agreement.",
+    input.paymentTerms ? `Recorded buyer-accepted payment terms: ${safe(input.paymentTerms, "[PAYMENT TERMS]")}. Inspection: ${safe(input.inspectionTerms, "[CONFIRM INSPECTION TERMS]")}. Subject to independent review.` : "Payment framework: DLC issued directly to the seller, with payment after SGS inspection at destination. Exact bank and inspection conditions require review and agreement.",
     "",
     "UNISSUED REVIEW COPY. This draft is not an issued ICPO or an irrevocable commitment. Only the buyer's authorized representative may finalize and issue a purchase order after reviewing all terms with legal and banking advisers.",
     "Authorized buyer representative: [NAME, TITLE AND SIGNATURE AFTER REVIEW]",

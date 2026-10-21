@@ -6,6 +6,7 @@ import { hashPassword } from "../auth/passwords";
 import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 export const sellerOfferSchema = z.object({
+  paymentTerms: z.string().trim().min(1).max(2000).optional(),
   specification: z.string().min(1).max(2000).optional(),
   availability: z.string().min(1).max(2000).optional(),
   inspectionTerms: z.string().min(1).max(2000).optional(),
@@ -41,7 +42,7 @@ export async function recordPendingSellerOffer(input: z.infer<typeof sellerOffer
     inspectionTerms: input.inspectionTerms,
     monthlyCapacity: input.monthlyCapacity === undefined ? undefined : String(input.monthlyCapacity),
     minimumOrderQuantity: input.minimumOrderQuantity === undefined ? undefined : String(input.minimumOrderQuantity),
-    paymentTerms: udcPaymentTerms, status: "pending_admin_review",
+    paymentTerms: input.paymentTerms ?? udcPaymentTerms, status: "pending_admin_review",
   }).returning({ id: sellerListingsTable.id, status: sellerListingsTable.status });
 
   return offer;

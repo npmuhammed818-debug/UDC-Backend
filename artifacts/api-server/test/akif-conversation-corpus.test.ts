@@ -385,7 +385,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     );
     assert.match(
       s.prompts.at(-1).messages[0].content,
-      /DLC issued directly to the seller.*after SGS inspection at destination/,
+      /UDC recommends DLC directly to seller, payment after SGS at destination/,
     );
     const count = s.sent.length;
     await send(

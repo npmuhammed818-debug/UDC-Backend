@@ -6,6 +6,7 @@ import { hashPassword } from "../auth/passwords";
 import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 export const buyerIntakeSchema = z.object({
+  paymentTerms: z.string().trim().min(1).max(2000).optional(),
   specification: z.string().min(1).max(2000).optional(),
   deliveryTime: z.string().min(1).max(2000).optional(),
   contractDuration: z.string().min(1).max(2000).optional(),
@@ -36,7 +37,7 @@ export async function recordPendingBuyerRequirement(input: z.infer<typeof buyerI
     additionalConditions: input.deliveryTime ? `Requested delivery: ${input.deliveryTime}` : undefined,
     contractDuration: input.contractDuration,
     inspectionRequirements: input.inspectionRequirements,
-    paymentTerms: udcPaymentTerms, status: "pending_admin_review",
+    paymentTerms: input.paymentTerms ?? udcPaymentTerms, status: "pending_admin_review",
   }).returning({ id: buyerRequestsTable.id, status: buyerRequestsTable.status });
   return requirement;
 }

@@ -1,3 +1,4 @@
+import { recordedDealTerms } from '../deals/recordedTerms';
 import { handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
@@ -687,13 +688,14 @@ async function handleDealWhatsAppMessage(
     }
     const [product] = await db.select({ name: productsTable.name }).from(productsTable)
       .where(eq(productsTable.id, deal.productId)).limit(1);
-    const terms = { dealNumber: deal.dealNumber,
+    const acceptedTerms = await recordedDealTerms(deal.id);
+    const terms = { paymentTerms:acceptedTerms?.paymentTerms, inspectionTerms:acceptedTerms?.inspectionTerms, dealNumber: deal.dealNumber,
       date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
       productName: product?.name ?? "", quantity: deal.quantity, unit: deal.unit,
       agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination };
     const confirmationKind = whatsappDraftConfirmation(draftRequest.type, terms);
     if (!draftRequest.confirmed || replyContextKind !== confirmationKind) {
-      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? DLC goes directly to the seller, with payment after SGS at destination. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
+      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
         deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: confirmationKind };
     }
     const draft = generateWhatsAppDraft(draftRequest.type, terms);
@@ -1284,6 +1286,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               specification: sellerDraft.specification,
               availability: sellerDraft.availability,
               inspectionTerms: sellerDraft.inspectionTerms,
+              paymentTerms: sellerDraft.paymentTerms,
               monthlyCapacity: sellerDraft.monthlyCapacity,
               minimumOrderQuantity: sellerDraft.minimumOrderQuantity,
             })
@@ -1303,6 +1306,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               deliveryTime: buyerDraft.deliveryTime,
               contractDuration: buyerDraft.contractDuration,
               inspectionRequirements: buyerDraft.inspectionRequirements,
+              paymentTerms: buyerDraft.paymentTerms,
             })
           : null;
 
@@ -1320,6 +1324,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               specification: sellerDraft.specification,
               availability: sellerDraft.availability,
               inspectionTerms: sellerDraft.inspectionTerms,
+              paymentTerms: sellerDraft.paymentTerms,
               monthlyCapacity: sellerDraft.monthlyCapacity,
               minimumOrderQuantity: sellerDraft.minimumOrderQuantity,
             }
@@ -1335,6 +1340,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
               deliveryTime: buyerDraft?.deliveryTime,
               contractDuration: buyerDraft?.contractDuration,
               inspectionRequirements: buyerDraft?.inspectionRequirements,
+              paymentTerms: buyerDraft?.paymentTerms,
             };
 
         await saveWhatsAppIntakeDraft({

@@ -1,3 +1,4 @@
+import { recordedDealTerms } from '../deals/recordedTerms';
 import { Router, raw, type IRouter } from "express";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -237,6 +238,7 @@ router.post("/deals/:dealId/spa-draft", requireAuth, async (req, res) => {
     ]);
 
     const date = new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date());
+    const acceptedTerms = await recordedDealTerms(deal.id);
     const draft = createSpaDraft({
       dealNumber: deal.dealNumber,
       date,
@@ -249,6 +251,8 @@ router.post("/deals/:dealId/spa-draft", requireAuth, async (req, res) => {
       currency: deal.currency,
       incoterm: deal.incoterm,
       destination: deal.destination,
+      paymentTerms: acceptedTerms?.paymentTerms,
+      inspectionTerms: acceptedTerms?.inspectionTerms,
     });
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
@@ -292,6 +296,7 @@ router.post("/deals/:dealId/loi-draft", requireAuth, async (req, res) => {
             .where(and(eq(companiesTable.id, sellerListing.companyId), eq(companiesTable.ownerUserId, deal.sellerUserId))).limit(1)
         : Promise.resolve([]),
     ]);
+    const acceptedTerms = await recordedDealTerms(deal.id);
     const draft = createLoiDraft({
       dealNumber: deal.dealNumber,
       date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
@@ -304,6 +309,8 @@ router.post("/deals/:dealId/loi-draft", requireAuth, async (req, res) => {
       currency: deal.currency,
       incoterm: deal.incoterm,
       destination: deal.destination,
+      paymentTerms: acceptedTerms?.paymentTerms,
+      inspectionTerms: acceptedTerms?.inspectionTerms,
     });
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
@@ -347,6 +354,7 @@ router.post("/deals/:dealId/icpo-draft", requireAuth, async (req, res) => {
             .where(and(eq(companiesTable.id, sellerListing.companyId), eq(companiesTable.ownerUserId, deal.sellerUserId))).limit(1)
         : Promise.resolve([]),
     ]);
+    const acceptedTerms = await recordedDealTerms(deal.id);
     const draft = createIcpoDraft({
       dealNumber: deal.dealNumber,
       date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
@@ -359,6 +367,8 @@ router.post("/deals/:dealId/icpo-draft", requireAuth, async (req, res) => {
       currency: deal.currency,
       incoterm: deal.incoterm,
       destination: deal.destination,
+      paymentTerms: acceptedTerms?.paymentTerms,
+      inspectionTerms: acceptedTerms?.inspectionTerms,
     });
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
@@ -402,6 +412,7 @@ router.post("/deals/:dealId/fco-draft", requireAuth, async (req, res) => {
             .where(and(eq(companiesTable.id, sellerListing.companyId), eq(companiesTable.ownerUserId, deal.sellerUserId))).limit(1)
         : Promise.resolve([]),
     ]);
+    const acceptedTerms = await recordedDealTerms(deal.id);
     const draft = createFcoDraft({
       dealNumber: deal.dealNumber,
       date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
@@ -414,6 +425,8 @@ router.post("/deals/:dealId/fco-draft", requireAuth, async (req, res) => {
       currency: deal.currency,
       incoterm: deal.incoterm,
       destination: deal.destination,
+      paymentTerms: acceptedTerms?.paymentTerms,
+      inspectionTerms: acceptedTerms?.inspectionTerms,
     });
     await db.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,

@@ -20,7 +20,7 @@ export function createFcoDraft(input: SpaDraftInput) {
     `Indicative unit price recorded in UDC: ${safe(input.currency, "[CURRENCY]")} ${safe(input.agreedPrice, "[PRICE]")} per ${safe(input.unit, "[UNIT]")}`,
     `Delivery: ${safe(input.incoterm, "[INCOTERM]")} ${safe(input.destination, "[NAMED DESTINATION]")}`,
     "Origin, quality specification, shipment schedule, offer validity and document list: [CONFIRM WITH THE SELLER].",
-    "Payment framework: DLC issued directly to the seller, with payment after SGS inspection at destination. Exact bank and inspection conditions require review and agreement.",
+    input.paymentTerms ? `Recorded buyer-accepted payment terms: ${safe(input.paymentTerms, "[PAYMENT TERMS]")}. Inspection: ${safe(input.inspectionTerms, "[CONFIRM INSPECTION TERMS]")}. Subject to independent review.` : "Payment framework: DLC issued directly to the seller, with payment after SGS inspection at destination. Exact bank and inspection conditions require review and agreement.",
     "",
     "This is a non-binding discussion draft. It does not prove stock, seller authority, bank acceptance or an obligation to supply. It becomes an offer only after the seller completes, reviews and authorizes it.",
     "Authorized seller representative: [NAME, TITLE AND SIGNATURE AFTER REVIEW]",

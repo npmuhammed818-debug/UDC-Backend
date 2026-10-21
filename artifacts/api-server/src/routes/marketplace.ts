@@ -3,7 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { buyerRequestsTable, db, productsTable, sellerListingsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../auth/middleware";
-import { hasConflictingPaymentTerms, udcPaymentTerms } from "../marketplace/paymentPolicy";
+import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 const router: IRouter = Router();
 const id = z.string().uuid();
@@ -86,9 +86,6 @@ router.get("/seller-listings", requireAuth, async (req, res) => {
 router.post("/seller-listings", requireRole("seller"), async (req, res) => {
   try {
     const input = listingInput.parse(req.body);
-    if (hasConflictingPaymentTerms(input.payment_terms)) {
-      res.status(400).json({ error: "udc_dlc_payment_terms_required" }); return;
-    }
     const [product] = await db.select({ id: productsTable.id }).from(productsTable)
       .where(eq(productsTable.id, input.product_id)).limit(1);
     if (!product) { res.status(404).json({ error: "product_not_found" }); return; }
@@ -100,7 +97,7 @@ router.post("/seller-listings", requireRole("seller"), async (req, res) => {
       specification: input.specification,
       monthlyCapacity: input.monthly_capacity === undefined ? undefined : String(input.monthly_capacity),
       minimumOrderQuantity: input.minimum_order_quantity === undefined ? undefined : String(input.minimum_order_quantity),
-      paymentTerms: udcPaymentTerms, inspectionTerms: input.inspection_terms,
+      paymentTerms: input.payment_terms || udcPaymentTerms, inspectionTerms: input.inspection_terms,
       availability: input.availability,
       status: "pending_admin_review",
     }).returning();
@@ -120,9 +117,6 @@ router.get("/buyer-requests", requireAuth, async (req, res) => {
 router.post("/buyer-requests", requireRole("buyer"), async (req, res) => {
   try {
     const input = requirementInput.parse(req.body);
-    if (hasConflictingPaymentTerms(input.payment_terms)) {
-      res.status(400).json({ error: "udc_dlc_payment_terms_required" }); return;
-    }
     const [product] = await db.select({ id: productsTable.id }).from(productsTable)
       .where(eq(productsTable.id, input.product_id)).limit(1);
     if (!product) { res.status(404).json({ error: "product_not_found" }); return; }
@@ -134,7 +128,7 @@ router.post("/buyer-requests", requireRole("buyer"), async (req, res) => {
       preferredIncoterm: input.preferred_incoterm,
       specification: input.specification,
       contractDuration: input.contract_duration,
-      paymentTerms: udcPaymentTerms,
+      paymentTerms: input.payment_terms || udcPaymentTerms,
       inspectionRequirements: input.inspection_requirements,
       additionalConditions: input.additional_conditions,
       status: "pending_admin_review",
