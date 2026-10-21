@@ -350,6 +350,8 @@ Requirements:
 - Do not claim a discovered company is verified without the verification workflow.
 
 ## 17. AKIF Learn
+
+Owner-approved identity (21 October 2026): UDC is UpDownCircle, founded by Muhammed NP. AKIF is Advanced Knowledge and Intelligent Framework, UDC's AI trade assistant. The public company website is https://updowncircle.pages.dev/. Keep customer interactions inside WhatsApp. Use `artifacts/api-server/src/akif/udcHandbook.ts` as the shared public-fact and workflow context; never infer company identity or verification requirements from earlier model replies. Friendly small talk is allowed, but Akif stays focused on trade and must not pretend to be human or offer unrelated coding services. Do not invent passport/ID/bank-statement requirements for the current registration flow.
 AKIF should eventually help beginners understand:
 - Import/export basics
 - Incoterms
