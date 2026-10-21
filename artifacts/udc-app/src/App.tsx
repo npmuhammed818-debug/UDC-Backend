@@ -48,6 +48,23 @@ const nav = [
   { href: '/messages', label: 'Negotiation records', icon: MessageSquare },
 ];
 
+const adminNavGroups = [
+  { title: 'WORKSPACE', items: [
+    { href: '/admin#review-queue', label: 'Overview', icon: LayoutDashboard },
+  ] },
+  { title: 'REVIEW', items: [
+    { href: '/admin#company-review', label: 'Company verification', icon: ShieldCheck },
+    { href: '/admin#participant-review', label: 'People', icon: UserRound },
+    { href: '/admin#trade-submissions', label: 'Requirements & offers', icon: ClipboardList },
+    { href: '/admin#deal-documents', label: 'Deal documents', icon: FileText },
+  ] },
+  { title: 'OPERATIONS', items: [
+    { href: '/admin/deals', label: 'Deals', icon: BriefcaseBusiness },
+    { href: '/admin/agents', label: 'Agents', icon: CircleUserRound },
+    { href: '/admin#audit-log', label: 'Activity history', icon: ClipboardList },
+  ] },
+];
+
 function initials(name?: string | null) {
   return (name || 'UDC').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 }
@@ -81,32 +98,42 @@ function AppLogo({ compact = false }: { compact?: boolean }) {
 
 function Shell({ children, user }: { children: ReactNode; user: AnyRecord }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const logout = useLogoutUser();
   const unread = useListNotifications();
   const unreadCount = (unread.data?.notifications || []).filter((n: AnyRecord) => !n.read).length;
   const isAdmin = ['admin', 'administrator'].includes(user?.role);
+  const activePath = location.split('#')[0];
   const close = () => setMobileOpen(false);
   useEffect(() => { const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileOpen(false); }; document.addEventListener('keydown', escape); return () => document.removeEventListener('keydown', escape); }, []);
   return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a>
     <div className="udc-noise" />
     <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
       <div className="sidebar-top"><AppLogo /><button className="mobile-close" aria-label="Close navigation" onClick={close} data-testid="button-close-menu"><X size={18} /></button></div>
-      <div className="workspace-label">WORKSPACE <span className="live-dot" /> LIVE</div>
-      <nav className="sidebar-nav">{nav.filter((item) => !item.roles || item.roles.includes(user?.role)).map((item) => {
+      <div className="workspace-label">ADMIN WORKSPACE <span className="live-dot" /> LIVE</div>
+      {isAdmin ? <nav className="sidebar-nav admin-sidebar-nav" aria-label="Admin workspace">
+        {adminNavGroups.map((group) => <div className="admin-nav-group" key={group.title}>
+          <div className="admin-nav-heading">{group.title}</div>
+          {group.items.map((item) => {
+            const Icon = item.icon; const anchor = item.href.includes('#') ? item.href.split('#')[1] : '';
+            const active = anchor ? activePath === '/admin' && (location.endsWith(`#${anchor}`) || (!location.includes('#') && anchor === 'review-queue')) : activePath === item.href;
+            return <Link key={item.href} href={item.href} onClick={(event) => { close(); if (anchor) { event.preventDefault(); setLocation(item.href); window.setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40); } }} className={`nav-item ${active ? 'nav-active' : ''}`} data-testid={`link-nav-${item.label.toLowerCase().replaceAll(' ', '-')}`}><Icon size={17} /><span>{item.label}</span>{active && <span className="nav-arrow"><ChevronRight size={14} /></span>}</Link>;
+          })}
+        </div>)}
+      </nav> : <nav className="sidebar-nav">{nav.filter((item) => !item.roles || item.roles.includes(user?.role)).map((item) => {
         const Icon = item.icon; const active = location === item.href;
         return <Link key={item.href} href={item.href} onClick={close} className={`nav-item ${active ? 'nav-active' : ''}`} data-testid={`link-nav-${item.label.toLowerCase().replaceAll(' ', '-')}`}><Icon size={17} /><span>{item.label}</span>{active && <span className="nav-arrow"><ChevronRight size={14} /></span>}</Link>;
-      })}</nav>
+      })}</nav>}
       <div className="sidebar-spacer" />
       <nav className="sidebar-nav sidebar-bottom">
         <Link href="/notifications" onClick={close} className={`nav-item ${location === '/notifications' ? 'nav-active' : ''}`} data-testid="link-nav-notifications"><Bell size={17} /><span>Notifications</span>{unreadCount > 0 && <span className="notification-count">{unreadCount}</span>}</Link>
         <Link href="/profile" onClick={close} className={`nav-item ${location === '/profile' ? 'nav-active' : ''}`} data-testid="link-nav-profile"><Settings2 size={17} /><span>Profile & company</span></Link>
-        {isAdmin && <Link href="/admin" onClick={close} className={`nav-item ${location === '/admin' ? 'nav-active' : ''}`} data-testid="link-nav-admin"><ShieldCheck size={17} /><span>Admin review</span></Link>}
+        {!isAdmin && <Link href="/admin" onClick={close} className={`nav-item ${location === '/admin' ? 'nav-active' : ''}`} data-testid="link-nav-admin"><ShieldCheck size={17} /><span>Admin review</span></Link>}
       </nav>
       <div className="sidebar-user"><div className="avatar">{initials(user?.fullName)}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold">{user?.fullName || 'Workspace user'}</div><div className="truncate text-[11px] text-sidebar-foreground/60">{user?.email || user?.role}</div></div><button onClick={() => logout.mutate()} className="icon-btn text-sidebar-foreground/60 hover:text-sidebar-foreground" data-testid="button-logout" aria-label="Sign out" title="Sign out"><LogOut size={16} /></button></div>
     </aside>
     <main className="main-shell" id="main-content" tabIndex={-1}>
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded={mobileOpen} data-testid="button-open-menu"><Menu size={21} /></button><div className="breadcrumb"><span>UDC /</span><strong>{location === '/dashboard' ? 'Command center' : location.slice(1).split('/')[0]}</strong></div><div className="topbar-actions"><Link href="/notifications" className="icon-btn relative" aria-label="Notifications" data-testid="button-topbar-notifications"><Bell size={18} />{unreadCount > 0 && <span className="notification-dot" />}</Link><div className="topbar-user"><div className="avatar avatar-small">{initials(user?.fullName)}</div><span>{user?.fullName || 'Operator'}</span></div></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded={mobileOpen} data-testid="button-open-menu"><Menu size={21} /></button><div className="breadcrumb"><span>UDC / Admin /</span><strong>{activePath === '/admin/deals' ? 'Deals' : activePath === '/admin/agents' ? 'Agents' : 'Overview'}</strong></div><div className="topbar-actions"><Link href="/notifications" className="icon-btn relative" aria-label="Notifications" data-testid="button-topbar-notifications"><Bell size={18} />{unreadCount > 0 && <span className="notification-dot" />}</Link><div className="topbar-user"><div className="avatar avatar-small">{initials(user?.fullName)}</div><span>{user?.fullName || 'Operator'}</span></div></div></header>
       <div className="page-wrap">{children}</div>
     </main>
   </div>;
@@ -783,19 +810,20 @@ function Admin() {
     finally { setBusy(''); }
   };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
-  return <><PageHeader eyebrow="UDC / ADMIN" title="Review queue" body="Review company evidence and trade terms before approving a participant, requirement, or offer." />
-    <section className="admin-review-overview" aria-label="Review queue overview">
-      <div className="admin-review-total"><span>Items needing attention</span><strong>{reviewCountsLoading ? '…' : reviewCountsFailed ? '!' : pendingReviewCount}</strong><small>{reviewCountsLoading ? 'Loading review queues' : reviewCountsFailed ? 'Some queue counts could not load' : 'Across verification, documents and trade submissions'}</small></div>
+  return <><PageHeader eyebrow="UDC ADMIN" title="Admin overview" body="Start with the items waiting for your review. Use the left menu for verification, trade submissions, deals, and people." />
+    <section id="review-queue" className="admin-review-overview" aria-label="Review queue overview">
+      <div className="admin-review-total"><span>Waiting for review</span><strong>{reviewCountsLoading ? '…' : reviewCountsFailed ? '!' : pendingReviewCount}</strong><small>{reviewCountsLoading ? 'Loading review lists…' : reviewCountsFailed ? 'Some lists did not load. Retry below.' : pendingReviewCount === 0 ? 'You are all caught up.' : 'Open a list below to review and decide.'}</small></div>
       <nav className="admin-review-nav" aria-label="Jump to review queue">
-        <a href="#company-evidence"><span>Company evidence</span><b>{showQueueCount(companyDocuments, pendingCompanyDocuments)}</b></a>
-        <a href="#company-review"><span>Company profiles</span><b>{showQueueCount(companies, companies.data?.companies.length ?? 0)}</b></a>
+        <a href="#company-evidence"><span>Company documents</span><b>{showQueueCount(companyDocuments, pendingCompanyDocuments)}</b></a>
+        <a href="#company-review"><span>Companies</span><b>{showQueueCount(companies, companies.data?.companies.length ?? 0)}</b></a>
         <a href="#participant-review"><span>People</span><b>{showQueueCount(users, users.data?.users.length ?? 0)}</b></a>
-        <a href="#trade-submissions"><span>Requirements & offers</span><b>{buyers.isLoading || sellers.isLoading ? '…' : buyers.isError || sellers.isError ? '!' : (buyers.data?.requirements.length ?? 0) + (sellers.data?.offers.length ?? 0)}</b></a>
+        <a href="#trade-submissions"><span>Trade submissions</span><b>{buyers.isLoading || sellers.isLoading ? '…' : buyers.isError || sellers.isError ? '!' : (buyers.data?.requirements.length ?? 0) + (sellers.data?.offers.length ?? 0)}</b></a>
         <a href="#deal-documents"><span>Deal documents</span><b>{showQueueCount(documents, pendingDealDocuments)}</b></a>
       </nav>
     </section>
     <AdminPrivacyRequests />
     {error && <div className="error-banner mt-5"><CircleAlert size={15} /> {error}</div>}
+    <details className="admin-secondary-tools mt-5"><summary>Reports, market signals and announcements</summary><div className="admin-secondary-content">
     <section className="panel mt-5" data-testid="akif-opportunity-intelligence">
       <div className="section-heading"><div><div className="eyebrow">AKIF / OPPORTUNITY INTELLIGENCE</div><h2>Evidence-backed market signals</h2></div><span className="akif-chip"><Sparkles size={12} /> AKIF</span></div>
       <p className="text-sm text-muted-foreground mb-3">{opportunities.data?.disclaimer || 'Market signals are evidence records for human review.'}</p>
@@ -821,6 +849,8 @@ function Admin() {
       <Button type="submit" disabled={!!busy}>Post announcement</Button>
       {announcementResult && <p className="text-sm mt-3">{announcementResult}</p>}
     </form>
+    </div></details>
+    <div className="admin-work-heading"><div><div className="eyebrow">YOUR REVIEW LISTS</div><h2>Items waiting for a decision</h2></div><p>Open the record, check the supporting information, then approve or reject it.</p></div>
     <div id="deal-documents" className="panel mt-5 admin-review-section"><div className="section-heading"><div><div className="eyebrow">DEAL DOCUMENTS</div><h2>Pending document review</h2></div><span className="admin-queue-count">{showQueueCount(documents, pendingDealDocuments)} waiting</span></div>
       {documents.isError ? <Failure retry={() => documents.refetch()} /> : documents.isLoading ? <LoadingRows /> : !documents.data?.documents.some((item) => item.status === 'pending') ? <EmptyState title="No documents waiting" body="Deal uploads appear here for inspection." /> : <div className="data-list">{documents.data.documents.filter((item) => item.status === 'pending').map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.documentType}</strong><span>Deal {item.dealId}</span><Input aria-label="Reason for rejecting deal document" placeholder="Reason for rejection (5–1,000 characters)" minLength={5} maxLength={1000} value={dealDocumentNotes[item.id] || ''} onChange={(e) => setDealDocumentNotes((current) => ({ ...current, [item.id]: e.target.value }))} /></div><a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-link">Open PDF</a><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy || (dealDocumentNotes[item.id]?.trim().length ?? 0) < 5} onClick={() => review(`/api/admin/documents/${item.id}/status`, 'rejected', { reviewNote: dealDocumentNotes[item.id].trim() })}>Reject</Button></div>)}</div>}
     </div>
@@ -839,7 +869,7 @@ function Admin() {
     <div className="panel mt-5 admin-review-section"><div className="section-heading"><div><div className="eyebrow">SELLER SUPPLY</div><h2>Seller offers</h2></div><span className="admin-queue-count">{showQueueCount(sellers, sellers.data?.offers.length ?? 0)} waiting</span></div>
       {sellers.isError ? <Failure retry={() => sellers.refetch()} /> : sellers.isLoading ? <LoadingRows /> : !sellers.data?.offers.length ? <EmptyState title="No offers waiting" body="Submitted seller offers appear here." /> : <div className="data-list">{sellers.data.offers.map((item) => <div className="data-row" key={item.id}><div className="row-main"><strong>{item.quantity} {item.unit} · {item.originCountry || 'Origin pending'}</strong><span>Product {item.productId} · {item.currency} {item.price}/{item.unit}</span></div><Button size="sm" disabled={!!busy} onClick={() => review(`/api/admin/seller-offers/${item.id}/status`, 'approved')}>Approve</Button><Button size="sm" variant="ghost" disabled={!!busy} onClick={() => review(`/api/admin/seller-offers/${item.id}/status`, 'rejected')}>Reject</Button></div>)}</div>}
     </div>
-    <div className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">OPERATIONS / TRACEABILITY</div><h2>Recent audit activity</h2></div><span className="status-pill status-warn">{auditRows.length} events loaded</span></div>
+    <div id="audit-log" className="panel mt-5"><div className="section-heading"><div><div className="eyebrow">OPERATIONS / TRACEABILITY</div><h2>Activity history</h2></div><span className="status-pill status-warn">{auditRows.length} events loaded</span></div>
       <div className="form-two"><Field label="Search action, record, or administrator"><Input value={auditSearch} onChange={(e) => setAuditSearch(e.target.value)} placeholder="e.g. verification, deal, name, email" data-testid="input-audit-search" /></Field><Field label="Record type"><select className="select" value={auditEntityType} onChange={(e) => setAuditEntityType(e.target.value)} data-testid="select-audit-entity"><option value="">All records</option><option value="company">Company</option><option value="company_verification_document">Company evidence</option><option value="deal">Deal</option><option value="document">Deal document</option><option value="user">User</option><option value="buyer_request">Buyer requirement</option><option value="seller_listing">Seller offer</option></select></Field></div>
       {auditLog.isError ? <Failure retry={() => auditLog.refetch()} /> : auditLog.isLoading ? <LoadingRows /> : !auditRows.length ? <EmptyState title="No matching activity" body="Audit events will appear here as administrators and users update records." /> : <><div className="data-list mt-4">{auditRows.map((item) => <article className="data-row" key={item.id}><div className="row-main"><strong>{formatStatus(item.action)}</strong><span>{item.actorName || 'System'}{item.actorEmail ? ` · ${item.actorEmail}` : ''} · {formatStatus(item.entityType)}{item.entityId ? ` · ${item.entityId}` : ''}</span><span>{new Date(item.createdAt).toLocaleString()}</span>{item.metadata && <details className="mt-1"><summary className="text-link cursor-pointer">Event details</summary><pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-3 text-xs">{JSON.stringify(item.metadata, null, 2)}</pre></details>}</div></article>)}</div>{auditLog.hasNextPage && <div className="mt-4 text-center"><Button variant="outline" disabled={auditLog.isFetchingNextPage} onClick={() => auditLog.fetchNextPage()}>{auditLog.isFetchingNextPage ? 'Loading more…' : 'Load older activity'}</Button></div>}</>}
     </div>
