@@ -69,6 +69,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);return s.guidanceReply??null;};",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudio=async()=> '100 MT copper';",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
@@ -105,7 +106,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
-    state.dealCalls = 0;
+    state.dealCalls = 0; state.guidanceReply=undefined;state.guidanceCalls=[];
   };
   function seedDeal() {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
@@ -124,6 +125,16 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
+    await t.test('unverified quoted learning questions bypass deal and intake; voice questions answer without execution',async()=>{
+      reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
+      state.guidanceReply='DLC means Documentary Letter of Credit.';
+      await message({text:{body:'What is dlc?'},context:{id:'ask-akif-menu'}});
+      assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.deepEqual(state.intake,[]);assert.equal(state.dealCalls,0);assert.deepEqual(state.recorded,[]);
+      await message({audio:{id:'voice-question'}});
+      assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.equal(state.guidanceCalls.at(-1)[3],true);assert.deepEqual(state.recorded,[]);assert.equal(rows.dealConversationEventsTable.length,0);
+      state.privacyReply='Reply AGREE';state.guidanceCalls=[];
+      await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
+    });
     await t.test("invalid signatures and consent gates cannot reach trade processing", async () => {
       reset(); assert.equal((await message({ text: { body: "hello" } }, false)).status, 401);
       assert.deepEqual(state.sent, []); assert.deepEqual(state.intake, []);
