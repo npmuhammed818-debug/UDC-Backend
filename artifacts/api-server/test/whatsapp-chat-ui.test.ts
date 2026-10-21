@@ -11,7 +11,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
   const rows:any=Object.fromEntries(names.map(n=>[n,[]]));
   const value=(x:any,r:any):any=>x?.column?(r[x.table]??r)[x.column]:x;
   const match=(c:any,r:any):any=>!c?true:c.kind==='eq'?value(c.a,r)===value(c.b,r):c.kind==='lt'?value(c.a,r)<value(c.b,r):c.kind==='and'?c.args.every((x:any)=>match(x,r)):c.kind==='or'?c.args.some((x:any)=>match(x,r)):c.kind==='sql'?c.parts.join('').includes('lower(')?String((r.usersTable??r).email??'').toLowerCase()===c.values.at(-1):c.parts.join('').includes("->>")?(r.auditLogsTable??r).metadata?.[c.parts.join('').match(/->>'([^']+)'/)?.[1]]===c.values.at(-1):true:true;
-  const state:any={tables,rows,sent:[],interactive:[],uploads:[],flowId:'123456',failAudit:false,locks:[]};
+  const state:any={tables,rows,sent:[],interactive:[],uploads:[],flowId:'123456',failAudit:false,locks:[],modelCalls:0,modelOutput:'{}'};
   function select(fields?:any){let table:any,c:any,joins:any[]=[],limit=Infinity;const q:any={from:(v:any)=>{table=v._table;return q},where:(v:any)=>{c=v;return q},limit:(n:number)=>{limit=n;return q},orderBy:()=>q,innerJoin:(v:any,on:any)=>{joins.push({table:v._table,on});return q},then:(resolve:any,reject:any)=>Promise.resolve().then(()=>{
     let result=rows[table].map((r:any)=>({[table]:r}));for(const join of joins)result=result.flatMap((r:any)=>rows[join.table].map((v:any)=>({...r,[join.table]:v})).filter((r:any)=>match(join.on,r)));
     return result.filter((r:any)=>match(c,r)).slice(0,limit).map((r:any)=>fields?Object.fromEntries(Object.entries(fields).map(([k,v])=>[k,value(v,r)])):{...r[table]});
@@ -28,8 +28,8 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
   (globalThis as any).__chatUiFixture=state;
   const output=fileURLToPath(new URL(`./chat-ui-${randomUUID()}.mjs`,import.meta.url));
   const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
-    const fixtures:any={db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';"};
-    for(const [filter,path] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
+    const fixtures:any={hermes:"export const runConversationChat=async()=>{const s=globalThis.__chatUiFixture;s.modelCalls++;return {content:s.modelOutput};};",db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';"};
+    for(const [filter,path] of [[/intelligence\/hermesClient$/,'hermes'],[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
   }}]});
   await writeFile(output,bundle.outputFiles[0].text);const previous=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='synthetic-chat-ui-secret-at-least-32';
@@ -81,7 +81,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       assert.equal(await m.handleChatUi('10000000003',doc),false);assert.equal(state.uploads.length,0);
       assert.equal(await m.handleChatUi(phone,doc),true);assert.equal(rows.companyVerificationDocumentsTable.length,1);assert.equal(rows.companyVerificationDocumentsTable[0].uploadedBy,buyer.id);assert.equal(rows.companyVerificationDocumentsTable[0].status,'pending');assert.match(rows.companyVerificationDocumentsTable[0].fileUrl,/storage:\/\/private/);
       await m.handleChatUi(phone,doc);assert.equal(state.uploads.length,1);assert.equal(rows.companyVerificationDocumentsTable.length,1);
-      state.flowId=null;await m.handleChatUi(phone,ui('requirement'));assert.match(last(),/What product/);assert.equal(rows.whatsappChatSessionsTable.length,1);
+      state.flowId=null;await m.handleChatUi(phone,ui('requirement'));assert.match(last(),/product/);delete rows.whatsappChatSessionsTable[0].data.__paragraph;assert.equal(rows.whatsappChatSessionsTable.length,1);
       assert.ok(state.sent.every((s:any)=>!s.body.includes('https://udc-backend.onrender.com/login')));
     });
     await t.test('guided WhatsApp intake validates each answer and waits for an explicit submit button',async()=>{
@@ -99,16 +99,35 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
     });
     await t.test('guided drafts support editing, cancellation, expiry and safe retry after audit failure',async()=>{
       const answer=(body:string)=>m.handleChatUi(phone,{id:randomUUID(),text:{body}});
-      await m.handleChatUi(phone,ui('requirement'));await answer('Sugar');await m.handleChatUi(phone,ui('restart'));assert.equal(rows.whatsappChatSessionsTable[0].step,0);assert.deepEqual(rows.whatsappChatSessionsTable[0].data,{});
+      await m.handleChatUi(phone,ui('requirement'));delete rows.whatsappChatSessionsTable[0].data.__paragraph;await answer('Sugar');await m.handleChatUi(phone,ui('restart'));assert.equal(rows.whatsappChatSessionsTable[0].step,0);assert.deepEqual(rows.whatsappChatSessionsTable[0].data,{__paragraph:'1'});
       await m.handleChatUi(phone,ui('cancel'));assert.equal(rows.whatsappChatSessionsTable.length,0);assert.match(last(),/Nothing was submitted/);
       await m.handleChatUi(phone,ui('requirement'));rows.whatsappChatSessionsTable[0].expiresAt=new Date(0);await answer('Sugar');assert.match(last(),/expired/);assert.equal(rows.whatsappChatSessionsTable.length,0);
-      await m.handleChatUi(phone,ui('requirement'));for(const text of ['Sugar','200','Skip','Mombasa','CIF','Skip','Skip'])await answer(text);
+      await m.handleChatUi(phone,ui('requirement'));delete rows.whatsappChatSessionsTable[0].data.__paragraph;for(const text of ['Sugar','200','Skip','Mombasa','CIF','Skip','Skip'])await answer(text);
       const before=rows.buyerRequestsTable.length;state.failAudit=true;await assert.rejects(m.handleChatUi(phone,ui('submit')),/audit_failure/);assert.equal(rows.buyerRequestsTable.length,before);assert.equal(rows.whatsappChatSessionsTable.length,1);
       await m.handleChatUi(phone,ui('submit'));assert.equal(rows.buyerRequestsTable.length,before+1);assert.equal(rows.whatsappChatSessionsTable.length,0);
       await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{text:{body:'Menu'}});assert.equal(rows.whatsappChatSessionsTable.length,0);
     });
+    await t.test('paragraph intake asks only missing fields and profile viewing never starts registration',async()=>{
+      await m.handleChatUi(phone,ui('profile'));assert.equal(rows.whatsappChatSessionsTable.length,0);assert.match(last(),/Verification:/);assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:edit_profile');
+      await m.handleChatUi(phone,ui('edit_profile'));assert.match(last(),/details you want to change/);assert.ok(rows.whatsappChatSessionsTable[0].data.email);await m.handleChatUi(phone,ui('cancel'));
+      await m.handleChatUi(phone,ui('requirement'));const before=rows.buyerRequestsTable.length;
+      const first={id:'paragraph-first',text:{body:'product: Copper cathode; quantity: 100; destination: Jebel Ali; target price: 5900'}};
+      await m.handleChatUi(phone,first);assert.match(last(),/delivery term/);assert.doesNotMatch(last(),/quantity/);assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');
+      await m.handleChatUi(phone,first);assert.equal(rows.whatsappChatSessionsTable[0].data.quantity,'100');
+      await m.handleChatUi(phone,{id:'paragraph-final',text:{body:'incoterm: DPU; specification: Grade A'}});assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:submit');assert.equal(rows.buyerRequestsTable.length,before);
+      await m.handleChatUi(phone,ui('submit'));assert.equal(rows.buyerRequestsTable.length,before+1);assert.equal(rows.buyerRequestsTable.at(-1).preferredIncoterm,'DPU');
+      await m.handleChatUi(phone,ui('requirement'));await m.handleChatUi(phone,{id:'paragraph-invalid',text:{body:'product: Sugar; quantity: -4; destination: Mombasa; incoterm: CIF'}});assert.match(last(),/quantity/);assert.doesNotMatch(last(),/product/);await m.handleChatUi(phone,ui('cancel'));
+    });
+    await t.test('natural paragraph extraction validates fields and skips duplicate model calls',async()=>{
+      await m.handleChatUi(phone,ui('requirement'));const before=rows.buyerRequestsTable.length,calls=state.modelCalls;
+      state.modelOutput=JSON.stringify({product:'Copper cathode',quantity:'100',destination:'Jebel Ali',incoterm:'CIF',target_price:'5900',verification:'verified'});
+      const message={id:'natural-paragraph',text:{body:'I need 100 MT copper cathode, CIF Jebel Ali at 5900 USD per MT'}};
+      await m.handleChatUi(phone,message);assert.equal(state.modelCalls,calls+1);assert.equal(rows.buyerRequestsTable.length,before);assert.equal(rows.whatsappChatSessionsTable[0].data.verification,undefined);
+      await m.handleChatUi(phone,message);assert.equal(state.modelCalls,calls+1);await m.handleChatUi(phone,ui('cancel'));
+      await m.handleChatUi(phone,ui('requirement'));state.modelOutput='not json';await m.handleChatUi(phone,{id:'invalid-model-output',text:{body:'some trade details'}});assert.equal(rows.whatsappChatSessionsTable[0].step,0);assert.match(last(),/product/);await m.handleChatUi(phone,ui('cancel'));
+    });
     await t.test('guided agent registration accepts normal email without a customer website',async()=>{
-      const agentPhone='10000000009';await m.handleChatUi(agentPhone,ui('agent'));await m.handleChatUi(agentPhone,{id:'a-name',text:{body:'Synthetic New Agent'}});await m.handleChatUi(agentPhone,{id:'a-email',text:{body:'newagent@gmail.com'}});
+      const agentPhone='10000000009';await m.handleChatUi(agentPhone,ui('agent'));await m.handleChatUi(agentPhone,{id:'a-name',text:{body:'full name: Synthetic New Agent'}});await m.handleChatUi(agentPhone,{id:'a-email',text:{body:'email: newagent@gmail.com'}});
       assert.equal(rows.usersTable.some((u:any)=>u.phone===agentPhone),false);
       await m.handleChatUi(agentPhone,ui('submit'));const agent=rows.usersTable.find((u:any)=>u.phone===agentPhone);assert.equal(agent.role,'agent');assert.equal(agent.status,'pending');assert.equal(agent.email,'newagent@gmail.com');
     });

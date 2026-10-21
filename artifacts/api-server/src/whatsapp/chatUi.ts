@@ -14,7 +14,7 @@ import { publishedFlowId } from './setupFlows';
 import { agentReferralCode } from '../referrals/invitation';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
-const actions=['buyer','seller','agent','menu','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','submit','restart','cancel'] as const;
+const actions=['buyer','seller','agent','menu','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','submit','restart','cancel','edit_profile'] as const;
 export function chatAction(message:ChatMessage){
   const i=message.interactive;
   if(i?.type==='button_reply'||i?.type==='list_reply'){
@@ -36,9 +36,9 @@ export function menuForRole(role?:string){
   return [];
 }
 export async function sendChatHome(phone:string){
-  const [user]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+  const [user]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status,email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
   if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppText(phone,'Your account needs UDC review.');return;}
-  const rows=menuForRole(user?.role);
+  const rows=menuForRole(user?.email?user.role:undefined);
   try{
     if(rows.length)await sendWhatsAppInteractive(phone,{type:'list',body:{text:`Your UDC ${user!.role} menu. Tap an option, or send a message or voice note naturally.`},action:{button:'Open menu',sections:[{title:'Your features',rows}]}});
     else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. How would you like to use UDC?'},action:{buttons:[['buyer','Buy products'],['seller','Sell products'],['agent','Agent services']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
@@ -47,7 +47,17 @@ export async function sendChatHome(phone:string){
 async function sendForm(phone:string,purpose:FlowPurpose){
   const kind=purpose==='profile_agent'?'agent':purpose.startsWith('profile_')?'profile':purpose as 'buyer'|'seller';
   const flow=await publishedFlowId(kind);
-  if(!flow){await startGuidedChat(phone,purpose);return;}
+  if(!flow){
+    const initial:Record<string,string>={};
+    if(purpose.startsWith('profile_')){
+      const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+      if(user?.email){
+        const [company]=await db.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+        for(const [key,value] of Object.entries({full_name:user.fullName,email:user.email,company_name:company?.companyName,country:company?.country??user.country,registration_number:company?.registrationNumber}))if(typeof value==='string'&&value)initial[key]=value;
+      }
+    }
+    await startGuidedChat(phone,purpose,initial);return;
+  }
   const profile=kind==='profile'||kind==='agent';
   await sendWhatsAppInteractive(phone,{type:'flow',body:{text:profile?'Complete your UDC details here in WhatsApp. Your registration requires UDC review.':'Fill in your trade details. Nothing is shared as an approved offer until UDC reviews it.'},action:{name:'flow',parameters:{flow_message_version:'3',flow_id:flow,flow_token:issueFlowToken(phone,purpose),flow_cta:profile?'Your details':'Open form',flow_action:'navigate',flow_action_payload:{screen:'START'}}}});
 }
@@ -83,7 +93,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.':'Your company details are saved for UDC review. Type Menu, then Upload documents to send your company PDF here.';
+      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review.';
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
@@ -132,7 +142,13 @@ export async function handleChatUi(phone:string,message:ChatMessage){
   if(!action || ['submit','restart','cancel'].includes(action)){
     const handled=await continueGuidedChat(phone,message,action,submitChatFlow);
     if(handled)return true;
-    if(!action)return false;
+    if(!action){
+      if(message.text?.body){
+        const [registered]=await db.select({email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+        if(!registered?.email){await sendChatHome(phone);return true;}
+      }
+      return false;
+    }
     await sendChatHome(phone);return true;
   }
   if(action!=='flow')await clearGuidedChat(phone);
@@ -146,7 +162,12 @@ export async function handleChatUi(phone:string,message:ChatMessage){
     await sendForm(phone,('profile_'+action) as FlowPurpose);return true;
   }
   if(!user){await sendChatHome(phone);return true;}
-  if(action==='profile'){await sendForm(phone,('profile_'+user.role) as FlowPurpose);return true;}
+  if(action==='profile'){
+    const [company]=await db.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+    await sendWhatsAppText(phone,[user.fullName,user.email,company?.companyName,company?.country,`Verification: ${user.status==='verified'?'verified':'pending'}`].filter(Boolean).join('\n'));
+    await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Your saved details.'},action:{buttons:[{type:'reply',reply:{id:'udc:edit_profile',title:'Edit details'}}]}});return true;
+  }
+  if(action==='edit_profile'){await sendForm(phone,('profile_'+user.role) as FlowPurpose);return true;}
   if(action==='requirement'||action==='offer'){
     const role=action==='requirement'?'buyer':'seller';
     if(user.role!==role){await sendChatHome(phone);return true;}
