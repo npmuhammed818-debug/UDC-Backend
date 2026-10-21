@@ -31,8 +31,15 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
   const reply = response.content.trim();
   if (reply === 'TRADE_ACTION') return null;
   if (!reply || reply.length > 4000) throw new Error('guidance_reply_invalid');
-  const data = { language, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
-  const values = { id: randomUUID(), phoneHash, purpose:'akif_guidance', step:0, data, lastMessageId:messageId ?? null, expiresAt:new Date(Date.now()+24*60*60_000), updatedAt:new Date() };
-  await db.insert(sessions).values(values).onConflictDoUpdate({target:sessions.phoneHash,set:{data,lastMessageId:values.lastMessageId,expiresAt:values.expiresAt,updatedAt:values.updatedAt}});
+  const data = { __kind: 'akif_guidance', language, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
+  // Existing DB constraint permits only form purposes. The distinct HMAC namespace
+  // and data marker isolate tutoring state; this does not create a buyer or trade.
+  const values = { id: randomUUID(), phoneHash, purpose:'buyer', step:0, data, lastMessageId:messageId ?? null, expiresAt:new Date(Date.now()+24*60*60_000), updatedAt:new Date() };
+  try {
+    await db.insert(sessions).values(values).onConflictDoUpdate({target:sessions.phoneHash,set:{data,lastMessageId:values.lastMessageId,expiresAt:values.expiresAt,updatedAt:values.updatedAt}});
+  } catch {
+    // An available answer must not be discarded because optional memory is down.
+    console.warn('AKIF guidance memory unavailable', { reason: 'history_save_failed' });
+  }
   return reply;
 }

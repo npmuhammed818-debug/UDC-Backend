@@ -1007,11 +1007,15 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
           continue;
         }
+        let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
           const media = await downloadWhatsAppMedia(message.audio.id);
+          voiceStage = 'transcription';
           const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
+          voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true);
           if (guidance !== null) { if (guidance) await deliverWhatsAppReply(message.from, guidance); continue; }
+          voiceStage = 'trade_context';
           const [speaker] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
           const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id, message.context?.id) : null;
@@ -1023,7 +1027,15 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
           continue;
         } catch {
-          await deliverWhatsAppReply(message.from, "I couldn’t read that voice note clearly. Please type the key details or send a shorter recording.");
+          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed' }, 'UDC voice processing failed');
+          const reply = voiceStage === 'answer'
+            ? "I read your voice note, but couldn’t prepare an answer just now. Please try your question again shortly."
+            : voiceStage === 'trade_context'
+              ? "I read your voice note, but couldn’t check the deal context. Please confirm any trade instructions in text."
+              : voiceStage === 'download'
+                ? "I couldn’t download that voice note just now. Please resend it shortly."
+                : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
+          await deliverWhatsAppReply(message.from, reply);
           continue;
         }
       }

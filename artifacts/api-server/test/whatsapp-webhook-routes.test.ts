@@ -69,7 +69,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
-    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);return s.guidanceReply??null;};",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudio=async()=> '100 MT copper';",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
@@ -106,7 +106,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
-    state.dealCalls = 0; state.guidanceReply=undefined;state.guidanceCalls=[];
+    state.dealCalls = 0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
   };
   function seedDeal() {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
@@ -132,6 +132,9 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.deepEqual(state.intake,[]);assert.equal(state.dealCalls,0);assert.deepEqual(state.recorded,[]);
       await message({audio:{id:'voice-question'}});
       assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.equal(state.guidanceCalls.at(-1)[3],true);assert.deepEqual(state.recorded,[]);assert.equal(rows.dealConversationEventsTable.length,0);
+      state.guidanceFailure=true;await message({audio:{id:'voice-answer-failure'}});
+      assert.match(state.sent.at(-1).body,/read your voice note, but couldn’t prepare an answer/);
+      assert.doesNotMatch(state.sent.at(-1).body,/couldn.t read|PRIVATE/);state.guidanceFailure=false;
       state.privacyReply='Reply AGREE';state.guidanceCalls=[];
       await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
     });

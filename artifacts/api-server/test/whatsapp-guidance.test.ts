@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 test('Akif guidance remembers language and follow-ups without verification or trade writes; voice actions stay unconfirmed', async()=>{
  const state:any={rows:new Map(), calls:[], reply:'അതെ, മലയാളത്തിൽ സംസാരിക്കാം.'};
  const query:any={from:()=>query,where:(x:any)=>{query.key=x.b;return query;},limit:async()=>state.rows.has(query.key)?[state.rows.get(query.key)]:[]};
- state.db={select:()=>query,insert:()=>({values:(v:any)=>({onConflictDoUpdate:async()=>{state.rows.set(v.phoneHash,v);}})})};
+ state.db={select:()=>query,insert:()=>({values:(v:any)=>({onConflictDoUpdate:async()=>{assert.ok(['profile_buyer','profile_seller','profile_agent','buyer','seller'].includes(v.purpose),'must respect the deployed SQL CHECK constraint');if(state.saveFailure)throw Error('PRIVATE_DATABASE_FAILURE');state.rows.set(v.phoneHash,v);}})})};
  (globalThis as any).__guidance=state;
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
@@ -29,6 +29,6 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  state.reply='You can ask learning questions before verification.';await answerGuidance('phone-one','Even to answer a question?','4');assert.match(JSON.parse(state.calls.at(-1).message).history.at(-1).content,/വിശദീകരണം/);
  state.reply='അതെ';await answerGuidance('phone-one','മലയാളത്തിൽ സംസാരിക്കാമോ?','5',true);assert.equal(JSON.parse(state.calls.at(-1).message).source,'voice_transcript');
  const before=state.rows.get(guidanceKey('phone-one'));state.reply='TRADE_ACTION';assert.equal(await answerGuidance('phone-one','Accept the seller offer','6',true),null);assert.equal(state.rows.get(guidanceKey('phone-one')),before);
- assert.equal(state.rows.size,2);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
+ state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','What is DLC?','7',true),state.reply);assert.equal(state.rows.size,2);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
  }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
 });
