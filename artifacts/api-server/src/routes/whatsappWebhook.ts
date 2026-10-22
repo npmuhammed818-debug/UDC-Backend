@@ -1105,16 +1105,50 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       const pendingIntake = message.from
         ? await loadWhatsAppIntakeDraft(message.from)
         : null;
+      const sellerAwaitingAnotherProduct = Boolean(
+        pendingIntake
+        && !pendingIntake.stale
+        && pendingIntake.role === "seller"
+        && pendingIntake.draft.awaitingAnotherProduct,
+      );
+      const anotherProductYes = /^(?:(?:yes|yeah|yep|sure|of course)(?:\s+please)?|add another|another product|i have another)[.! ]*$/i.test(message.text.body.trim());
+      const anotherProductNo = /^(?:no|no thanks|no thank you|no[, ]+(?:that’s all|that's all)|not now|that’s all|that's all|done)[.! ]*$/i.test(message.text.body.trim());
+      if (message.from && sellerAwaitingAnotherProduct && anotherProductYes) {
+        await saveWhatsAppIntakeDraft({
+          phone: message.from,
+          role: "seller",
+          fullName: pendingIntake!.fullName ?? undefined,
+          draft: {},
+          providerMessageId: message.id,
+        });
+        await deliverWhatsAppReply(message.from, "Sure. What product would you like to offer?");
+        continue;
+      }
+      if (message.from && sellerAwaitingAnotherProduct && anotherProductNo) {
+        await clearWhatsAppIntakeDraft({
+          phone: message.from,
+          role: "seller",
+          fullName: pendingIntake!.fullName ?? undefined,
+          providerMessageId: message.id,
+        });
+        await deliverWhatsAppReply(message.from, "Okay. I’ll keep this offer with UDC for review.");
+        continue;
+      }
+      const sellerStartsAnotherProduct = Boolean(
+        sellerAwaitingAnotherProduct
+        && /^(?:yes|yeah|yep|sure|of course)\b[\s,:-]+\S/i.test(message.text.body.trim()),
+      );
       const hasPendingIntake = Boolean(
         pendingIntake
         && !pendingIntake.stale
+        && !sellerAwaitingAnotherProduct
         && !pendingIntake.draft.submittedRecordId
         && Boolean(pendingIntake.draft.product || pendingIntake.draft.quantity),
       );
       const repeatedSubmittedIntake = Boolean(pendingIntake && !pendingIntake.stale
         && pendingIntake.draft.submittedRecordId
         && pendingIntake.draft.conversation?.at(-1)?.message.trim().toLowerCase() === message.text.body.trim().toLowerCase());
-      const explicitNewIntake = isExplicitSeparateTradeIntake(message.text.body)
+      const explicitNewIntake = sellerStartsAnotherProduct || isExplicitSeparateTradeIntake(message.text.body)
         || (!hasPendingIntake && !repeatedSubmittedIntake && !message.context?.id && isStandaloneBuyerInquiry(message.text.body));
 
       if (
@@ -1283,8 +1317,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       );
       const intakeDecision = await interpretIntakeConversation({
         message: message.text.body,
-        role: isSellerOffer(message.text.body) ? "seller" : savedIntake?.role === "seller" ? "seller" : "buyer",
-        memory: hasSavedDraft ? savedIntake!.draft : null,
+        role: isSellerOffer(message.text.body) || sellerStartsAnotherProduct ? "seller" : savedIntake?.role === "seller" ? "seller" : "buyer",
+        memory: hasSavedDraft && !sellerStartsAnotherProduct ? savedIntake!.draft : null,
       });
       if (!intakeDecision) {
         await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
@@ -1393,6 +1427,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           draft: {
             ...draftForStorage,
             submittedRecordId: record?.id ?? previousDraft?.submittedRecordId,
+            ...(record && sellerDraft ? { awaitingAnotherProduct: true } : {}),
             conversation: [...(previousDraft?.conversation ?? []), {
               message: message.text.body, reply,
             }].slice(-12),

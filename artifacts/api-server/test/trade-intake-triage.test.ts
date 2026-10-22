@@ -70,7 +70,7 @@ test("does not ask for price again after the seller supplies the missing quantit
   assert.equal(complete.quantity, 100);
   assert.equal(complete.price, 10_000);
   assert.deepEqual(complete.missingFields, []);
-  assert.equal(sellerOfferReply(complete), "Thanks, I have the key offer details. I’ll send them to UDC for review.");
+  assert.equal(sellerOfferReply(complete), "Thanks, I’ve sent this offer to UDC for review. Would you like to add another product?");
 });
 
 test("captures an optional seller destination when CIF includes a named port", () => {

@@ -8,6 +8,7 @@ import {
 
 export type WhatsAppIntakeDraftPayload = {
   submittedRecordId?: string;
+  awaitingAnotherProduct?: boolean;
   conversation?: Array<{ message: string; reply: string }>;
   product?: string;
   specification?: string;
