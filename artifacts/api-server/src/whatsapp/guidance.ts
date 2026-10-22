@@ -12,7 +12,7 @@ export function guidanceKey(phone: string) {
 }
 export function isGuidanceQuestion(text: string) {
   if (/^deal\s+UDC-/i.test(text.trim())) return false;
-  return /\?|^(?:what|why|how|which|can you|could you|do you|does|explain|teach|tell me|even (?:for|to)|speak|talk|answer|i (?:don.t|do not) understand)\b|^(?:dlc|sblc|cif|fob|sgs|incoterms)[.! ]*$|malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்|\b(?:udc|updowncircle|akif|website|founder|verification documents)\b/i.test(text.trim());
+  return /\?|^(?:what|why|how|which|can you|could you|do you|does|explain|teach|tell me|even (?:for|to)|speak|talk|answer|i (?:don.t|do not) understand)\b|malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்|\b(?:udc|updowncircle|akif|website|founder|verification documents)\b/i.test(text.trim());
 }
 export function guidancePrompt(history: {role:string;content:string}[], message: string, voice: boolean) {
   return JSON.stringify({ history, currentMessage: message, source: voice ? 'voice_transcript' : 'text' });
@@ -27,6 +27,9 @@ function guidanceServiceFallback(trusted: string | null, language: string) {
   return 'My detailed trade-answer service is temporarily unavailable. I can still answer UDC’s saved company facts and basic trade questions in English; please try again shortly for a fuller answer.';
 }
 export async function answerGuidance(phone: string, text: string, messageId?: string, voice = false, onlyWithHistory = false): Promise<string | null> {
+  // A one-word Incoterm is commonly an answer to an active offer/intake prompt.
+  // Let trade intake handle it instead of turning it into an unsolicited lesson.
+  if (/^(?:EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)$/i.test(text.trim())) return null;
   const phoneHash = guidanceKey(phone);
   const [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash, phoneHash)).limit(1);
   const fresh = saved && saved.expiresAt > new Date() ? saved : null;

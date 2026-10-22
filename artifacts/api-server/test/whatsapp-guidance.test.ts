@@ -19,6 +19,10 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  try{
  const {answerGuidance,isGuidanceQuestion,guidanceKey,validateGuidanceReply,trustedGuidanceAnswer}=await import(path);
  for(const text of ['What is dlc','Which payment method is safe for me?','Even for ur to answer and question?','Can you speak in malayalam?','എന്ത് ആണ് DLC?'])assert.equal(isGuidanceQuestion(text),true,text);
+ assert.equal(isGuidanceQuestion('What is CIF?'),true);
+ assert.equal(isGuidanceQuestion('CIF'),false,'a bare Incoterm may answer an active intake prompt');
+ assert.match(trustedGuidanceAnswer('What is CIF?')??'',/Cost, Insurance and Freight/);
+ assert.match(trustedGuidanceAnswer('What is CIF?')??'',/risk transfers to the buyer when the goods are loaded on board/);
  assert.equal(isGuidanceQuestion('Deal UDC-123: accept offer?'),false);
  assert.equal(isGuidanceQuestion('100 MT copper at 5900'),false);
  await answerGuidance('phone-one','Can you speak in malayalam?','1');
