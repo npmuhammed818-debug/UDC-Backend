@@ -32,7 +32,9 @@ export function chatAction(message:ChatMessage){
     'my referrals':'referrals','referral code':'invite','my code':'invite','share code':'invite',
     'copy code':'invite','more options':'more','all options':'more',
   };
-  return text ? typed[text] ?? (['more'].includes(text)?'more':['menu','help','hi','hello','start','open menu','features'].includes(text)?'menu':null) : null;
+  // A menu is shown ONLY after an explicit menu request or menu-button selection.
+  // Greetings, 'help' and ordinary chat must remain conversations with Akif.
+  return text ? typed[text] ?? (text==='more'?'more':/^(?:(?:open|show|show me|show me the|send|send me)\s+)?(?:udc\s+)?menu[.!?]*$/.test(text)?'menu':null) : null;
 }
 const row=(id:string,title:string,description?:string)=>({id:'udc:'+id,title,...(description?{description}:{})});
 export function menuForRole(role?:string){
@@ -165,14 +167,8 @@ export async function handleChatUi(phone:string,message:ChatMessage){
   if(!action || ['submit','restart','cancel'].includes(action)){
     const handled=await continueGuidedChat(phone,message,action,submitChatFlow);
     if(handled)return true;
-    if(!action){
-      if(message.text?.body){
-        const [registered]=await db.select({email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
-        if(!registered?.email){await sendChatHome(phone);return true;}
-      }
-      return false;
-    }
-    await sendChatHome(phone);return true;
+    if(!action)return false;
+    await sendWhatsAppText(phone,'No active form to change. Send Menu only if you want your options.');return true;
   }
   if(action==='menu'){await sendChatHome(phone);return true;}
   if(action==='more'){await sendChatMore(phone);return true;}
@@ -180,12 +176,12 @@ export async function handleChatUi(phone:string,message:ChatMessage){
   if(action==='flow'){await sendWhatsAppTextWithMenu(phone,await submitChatFlow(phone,message.interactive?.nfm_reply?.response_json));return true;}
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
   if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppTextWithMenu(phone,'Your account needs UDC review.');return true;}
-  if(action==='invalid'){await sendChatHome(phone);return true;}
+  if(action==='invalid'){await sendWhatsAppText(phone,'That option is no longer available. Send Menu if you want to see the current options.');return true;}
   if(['buyer','seller','agent'].includes(action)){
     if(user&&user.role!==action){await sendWhatsAppTextWithMenu(phone,`Your account is registered as ${user.role}. UDC must review role changes.`);return true;}
     await sendForm(phone,('profile_'+action) as FlowPurpose);return true;
   }
-  if(!user){await sendChatHome(phone);return true;}
+  if(!user){await sendWhatsAppText(phone,'Please register before using this feature. Send Menu to choose your role.');return true;}
   if(action==='profile'){
     const [company]=await db.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     await sendWhatsAppTextWithMenu(phone,[user.fullName,user.email,company?.companyName,company?.country,`Verification: ${user.status==='verified'?'verified':'pending'}`].filter(Boolean).join('\n'));
@@ -194,7 +190,7 @@ export async function handleChatUi(phone:string,message:ChatMessage){
   if(action==='edit_profile'){await sendForm(phone,('profile_'+user.role) as FlowPurpose);return true;}
   if(action==='requirement'||action==='offer'){
     const role=action==='requirement'?'buyer':'seller';
-    if(user.role!==role){await sendChatHome(phone);return true;}
+    if(user.role!==role){await sendWhatsAppText(phone,`Your account is registered as ${user.role}. Send Menu to see your available features.`);return true;}
     await sendForm(phone,role);return true;
   }
   if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval.`);return true;}
@@ -220,5 +216,5 @@ export async function handleChatUi(phone:string,message:ChatMessage){
     if(!rows.length){await sendWhatsAppTextWithMenu(phone,'No approved deals are assigned to you yet. UDC will notify you when there is an update.');return true;}
     await sendWhatsAppInteractive(phone,{type:'list',body:{text:'Choose one of your authorized deals.'},action:{button:'My deals',sections:[{title:'Your deals',rows:rows.map(r=>row('deal:'+r.id,r.number.slice(0,24),r.status))}]}});return true;
   }
-  await sendChatHome(phone);return true;
+  await sendWhatsAppText(phone,'This option is unavailable. Send Menu if you need to choose another.');return true;
 }

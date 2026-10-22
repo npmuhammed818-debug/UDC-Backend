@@ -40,8 +40,15 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
     await t.test('buttons and role menus use stable IDs; all forms are terminal review submissions',async()=>{
       await m.sendChatHome(phone);assert.equal(state.interactive.at(-1).body.type,'button');assert.equal(state.interactive.at(-1).body.action.buttons.length,3);
       for(const role of ['buyer','seller','agent']){const menu=m.menuForRole(role);assert.ok(menu.length>4&&menu.length<=10);assert.ok(menu.every((r:any)=>r.title.length<=24&&r.id.startsWith('udc:')));}
-      assert.equal(m.chatAction({interactive:{type:'list_reply',list_reply:{id:'unknown',title:'Submit requirement'}}}),'invalid');assert.equal(m.chatAction({text:{body:'100 MT copper'}}),null);assert.equal(m.chatAction({text:{body:'Menu'}}),'menu');assert.equal(m.chatAction({text:{body:'My code'}}),'invite');assert.equal(m.chatAction({text:{body:'More options'}}),'more');
+      assert.equal(m.chatAction({interactive:{type:'list_reply',list_reply:{id:'unknown',title:'Submit requirement'}}}),'invalid');assert.equal(m.chatAction({text:{body:'100 MT copper'}}),null);assert.equal(m.chatAction({text:{body:'Menu'}}),'menu');assert.equal(m.chatAction({text:{body:'My code'}}),'invite');assert.equal(m.chatAction({text:{body:'More options'}}),'more');assert.equal(m.chatAction({text:{body:'Hi'}}),null);assert.equal(m.chatAction({text:{body:'hello'}}),null);assert.equal(m.chatAction({text:{body:'help'}}),null);assert.equal(m.chatAction({text:{body:'start'}}),null);assert.equal(m.chatAction({text:{body:'Show me the menu'}}),'menu');
       for(const flow of Object.values(m.flowDefinitions) as any[]){assert.equal(flow.json.screens[0].terminal,true);assert.equal(flow.json.screens[0].layout.children[0].children.at(-1)['on-click-action'].name,'complete');}
+      const beforeUnprompted=state.interactive.length;
+      assert.equal(await m.handleChatUi(phone,{text:{body:'Hello'}}),false);
+      assert.equal(await m.handleChatUi(phone,{text:{body:'I would like to learn about UDC'}}),false);
+      assert.equal(state.interactive.length,beforeUnprompted,'regular chat must not open menu');
+      await m.handleChatUi(phone,{text:{body:'Menu'}});
+      assert.equal(state.interactive.at(-1).body.type,'button');
+      assert.equal(state.interactive.length,beforeUnprompted+1,'explicit menu request should open home');
       await m.handleChatUi(phone,ui('buyer'));assert.equal(state.interactive.at(-1).body.type,'flow');assert.equal(state.interactive.at(-1).body.action.parameters.flow_id,'123456');
     });
     await t.test('form proof expires, binds to its WhatsApp owner and ignores tampering',async()=>{

@@ -65,7 +65,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   state.db.transaction = async (callback: any) => callback(state.db);
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
-    "../whatsapp/chatUi": "export const sendChatHome=async()=>{};export const handleChatUi=async(phone,message)=>{if(message.interactive){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};",
+    "../whatsapp/chatUi": "export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};",
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
