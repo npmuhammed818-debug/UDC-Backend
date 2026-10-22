@@ -13,7 +13,7 @@ import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
 import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
-import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
+import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
@@ -51,11 +51,12 @@ function cleanHumanWhatsAppText(body: string) {
     .trim();
 }
 
-async function deliverWhatsAppReply(to: string | undefined, body: string) {
+async function deliverWhatsAppReply(to: string | undefined, body: string, withMenu = true) {
   if (!to) return { delivered: false as const, reason: "missing_sender" as const };
 
   try {
-    return await sendWhatsAppText(to, cleanHumanWhatsAppText(body));
+    const cleaned = cleanHumanWhatsAppText(body);
+    return await (withMenu ? sendWhatsAppTextWithMenu(to, cleaned) : sendWhatsAppText(to, cleaned));
   } catch {
     return {
       delivered: false as const,
@@ -471,13 +472,13 @@ async function handleWhatsAppDealDocument(
       const warning = result.status === "needs_review"
         ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
         : "";
-      await sendWhatsAppText(
+      await sendWhatsAppTextWithMenu(
         from,
         `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}`,
       ).catch(() => undefined);
     })
     .catch(async () => {
-      await sendWhatsAppText(
+      await sendWhatsAppTextWithMenu(
         from,
         `I attached the ${documentType} to the deal, but full extraction failed. UDC kept the original file for review and retry.`,
       ).catch(() => undefined);
@@ -977,7 +978,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
-          if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply); if (message.text?.body?.trim().toUpperCase() === "AGREE" && privacyReply.startsWith("Thanks.")) await sendChatHome(message.from); continue; }
+          if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply, false); if (message.text?.body?.trim().toUpperCase() === "AGREE" && privacyReply.startsWith("Thanks.")) await sendChatHome(message.from); continue; }
           const [account] = await db.select({ status: usersTable.status }).from(usersTable)
             .where(eq(usersTable.phone, message.from)).limit(1);
           if (account?.status === "suspended" || account?.status === "rejected") {
@@ -1002,7 +1003,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
       if (message.from) {
         try { if (await handleChatUi(message.from, message)) continue; }
-        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Please type Menu and try again.'); continue; }
+        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Tap Open menu and try again.'); continue; }
       }
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {

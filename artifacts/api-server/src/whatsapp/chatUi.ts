@@ -9,7 +9,7 @@ import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, comm
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
-import { downloadWhatsAppMedia, sendWhatsAppInteractive, sendWhatsAppText } from './client';
+import { downloadWhatsAppMedia, sendWhatsAppInteractive, sendWhatsAppText, sendWhatsAppTextWithMenu } from './client';
 import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
@@ -39,7 +39,7 @@ export function menuForRole(role?:string){
 }
 export async function sendChatHome(phone:string){
   const [user]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status,email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
-  if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppText(phone,'Your account needs UDC review.');return;}
+  if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppTextWithMenu(phone,'Your account needs UDC review.');return;}
   const rows=menuForRole(user?.email?user.role:undefined);
   try{
     if(rows.length)await sendWhatsAppInteractive(phone,{type:'list',body:{text:`Your UDC ${user!.role} menu. Tap an option, or send a message or voice note naturally.`},action:{button:'Open menu',sections:[{title:'Your features',rows}]}});
@@ -122,10 +122,10 @@ async function companyDocument(phone:string,message:ChatMessage){
   if(!request)return false;
   const metadata=request.metadata as {companyId:string};
   const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.id,metadata.companyId),eq(companiesTable.ownerUserId,user.id))).limit(1);
-  if(!company){await sendWhatsAppText(phone,'That company request is no longer available. Open My profile first.');return true;}
+  if(!company){await sendWhatsAppTextWithMenu(phone,'That company request is no longer available. Open My profile first.');return true;}
   const media=await downloadWhatsAppMedia(message.document.id);
   const bytes=Buffer.from(media.bytes);
-  if(bytes.length>5*1024*1024||bytes.subarray(0,5).toString()!=='%PDF-'){await sendWhatsAppText(phone,'Send a PDF under 5 MB as a reply to the document request.');return true;}
+  if(bytes.length>5*1024*1024||bytes.subarray(0,5).toString()!=='%PDF-'){await sendWhatsAppTextWithMenu(phone,'Send a PDF under 5 MB as a reply to the document request.');return true;}
   await db.transaction(async tx=>{
     const fingerprint=message.id||message.document!.id!;
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_doc:'+fingerprint}))`);
@@ -135,7 +135,7 @@ async function companyDocument(phone:string,message:ChatMessage){
     const [document]=await tx.insert(companyVerificationDocumentsTable).values({companyId:company.id,uploadedBy:user.id,documentType:'registration',fileUrl,status:'pending'}).returning({id:companyVerificationDocumentsTable.id});
     await tx.insert(auditLogsTable).values({actorUserId:user.id,action:'company_verification_document_uploaded',entityType:'company_verification_document',entityId:document.id,metadata:{companyId:company.id,channel:'whatsapp',providerMessageId:fingerprint}});
   });
-  await sendWhatsAppText(phone,'Your company PDF is stored privately for UDC review. Uploading it does not verify your company.');return true;
+  await sendWhatsAppTextWithMenu(phone,'Your company PDF is stored privately for UDC review. Uploading it does not verify your company.');return true;
 }
 
 export async function handleChatUi(phone:string,message:ChatMessage){
@@ -157,20 +157,20 @@ export async function handleChatUi(phone:string,message:ChatMessage){
     }
     await sendChatHome(phone);return true;
   }
-  if(action!=='flow')await clearGuidedChat(phone);
   if(action==='menu'){await sendChatHome(phone);return true;}
-  if(action==='flow'){await sendWhatsAppText(phone,await submitChatFlow(phone,message.interactive?.nfm_reply?.response_json));return true;}
+  if(action!=='flow')await clearGuidedChat(phone);
+  if(action==='flow'){await sendWhatsAppTextWithMenu(phone,await submitChatFlow(phone,message.interactive?.nfm_reply?.response_json));return true;}
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
-  if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppText(phone,'Your account needs UDC review.');return true;}
+  if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppTextWithMenu(phone,'Your account needs UDC review.');return true;}
   if(action==='invalid'){await sendChatHome(phone);return true;}
   if(['buyer','seller','agent'].includes(action)){
-    if(user&&user.role!==action){await sendWhatsAppText(phone,`Your account is registered as ${user.role}. UDC must review role changes.`);return true;}
+    if(user&&user.role!==action){await sendWhatsAppTextWithMenu(phone,`Your account is registered as ${user.role}. UDC must review role changes.`);return true;}
     await sendForm(phone,('profile_'+action) as FlowPurpose);return true;
   }
   if(!user){await sendChatHome(phone);return true;}
   if(action==='profile'){
     const [company]=await db.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
-    await sendWhatsAppText(phone,[user.fullName,user.email,company?.companyName,company?.country,`Verification: ${user.status==='verified'?'verified':'pending'}`].filter(Boolean).join('\n'));
+    await sendWhatsAppTextWithMenu(phone,[user.fullName,user.email,company?.companyName,company?.country,`Verification: ${user.status==='verified'?'verified':'pending'}`].filter(Boolean).join('\n'));
     await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Your saved details.'},action:{buttons:[{type:'reply',reply:{id:'udc:edit_profile',title:'Edit details'}}]}});return true;
   }
   if(action==='edit_profile'){await sendForm(phone,('profile_'+user.role) as FlowPurpose);return true;}
@@ -179,27 +179,27 @@ export async function handleChatUi(phone:string,message:ChatMessage){
     if(user.role!==role){await sendChatHome(phone);return true;}
     await sendForm(phone,role);return true;
   }
-  if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppText(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval.`);return true;}
+  if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval.`);return true;}
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
-    if(!company){await sendWhatsAppText(phone,'Open My profile and add your company details first.');return true;}
-    const sent=await sendWhatsAppText(phone,'Reply to THIS message with your company registration PDF (under 5 MB). It will be private and pending UDC review. For a deal document, reply to that deal’s message instead.');
+    if(!company){await sendWhatsAppTextWithMenu(phone,'Open My profile and add your company details first.');return true;}
+    const sent=await sendWhatsAppTextWithMenu(phone,'Reply to THIS message with your company registration PDF (under 5 MB). It will be private and pending UDC review. For a deal document, reply to that deal’s message instead.');
     if(sent.delivered&&sent.messageId)await db.insert(auditLogsTable).values({actorUserId:user.id,action:'whatsapp_company_document_requested',entityType:'company',entityId:company.id,metadata:{companyId:company.id,messageId:sent.messageId}});return true;
   }
-  if(action==='ask'){await sendWhatsAppText(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
-  if(action==='meeting'){await sendWhatsAppText(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
+  if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
+  if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
-    if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppText(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
-    if(action==='invite'){const code=agentReferralCode(user.id);await sendWhatsAppText(phone,`Share this short code with them: ${code}. After they register as a UDC buyer or seller, they can send “Referral ${code}” here and confirm the introduction. UDC reviews it. No commission is agreed automatically.`);return true;}
-    if(action==='referrals'){const rows=await db.select({code:referralsTable.referralCode,status:referralsTable.status}).from(referralsTable).where(eq(referralsTable.agentUserId,user.id)).orderBy(desc(referralsTable.createdAt)).limit(10);await sendWhatsAppText(phone,rows.length?rows.map(r=>`${r.code}: ${r.status}`).join('\n'):'No referrals have been recorded for you yet.');return true;}
-    const rows=await db.select({amount:commissionsTable.amount,currency:commissionsTable.currency,status:commissionsTable.status}).from(commissionsTable).where(eq(commissionsTable.beneficiaryUserId,user.id)).orderBy(desc(commissionsTable.createdAt)).limit(10);await sendWhatsAppText(phone,rows.length?rows.map(r=>`${r.currency} ${r.amount}: ${r.status}`).join('\n'):'No agreed commissions have been recorded for you yet.');return true;
+    if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
+    if(action==='invite'){const code=agentReferralCode(user.id);await sendWhatsAppTextWithMenu(phone,`Share this short code with them: ${code}. After they register as a UDC buyer or seller, they can send “Referral ${code}” here and confirm the introduction. UDC reviews it. No commission is agreed automatically.`);return true;}
+    if(action==='referrals'){const rows=await db.select({code:referralsTable.referralCode,status:referralsTable.status}).from(referralsTable).where(eq(referralsTable.agentUserId,user.id)).orderBy(desc(referralsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.code}: ${r.status}`).join('\n'):'No referrals have been recorded for you yet.');return true;}
+    const rows=await db.select({amount:commissionsTable.amount,currency:commissionsTable.currency,status:commissionsTable.status}).from(commissionsTable).where(eq(commissionsTable.beneficiaryUserId,user.id)).orderBy(desc(commissionsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.currency} ${r.amount}: ${r.status}`).join('\n'):'No agreed commissions have been recorded for you yet.');return true;
   }
   if(action==='deals'||action.startsWith('deal:')){
-    if(user.status!=='verified'){await sendWhatsAppText(phone,'Your registration is pending UDC approval. Deal access starts after verification.');return true;}
+    if(user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Deal access starts after verification.');return true;}
     const fields={id:dealsTable.id,number:dealsTable.dealNumber,status:dealsTable.status};
     const rows=user.role==='agent'?await db.select(fields).from(dealsTable).innerJoin(dealParticipantsTable,eq(dealParticipantsTable.dealId,dealsTable.id)).where(and(eq(dealParticipantsTable.userId,user.id),eq(dealParticipantsTable.participantRole,'agent'),eq(dealParticipantsTable.status,'active'))).orderBy(desc(dealsTable.updatedAt)).limit(10):await db.select(fields).from(dealsTable).where(or(eq(dealsTable.buyerUserId,user.id),eq(dealsTable.sellerUserId,user.id))).orderBy(desc(dealsTable.updatedAt)).limit(10);
-    if(action.startsWith('deal:')){const selected=rows.find(r=>r.id===action.slice(5));if(!selected){await sendWhatsAppText(phone,'That deal is unavailable. Open My deals again.');return true;}await db.insert(whatsappUserContextsTable).values({userId:user.id,activeDealId:selected.id}).onConflictDoUpdate({target:whatsappUserContextsTable.userId,set:{activeDealId:selected.id,updatedAt:new Date()}});await sendWhatsAppText(phone,`${selected.number}: ${selected.status}. Your next trade message will use this deal. Ask for its documents, status or a meeting here.`);return true;}
-    if(!rows.length){await sendWhatsAppText(phone,'No approved deals are assigned to you yet. UDC will notify you when there is an update.');return true;}
+    if(action.startsWith('deal:')){const selected=rows.find(r=>r.id===action.slice(5));if(!selected){await sendWhatsAppTextWithMenu(phone,'That deal is unavailable. Open My deals again.');return true;}await db.insert(whatsappUserContextsTable).values({userId:user.id,activeDealId:selected.id}).onConflictDoUpdate({target:whatsappUserContextsTable.userId,set:{activeDealId:selected.id,updatedAt:new Date()}});await sendWhatsAppTextWithMenu(phone,`${selected.number}: ${selected.status}. Your next trade message will use this deal. Ask for its documents, status or a meeting here.`);return true;}
+    if(!rows.length){await sendWhatsAppTextWithMenu(phone,'No approved deals are assigned to you yet. UDC will notify you when there is an update.');return true;}
     await sendWhatsAppInteractive(phone,{type:'list',body:{text:'Choose one of your authorized deals.'},action:{button:'My deals',sections:[{title:'Your deals',rows:rows.map(r=>row('deal:'+r.id,r.number.slice(0,24),r.status))}]}});return true;
   }
   await sendChatHome(phone);return true;

@@ -5,7 +5,7 @@ import { db, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail } from './registrationEmail';
-import { sendWhatsAppInteractive, sendWhatsAppText } from './client';
+import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 
 type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
 const q=(name:string,label:string,options:Omit<Question,'name'|'label'>={}):Question=>({name,label,...options});
@@ -18,14 +18,14 @@ function phoneHash(phone:string){const key=process.env.WHATSAPP_APP_SECRET;if(!k
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
   if(data.__paragraph==='1'){
-    if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppText(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
+    if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppTextWithMenu(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
     const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
-    if(next){await sendWhatsAppText(phone,next.label);return;}
+    if(next){await sendWhatsAppTextWithMenu(phone,next.label);return;}
     const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>q.label);
-    if(!labels.length){await sendWhatsAppText(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
-    await sendWhatsAppText(phone,`Send ${labels.join(', ')} together in one short message.${purpose.startsWith('profile_')?'':' You can include grade, timing, payment terms and the delivery place too.'}`);return;
+    if(!labels.length){await sendWhatsAppTextWithMenu(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
+    await sendWhatsAppTextWithMenu(phone,`Send ${labels.join(', ')} together in one short message.${purpose.startsWith('profile_')?'':' You can include grade, timing, payment terms and the delivery place too.'}`);return;
   }
-  const current=guidedQuestions(purpose)[step];await sendWhatsAppText(phone,current.label+(current.optional?' Reply Skip to leave it blank.':''));
+  const current=guidedQuestions(purpose)[step];await sendWhatsAppTextWithMenu(phone,current.label+(current.optional?' Reply Skip to leave it blank.':''));
 }
 export async function clearGuidedChat(phone:string){const fingerprint=phoneHash(phone);await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+fingerprint}))`);await tx.delete(sessions).where(eq(sessions.phoneHash,fingerprint));});}
 export async function startGuidedChat(phone:string,purpose:FlowPurpose,initial:Record<string,string>={}){
@@ -60,8 +60,8 @@ function validate(question:Question,text:string,purpose:FlowPurpose){
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
   const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
   const summary=Object.entries(data).filter(([k,v])=>v&&!k.startsWith('__')).map(([key,value])=>`${label[key]??key}: ${value}`).join('\n');
-  await sendWhatsAppText(phone,'Please review:\n'+summary+(purpose.startsWith('profile_')?'\nRegistration needs UDC approval.':'\nUDC recommends DLC directly to seller, after SGS at destination. Other terms require explicit buyer agreement. Submission needs UDC review.'));
-  try{await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Are these details correct?'},action:{buttons:[['submit','Submit for review'],['restart','Edit details'],['cancel','Cancel']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});}catch{await sendWhatsAppText(phone,'Reply Submit to send for UDC review, Edit to start again, or Cancel.');}
+  await sendWhatsAppTextWithMenu(phone,'Please review:\n'+summary+(purpose.startsWith('profile_')?'\nRegistration needs UDC approval.':'\nUDC recommends DLC directly to seller, after SGS at destination. Other terms require explicit buyer agreement. Submission needs UDC review.'));
+  try{await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Are these details correct?'},action:{buttons:[['submit','Submit for review'],['restart','Edit details'],['cancel','Cancel']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});}catch{await sendWhatsAppTextWithMenu(phone,'Reply Submit to send for UDC review, Edit to start again, or Cancel.');}
 }
 export async function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>){
   const raw=message.text?.body?.trim();
@@ -106,15 +106,15 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
   if(!result)return false;
   switch(result.kind){
     case 'duplicate':return true;
-    case 'expired':await sendWhatsAppText(phone,'That draft expired. Type Menu to start again.');return true;
-    case 'cancelled':await sendWhatsAppText(phone,'Cancelled. Nothing was submitted. Type Menu for your features.');return true;
-    case 'invalid':await sendWhatsAppText(phone,result.text);await question(phone,result.purpose,result.step);return true;
+    case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Tap Open menu to start again.');return true;
+    case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Tap Open menu to see your features.');return true;
+    case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
     case 'question':await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
     case 'review':await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
       await db.delete(sessions).where(and(eq(sessions.id,result.id),eq(sessions.phoneHash,fingerprint)));
-      await sendWhatsAppText(phone,reply);return true;
+      await sendWhatsAppTextWithMenu(phone,reply);return true;
     }
   }
 }
