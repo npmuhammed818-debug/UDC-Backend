@@ -22,13 +22,12 @@ test('sends native interactive menus and rejects invalid button limits before Me
   assert.deepEqual(await sendWhatsAppInteractive('recipient',{type:'list',body:{text:'Your menu'},action:{button:'Open menu',sections:[{title:'Features',rows:[{id:'udc:deals',title:'My deals'}]}]}}),{delivered:true,messageId:'synthetic-menu'});
   await assert.rejects(sendWhatsAppInteractive('recipient',{type:'button',body:{text:'bad'},action:{buttons:Array.from({length:4},()=>({type:'reply' as const,reply:{id:'x',title:'x'}}))}}),/buttons_invalid/);assert.equal(calls,1);
 });
-test('adds an Open menu button to short replies and sends long replies as text',async()=>{
+test('ordinary replies stay clean without repeating an Open menu button',async()=>{
   configure();const requests:any[]=[];
   globalThis.fetch=async(_url,init)=>{const body=JSON.parse(String(init?.body));requests.push(body);return new Response('{"messages":[{"id":"synthetic-reply"}]}');};
   assert.deepEqual(await sendWhatsAppTextWithMenu('recipient','Your account is verified.'),{delivered:true,messageId:'synthetic-reply'});
-  assert.equal(requests[0].type,'interactive');
-  assert.equal(requests[0].interactive.action.buttons[0].reply.id,'udc:menu');
-  assert.equal(requests[0].interactive.action.buttons[0].reply.title,'Open menu');
+  assert.equal(requests[0].type,'text');
+  assert.equal(requests[0].text.body,'Your account is verified.');
   const long='x'.repeat(1025);
   assert.deepEqual(await sendWhatsAppTextWithMenu('recipient',long),{delivered:true,messageId:'synthetic-reply'});
   assert.equal(requests[1].type,'text');

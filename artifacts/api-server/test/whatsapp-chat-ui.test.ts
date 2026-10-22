@@ -40,7 +40,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
     await t.test('buttons and role menus use stable IDs; all forms are terminal review submissions',async()=>{
       await m.sendChatHome(phone);assert.equal(state.interactive.at(-1).body.type,'button');assert.equal(state.interactive.at(-1).body.action.buttons.length,3);
       for(const role of ['buyer','seller','agent']){const menu=m.menuForRole(role);assert.ok(menu.length>4&&menu.length<=10);assert.ok(menu.every((r:any)=>r.title.length<=24&&r.id.startsWith('udc:')));}
-      assert.equal(m.chatAction({interactive:{type:'list_reply',list_reply:{id:'unknown',title:'Submit requirement'}}}),'invalid');assert.equal(m.chatAction({text:{body:'100 MT copper'}}),null);assert.equal(m.chatAction({text:{body:'Menu'}}),'menu');
+      assert.equal(m.chatAction({interactive:{type:'list_reply',list_reply:{id:'unknown',title:'Submit requirement'}}}),'invalid');assert.equal(m.chatAction({text:{body:'100 MT copper'}}),null);assert.equal(m.chatAction({text:{body:'Menu'}}),'menu');assert.equal(m.chatAction({text:{body:'My code'}}),'invite');assert.equal(m.chatAction({text:{body:'More options'}}),'more');
       for(const flow of Object.values(m.flowDefinitions) as any[]){assert.equal(flow.json.screens[0].terminal,true);assert.equal(flow.json.screens[0].layout.children[0].children.at(-1)['on-click-action'].name,'complete');}
       await m.handleChatUi(phone,ui('buyer'));assert.equal(state.interactive.at(-1).body.type,'flow');assert.equal(state.interactive.at(-1).body.action.parameters.flow_id,'123456');
     });
@@ -72,6 +72,18 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,ui('deal:'+other));assert.match(last(),/unavailable/);assert.equal(rows.whatsappUserContextsTable.length,0);
       await m.handleChatUi(phone,ui('deal:'+own));assert.equal(rows.whatsappUserContextsTable[0].activeDealId,own);
       const agent=rows.usersTable.find((u:any)=>u.role==='agent');await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/Verified agent approval/);agent.status='verified';
+      await m.handleChatUi(agent.phone,ui('menu'));
+      const shortcuts=state.interactive.at(-1).body.action.buttons.map((b:any)=>b.reply.id);
+      assert.deepEqual(shortcuts,['udc:invite','udc:referrals','udc:more']);
+      await m.handleChatUi(agent.phone,ui('more'));
+      const allOptions=state.interactive.at(-1).body.action.sections[0].rows;
+      assert.ok(allOptions.some((r:any)=>r.id==='udc:commissions'));
+      assert.ok(allOptions.some((r:any)=>r.id==='udc:profile'));
+      await m.handleChatUi(agent.phone,ui('invite'));
+      assert.match(last(),/^UDC-[0-9A-F]{12}$/);
+      assert.match(state.sent.at(-2).body,/after joining UDC/);
+      assert.ok(!state.sent.at(-1).body.includes('Share this'));
+
       rows.commissionsTable=[{beneficiaryUserId:agent.id,currency:'USD',amount:'50',status:'pending'},{beneficiaryUserId:'other',currency:'USD',amount:'999999',status:'paid'}];await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/50/);assert.doesNotMatch(last(),/999999/);
       rows.dealParticipantsTable=[{dealId:own,userId:agent.id,participantRole:'agent',status:'active'}];await m.handleChatUi(agent.phone,ui('deals'));assert.equal(state.interactive.at(-1).body.action.sections[0].rows.length,1);
       rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);

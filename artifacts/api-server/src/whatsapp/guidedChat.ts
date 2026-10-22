@@ -106,8 +106,8 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
   if(!result)return false;
   switch(result.kind){
     case 'duplicate':return true;
-    case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Tap Open menu to start again.');return true;
-    case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Tap Open menu to see your features.');return true;
+    case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Send Menu to start again.');return true;
+    case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
     case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
     case 'question':await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
     case 'review':await review(phone,result.purpose,result.data);return true;

@@ -1003,7 +1003,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
       if (message.from) {
         try { if (await handleChatUi(message.from, message)) continue; }
-        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Tap Open menu and try again.'); continue; }
+        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Send Menu and try again.'); continue; }
       }
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {

@@ -121,19 +121,11 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   return {delivered:true as const,...(result?.messages?.[0]?.id?{messageId:result.messages[0].id}:{})};
 }
 
+// Retain the helper for existing callers, but do not append a menu button to
+// every reply. The role menu is available from the explicit Menu entry point.
 export async function sendWhatsAppTextWithMenu(to: string, body: string) {
-  if (body.length > 1024) return sendWhatsAppText(to, body);
-  try {
-    return await sendWhatsAppInteractive(to, {
-      type: "button",
-      body: { text: body },
-      action: { buttons: [{ type: "reply", reply: { id: "udc:menu", title: "Open menu" } }] },
-    });
-  } catch {
-    return sendWhatsAppText(to, body);
-  }
+  return sendWhatsAppText(to, body);
 }
-
 
 export async function sendWhatsAppDocument(
   to: string,
