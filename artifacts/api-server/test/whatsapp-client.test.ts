@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { checkWhatsAppConnection, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppInteractive } from "../src/whatsapp/client.ts";
+import { checkWhatsAppConnection, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from "../src/whatsapp/client.ts";
 
 const originalFetch = globalThis.fetch;
 const token = process.env.WHATSAPP_ACCESS_TOKEN;
@@ -21,6 +21,18 @@ test('sends native interactive menus and rejects invalid button limits before Me
   globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(String(init?.body));assert.equal(body.type,'interactive');assert.equal(body.interactive.type,'list');assert.equal(body.interactive.action.sections[0].rows[0].id,'udc:deals');return new Response('{"messages":[{"id":"synthetic-menu"}]}');};
   assert.deepEqual(await sendWhatsAppInteractive('recipient',{type:'list',body:{text:'Your menu'},action:{button:'Open menu',sections:[{title:'Features',rows:[{id:'udc:deals',title:'My deals'}]}]}}),{delivered:true,messageId:'synthetic-menu'});
   await assert.rejects(sendWhatsAppInteractive('recipient',{type:'button',body:{text:'bad'},action:{buttons:Array.from({length:4},()=>({type:'reply' as const,reply:{id:'x',title:'x'}}))}}),/buttons_invalid/);assert.equal(calls,1);
+});
+test('adds an Open menu button to short replies and sends long replies as text',async()=>{
+  configure();const requests:any[]=[];
+  globalThis.fetch=async(_url,init)=>{const body=JSON.parse(String(init?.body));requests.push(body);return new Response('{"messages":[{"id":"synthetic-reply"}]}');};
+  assert.deepEqual(await sendWhatsAppTextWithMenu('recipient','Your account is verified.'),{delivered:true,messageId:'synthetic-reply'});
+  assert.equal(requests[0].type,'interactive');
+  assert.equal(requests[0].interactive.action.buttons[0].reply.id,'udc:menu');
+  assert.equal(requests[0].interactive.action.buttons[0].reply.title,'Open menu');
+  const long='x'.repeat(1025);
+  assert.deepEqual(await sendWhatsAppTextWithMenu('recipient',long),{delivered:true,messageId:'synthetic-reply'});
+  assert.equal(requests[1].type,'text');
+  assert.equal(requests[1].text.body,long);
 });
 test("missing configuration never calls Meta", async () => {
   delete process.env.WHATSAPP_ACCESS_TOKEN;

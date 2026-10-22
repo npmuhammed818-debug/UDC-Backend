@@ -73,7 +73,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudio=async()=> '100 MT copper';",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
-    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});",
+    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
     "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
     "../akif/documentIntelligence": "export const processDocumentIntelligence=async()=>({status:'needs_review'});",
