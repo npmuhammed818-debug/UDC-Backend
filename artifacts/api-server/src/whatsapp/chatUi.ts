@@ -16,7 +16,7 @@ import { publishedFlowId } from './setupFlows';
 import { agentReferralCode } from '../referrals/invitation';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
-const actions=['buyer','seller','agent','menu','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','submit','restart','cancel','edit_profile'] as const;
+const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','submit','restart','cancel','edit_profile'] as const;
 export function chatAction(message:ChatMessage){
   const i=message.interactive;
   if(i?.type==='button_reply'||i?.type==='list_reply'){
@@ -26,25 +26,42 @@ export function chatAction(message:ChatMessage){
   }
   if(i?.type==='nfm_reply')return 'flow';
   const text=message.text?.body?.trim().toLowerCase();
-  const typed:Record<string,string>={'my deals':'deals','show my deals':'deals','verification status':'verification','my profile':'profile','my commissions':'commissions','track referrals':'referrals'};
-  return text ? typed[text] ?? (['menu','help','hi','hello','start','open menu','features'].includes(text)?'menu':null) : null;
+  const typed:Record<string,string>={
+    'my deals':'deals','show my deals':'deals','verification status':'verification',
+    'my profile':'profile','my commissions':'commissions','track referrals':'referrals',
+    'my referrals':'referrals','referral code':'invite','my code':'invite','share code':'invite',
+    'copy code':'invite','more options':'more','all options':'more',
+  };
+  return text ? typed[text] ?? (['more'].includes(text)?'more':['menu','help','hi','hello','start','open menu','features'].includes(text)?'menu':null) : null;
 }
 const row=(id:string,title:string,description?:string)=>({id:'udc:'+id,title,...(description?{description}:{})});
 export function menuForRole(role?:string){
-  const common=[row('profile','My profile','Register or update your company details'),row('verification','Verification status'),row('documents','Upload documents','Company verification PDF'),row('ask','Ask Akif','Trade guidance and learning')];
-  if(role==='buyer')return [row('requirement','Submit requirement'),row('deals','Offers & my deals'),row('meeting','Request a meeting'),...common];
-  if(role==='seller')return [row('offer','Add an offer'),row('deals','Enquiries & my deals'),row('meeting','Request a meeting'),...common];
-  if(role==='agent')return [row('invite','Invite someone'),row('referrals','Track referrals'),row('commissions','My commissions'),row('deals','Assigned deals'),...common.filter(item=>item.id!=='udc:documents')];
+  const common=[row('profile','My profile','View or edit saved details'),row('verification','Verification status'),row('documents','Upload documents','Company verification PDF'),row('ask','Ask Akif','Trade guidance and learning')];
+  if(role==='buyer')return [row('requirement','New requirement'),row('deals','My deals'),row('meeting','Request a meeting'),...common];
+  if(role==='seller')return [row('offer','New product offer'),row('deals','My deals'),row('meeting','Request a meeting'),...common];
+  if(role==='agent')return [row('invite','My referral code','Copy and share your code'),row('referrals','My referrals'),row('commissions','My commissions'),row('deals','Assigned deals'),...common.filter(item=>item.id!=='udc:documents')];
   return [];
+}
+function primaryActions(role:string){
+  const choices=role==='agent'?[['invite','My code'],['referrals','Referrals']]:role==='seller'?[['offer','Add offer'],['deals','My deals']]:[['requirement','Buy products'],['deals','My deals']];
+  return [...choices,['more','More options']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}));
 }
 export async function sendChatHome(phone:string){
   const [user]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status,email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
-  if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppTextWithMenu(phone,'Your account needs UDC review.');return;}
-  const rows=menuForRole(user?.email?user.role:undefined);
+  if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppText(phone,'Your account needs UDC review.');return;}
+  const role=user?.email?user.role:undefined;
   try{
-    if(rows.length)await sendWhatsAppInteractive(phone,{type:'list',body:{text:`Your UDC ${user!.role} menu. Tap an option, or send a message or voice note naturally.`},action:{button:'Open menu',sections:[{title:'Your features',rows}]}});
+    if(role)await sendWhatsAppInteractive(phone,{type:'button',body:{text:'What would you like to do? Choose below, or message Akif normally.'},action:{buttons:primaryActions(role)}});
     else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. How would you like to use UDC?'},action:{buttons:[['buyer','Buy products'],['seller','Sell products'],['agent','Agent services']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
-  }catch{await sendWhatsAppText(phone,rows.length?'The menu is temporarily unavailable. You can still type your trade requirement or offer naturally.':'The menu is temporarily unavailable. Type your requirement, offer, or “Register me as an agent”.');}
+  }catch{await sendWhatsAppText(phone,role?'Menu unavailable. You can still message Akif, or send “My code”, “My deals”, or “More options”.':'Menu unavailable. Send your requirement, offer, or “Register me as an agent”.');}
+}
+async function sendChatMore(phone:string){
+  const [user]=await db.select({role:usersTable.role,status:usersTable.status,email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+  if(!user?.email||['suspended','rejected'].includes(user.status)){await sendChatHome(phone);return;}
+  const rows=menuForRole(user.role);
+  if(!rows.length){await sendChatHome(phone);return;}
+  try{await sendWhatsAppInteractive(phone,{type:'list',body:{text:'All your UDC options in one place.'},action:{button:'Choose option',sections:[{title:'Trade & account',rows}]}});}
+  catch{await sendWhatsAppText(phone,'Options are temporarily unavailable. You can still ask Akif directly.');}
 }
 async function sendForm(phone:string,purpose:FlowPurpose){
   const kind=purpose==='profile_agent'?'agent':purpose.startsWith('profile_')?'profile':purpose as 'buyer'|'seller';
@@ -158,6 +175,7 @@ export async function handleChatUi(phone:string,message:ChatMessage){
     await sendChatHome(phone);return true;
   }
   if(action==='menu'){await sendChatHome(phone);return true;}
+  if(action==='more'){await sendChatMore(phone);return true;}
   if(action!=='flow')await clearGuidedChat(phone);
   if(action==='flow'){await sendWhatsAppTextWithMenu(phone,await submitChatFlow(phone,message.interactive?.nfm_reply?.response_json));return true;}
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
@@ -190,7 +208,7 @@ export async function handleChatUi(phone:string,message:ChatMessage){
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
     if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
-    if(action==='invite'){const code=agentReferralCode(user.id);await sendWhatsAppTextWithMenu(phone,`Share this short code with them: ${code}. After they register as a UDC buyer or seller, they can send “Referral ${code}” here and confirm the introduction. UDC reviews it. No commission is agreed automatically.`);return true;}
+    if(action==='invite'){await sendWhatsAppText(phone,'Share the next message with your buyer or seller. They can send “Referral” followed by your code after joining UDC, then confirm the introduction. UDC reviews it; no commission is agreed automatically.');await sendWhatsAppText(phone,agentReferralCode(user.id));return true;}
     if(action==='referrals'){const rows=await db.select({code:referralsTable.referralCode,status:referralsTable.status}).from(referralsTable).where(eq(referralsTable.agentUserId,user.id)).orderBy(desc(referralsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.code}: ${r.status}`).join('\n'):'No referrals have been recorded for you yet.');return true;}
     const rows=await db.select({amount:commissionsTable.amount,currency:commissionsTable.currency,status:commissionsTable.status}).from(commissionsTable).where(eq(commissionsTable.beneficiaryUserId,user.id)).orderBy(desc(commissionsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.currency} ${r.amount}: ${r.status}`).join('\n'):'No agreed commissions have been recorded for you yet.');return true;
   }
