@@ -188,6 +188,33 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.recorded[0]?.destination, "Jebel Ali");
       assert.equal(state.sent[0].body, state.decision.reply);
     });
+    await t.test("seller can add another product after an offer is saved without reusing the old offer details", async () => {
+      reset();
+      state.decision = { role: "seller", newIntake: true, fields: { product: "Copper cathode", quantity: 100, price: 5900, currency: "USD" }, reply: "model reply" };
+      await message({ text: { body: "I am offering copper cathode, 100 MT at USD 5,900 per MT" } });
+      assert.equal(state.recorded.length, 1);
+      assert.match(state.sent.at(-1).body, /Would you like to add another product\?/);
+      assert.equal(state.saved.draft.awaitingAnotherProduct, true);
+
+      await message({ text: { body: "Yes" } });
+      assert.equal(state.sent.at(-1).body, "Sure. What product would you like to offer?");
+      assert.deepEqual(state.saved.draft, {});
+
+      state.decision = { role: "seller", newIntake: true, fields: { product: "Apples" }, reply: "What quantity can you supply?" };
+      await message({ text: { body: "Apples" } });
+      assert.equal(state.intake.at(-1).role, "seller");
+      assert.equal(state.intake.at(-1).memory, null);
+      assert.deepEqual(state.recorded.map((offer: any) => offer.product), ["copper cathode"]);
+      assert.equal(state.sent.at(-1).body, "What quantity can you supply?");
+    });
+    await t.test("seller can decline to add another product and finish the offer flow", async () => {
+      reset();
+      state.saved = { role: "seller", draft: { product: "Copper cathode", quantity: 100, price: 5900, submittedRecordId: "offer-1", awaitingAnotherProduct: true }, stale: false };
+      await message({ text: { body: "No thanks" } });
+      assert.equal(state.sent.at(-1).body, "Okay. I’ll keep this offer with UDC for review.");
+      assert.equal(state.saved, null);
+      assert.deepEqual(state.intake, []);
+    });
     await t.test("pending users can finish intake; suspended users cannot submit", async () => {
       reset(); rows.usersTable = [{ id: "buyer", phone: "10000000001", status: "pending" }];
       state.decision = { role: "buyer", fields: {}, reply: "Which product do you need?" };
