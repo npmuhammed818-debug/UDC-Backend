@@ -13,7 +13,7 @@ import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
 import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
-import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText } from "../whatsapp/client";
+import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
