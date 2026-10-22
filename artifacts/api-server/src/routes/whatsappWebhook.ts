@@ -21,6 +21,8 @@ import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
+import { sellerOfferReply } from "../akif/sellerOfferReply";
+import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
@@ -1301,7 +1303,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         ? mergeBuyerRequirementDraft(previousDraft, { ...intakeDecision.fields, missingFields: [] }, "")
         : null;
       const sellerDraft = intakeRole === "seller"
-        ? mergeSellerOfferDraft(previousDraft, { ...intakeDecision.fields, missingFields: [] })
+        ? mergeSellerOfferDraft(
+            previousDraft,
+            { ...intakeDecision.fields, ...Object.fromEntries(Object.entries(triageSellerOffer(message.text.body)).filter(([key, value]) => key !== "missingFields" && value !== undefined)), missingFields: [] },
+          )
         : null;
 
       const record = previousDraft?.submittedRecordId ? null : sellerDraft
@@ -1344,6 +1349,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             })
           : null;
 
+      const reply = sellerDraft && !previousDraft?.submittedRecordId && (sellerDraft.missingFields.length > 0 || record)
+        ? sellerOfferReply(sellerDraft)
+        : intakeDecision.reply;
+
       if (message.from) {
         const draftForStorage = sellerDraft
           ? {
@@ -1385,14 +1394,13 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             ...draftForStorage,
             submittedRecordId: record?.id ?? previousDraft?.submittedRecordId,
             conversation: [...(previousDraft?.conversation ?? []), {
-              message: message.text.body, reply: intakeDecision.reply,
+              message: message.text.body, reply,
             }].slice(-12),
           },
           providerMessageId: message.id,
         });
       }
 
-      const reply = intakeDecision.reply;
       const delivery = await deliverWhatsAppReply(message.from, reply);
 
       if (!delivery.delivered) {

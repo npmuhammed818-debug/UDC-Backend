@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
 import { intakeDecisionHint } from "./decisionModels";
+import { triageSellerOffer } from "./sellerOfferTriage";
 
 // Some providers quote extracted numbers despite the JSON-number instruction.
 // Normalize only plain decimal values or correctly grouped thousands, never units,
@@ -81,6 +82,12 @@ export async function interpretIntakeConversation(input: {
   role: "buyer" | "seller";
   memory: Record<string, unknown> | null;
 }) {
+  const deterministicSellerFields = () => {
+    const parsed = triageSellerOffer(input.message);
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([key, value]) => key !== "missingFields" && value !== undefined),
+    ) as Record<string, unknown>;
+  };
   try {
     const explicit = input.role === "buyer" && input.memory && !input.memory.submittedRecordId
       ? explicitBuyerPriceFollowup(input.message) : null;
@@ -114,9 +121,24 @@ export async function interpretIntakeConversation(input: {
       ].join(" "),
       15_000,
     );
-    return parseIntakeConversation(content);
+    const parsed = parseIntakeConversation(content);
+    if (!parsed || input.role !== "seller") return parsed;
+    // Preserve obvious seller-stated facts even when the model omits them, e.g.
+    // “10k USD per MT”. Structured facts from the current message take priority
+    // over extraction guesses; the draft merge keeps facts from earlier turns.
+    return {
+      ...parsed,
+      role: "seller" as const,
+      fields: { ...parsed.fields, ...deterministicSellerFields() },
+    };
   } catch {
     console.warn("AKIF intake unavailable", { reason: "model_request_failed" });
+    if (input.role === "seller") {
+      const fields = deterministicSellerFields();
+      if (Object.keys(fields).length) {
+        return { role: "seller" as const, fields, newIntake: !input.memory, reply: "" };
+      }
+    }
     return null;
   }
 }
