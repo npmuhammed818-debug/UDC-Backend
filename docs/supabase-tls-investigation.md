@@ -30,17 +30,37 @@ plaintext only for loopback test databases. Its existing local TLS regressions
 exercise trusted/untrusted chains and hostname rejection, but cannot establish
 compatibility with this project's actual endpoint or CA.
 
-The integration environment has no Supabase project URL/database binding. The
-actual database/pooler hostname, port, network reachability and certificate issuer
-are therefore **NOT YET TESTED**. No host, CA or production connection change is
-being guessed. Default OS trust may be insufficient for a project-specific CA;
-strict failure is preferable to silently accepting an untrusted server.
+## Owner-confirmed direct endpoint follow-up
 
-Next: obtain only the public hostname/port and official project CA if required;
-perform a PostgreSQL STARTTLS handshake with chain and hostname verification and
-no database authentication or SQL. Then validate #123 separately against a
-non-production database using the same endpoint class, CA and client library.
-Report DNS/IPv4/IPv6, certificate identity/trust/expiry and authentication separately.
+The owner confirmed `db.aykylupvkdrnoivmktfg.supabase.co:5432` as the direct
+endpoint and authorized only a read-only certificate check. This is **not** a
+confirmed production pooler endpoint.
+
+The following certificate-only probe was attempted, without credentials or SQL:
+
+```sh
+openssl s_client -starttls postgres \
+  -connect db.aykylupvkdrnoivmktfg.supabase.co:5432 \
+  -servername db.aykylupvkdrnoivmktfg.supabase.co \
+  -verify_hostname db.aykylupvkdrnoivmktfg.supabase.co \
+  -verify_return_error -brief < /dev/null
+```
+
+**BLOCKED — direct endpoint:** local DNS returned `EAI_AGAIN` / “Temporary failure
+in name resolution”; OpenSSL exited before connecting. No peer certificate was
+received, so neither trust, identity nor expiry can be judged. This is an
+environment/reachability failure, not evidence of an invalid server certificate.
+
+**BLOCKED — production transaction pooler:** port 6543 has been used, but its exact
+hostname is unconfirmed. Do not assume the direct host is the pooler or guess a
+pooler cluster name. No production pooler handshake was attempted.
+
+Next: repeat the strict direct certificate-only probe from an environment with
+working DNS and endpoint reachability; obtain the official project CA if required.
+Obtain the actual production pooler hostname before testing it separately. Then
+validate #123 against a non-production database using the same endpoint class,
+CA and client library. Report DNS/IPv4/IPv6, certificate identity/trust/expiry and
+authentication separately. Existing local TLS tests cannot substitute for this.
 Never use `rejectUnauthorized:false`, `sslmode=no-verify`, `NODE_TLS_REJECT_UNAUTHORIZED=0`
 or an SSL-enforcement change as a workaround. Owner approval is required for any
 production configuration or deployment change.
