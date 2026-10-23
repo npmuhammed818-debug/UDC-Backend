@@ -1,5 +1,6 @@
 import { extractParagraph } from './paragraphIntake';
-import { createHmac, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
 import { db, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { z } from 'zod/v4';
@@ -14,7 +15,7 @@ export function guidedQuestions(purpose:FlowPurpose):Question[]{
   if(purpose==='buyer')return [q('product','What product do you need?'),q('quantity','How many metric tonnes (MT) do you need?',{kind:'positive'}),q('specification','What grade or specification do you need?',{optional:true,max:2000}),q('destination','What is the destination port?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('target_price','What is your target price in USD per MT?',{kind:'positive',optional:true}),q('delivery_time','When do you need delivery?',{optional:true,max:500}),q('payment_terms','What payment terms do you prefer?',{optional:true,max:2000})];
   return [q('product','What product can you supply?'),q('quantity','What quantity can you supply?',{kind:'positive'}),q('unit','What unit is that quantity and price based on? (for example, MT, kg or pieces)',{max:24}),q('specification','What grade or specification can you supply?',{optional:true,max:2000}),q('price','What price are you offering?',{kind:'positive'}),q('currency','What currency is that price in? (for example, USD, AED or EUR)',{max:3}),q('origin','What is the origin country?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('availability','When is the product available for delivery?',{optional:true,max:500}),q('destination','What is the delivery port or named place? You can skip it if the buyer will choose the destination.',{optional:true,max:120}),q('payment_terms','What payment terms do you propose?',{optional:true,max:2000})];
 }
-function phoneHash(phone:string){const key=process.env.WHATSAPP_APP_SECRET;if(!key||key.length<16)throw new Error('chat_draft_signing_unavailable');return createHmac('sha256',key).update('UDC_GUIDED_CHAT_V1\0'+phone).digest('hex');}
+const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
   if(data.__paragraph==='1'){
