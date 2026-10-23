@@ -179,6 +179,68 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       const result=await m.submitChatFlow(sellerPhone,JSON.stringify({flow_token:m.issueFlowToken(sellerPhone,'seller'),product:'Test goods',quantity:'100',price:'490',incoterm:'EXW',destination:'Agreed warehouse',payment_terms:'30% advance, 70% on delivery'}));
       assert.match(result,/saved/);assert.equal(rows.sellerListingsTable.at(-1).paymentTerms,'30% advance, 70% on delivery');assert.equal(rows.sellerListingsTable.at(-1).status,'pending_admin_review');assert.equal(rows.buyerRequestsTable.length,before);
     });
+    await t.test('fresh WhatsApp buyer completes registration then one private requirement without live customer writes',async()=>{
+      const buyerPhone='10000000077';
+      const originalFlowId=state.flowId;
+      const beforeUsers=rows.usersTable.length;
+      const beforeCompanies=rows.companiesTable.length;
+      const beforeRequests=rows.buyerRequestsTable.length;
+      const beforeDeals=rows.dealsTable.length;
+      const beforeSellerOffers=rows.sellerListingsTable.length;
+      try{
+        // A missing published Meta Flow should still give a fully working WhatsApp
+        // fallback; no credentials or actual Meta messages are used.
+        state.flowId=null;
+        assert.equal(await m.handleChatUi(buyerPhone,{text:{body:'Buyer'}}),true);
+        assert.equal(rows.usersTable.length,beforeUsers);
+        assert.equal(rows.whatsappChatSessionsTable.length,1);
+        assert.match(last(),/full name/i);
+        const profile={id:'new-buyer-profile',text:{body:'full_name: Fresh Synthetic Buyer; email: freshbuyer@example.invalid; company_name: Synthetic Import Test Ltd; country: India'}};
+        await m.handleChatUi(buyerPhone,profile);
+        assert.equal(rows.usersTable.length,beforeUsers,'registration must wait for explicit confirmation');
+        assert.equal(rows.whatsappChatSessionsTable.length,1);
+        assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:submit');
+        await m.handleChatUi(buyerPhone,{...ui('submit'),id:'new-buyer-profile-submit'});
+        const buyer=rows.usersTable.find((u:any)=>u.phone===buyerPhone);
+        assert.ok(buyer,'fresh buyer must be persisted');
+        assert.equal(buyer.role,'buyer');
+        assert.equal(buyer.status,'pending','registration must not approve a buyer');
+        assert.equal(buyer.email,'freshbuyer@example.invalid');
+        assert.equal(rows.usersTable.length,beforeUsers+1);
+        const company=rows.companiesTable.find((c:any)=>c.ownerUserId===buyer.id);
+        assert.ok(company);
+        assert.equal(company.verificationStatus,'pending');
+        assert.equal(rows.companiesTable.length,beforeCompanies+1);
+        assert.equal(rows.whatsappChatSessionsTable.length,0);
+        assert.equal(rows.buyerRequestsTable.length,beforeRequests);
+
+        // A pending buyer may privately submit requirements without being
+        // falsely marked verified or immediately matched to other traders.
+        await m.handleChatUi(buyerPhone,ui('requirement'));
+        assert.equal(rows.whatsappChatSessionsTable.length,1);
+        assert.match(last(),/product/i);
+        await m.handleChatUi(buyerPhone,{id:'new-buyer-trade',text:{body:'product: Copper cathode; quantity: 100; destination: Jebel Ali; incoterm: CIF; target_price: 5900; specification: Grade A'}});
+        assert.equal(rows.buyerRequestsTable.length,beforeRequests,'incomplete/unconfirmed drafts are never submitted');
+        assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:submit');
+        await m.handleChatUi(buyerPhone,{...ui('submit'),id:'new-buyer-trade-submit'});
+        assert.equal(rows.buyerRequestsTable.length,beforeRequests+1);
+        const requirement=rows.buyerRequestsTable.at(-1);
+        assert.equal(requirement.buyerUserId,buyer.id);
+        assert.equal(requirement.quantity,'100');
+        assert.equal(requirement.unit,'MT');
+        assert.equal(requirement.destination,'Jebel Ali');
+        assert.equal(requirement.preferredIncoterm,'CIF');
+        assert.equal(requirement.targetPrice,'5900');
+        assert.equal(requirement.currency,'USD');
+        assert.equal(requirement.status,'pending_admin_review');
+        assert.equal(rows.usersTable.find((u:any)=>u.phone===buyerPhone)?.status,'pending');
+        assert.equal(rows.dealsTable.length,beforeDeals,'a pending requirement must not create a live deal');
+        assert.equal(rows.sellerListingsTable.length,beforeSellerOffers);
+        assert.equal(rows.whatsappChatSessionsTable.length,0);
+        await m.handleChatUi(buyerPhone,{...ui('submit'),id:'new-buyer-trade-submit'});
+        assert.equal(rows.buyerRequestsTable.length,beforeRequests+1,'duplicate confirmation must not create another requirement');
+      }finally{state.flowId=originalFlowId;}
+    });
     await t.test('guided agent registration accepts normal email without a customer website',async()=>{
       const agentPhone='10000000009';await m.handleChatUi(agentPhone,ui('agent'));await m.handleChatUi(agentPhone,{id:'a-name',text:{body:'full name: Synthetic New Agent'}});await m.handleChatUi(agentPhone,{id:'a-email',text:{body:'email: newagent@gmail.com'}});
       assert.equal(rows.usersTable.some((u:any)=>u.phone===agentPhone),false);
