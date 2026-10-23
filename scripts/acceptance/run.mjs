@@ -13,7 +13,7 @@ const groups = [
   ['Referrals and commissions', ['agent-referral-chain', 'referral-invitation', 'auth-registration', 'commission-amount', 'admin-meetings'], 'Referral attribution, commission calculation and payout recording need end-to-end acceptance.'],
   ['Meetings', ['admin-meetings'], 'Real participant meeting requests, video delivery and in-person coordination need live acceptance.'],
   ['Post-deal operations', ['payment-policy', 'payment-milestone', 'admin-meetings'], 'Shipment evidence, customs, delivery, feedback and commission distribution need workflow acceptance.'],
-  ['Admin control and analytics', ['admin-meetings'], 'All admin route access controls are covered; reports, announcements and analytics still need workflow acceptance.'],
+  ['Admin control and analytics', ['admin-meetings', 'database-tls'], 'All admin route access controls are covered; reports, announcements and analytics still need workflow acceptance.'],
 ];
 const available = new Set((await readdir(path.join(api, 'test'))).filter(n => n.endsWith('.test.ts')));
 const assigned = new Set(groups.flatMap(([, names]) => names.map(n => `${n}.test.ts`)));
