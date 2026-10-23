@@ -31,6 +31,7 @@ export function chatAction(message:ChatMessage){
     'my profile':'profile','my commissions':'commissions','track referrals':'referrals',
     'my referrals':'referrals','referral code':'invite','my code':'invite','share code':'invite',
     'copy code':'invite','more options':'more','all options':'more',
+    'buyer':'buyer','seller':'seller','agent':'agent',
   };
   // A menu is shown ONLY after an explicit menu request or menu-button selection.
   // Greetings, 'help' and ordinary chat must remain conversations with Akif.
@@ -54,8 +55,8 @@ export async function sendChatHome(phone:string){
   const role=user?.email?user.role:undefined;
   try{
     if(role)await sendWhatsAppInteractive(phone,{type:'button',body:{text:'What would you like to do? Choose below, or message Akif normally.'},action:{buttons:primaryActions(role)}});
-    else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. How would you like to use UDC?'},action:{buttons:[['buyer','Buy products'],['seller','Sell products'],['agent','Agent services']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
-  }catch{await sendWhatsAppText(phone,role?'Menu unavailable. You can still message Akif, or send “My code”, “My deals”, or “More options”.':'Menu unavailable. Send your requirement, offer, or “Register me as an agent”.');}
+    else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. Are you a buyer, seller or agent? Please choose below.'},action:{buttons:[['buyer','Buyer'],['seller','Seller'],['agent','Agent']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
+  }catch{await sendWhatsAppText(phone,role?'Menu unavailable. You can still message Akif, or send “My code”, “My deals”, or “More options”.':'Role buttons unavailable. Reply Buyer, Seller or Agent to continue registration, or type Menu to try again.');}
 }
 async function sendChatMore(phone:string){
   const [user]=await db.select({role:usersTable.role,status:usersTable.status,email:usersTable.email}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);

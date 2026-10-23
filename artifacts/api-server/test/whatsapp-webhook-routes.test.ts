@@ -65,7 +65,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   state.db.transaction = async (callback: any) => callback(state.db);
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
-    "../whatsapp/chatUi": "export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};",
+    "../whatsapp/chatUi": "export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};export const sendChatHome=async(phone)=>{s.homeCalls=(s.homeCalls||0)+1;};",
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
@@ -106,7 +106,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
-    state.dealCalls = 0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
+    state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
   };
   function seedDeal() {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
@@ -137,6 +137,14 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.doesNotMatch(state.sent.at(-1).body,/couldn.t read|PRIVATE/);state.guidanceFailure=false;
       state.privacyReply='Reply AGREE';state.guidanceCalls=[];
       await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
+    });
+    await t.test("accepting consent opens role selection without sending AGREE to trade intelligence", async () => {
+      reset();state.privacyReply={kind:"consent_accepted"};
+      assert.equal((await message({text:{body:"AGREE"}})).status,200);
+      assert.equal(state.homeCalls,1);
+      assert.deepEqual(state.intake,[]);
+      assert.deepEqual(state.sent,[]);
+      assert.deepEqual(state.recorded,[]);
     });
     await t.test("invalid signatures and consent gates cannot reach trade processing", async () => {
       reset(); assert.equal((await message({ text: { body: "hello" } }, false)).status, 401);
