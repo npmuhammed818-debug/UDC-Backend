@@ -33,6 +33,11 @@ import type {
   DocumentEnvelope,
   DocumentInput,
   DocumentsEnvelope,
+  EmailAuthRequestEnvelope,
+  EmailCodeInput,
+  EmailOwnershipStatus,
+  EmailVerifiedEnvelope,
+  EmptyEmailAuthInput,
   HealthStatus,
   ListingEnvelope,
   ListingInput,
@@ -47,6 +52,8 @@ import type {
   MessagesEnvelope,
   NotificationEnvelope,
   NotificationsEnvelope,
+  PasswordRecoveryConfirm,
+  PasswordRecoveryRequest,
   ProductEnvelope,
   ProductInput,
   ProductsEnvelope,
@@ -494,6 +501,337 @@ export function useGetCurrentUser<TData = Awaited<ReturnType<typeof getCurrentUs
 
 
 
+
+export const getGetEmailOwnershipStatusUrl = () => {
+
+
+
+
+  return `/api/auth/email/status`
+}
+
+export const getEmailOwnershipStatus = async ( options?: Parameters<typeof customFetch>[1]): Promise<EmailOwnershipStatus> => {
+
+  return customFetch<EmailOwnershipStatus>(getGetEmailOwnershipStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetEmailOwnershipStatusQueryKey = () => {
+    return [
+    `/api/auth/email/status`
+    ] as const;
+    }
+
+
+export const getGetEmailOwnershipStatusQueryOptions = <TData = Awaited<ReturnType<typeof getEmailOwnershipStatus>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmailOwnershipStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetEmailOwnershipStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmailOwnershipStatus>>> = ({ signal }) => getEmailOwnershipStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEmailOwnershipStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetEmailOwnershipStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getEmailOwnershipStatus>>>
+export type GetEmailOwnershipStatusQueryError = ErrorType<void>
+
+
+
+export function useGetEmailOwnershipStatus<TData = Awaited<ReturnType<typeof getEmailOwnershipStatus>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getEmailOwnershipStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetEmailOwnershipStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRequestEmailVerificationUrl = () => {
+
+
+
+
+  return `/api/auth/email/verification/request`
+}
+
+export const requestEmailVerification = async (emptyEmailAuthInput: EmptyEmailAuthInput, options?: Parameters<typeof customFetch>[1]): Promise<EmailAuthRequestEnvelope> => {
+
+  return customFetch<EmailAuthRequestEnvelope>(getRequestEmailVerificationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(emptyEmailAuthInput)
+  }
+);}
+
+
+
+
+
+export const getRequestEmailVerificationMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailVerification>>, TError,{data: BodyType<EmptyEmailAuthInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestEmailVerification>>, TError,{data: BodyType<EmptyEmailAuthInput>}, TContext> => {
+
+const mutationKey = ['requestEmailVerification'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestEmailVerification>>, {data: BodyType<EmptyEmailAuthInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestEmailVerification(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestEmailVerificationMutationResult = NonNullable<Awaited<ReturnType<typeof requestEmailVerification>>>
+    export type RequestEmailVerificationMutationBody = BodyType<EmptyEmailAuthInput>
+    export type RequestEmailVerificationMutationError = ErrorType<void>
+
+    export const useRequestEmailVerification = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestEmailVerification>>, TError,{data: BodyType<EmptyEmailAuthInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestEmailVerification>>,
+        TError,
+        {data: BodyType<EmptyEmailAuthInput>},
+        TContext
+      > => {
+      return useMutation(getRequestEmailVerificationMutationOptions(options));
+    }
+
+export const getConfirmEmailVerificationUrl = () => {
+
+
+
+
+  return `/api/auth/email/verification/confirm`
+}
+
+export const confirmEmailVerification = async (emailCodeInput: EmailCodeInput, options?: Parameters<typeof customFetch>[1]): Promise<EmailVerifiedEnvelope> => {
+
+  return customFetch<EmailVerifiedEnvelope>(getConfirmEmailVerificationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(emailCodeInput)
+  }
+);}
+
+
+
+
+
+export const getConfirmEmailVerificationMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailVerification>>, TError,{data: BodyType<EmailCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmEmailVerification>>, TError,{data: BodyType<EmailCodeInput>}, TContext> => {
+
+const mutationKey = ['confirmEmailVerification'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmEmailVerification>>, {data: BodyType<EmailCodeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmEmailVerification(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmEmailVerificationMutationResult = NonNullable<Awaited<ReturnType<typeof confirmEmailVerification>>>
+    export type ConfirmEmailVerificationMutationBody = BodyType<EmailCodeInput>
+    export type ConfirmEmailVerificationMutationError = ErrorType<void>
+
+    export const useConfirmEmailVerification = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmEmailVerification>>, TError,{data: BodyType<EmailCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof confirmEmailVerification>>,
+        TError,
+        {data: BodyType<EmailCodeInput>},
+        TContext
+      > => {
+      return useMutation(getConfirmEmailVerificationMutationOptions(options));
+    }
+
+export const getRequestPasswordRecoveryUrl = () => {
+
+
+
+
+  return `/api/auth/password/recovery/request`
+}
+
+export const requestPasswordRecovery = async (passwordRecoveryRequest: PasswordRecoveryRequest, options?: Parameters<typeof customFetch>[1]): Promise<EmailAuthRequestEnvelope> => {
+
+  return customFetch<EmailAuthRequestEnvelope>(getRequestPasswordRecoveryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(passwordRecoveryRequest)
+  }
+);}
+
+
+
+
+
+export const getRequestPasswordRecoveryMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestPasswordRecovery>>, TError,{data: BodyType<PasswordRecoveryRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof requestPasswordRecovery>>, TError,{data: BodyType<PasswordRecoveryRequest>}, TContext> => {
+
+const mutationKey = ['requestPasswordRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof requestPasswordRecovery>>, {data: BodyType<PasswordRecoveryRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  requestPasswordRecovery(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RequestPasswordRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof requestPasswordRecovery>>>
+    export type RequestPasswordRecoveryMutationBody = BodyType<PasswordRecoveryRequest>
+    export type RequestPasswordRecoveryMutationError = ErrorType<void>
+
+    export const useRequestPasswordRecovery = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof requestPasswordRecovery>>, TError,{data: BodyType<PasswordRecoveryRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof requestPasswordRecovery>>,
+        TError,
+        {data: BodyType<PasswordRecoveryRequest>},
+        TContext
+      > => {
+      return useMutation(getRequestPasswordRecoveryMutationOptions(options));
+    }
+
+export const getConfirmPasswordRecoveryUrl = () => {
+
+
+
+
+  return `/api/auth/password/recovery/confirm`
+}
+
+export const confirmPasswordRecovery = async (passwordRecoveryConfirm: PasswordRecoveryConfirm, options?: Parameters<typeof customFetch>[1]): Promise<SuccessEnvelope> => {
+
+  return customFetch<SuccessEnvelope>(getConfirmPasswordRecoveryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(passwordRecoveryConfirm)
+  }
+);}
+
+
+
+
+
+export const getConfirmPasswordRecoveryMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmPasswordRecovery>>, TError,{data: BodyType<PasswordRecoveryConfirm>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmPasswordRecovery>>, TError,{data: BodyType<PasswordRecoveryConfirm>}, TContext> => {
+
+const mutationKey = ['confirmPasswordRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmPasswordRecovery>>, {data: BodyType<PasswordRecoveryConfirm>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  confirmPasswordRecovery(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmPasswordRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof confirmPasswordRecovery>>>
+    export type ConfirmPasswordRecoveryMutationBody = BodyType<PasswordRecoveryConfirm>
+    export type ConfirmPasswordRecoveryMutationError = ErrorType<void>
+
+    export const useConfirmPasswordRecovery = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmPasswordRecovery>>, TError,{data: BodyType<PasswordRecoveryConfirm>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof confirmPasswordRecovery>>,
+        TError,
+        {data: BodyType<PasswordRecoveryConfirm>},
+        TContext
+      > => {
+      return useMutation(getConfirmPasswordRecoveryMutationOptions(options));
+    }
 
 export const getUpdateProfileUrl = () => {
 

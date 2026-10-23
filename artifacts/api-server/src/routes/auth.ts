@@ -95,6 +95,7 @@ router.post("/auth/register", async (req, res) => {
           fullName: input.full_name,
           email: input.email,
           passwordHash,
+          passwordRecoveryEnabled: true,
           role: input.role,
           status: "pending",
         })
@@ -159,27 +160,30 @@ router.post("/auth/login", async (req, res) => {
 
   try {
     const input = loginSchema.parse(req.body);
-    const [user] = await db
-      .select()
-      .from(usersTable)
-      .where(sql`lower(${usersTable.email}) = ${input.email}`)
-      .limit(1);
-
-    if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
+    // Serialize password proof/session creation with password reset. Otherwise a
+    // login verified against an old hash could create a session after revocation.
+    const result = await db.transaction(async tx => {
+      const [user] = await tx.select().from(usersTable)
+        .where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1).for("update");
+      if (!user || !(await verifyPassword(input.password, user.passwordHash))) return { kind: "invalid" as const };
+      if (["suspended", "rejected"].includes(user.status)) return { kind: "blocked" as const };
+      // Successful password proof safely identifies legacy password accounts;
+      // random WhatsApp-only hashes are never inferred to be recovery credentials.
+      await tx.update(usersTable).set({ passwordRecoveryEnabled: true }).where(eq(usersTable.id,user.id));
+      return { kind: "authenticated" as const, userId: user.id, ...await createSession(user.id,tx) };
+    });
+    if (result.kind === "invalid") {
       recordAuthFailure(rateKey);
       res.status(401).json({ error: "invalid_email_or_password" });
       return;
     }
-
-    if (user.status === "suspended") {
+    if (result.kind === "blocked") {
       res.status(403).json({ error: "account_suspended" });
       return;
     }
-
     clearAuthFailures(rateKey);
-    const { token, expiresAt } = await createSession(user.id);
-    setSessionCookie(res, token, expiresAt);
-    res.json({ user: await getSafeUserProfile(user.id) });
+    setSessionCookie(res, result.token, result.expiresAt);
+    res.json({ user: await getSafeUserProfile(result.userId) });
   } catch (error) {
     if (validationResponse(res, error)) return;
     res.status(500).json({ error: "login_failed" });

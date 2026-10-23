@@ -13,6 +13,20 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+        env:
+          POSTGRES_USER: udc_dev
+          POSTGRES_DB: udc_qa_registration
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U udc_dev -d udc_qa_registration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,10 +37,143 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run release:verify
+      - name: Verify backend release and retain diagnostics
+        id: release
+        run: |
+          mkdir -p .acceptance-results
+          set -o pipefail
+          pnpm run release:verify 2>&1 | tee .acceptance-results/release.log
+      - name: Annotate release failures for review
+        if: failure() && steps.release.outcome == 'failure'
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const tail = readFileSync('.acceptance-results/release.log', 'utf8').slice(-24000);
+          const escaped = tail.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+          console.log(`::error title=Backend release diagnostic::${escaped}`);
+          JS
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated worker and extractor test dependencies
+        run: >-
+          python -m pip install 'pytest>=8,<9' 'fastapi==0.115.14'
+          'pydantic>=2.11,<3' 'httpx>=0.28,<0.29'
+          'pandas>=2.2,<3' 'rapidfuzz>=3.14,<4'
+          'comtradeapicall==1.3.2' requests
+          -r services/document_extractor/requirements.txt
+      - name: Run all worker and document extractor regression tests
+        run: python -m pytest services/akif-worker/tests services/document_extractor/tests -q --junitxml=.acceptance-results/python.xml
+        env:
+          PYTHONPATH: services/akif-worker:.
+      - name: Initialize isolated WhatsApp QA database
+        run: pnpm --filter @workspace/db run push
+        env:
+          SUPABASE_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
+          SUPABASE_DIRECT_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
+      - name: Verify signed WhatsApp registration, trade intake, retries and roles with real PostgreSQL
+        run: |
+          set -o pipefail
+          node artifacts/api-server/test/integration/whatsapp-buyer-postgres.mjs 2>&1 | tee .acceptance-results/whatsapp-postgres.log
+        env:
+          UDC_QA_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
       - run: pnpm run acceptance
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sow-regression-report
           path: .acceptance-results/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  email-auth-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+        env:
+          POSTGRES_USER: udc_dev
+          POSTGRES_DB: udc_qa_email_auth
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U udc_dev -d udc_qa_email_auth"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Initialize dedicated fictional-account schema
+        run: pnpm --filter @workspace/db run push
+        env:
+          SUPABASE_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_email_auth?sslmode=disable
+          SUPABASE_DIRECT_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_email_auth?sslmode=disable
+      - name: Verify email ownership and recovery with mocked mail and real PostgreSQL
+        run: |
+          set -o pipefail
+          node artifacts/api-server/test/integration/email-auth-postgres.mjs 2>&1 | tee email-auth-postgres.log
+        env:
+          UDC_EMAIL_QA_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_email_auth?sslmode=disable
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: email-auth-postgres-report
+          path: email-auth-postgres.log
+
+  email-migration-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+        env:
+          POSTGRES_USER: udc_migration_test
+          POSTGRES_DB: udc_qa_migration_review
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U udc_migration_test -d udc_qa_migration_review"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Review exact migration on disposable legacy schema and restricted roles
+        id: migration_review
+        run: |
+          set -o pipefail
+          node artifacts/api-server/test/integration/email-migration-review.mjs 2>&1 | tee email-migration-review.log
+        env:
+          UDC_MIGRATION_QA_DATABASE_URL: postgresql://udc_migration_test@127.0.0.1:5432/udc_qa_migration_review?sslmode=disable
+      - name: Annotate isolated migration failures
+        if: failure() && steps.migration_review.outcome == 'failure'
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const text = readFileSync('email-migration-review.log','utf8').slice(-16000);
+          console.log('::error title=Isolated migration review::'+text.replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'));
+          JS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: email-migration-review
+          path: email-migration-review.log

@@ -18,6 +18,9 @@ export interface User {
   email?: string | null;
   /** @nullable */
   fullName?: string | null;
+  emailVerified?: boolean;
+  /** @nullable */
+  emailVerifiedAt?: string | null;
   role: string;
   status: string;
   [key: string]: unknown;
@@ -158,7 +161,10 @@ export const RegisterInputRole = {
 export interface RegisterInput {
   full_name: string;
   email: string;
-  /** @minLength 12 */
+  /**
+     * @minLength 12
+     * @maxLength 128
+     */
   password: string;
   role: RegisterInputRole;
   /** @maxLength 120 */
@@ -172,7 +178,64 @@ export interface LoginInput {
   password: string;
 }
 
-export interface ProfileUpdate { [key: string]: unknown }
+export interface EmailOwnershipStatus {
+  emailVerified: boolean;
+  passwordRecoveryEnabled: boolean;
+}
+
+export interface EmailVerifiedEnvelope {
+  emailVerified: boolean;
+}
+
+export type EmailAuthRequestEnvelopeExpiresInSeconds = typeof EmailAuthRequestEnvelopeExpiresInSeconds[keyof typeof EmailAuthRequestEnvelopeExpiresInSeconds];
+
+
+export const EmailAuthRequestEnvelopeExpiresInSeconds = {
+  NUMBER_600: 600,
+} as const;
+
+export interface EmailAuthRequestEnvelope {
+  message: string;
+  challengeId: string;
+  expiresInSeconds: EmailAuthRequestEnvelopeExpiresInSeconds;
+}
+
+export interface EmptyEmailAuthInput { [key: string]: unknown }
+
+export interface EmailCodeInput {
+  challengeId: string;
+  /** @pattern ^[0-9]{8}$ */
+  code: string;
+}
+
+export interface PasswordRecoveryRequest {
+  /** @maxLength 254 */
+  email: string;
+}
+
+export interface PasswordRecoveryConfirm {
+  /** @maxLength 254 */
+  email: string;
+  challengeId: string;
+  /** @pattern ^[0-9]{8}$ */
+  code: string;
+  /**
+     * Uppercase
+     * @minLength 12
+     * @maxLength 128
+     */
+  password: string;
+}
+
+export interface ProfileUpdate {
+  full_name?: string;
+  email?: string;
+  /**
+     * Required when changing a password-enabled account email
+     * @maxLength 1024
+     */
+  current_password?: string;
+}
 
 export interface CompanyInput {
   company_name: string;

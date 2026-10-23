@@ -97,6 +97,127 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserEnvelope"
+  /auth/email/status:
+    get:
+      operationId: getEmailOwnershipStatus
+      tags: [auth]
+      responses:
+        "200":
+          description: Operation completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailOwnershipStatus"
+        "400":
+          description: Invalid input or invalid/expired code
+        "401":
+          description: Authentication required
+        "403":
+          description: Account unavailable
+        "429":
+          description: Rate limited; Retry-After supplied
+        "503":
+          description: Email authentication unavailable
+  /auth/email/verification/request:
+    post:
+      operationId: requestEmailVerification
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyEmailAuthInput"
+      responses:
+        "202":
+          description: Generic eligible request response; no account existence disclosure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailAuthRequestEnvelope"
+        "400":
+          description: Invalid input or invalid/expired code
+        "401":
+          description: Authentication required
+        "403":
+          description: Account unavailable
+        "429":
+          description: Rate limited; Retry-After supplied
+        "503":
+          description: Email authentication unavailable
+  /auth/email/verification/confirm:
+    post:
+      operationId: confirmEmailVerification
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailCodeInput"
+      responses:
+        "200":
+          description: Operation completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailVerifiedEnvelope"
+        "400":
+          description: Invalid input or invalid/expired code
+        "401":
+          description: Authentication required
+        "403":
+          description: Account unavailable
+        "429":
+          description: Rate limited; Retry-After supplied
+        "503":
+          description: Email authentication unavailable
+  /auth/password/recovery/request:
+    post:
+      operationId: requestPasswordRecovery
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordRecoveryRequest"
+      responses:
+        "202":
+          description: Generic eligible request response; no account existence disclosure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailAuthRequestEnvelope"
+        "400":
+          description: Invalid input or invalid/expired code
+        "429":
+          description: Rate limited; Retry-After supplied
+        "503":
+          description: Email authentication unavailable
+  /auth/password/recovery/confirm:
+    post:
+      operationId: confirmPasswordRecovery
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordRecoveryConfirm"
+      responses:
+        "200":
+          description: Operation completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope"
+        "400":
+          description: Invalid input or invalid/expired code
+        "429":
+          description: Rate limited; Retry-After supplied
+        "503":
+          description: Email authentication unavailable
   /profile:
     put:
       operationId: updateProfile
@@ -475,6 +596,8 @@ components:
         id: { type: string }
         email: { type: ["string", "null"] }
         fullName: { type: ["string", "null"] }
+        emailVerified: { type: boolean }
+        emailVerifiedAt: { type: ["string", "null"], format: date-time }
         role: { type: string }
         status: { type: string }
       required: [id, role, status]
@@ -596,7 +719,7 @@ components:
       properties:
         full_name: { type: string }
         email: { type: string }
-        password: { type: string, minLength: 12 }
+        password: { type: string, minLength: 12, maxLength: 128 }
         role: { type: string, enum: [buyer, seller, agent] }
         referral_token: { type: string, maxLength: 120 }
         accepted_terms: { type: boolean, enum: [true] }
@@ -607,9 +730,56 @@ components:
       properties:
         email: { type: string }
         password: { type: string }
+    EmailOwnershipStatus:
+      type: object
+      required: [emailVerified, passwordRecoveryEnabled]
+      properties:
+        emailVerified: { type: boolean }
+        passwordRecoveryEnabled: { type: boolean }
+    EmailVerifiedEnvelope:
+      type: object
+      required: [emailVerified]
+      properties:
+        emailVerified: { type: boolean }
+    EmailAuthRequestEnvelope:
+      type: object
+      required: [message, challengeId, expiresInSeconds]
+      properties:
+        message: { type: string }
+        challengeId: { type: string, format: uuid }
+        expiresInSeconds: { type: integer, enum: [600] }
+    EmptyEmailAuthInput:
+      type: object
+      additionalProperties: false
+    EmailCodeInput:
+      type: object
+      additionalProperties: false
+      required: [challengeId, code]
+      properties:
+        challengeId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[0-9]{8}$' }
+    PasswordRecoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+    PasswordRecoveryConfirm:
+      type: object
+      additionalProperties: false
+      required: [email, challengeId, code, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        challengeId: { type: string, format: uuid }
+        code: { type: string, pattern: '^[0-9]{8}$' }
+        password: { type: string, minLength: 12, maxLength: 128, description: Uppercase, lowercase, number and symbol required }
     ProfileUpdate:
       type: object
-      additionalProperties: true
+      additionalProperties: false
+      properties:
+        full_name: { type: string }
+        email: { type: string, format: email }
+        current_password: { type: string, maxLength: 1024, description: Required when changing a password-enabled account email }
     CompanyInput:
       type: object
       required: [company_name]
