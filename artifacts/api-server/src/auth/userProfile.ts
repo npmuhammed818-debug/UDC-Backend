@@ -9,6 +9,8 @@ export const safeUserSelection = {
   fullName: usersTable.fullName,
   role: usersTable.role,
   status: usersTable.status,
+  verifiedEmail: usersTable.verifiedEmail,
+  emailVerifiedAt: usersTable.emailVerifiedAt,
 } as const;
 
 export async function getSafeUserProfile(userId: string) {
@@ -37,5 +39,6 @@ export async function getSafeUserProfile(userId: string) {
     .orderBy(desc(companiesTable.createdAt))
     .limit(1);
 
-  return { ...user, company: company ?? null };
+  const { verifiedEmail, ...profile } = user;
+  return { ...profile, emailVerified: !!user.emailVerifiedAt && !!user.email && verifiedEmail === user.email.toLowerCase(), company: company ?? null };
 }

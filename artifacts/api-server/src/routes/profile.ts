@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { verifyPassword } from "../auth/passwords";
 import { getSafeUserProfile } from "../auth/userProfile";
 
 const router: IRouter = Router();
@@ -27,6 +28,7 @@ const profileSchema = z
     full_name: z.string().trim().min(2).max(200).optional(),
     email: z.string().trim().email().transform((value) => value.toLowerCase()).optional(),
     phone: z.never().optional(),
+    current_password: z.string().max(1024).optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -53,14 +55,22 @@ router.put("/profile", requireAuth, async (req, res) => {
       }
     }
 
-    await db
-      .update(usersTable)
-      .set({
+    const updated = await db.transaction(async tx => {
+      const [current] = await tx.select().from(usersTable).where(eq(usersTable.id,req.authUser!.id)).limit(1).for("update");
+      if (!current) return false;
+      const changingEmail = input.email !== undefined && input.email !== current.email?.toLowerCase();
+      if (changingEmail &&
+        (!input.current_password || !await verifyPassword(input.current_password,current.passwordHash))) return false;
+      await tx.update(usersTable).set({
         ...(input.full_name === undefined ? {} : { fullName: input.full_name }),
         ...(input.email === undefined ? {} : { email: input.email }),
+        ...(changingEmail ? { verifiedEmail:null, emailVerifiedAt:null } : {}),
         updatedAt: new Date(),
-      })
-      .where(eq(usersTable.id, req.authUser!.id));
+      }).where(eq(usersTable.id,req.authUser!.id));
+      if (changingEmail) await tx.execute(sql`update email_auth_challenges set consumed_at=coalesce(consumed_at,now()) where user_id=${req.authUser!.id}`);
+      return true;
+    });
+    if (!updated) { res.status(403).json({error:"current_password_required"}); return; }
 
     res.json({ user: await getSafeUserProfile(req.authUser!.id) });
   } catch (error) {

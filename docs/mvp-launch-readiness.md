@@ -7,6 +7,7 @@ The following is a code audit, not a claim of production acceptance or zero defe
 
 | Area | Existing implementation | Acceptance still needed |
 | --- | --- | --- |
+| Email ownership and password recovery | Separate draft implementation: expiring single-use codes, persistent limits, explicit password eligibility and atomic recovery | Mocked automated checks; real delivery intentionally disabled and not accepted. See [email authentication](email-authentication.md). |
 | Buyer/seller/agent onboarding | Auth, company profiles, consent gate, manual verification and audit history | Fresh-number onboarding and real persisted accounts |
 | Requirements and offers | Natural-language intake, draft memory, product/spec/quantity/price/port fields, private submission review | Real buyer and seller messages; typo/mixed-language cases |
 | Matching | Recommendations, manual approval, match/deal creation | Seeded test participants and persistence test |

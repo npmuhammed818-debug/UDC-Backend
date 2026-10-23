@@ -10,7 +10,10 @@ import type { RegisterInputRole } from './registerInputRole';
 export interface RegisterInput {
   full_name: string;
   email: string;
-  /** @minLength 12 */
+  /**
+     * @minLength 12
+     * @maxLength 128
+     */
   password: string;
   role: RegisterInputRole;
   /** @maxLength 120 */
