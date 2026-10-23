@@ -67,3 +67,5 @@ jobs:
         with:
           name: sow-regression-report
           path: .acceptance-results/
+          include-hidden-files: true
+          if-no-files-found: error
