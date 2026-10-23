@@ -16,7 +16,7 @@ import { publishedFlowId } from './setupFlows';
 import { agentReferralCode } from '../referrals/invitation';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
-const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile' as const;
+const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile'] as const;
 export function chatAction(message:ChatMessage){
   const i=message.interactive;
   if(i?.type==='button_reply'||i?.type==='list_reply'){
