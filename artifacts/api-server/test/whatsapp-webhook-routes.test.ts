@@ -66,6 +66,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
     "../whatsapp/emailVerification": "export const handleEmailVerification=async(phone,text)=>{if(!/^(?:verify email|email code(?:\\s|$))/i.test(text))return null;s.emailCalls=(s.emailCalls||0)+1;return 'Fixture email verification reply';};",
+    "../whatsapp/phoneRecovery": "export const handlePhoneRecovery=async(phone,text)=>{if(!/^(?:(?:sign in|recover account|change number)(?:\\s|$)|phone code(?:\\s|$))/i.test(text))return null;s.recoveryCalls=(s.recoveryCalls||0)+1;return 'Fixture private phone recovery reply';};",
     "../whatsapp/chatUi": "export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};export const sendChatHome=async(phone)=>{s.homeCalls=(s.homeCalls||0)+1;};",
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
@@ -171,6 +172,19 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply=null;rows.usersTable.push({phone:'10000000001',status:'suspended'});
       await message(text);assert.equal(state.signins,0);rows.usersTable=[];
       await message(text);assert.equal(state.signins,1);assert.equal(state.sent.at(-1).body,'Fixture sign-in confirmation');assert.deepEqual(state.intake,[]);
+    });
+    await t.test("phone recovery remains behind Meta signature and consent and never reaches AI",async()=>{
+      reset();state.recoveryCalls=0;
+      const request={text:{body:"Sign in owner@example.invalid"}};
+      await message(request,false);assert.equal(state.recoveryCalls,0);
+      state.privacyReply="Reply AGREE";await message(request);assert.equal(state.recoveryCalls,0);
+      state.privacyReply=null;rows.usersTable.push({phone:"10000000001",status:"suspended"});
+      await message(request);assert.equal(state.recoveryCalls,0);rows.usersTable=[];
+      await message(request);assert.equal(state.recoveryCalls,1);
+      assert.equal(state.sent.at(-1).body,"Fixture private phone recovery reply");
+      await message({text:{body:"Phone code 123456"}});assert.equal(state.recoveryCalls,2);
+      assert.deepEqual(state.intake,[]);assert.deepEqual(state.recorded,[]);
+      assert.equal(state.dealCalls,0);assert.deepEqual(state.guidanceCalls,[]);
     });
     await t.test('email code commands require signed consented nonblocked senders and never reach AI or memory',async()=>{
       reset();state.emailCalls=0;
