@@ -39,6 +39,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "productsTable",
     "whatsappMessageContextsTable",
     "whatsappUserContextsTable",
+    "whatsappChatSessionsTable",
     "whatsappIntakeDraftsTable",
   ];
   names.forEach((n) => (s.tables[n] = []));
