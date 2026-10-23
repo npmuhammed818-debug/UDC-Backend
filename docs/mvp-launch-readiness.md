@@ -3,30 +3,34 @@
 Reference: UDC WhatsApp AI Trade Platform Development Proposal (July 16, 2026),
 plus subsequent pooling, privacy, agent tracker and Akif requirements.
 
-The following is a code audit, not a claim of production acceptance or zero defects.
+## Current MVP checklist — 23 October 2026
 
-| Area | Existing implementation | Acceptance still needed |
+This is an implementation inventory, not production acceptance. **PASSED** below
+means only the stated isolated check passed. Existing code, green tests and older
+live health checks do not prove a complete customer workflow. Historical evidence
+later in this file belongs to its stated date/revision.
+
+| Feature | Implementation / genuine gap | Current evidence and remaining acceptance |
 | --- | --- | --- |
-| Buyer/seller/agent onboarding | Auth, company profiles, consent gate, manual verification and audit history | Fresh-number onboarding and real persisted accounts |
-| Requirements and offers | Natural-language intake, draft memory, product/spec/quantity/price/port fields, private submission review | Real buyer and seller messages; typo/mixed-language cases |
-| Matching | Recommendations, manual approval, match/deal creation | Seeded test participants and persistence test |
-| Deal room | Deal IDs, private text relay, selective delivery, history and admin views | Live WhatsApp routing and privacy test |
-| PDFs/documents | Private upload, signed downloads, document review/extraction and comparison | Storage, scanned-document and live relay test |
-| LOI/ICPO/FCO/SPA | Draft generators and editable downloads from recorded terms | Party review and sample outputs |
-| NCNDA generation | Editable discussion draft from the deal room, with explicit legal placeholders | Sample output and party/counsel review |
-| Voice and direct images | Voice transcription with text confirmation; private image attachment and vision extraction | Real media tests and provider configuration |
-| AI/translation | Existing prompts support languages; worker model bridge added in this change | Real configured-model and language accuracy tests |
-| Referrals/agents | Referral codes, introductions, ordered deal agent chain, capped allocations, status tracking | Persisted multi-agent deal and payout-state checks |
-| Meetings | Requests, admin scheduling, meeting records and provider URLs | Real scheduling/notification test; provider booking is manual |
-| Post-deal | SPA milestone, shipment/inspection/customs records, delivery and cases | Full persisted timeline and role access test |
-| DLC/SGS | Fixed DLC workflow and evidence-gated completion | Bank/inspection evidence review; software does not issue bank instruments |
-| Commissions | Rules, calculations, allocations, recorded payout states | Reconciliation test; external bank transfers remain human-operated |
-| Feedback | Completion-gated ratings with moderation | Completed test deal and moderation test |
-| Admin | Users, deals, docs, finance, communications, audit, analytics | Signed-in UI walkthrough; live schema and private storage checked |
-| Buyer pooling | Pool creation, allocations and bank-review state | Bank-approved structure; allocation concurrency test passes |
-| Akif research | Comtrade/GLEIF, FX, news, World Bank, Eurostat and CSL clients | Upstream keys where required, admin research acceptance |
-| Learn | Curated lessons plus model-backed beginner questions | Live tutor accuracy and language tests |
-| Privacy/operations | Consent, opt-out, role checks, deletion-review requests, signed documents | New-number consent and withdrawal test |
+| Consent and buyer/seller/agent registration | Implemented; manual company verification remains required | PASSED signed webhook + real local PostgreSQL for all roles during simulated AI outages, pending company state, email-conflict correction and duplicate buyer submit. Real WhatsApp delivery and company-review workflow NOT YET TESTED on combined branch. |
+| Email OTP / email ownership verification | Implemented in #125: expiring single-use codes, purpose/user/email-bound hashes, persistent limits, browser and signed WhatsApp flows | Isolated mocked checks passed on #125; combined results are recorded in the integration report. Real email adapter remains disabled and live delivery NOT YET TESTED. Company approval stays manual. |
+| Email password recovery | Implemented for proven password accounts with verified current email; atomic password/session changes | Mocked regression evidence in #125; combined results in integration report. Legacy enrollment, migration and mail-provider approval remain rollout prerequisites. WhatsApp-only accounts are excluded. |
+| WhatsApp menus and trade intake | Implemented guided forms, drafts, requirements and multiple offers | PASSED local signed conversations, scalar kg/AED fields, two seller offers, retained rejected draft and all four cross-role intake rejections. Live Meta menus/delivery NOT YET TESTED. |
+| Akif intelligence, memory, languages and fallbacks | Implemented provider chain, memory and offline guided intake; shared fallback deadline in #121 | PASSED isolated deadline/provider-error/memory checks; real provider availability, naturalness, translation accuracy and latency NOT YET TESTED. |
+| Matching, negotiations and private rooms | Implemented matching, approval, private relay, permissions and history | PASSED isolated regression groups; multi-participant persisted workflow and live selective delivery NOT YET TESTED here. |
+| Uploads, extraction and verification | Implemented private uploads, signed links, assistive extraction and human review | PASSED isolated authorization/extractor checks; real storage, scans, voice/images, extraction accuracy and human review NOT YET TESTED here. |
+| LOI, ICPO, FCO, SPA, NCNDA | Draft generators exist; editable discussion drafts are not executed legal documents | PASSED isolated drafting checks; representative outputs and party/counsel review NOT YET TESTED here. |
+| Referrals and commissions | Codes, agent chain, allocations and payout records implemented | PASSED isolated checks; persisted multi-agent reconciliation NOT YET TESTED here. External transfers intentionally remain human-operated. |
+| DLC, SGS and payment milestones | Recommended DLC policy with explicit agreement for supported alternate terms; evidence-gated milestone records | PASSED isolated policy checks; banking/inspection evidence acceptance NOT YET TESTED. Issuing instruments/transferring funds is intentionally outside software authority. |
+| Shipping, inspections, delivery and feedback | Records, milestones, cases and moderated feedback implemented | PASSED isolated post-deal checks; persisted complete timeline NOT YET TESTED here. Automated carrier integration is not implied by these records. |
+| Meetings, notifications and follow-ups | Requests, scheduling records, URLs and messaging paths implemented | PASSED isolated checks; actual delivery/scheduling acceptance NOT YET TESTED. Provider booking remains manual. |
+| Admin dashboard, controls and analytics | Admin UI/API, audit and access checks implemented | PASSED isolated checks; complete signed-in workflow and analytics reconciliation NOT YET TESTED on this combined branch. |
+| Buyer pooling, privacy and data protection | Allocations, locking, role checks, consent/opt-out and deletion-review paths implemented | PASSED isolated concurrency/privacy checks; bank-reviewed pooling and actual storage/RLS/deletion acceptance NOT YET TESTED. Strict database TLS fix #123 is separate and excluded from this integration. |
+| Research, learning and external integrations | Clients/prompts exist | External keys, provider health, accuracy and actual connected workflows remain unverified; presence of a client is not completed integration. |
+
+Combined integration evidence: [#124 + #125](integration-124-125.md). Historical #124 evidence: [#119–122](integration-119-122.md).
+Separate TLS compatibility investigation: [Supabase TLS](supabase-tls-investigation.md).
+No production settings, deployments, customer records or approval states were changed.
 
 ## Conversation worker setup
 
@@ -62,7 +66,7 @@ inspection environment; its failure is isolated. No promise is made that an
 external service is permanently free or that provider approval will finish by a
 specific date. Keep all paid plans unchanged unless the owner authorizes spending.
 
-## Validation of the launch preparation change
+## Historical validation of the launch preparation change
 
 Full release checks passed: production build and 99 backend tests.
 21 Python worker/extractor tests passed. Tests cover chat
@@ -127,7 +131,7 @@ Use authorized buyer, seller, agent and admin test participants:
    placeholders; no generated text should imply signature or legal approval.
 6. Request a meeting and record its authorized scheduling/meeting URL.
 7. Record inspection/shipment/customs/delivery milestones and supporting documents.
-   Confirm the fixed DLC/SGS workflow and admin-controlled banking evidence.
+   Confirm the recommended DLC/SGS workflow, any explicitly agreed supported alternate terms, and admin-controlled banking evidence.
 8. Check referral attribution, agent chain, commission calculations and recorded
    payout states. Check pool capacity rejection and issuing-bank review state.
 9. Complete a test deal, submit feedback and inspect admin/audit history.

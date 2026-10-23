@@ -6,4 +6,12 @@
  * OpenAPI spec version: 0.2.0
  */
 
-export interface ProfileUpdate { [key: string]: unknown }
+export interface ProfileUpdate {
+  full_name?: string;
+  email?: string;
+  /**
+     * Required when changing a password-enabled account email
+     * @maxLength 1024
+     */
+  current_password?: string;
+}

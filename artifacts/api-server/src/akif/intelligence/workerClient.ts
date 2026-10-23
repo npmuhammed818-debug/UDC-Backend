@@ -208,7 +208,7 @@ export function isAkifWorkerConversationEnabled() {
 
 export async function runAkifWorkerChat(message: string, system?: string, timeoutMs = 15_000) {
   // Leave transport overhead within the caller's deadline; no retries at either layer.
-  const budget = Math.max(2_000, Math.min(25_000, timeoutMs));
+  const budget = Math.max(1, Math.min(25_000, timeoutMs));
   const raw = await requestWorker<{
     choices?: Array<{ message?: { content?: string | null } }>;
   }>("/chat/completions", {
