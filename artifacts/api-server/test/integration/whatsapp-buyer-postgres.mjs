@@ -6,7 +6,7 @@
 // Combined #119-122 integration: all roles, retries, offers and permissions.
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
@@ -21,12 +21,15 @@ const testPhones = new Set([phone]);
 let forcedDecision = null;
 const label = `UDC QA ${randomUUID().slice(0, 8)}`;
 const email = `qa-${randomUUID()}@example.invalid`;
+const mail = { outbox: [] };
+globalThis.__udcCombinedMail = mail;
 // Ignore any real integration configuration inherited by the developer shell.
 for (const key of Object.keys(process.env)) {
   if (/^(?:WHATSAPP_|AKIF_|NVIDIA_|OPENAI_|HERMES_)/.test(key)) delete process.env[key];
 }
 Object.assign(process.env, {
   NODE_ENV: 'production',
+  SESSION_SECRET: secret,
   SUPABASE_DATABASE_URL: url.href,
   WHATSAPP_APP_SECRET: secret,
   WHATSAPP_ACCESS_TOKEN: 'synthetic-no-network-token',
@@ -81,9 +84,14 @@ try {
     external: ['pg-native'],
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
     logLevel: 'silent',
+    plugins: [{ name: 'fictional-email-provider', setup(b) {
+      b.onResolve({ filter: /\/emailDelivery$/ }, () => ({ path: 'mail', namespace: 'combined-qa' }));
+      b.onLoad({ filter: /.*/, namespace: 'combined-qa' }, () => ({ contents: 'export const sendAuthEmail=async(message,signal)=>{if(!signal)throw new Error("missing delivery deadline");globalThis.__udcCombinedMail.outbox.push(message);};' }));
+    } }],
   });
   const module = await import(output);
   pool = module.pool;
+  await pool.query(await readFile(new URL('../../../../lib/db/migrations/20261023_email_authentication.sql', import.meta.url), 'utf8'));
   server = module.default.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   localOrigin = `http://127.0.0.1:${server.address().port}`;
@@ -121,6 +129,22 @@ try {
   assert.ok(buyer);assert.equal(buyer.role, 'buyer');assert.equal(buyer.status, 'pending');assert.equal(buyer.email, email);
   const { rows: [company] } = await pool.query('select verification_status from companies where owner_user_id=$1', [buyer.id]);
   assert.equal(company.verification_status, 'pending');
+  await post('Verify email');
+  assert.match(sent.at(-1).text.body, /8-digit code/);
+  assert.equal(mail.outbox.length, 1);assert.equal(mail.outbox[0].to, email);
+  const code = mail.outbox[0].code;
+  await post('Email code ' + code);
+  assert.match(sent.at(-1).text.body, /ownership is verified/);
+  await post('Email code ' + code);
+  assert.match(sent.at(-1).text.body, /invalid or expired/);
+  await post('Verify email');
+  assert.equal(mail.outbox.length, 1, 'already verified account must not send another code');
+  const { rows: [proof] } = await pool.query('select verified_email,email_verified_at,password_recovery_enabled,role,status from users where id=$1', [buyer.id]);
+  assert.equal(proof.verified_email, email);assert.ok(proof.email_verified_at);
+  assert.equal(proof.password_recovery_enabled, false);assert.equal(proof.role, 'buyer');assert.equal(proof.status, 'pending');
+  assert.equal(providerCalls.length, calls, 'email code must bypass AI and trade memory');
+  assert.equal(await count('select count(*) from whatsapp_intake_drafts where phone=$1', [phone]), 0);
+  console.log('PASSED combined signed WhatsApp + PostgreSQL: outage registration, mocked email code, ownership proof, replay rejection and unchanged role/company/passwordless permissions before trade intake.');
   await post({type:'list_reply',list_reply:{id:'udc:requirement'}});
   assert.match(sent.at(-1).text.body, /product/i);
   for (const answer of ['Copper cathode', '100', 'Jebel Ali', 'CIF']) await post(answer);
@@ -172,7 +196,7 @@ try {
   assert.equal(originalBuyer.email,email);assert.equal(originalBuyer.role,'buyer');assert.equal(originalBuyer.status,'pending');
 
   for(const [sender,role,attempt] of [[agentPhone,'agent','buyer'],[agentPhone,'agent','seller'],[phone,'buyer','seller'],[sellerPhone,'seller','buyer']]){
-    const {rows:[beforeAccount]}=await pool.query('select id,full_name,email,role,status from users where phone=$1',[sender]);
+    const {rows:[beforeAccount]}=await pool.query('select id,full_name,email,role,status,verified_email,email_verified_at,password_recovery_enabled from users where phone=$1',[sender]);
     const beforeRequests=await count('select count(*) from buyer_requests where buyer_user_id=$1',[beforeAccount.id]);
     const beforeOffers=await count('select count(*) from seller_listings where seller_user_id=$1',[beforeAccount.id]);
     forcedDecision={role:attempt,newIntake:true,fields:{product:'Sugar',quantity:100,targetPrice:500,price:490,destination:'Mombasa'},reply:'I will send this for review.'};
@@ -183,7 +207,7 @@ try {
     assert.equal(await count('select count(*) from buyer_requests where buyer_user_id=$1',[beforeAccount.id]),beforeRequests);
     assert.equal(await count('select count(*) from seller_listings where seller_user_id=$1',[beforeAccount.id]),beforeOffers);
     assert.equal(await count('select count(*) from whatsapp_intake_drafts where phone=$1',[sender]),0);
-    const {rows:[afterAccount]}=await pool.query('select id,full_name,email,role,status from users where phone=$1',[sender]);
+    const {rows:[afterAccount]}=await pool.query('select id,full_name,email,role,status,verified_email,email_verified_at,password_recovery_enabled from users where phone=$1',[sender]);
     assert.deepEqual(afterAccount,beforeAccount,'cross-role attempts must not mutate the existing account');
   }
   console.log('PASSED additionally with real local PostgreSQL: seller and agent registration, two kg/AED offers, retained rejected registration + successful edit/retry, existing account unchanged, and signed cross-role intake blocked.');
@@ -191,6 +215,7 @@ try {
   console.log('PASSED: signed webhook, privacy consent, worker timeout + fallback error, plain buyer registration, pending company review, private requirement persistence and duplicate submit protection (real local PostgreSQL; no live messages).');
 } finally {
   globalThis.fetch = fetchBefore;
+  delete globalThis.__udcCombinedMail;
   if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   if (pool) await pool.end();
   await rm(directory, { recursive: true, force: true });
