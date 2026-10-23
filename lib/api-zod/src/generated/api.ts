@@ -18,6 +18,7 @@ export const DatabaseHealthCheckResponse = zod.object({
 
 
 export const registerUserBodyPasswordMin = 12;
+export const registerUserBodyPasswordMax = 128;
 
 export const registerUserBodyReferralTokenMax = 120;
 
@@ -26,7 +27,7 @@ export const registerUserBodyReferralTokenMax = 120;
 export const RegisterUserBody = zod.object({
   "full_name": zod.string(),
   "email": zod.string(),
-  "password": zod.string().min(registerUserBodyPasswordMin),
+  "password": zod.string().min(registerUserBodyPasswordMin).max(registerUserBodyPasswordMax),
   "role": zod.enum(['buyer', 'seller', 'agent']),
   "referral_token": zod.string().max(registerUserBodyReferralTokenMax).optional(),
   "accepted_terms": zod.literal(true),
@@ -38,6 +39,8 @@ export const RegisterUserResponse = zod.object({
   "id": zod.string(),
   "email": zod.string().nullish(),
   "fullName": zod.string().nullish(),
+  "emailVerified": zod.boolean().optional(),
+  "emailVerifiedAt": zod.coerce.date().nullish(),
   "role": zod.string(),
   "status": zod.string()
 })
@@ -54,6 +57,8 @@ export const LoginUserResponse = zod.object({
   "id": zod.string(),
   "email": zod.string().nullish(),
   "fullName": zod.string().nullish(),
+  "emailVerified": zod.boolean().optional(),
+  "emailVerifiedAt": zod.coerce.date().nullish(),
   "role": zod.string(),
   "status": zod.string()
 })
@@ -70,19 +75,96 @@ export const GetCurrentUserResponse = zod.object({
   "id": zod.string(),
   "email": zod.string().nullish(),
   "fullName": zod.string().nullish(),
+  "emailVerified": zod.boolean().optional(),
+  "emailVerifiedAt": zod.coerce.date().nullish(),
   "role": zod.string(),
   "status": zod.string()
 })
 })
 
 
-export const UpdateProfileBody = zod.record(zod.string(), zod.unknown())
+export const GetEmailOwnershipStatusResponse = zod.object({
+  "emailVerified": zod.boolean(),
+  "passwordRecoveryEnabled": zod.boolean()
+})
+
+
+export const RequestEmailVerificationBody = zod.object({
+
+})
+
+export const RequestEmailVerificationResponse = zod.object({
+  "message": zod.string(),
+  "challengeId": zod.string().uuid(),
+  "expiresInSeconds": zod.literal(600)
+})
+
+
+export const confirmEmailVerificationBodyCodeRegExp = new RegExp('^[0-9]{8}$');
+
+
+export const ConfirmEmailVerificationBody = zod.object({
+  "challengeId": zod.string().uuid(),
+  "code": zod.string().regex(confirmEmailVerificationBodyCodeRegExp)
+})
+
+export const ConfirmEmailVerificationResponse = zod.object({
+  "emailVerified": zod.boolean()
+})
+
+
+export const requestPasswordRecoveryBodyEmailMax = 254;
+
+
+
+export const RequestPasswordRecoveryBody = zod.object({
+  "email": zod.string().email().max(requestPasswordRecoveryBodyEmailMax)
+})
+
+export const RequestPasswordRecoveryResponse = zod.object({
+  "message": zod.string(),
+  "challengeId": zod.string().uuid(),
+  "expiresInSeconds": zod.literal(600)
+})
+
+
+export const confirmPasswordRecoveryBodyEmailMax = 254;
+
+export const confirmPasswordRecoveryBodyCodeRegExp = new RegExp('^[0-9]{8}$');
+export const confirmPasswordRecoveryBodyPasswordMin = 12;
+export const confirmPasswordRecoveryBodyPasswordMax = 128;
+
+
+
+export const ConfirmPasswordRecoveryBody = zod.object({
+  "email": zod.string().email().max(confirmPasswordRecoveryBodyEmailMax),
+  "challengeId": zod.string().uuid(),
+  "code": zod.string().regex(confirmPasswordRecoveryBodyCodeRegExp),
+  "password": zod.string().min(confirmPasswordRecoveryBodyPasswordMin).max(confirmPasswordRecoveryBodyPasswordMax).describe('Uppercase')
+})
+
+export const ConfirmPasswordRecoveryResponse = zod.object({
+  "success": zod.boolean()
+})
+
+
+export const updateProfileBodyCurrentPasswordMax = 1024;
+
+
+
+export const UpdateProfileBody = zod.object({
+  "full_name": zod.string().optional(),
+  "email": zod.string().email().optional(),
+  "current_password": zod.string().max(updateProfileBodyCurrentPasswordMax).optional().describe('Required when changing a password-enabled account email')
+})
 
 export const UpdateProfileResponse = zod.object({
   "user": zod.object({
   "id": zod.string(),
   "email": zod.string().nullish(),
   "fullName": zod.string().nullish(),
+  "emailVerified": zod.boolean().optional(),
+  "emailVerifiedAt": zod.coerce.date().nullish(),
   "role": zod.string(),
   "status": zod.string()
 })

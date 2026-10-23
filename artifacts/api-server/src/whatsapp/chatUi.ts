@@ -115,7 +115,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review.';
+      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status. To confirm your email, send Verify email.':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review. To confirm your email, send Verify email.';
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
@@ -194,7 +194,7 @@ export async function handleChatUi(phone:string,message:ChatMessage){
     if(user.role!==role){await sendWhatsAppText(phone,`Your account is registered as ${user.role}. Send Menu to see your available features.`);return true;}
     await sendForm(phone,role);return true;
   }
-  if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval.`);return true;}
+  if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     if(!company){await sendWhatsAppTextWithMenu(phone,'Open My profile and add your company details first.');return true;}

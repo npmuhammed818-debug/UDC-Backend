@@ -2,6 +2,7 @@ export * from "./akifLearning";
 export * from "./akifIntelligence";
 export * from "./akifResearch";
 export * from "./authSessions";
+export * from "./emailAuth";
 export * from "./buyerRequests";
 export * from "./buyerPools";
 export * from "./companies";
