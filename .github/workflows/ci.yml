@@ -37,7 +37,21 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run release:verify
+      - name: Verify backend release and retain diagnostics
+        id: release
+        run: |
+          mkdir -p .acceptance-results
+          set -o pipefail
+          pnpm run release:verify 2>&1 | tee .acceptance-results/release.log
+      - name: Annotate release failures for review
+        if: failure() && steps.release.outcome == 'failure'
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const tail = readFileSync('.acceptance-results/release.log', 'utf8').slice(-24000);
+          const escaped = tail.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+          console.log(`::error title=Backend release diagnostic::${escaped}`);
+          JS
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
