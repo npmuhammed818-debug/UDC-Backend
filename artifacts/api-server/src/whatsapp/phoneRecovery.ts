@@ -27,9 +27,9 @@ type Challenge = {
 };
 export const phoneRecoveryCommand = (body: string) => {
   const text = body.trim();
-  const request = /^(?:sign in|recover account|change number)\s+([^\s]+@[^\s]+)$/i.exec(text);
+  const request = /^(?:sign in|recover account|change number)(?:\s+(.+))?$/i.exec(text);
   const confirm = /^phone code(?:\s+(.*))?$/i.exec(text);
-  return request ? {kind: "request" as const, email: request[1]} :
+  return request ? {kind: "request" as const, email: request[1] ?? ""} :
     confirm ? {kind: "confirm" as const, code: confirm[1] ?? ""} : null;
 };
 
