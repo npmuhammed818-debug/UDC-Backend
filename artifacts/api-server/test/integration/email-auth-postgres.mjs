@@ -192,7 +192,7 @@ try {
   );
   assert.equal(fixture.outbox.length, 1);
   pass("one-minute resend cooldown");
-  const bad = firstCode === "00000000" ? "00000001" : "00000000";
+  const bad = firstCode === "000000" ? "000001" : "000000";
   for (let n = 0; n < 5; n++)
     assert.equal(
       (
