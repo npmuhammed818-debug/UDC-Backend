@@ -1,6 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 
-export type EmailPurpose = "verify_email" | "reset_password";
+export type EmailPurpose = "verify_email" | "reset_password" | "link_phone";
 export const EMAIL_CODE_TTL_MS = 10 * 60_000;
 export const EMAIL_CODE_ATTEMPTS = 5;
 export const newEmailCode = () =>
