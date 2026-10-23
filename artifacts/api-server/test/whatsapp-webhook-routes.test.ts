@@ -223,8 +223,24 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.saved, null);
       assert.deepEqual(state.intake, []);
     });
+    await t.test("natural intake cannot use AI output to cross an existing account's role", async () => {
+      for (const [role, requestedRole] of [['buyer','seller'],['seller','buyer'],['agent','buyer'],['agent','seller']]) {
+        reset();
+        rows.usersTable = [{ id:'qa-identity', phone:'10000000001', role, status:'pending' }];
+        state.decision = { role:requestedRole, newIntake:true,
+          fields:{ product:'Sugar',quantity:100,price:490,targetPrice:500,destination:'Mombasa' },
+          reply:'I will send this for review.' };
+        const original = structuredClone(rows.usersTable);
+        const text = requestedRole==='seller'?'I can supply 100 MT Sugar at USD 490 per MT.':'I need 100 MT Sugar to Mombasa at USD 500 per MT.';
+        assert.equal((await message({text:{body:text}})).status,200);
+        assert.deepEqual(state.recorded,[],`${role} must not submit as ${requestedRole}`);
+        assert.equal(state.saved,null,'a conflicting model decision must not replace intake memory');
+        assert.deepEqual(rows.usersTable,original);
+        assert.match(state.sent.at(-1).body,/registered as|account role/i);
+      }
+    });
     await t.test("pending users can finish intake; suspended users cannot submit", async () => {
-      reset(); rows.usersTable = [{ id: "buyer", phone: "10000000001", status: "pending" }];
+      reset(); rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "pending" }];
       state.decision = { role: "buyer", fields: {}, reply: "Which product do you need?" };
       await message({ text: { body: "What can I buy?" } }); assert.equal(state.intake.length, 1);
       rows.usersTable[0].status = "suspended";
