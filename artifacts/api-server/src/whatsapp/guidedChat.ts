@@ -1,4 +1,4 @@
-import { extractParagraph } from './paragraphIntake';
+import { extractLabelledParagraph, extractParagraph } from './paragraphIntake';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
@@ -64,14 +64,46 @@ async function review(phone:string,purpose:FlowPurpose,data:Record<string,string
   await sendWhatsAppTextWithMenu(phone,'Please review:\n'+summary+(purpose.startsWith('profile_')?'\nRegistration needs UDC approval.':'\nUDC recommends DLC directly to seller, after SGS at destination. Other terms require explicit buyer agreement. Submission needs UDC review.'));
   try{await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Are these details correct?'},action:{buttons:[['submit','Submit for review'],['restart','Edit details'],['cancel','Cancel']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});}catch{await sendWhatsAppTextWithMenu(phone,'Reply Submit to send for UDC review, Edit to start again, or Cancel.');}
 }
-export async function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>){
+
+// The chat asks one concrete question at a time. A plain answer to that
+// question is already structured input and must not depend on an AI provider.
+// Leave prose, corrections and questions to paragraph extraction; never guess
+// which of several facts the user intended to supply.
+function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>){
+  const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
+  if(!next)return null;
+  let scalar=false;
+  if(next.kind==='email')scalar=/^[^\s@]+@[^\s@]+$/.test(text);
+  else if(next.kind==='positive')scalar=/^\d+(?:\.\d+)?$/.test(text);
+  else if(next.kind==='incoterm')scalar=/^(?:EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)$/i.test(text);
+  else if(next.name==='currency')scalar=/^[A-Za-z]{3}$/.test(text);
+  else if(next.name==='unit')scalar=/^(?:MT|kg|g|tonnes?|tons?|pieces?|pcs|units?|containers?|litres?|liters?|L|m3|bales?|bags?|boxes)$/i.test(text);
+  else{
+    scalar=text.split(/\s+/).length<=8
+      && /^[\p{L}\p{N}][\p{L}\p{M}\p{N} .&'’()/-]*$/u.test(text)
+      && /\p{L}/u.test(text)
+      && !/^(?:i|we|my|our|hi|hello|hey|yes|no|ok|okay|thanks|thank you|please|what|where|when|which|how|why|can|could|would|should|is|are|do|does|some|need|want|buy|sell|supply|submit|skip|tell|explain|teach|speak|talk|answer)\b/i.test(text)
+      && !/malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்/i.test(text)
+      && !/\b(?:is|am|are|email|country|quantity|price|incoterm)\b/i.test(text);
+    // A quantity, price or named Incoterm makes this a multi-field message.
+    if(/\b(?:MT|KG|USD|AED|INR|EUR|EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b/i.test(text))scalar=false;
+  }
+  if(!scalar)return null;
+  try{return {[next.name]:validate(next,text,purpose)};}catch{return {};}
+}
+export async function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){
   const raw=message.text?.body?.trim();
   if(!raw&&!['submit','restart','cancel'].includes(action??''))return false;
   const fingerprint=phoneHash(phone);
   const [snapshot]=await db.select().from(sessions).where(eq(sessions.phoneHash,fingerprint)).limit(1);
   if(snapshot&&message.id&&snapshot.lastMessageId===message.id)return true;
-  const extracted=snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)
-    ? await extractParagraph(snapshot.purpose as FlowPurpose,raw):null;
+  let extracted:Record<string,string>|null=null;
+  if(snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)){
+    const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
+    const local=Object.keys(labelled).length?labelled:directAnswer(snapshot.purpose as FlowPurpose,raw,snapshot.data);
+    if(directOnly&&!local)return false;
+    extracted=local??await extractParagraph(snapshot.purpose as FlowPurpose,raw);
+  }else if(directOnly)return false;
   const result=await db.transaction(async tx=>{
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+fingerprint}))`);
     const [session]=await tx.select().from(sessions).where(eq(sessions.phoneHash,fingerprint)).limit(1);

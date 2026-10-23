@@ -158,7 +158,8 @@ async function companyDocument(phone:string,message:ChatMessage){
   await sendWhatsAppTextWithMenu(phone,'Your company PDF is stored privately for UDC review. Uploading it does not verify your company.');return true;
 }
 
-export async function handleChatUi(phone:string,message:ChatMessage){
+export async function handleChatUi(phone:string,message:ChatMessage,directOnly=false){
+  if(directOnly)return continueGuidedChat(phone,message,null,submitChatFlow,true);
   if(await handleWhatsAppIntroduction(phone,message))return true;
   const termId=message.interactive?.button_reply?.id;
   const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
