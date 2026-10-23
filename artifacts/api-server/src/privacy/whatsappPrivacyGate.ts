@@ -16,7 +16,7 @@ const policyBase = "https://udc-backend.onrender.com";
 export async function whatsappPrivacyGate(
   phone: string,
   text?: string,
-): Promise<string | null> {
+): Promise<string | { kind: "consent_accepted" } | null> {
   const command = privacyCommand(text);
   if (command === "privacy")
     return `Privacy: ${policyBase}/privacy\nTerms: ${policyBase}/terms\nData requests: ${policyBase}/data-deletion`;
