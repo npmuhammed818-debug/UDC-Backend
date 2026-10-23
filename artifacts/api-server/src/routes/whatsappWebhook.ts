@@ -1,6 +1,6 @@
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
-import { chatAction, handleChatUi, type ChatMessage } from '../whatsapp/chatUi';
+import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -978,7 +978,12 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
-          if (privacyReply) { await deliverWhatsAppReply(message.from, privacyReply, false); continue; }
+          if (privacyReply) {
+            // First consent opens role selection; later chat stays a conversation.
+            if (typeof privacyReply === "string") await deliverWhatsAppReply(message.from, privacyReply, false);
+            else if (privacyReply.kind === "consent_accepted") await sendChatHome(message.from);
+            continue;
+          }
           const [account] = await db.select({ status: usersTable.status }).from(usersTable)
             .where(eq(usersTable.phone, message.from)).limit(1);
           if (account?.status === "suspended" || account?.status === "rejected") {
