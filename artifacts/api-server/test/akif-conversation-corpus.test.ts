@@ -146,7 +146,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
   };
   (globalThis as any).__udcChatTest = s;
   const stubs: Record<string, string> = {
-    "../whatsapp/chatUi": "export const chatAction=()=>null;export const sendChatHome=async()=>{};export const handleChatUi=async()=>false;",
+    "../whatsapp/chatUi": "export const chatAction=()=>null;export const sendChatHome=async(phone)=>{const s=globalThis.__udcChatTest;s.sent.push({to:phone,body:'Welcome to UDC. Are you a buyer, seller or agent?'});};export const handleChatUi=async()=>false;",
     "../auth/whatsappSignin": "export const parseSigninCommand=()=>null;export const handleWhatsAppSignin=async()=>null;",
     "@workspace/db": `export const db=globalThis.__udcChatTest.db;${names.map((n) => `export const ${n}=new Proxy({_name:'${n}'},{get:(t,k)=>k==='_name'?t._name:{key:k}});`).join("")}`,
     "drizzle-orm":
@@ -280,7 +280,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       assert.equal(s.records.length, 0, 'no trade record before consent');
       assert.equal(s.prompts.length, 0, 'no AI processing before consent');
       await send(phone, 'AGREE', undefined);
-      assert.match(s.sent.at(-1).body, /Thanks/);
+      assert.match(s.sent.at(-1).body, /buyer, seller or agent/);
     }
     assert.equal(s.tables.auditLogsTable.filter((row: any) => row.metadata?.status === 'accepted').length, 2);
     s.sent = [];
