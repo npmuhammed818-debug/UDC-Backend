@@ -167,7 +167,7 @@ try {
   assert.equal(issued.status, 202);
   let letter = fixture.outbox.at(-1);
   assert.equal(letter.to, email);
-  assert.match(letter.code, /^\d{8}$/);
+  assert.match(letter.code, /^\d{6}$/);
   assert.equal(letter.purpose, "verify_email");
   assert.ok(!JSON.stringify(issued.body).includes(letter.code));
   const stored = (
@@ -182,7 +182,7 @@ try {
     600000,
   );
   pass(
-    "eight-digit code is delivered only to mock email; DB stores keyed digest with ten-minute expiry",
+    "six-digit code is delivered only to mock email; DB stores keyed digest with ten-minute expiry",
   );
   const firstId = issued.body.challengeId,
     firstCode = letter.code;
@@ -449,7 +449,7 @@ try {
   );
   assert.match(
     await app.handleEmailVerification(phone, "Verify email"),
-    /8-digit/,
+    /6-digit/,
   );
   const waLetter = fixture.outbox.at(-1);
   assert.match(

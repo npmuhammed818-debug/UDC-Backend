@@ -757,7 +757,7 @@ components:
       required: [challengeId, code]
       properties:
         challengeId: { type: string, format: uuid }
-        code: { type: string, pattern: '^[0-9]{8}$' }
+        code: { type: string, pattern: '^[0-9]{6}$' }
     PasswordRecoveryRequest:
       type: object
       additionalProperties: false
@@ -771,7 +771,7 @@ components:
       properties:
         email: { type: string, format: email, maxLength: 254 }
         challengeId: { type: string, format: uuid }
-        code: { type: string, pattern: '^[0-9]{8}$' }
+        code: { type: string, pattern: '^[0-9]{6}$' }
         password: { type: string, minLength: 12, maxLength: 128, description: Uppercase, lowercase, number and symbol required }
     ProfileUpdate:
       type: object

@@ -174,7 +174,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     });
     await t.test('email code commands require signed consented nonblocked senders and never reach AI or memory',async()=>{
       reset();state.emailCalls=0;
-      const text={text:{body:'Email code 12345678'}};
+      const text={text:{body:'Email code 123456'}};
       await message(text,false);assert.equal(state.emailCalls,0);
       state.privacyReply='Reply AGREE';await message(text);assert.equal(state.emailCalls,0);
       state.privacyReply=null;rows.usersTable.push({phone:'10000000001',status:'suspended'});await message(text);assert.equal(state.emailCalls,0);

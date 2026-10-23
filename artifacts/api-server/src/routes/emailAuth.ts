@@ -13,7 +13,7 @@ const email = z
   .email()
   .transform((v) => v.toLowerCase());
 const proof = z
-  .object({ challengeId: z.uuid(), code: z.string().regex(/^\d{8}$/) })
+  .object({ challengeId: z.uuid(), code: z.string().regex(/^\d{6}$/) })
   .strict();
 const reset = proof.extend({ email, password: passwordSchema });
 const requested = {

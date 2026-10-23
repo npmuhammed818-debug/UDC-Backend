@@ -204,7 +204,7 @@ export interface EmptyEmailAuthInput { [key: string]: unknown }
 
 export interface EmailCodeInput {
   challengeId: string;
-  /** @pattern ^[0-9]{8}$ */
+  /** @pattern ^[0-9]{6}$ */
   code: string;
 }
 
@@ -217,7 +217,7 @@ export interface PasswordRecoveryConfirm {
   /** @maxLength 254 */
   email: string;
   challengeId: string;
-  /** @pattern ^[0-9]{8}$ */
+  /** @pattern ^[0-9]{6}$ */
   code: string;
   /**
      * Uppercase

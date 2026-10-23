@@ -4,7 +4,7 @@ export type EmailPurpose = "verify_email" | "reset_password";
 export const EMAIL_CODE_TTL_MS = 10 * 60_000;
 export const EMAIL_CODE_ATTEMPTS = 5;
 export const newEmailCode = () =>
-  randomInt(100_000_000).toString().padStart(8, "0");
+  randomInt(1_000_000).toString().padStart(6, "0");
 
 export function emailCodeHash(
   secret: string,

@@ -10,7 +10,7 @@ export interface PasswordRecoveryConfirm {
   /** @maxLength 254 */
   email: string;
   challengeId: string;
-  /** @pattern ^[0-9]{8}$ */
+  /** @pattern ^[0-9]{6}$ */
   code: string;
   /**
      * Uppercase

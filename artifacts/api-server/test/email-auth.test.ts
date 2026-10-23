@@ -81,12 +81,12 @@ test("email code digests are keyed and bound to purpose, challenge, user and ema
       "a",
       "b",
       "qa@example.invalid",
-      "12345678",
+      "123456",
     ),
   );
 });
-test("codes are eight digits including possible leading zeroes", () => {
-  for (let n = 0; n < 100; n++) assert.match(newEmailCode(), /^\d{8}$/);
+test("codes are six digits including possible leading zeroes", () => {
+  for (let n = 0; n < 100; n++) assert.match(newEmailCode(), /^\d{6}$/);
 });
 test("default email delivery fails closed and never logs codes or contacts a provider", async (t) => {
   let contacted = false,
@@ -103,7 +103,7 @@ test("default email delivery fails closed and never logs codes or contacts a pro
     sendAuthEmail(
       {
         to: "qa@example.invalid",
-        code: "12345678",
+        code: "123456",
         purpose: "verify_email",
         expiresAt: new Date(),
       },
@@ -140,7 +140,7 @@ test("email delivery deadline aborts even an unresponsive provider", async () =>
       },
       {
         to: "qa@example.invalid",
-        code: "12345678",
+        code: "123456",
         purpose: "verify_email",
         expiresAt: new Date(),
       },

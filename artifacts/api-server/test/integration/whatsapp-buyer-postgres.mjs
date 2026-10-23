@@ -130,7 +130,7 @@ try {
   const { rows: [company] } = await pool.query('select verification_status from companies where owner_user_id=$1', [buyer.id]);
   assert.equal(company.verification_status, 'pending');
   await post('Verify email');
-  assert.match(sent.at(-1).text.body, /8-digit code/);
+  assert.match(sent.at(-1).text.body, /6-digit code/);
   assert.equal(mail.outbox.length, 1);assert.equal(mail.outbox[0].to, email);
   const code = mail.outbox[0].code;
   await post('Email code ' + code);

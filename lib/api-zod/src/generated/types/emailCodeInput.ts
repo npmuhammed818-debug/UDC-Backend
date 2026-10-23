@@ -8,6 +8,6 @@
 
 export interface EmailCodeInput {
   challengeId: string;
-  /** @pattern ^[0-9]{8}$ */
+  /** @pattern ^[0-9]{6}$ */
   code: string;
 }

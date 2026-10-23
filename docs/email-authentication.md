@@ -26,7 +26,7 @@ verification of the current email. These are separate from company verification.
 
 ## Customer/admin flows
 
-- In a consented, registered WhatsApp chat: `Verify email`, then `Email code 12345678`
+- In a consented, registered WhatsApp chat: `Verify email`, then `Email code 123456`
   using the code received by email. These commands run after signature/consent/block
   gates and before AI, deal relay or memory. Codes are not forwarded to a model.
 - A signed-in browser user can request/confirm ownership from the verification

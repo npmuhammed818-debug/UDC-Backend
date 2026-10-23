@@ -26,10 +26,10 @@ export async function handleEmailVerification(
       if ((await emailAuth.status(user.id)).emailVerified)
         return "Your email is already verified. Company approval is a separate UDC review.";
       await emailAuth.requestVerification(user.id);
-      return "Check your registered email for an 8-digit code. Reply Email code followed by the code. It expires in 10 minutes; wait one minute before requesting another.";
+      return "Check your registered email for an 6-digit code. Reply Email code followed by the code. It expires in 10 minutes; wait one minute before requesting another.";
     }
-    if (!/^\d{8}$/.test(confirm![1] ?? ""))
-      return "Reply Email code followed by the 8-digit code from your email.";
+    if (!/^\d{6}$/.test(confirm![1] ?? ""))
+      return "Reply Email code followed by the 6-digit code from your email.";
     // The user row lock in verify rechecks ownership and serializes one-time use.
     const { rows: challenges } = await db.execute(
       sql`select id from email_auth_challenges where user_id=${user.id} and purpose='verify_email' and consumed_at is null order by created_at desc limit 1`,
