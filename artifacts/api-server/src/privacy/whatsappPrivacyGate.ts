@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
   auditLogsTable,
@@ -95,9 +96,7 @@ export async function whatsappPrivacyGate(
           )
           .limit(1);
         if (!applied) {
-          const guidedChatHash = createHmac("sha256", process.env.WHATSAPP_APP_SECRET!)
-            .update("UDC_GUIDED_CHAT_V1\\0" + phone)
-            .digest("hex");
+          const guidedChatHash = guidedChatPhoneHash(phone);
           await tx.delete(whatsappIntakeDraftsTable).where(eq(whatsappIntakeDraftsTable.phone, phone));
           await tx.delete(whatsappChatSessionsTable).where(eq(whatsappChatSessionsTable.phoneHash, guidedChatHash));
           await tx.update(usersTable)
