@@ -47,7 +47,7 @@ globalThis.fetch = async (input, init) => {
 try {
   await build({
     stdin: {
-      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import email from './src/routes/emailAuth';import profile from './src/routes/profile';import {loadAuth} from './src/auth/middleware';export {pool} from '@workspace/db';export {hashPassword,verifyPassword} from './src/auth/passwords';export {createEmailAuthService} from './src/auth/emailAuth';export {handleEmailVerification} from './src/whatsapp/emailVerification';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(email);app.use(profile);export default app;`,
+      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import email from './src/routes/emailAuth';import profile from './src/routes/profile';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {createPhoneRecoveryService} from './src/whatsapp/phoneRecovery';export {hashPassword,verifyPassword} from './src/auth/passwords';export {createEmailAuthService} from './src/auth/emailAuth';export {handleEmailVerification} from './src/whatsapp/emailVerification';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(email);app.use(profile);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     outfile: directory + "/app.mjs",
@@ -94,6 +94,9 @@ try {
       "utf8",
     ),
   );
+  const phoneMigration = await readFile(new URL("../../../../lib/db/migrations/20261024_whatsapp_phone_recovery.sql",import.meta.url),"utf8");
+  await pool.query(phoneMigration);
+  await pool.query(phoneMigration);
   server = app.default.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -652,6 +655,43 @@ try {
   pass(
     "malformed confirmation requests consume the durable IP guessing budget",
   );
+  // QA-only: real PostgreSQL and fake email; no real Meta/SMTP requests.
+  process.env.WHATSAPP_APP_SECRET="synthetic-qa-phone-recovery-secret-at-least-32";
+  const originalId=randomUUID(),oldPhone="100000091111",newPhone="100000092222";
+  const originalEmail="recover-"+randomUUID()+"@example.invalid";
+  await pool.query("insert into users(id,email,verified_email,email_verified_at,phone,password_hash,role,status) values($1,$2,$2,now(),$3,$4,'buyer','verified')",
+    [originalId,originalEmail,oldPhone,"synthetic-no-password-"+randomUUID()]);
+  const beforeCount=Number((await pool.query("select count(*) from users")).rows[0].count);
+  const recovery=app.createPhoneRecoveryService({database:app.db});
+  const beforeMail=fixture.outbox.length;
+  const generic=await recovery.request(newPhone,"unknown-"+randomUUID()+"@example.invalid");
+  assert.equal(fixture.outbox.length,beforeMail);
+  assert.equal(await recovery.request(newPhone,originalEmail),generic);
+  assert.equal(fixture.outbox.length,beforeMail+1);
+  const recoveryMail=fixture.outbox.at(-1);
+  assert.equal(recoveryMail.purpose,"link_phone");
+  assert.match(recoveryMail.code,/^\d{6}$/);
+  const c=(await pool.query("select * from public.whatsapp_phone_link_challenges where user_id=$1",[originalId])).rows[0];
+  assert.notEqual(c.code_hash,recoveryMail.code);
+  assert.match(c.code_hash,/^[a-f0-9]{64}$/);
+  assert.match(await recovery.confirm("100000093333",recoveryMail.code),/invalid/);
+  const wrongCode=recoveryMail.code==="000000"?"000001":"000000";
+  assert.match(await recovery.confirm(newPhone,wrongCode),/invalid/);
+  assert.equal((await pool.query("select attempts from whatsapp_phone_link_challenges where id=$1",[c.id])).rows[0].attempts,1);
+  assert.match(await recovery.confirm(newPhone,recoveryMail.code),/original UDC account/);
+  const after=(await pool.query("select id,email,phone,role,status,verified_email from users where id=$1",[originalId])).rows[0];
+  assert.equal(after.id,originalId);assert.equal(after.email,originalEmail);
+  assert.equal(after.verified_email,originalEmail);assert.equal(after.phone,newPhone);
+  assert.equal(after.role,"buyer");assert.equal(after.status,"verified");
+  assert.equal(Number((await pool.query("select count(*) from users")).rows[0].count),beforeCount);
+  assert.equal((await pool.query("select id from users where phone=$1",[oldPhone])).rowCount,0);
+  assert.match(await recovery.confirm(newPhone,recoveryMail.code),/invalid/);
+  for(const role of ["anon","authenticated"]){
+    const grant=(await pool.query("select has_table_privilege($1,'public.whatsapp_phone_link_challenges','SELECT') AS allowed",[role])).rows[0];
+    assert.equal(grant.allowed,false);
+  }
+  assert.equal((await pool.query("select relrowsecurity from pg_class where oid='public.whatsapp_phone_link_challenges'::regclass")).rows[0].relrowsecurity,true);
+  pass("real PostgreSQL: verified email permits safe second-number recovery without duplicate identity or client SQL access");
   const audit = JSON.stringify(
     (
       await pool.query(
