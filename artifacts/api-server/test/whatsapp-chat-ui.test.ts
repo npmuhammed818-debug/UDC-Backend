@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 test('native WhatsApp menus and forms preserve role, privacy, review and replay boundaries',async t=>{
-  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable'];
+  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable'];
   const tables:any=Object.fromEntries(names.map(n=>[n,new Proxy({_table:n},{get:(_,k)=>k==='_table'?n:{column:k,table:n}})]));
   const rows:any=Object.fromEntries(names.map(n=>[n,[]]));
   const value=(x:any,r:any):any=>x?.column?(r[x.table]??r)[x.column]:x;
@@ -102,7 +102,20 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       rows.dealsTable=[{id:own,dealNumber:'UDC-OWN',buyerUserId:buyer.id,sellerUserId:'seller',status:'negotiation'},{id:other,dealNumber:'UDC-PRIVATE',buyerUserId:'other',sellerUserId:'other-seller',status:'banking'}];
       await m.handleChatUi(phone,ui('deals'));const list=state.interactive.at(-1).body.action.sections[0].rows;assert.equal(list.length,1);assert.equal(list[0].title,'UDC-OWN');
       await m.handleChatUi(phone,ui('deal:'+other));assert.match(last(),/unavailable/);assert.equal(rows.whatsappUserContextsTable.length,0);
+      await m.handleChatUi(phone,ui('track'));assert.match(last(),/select your deal first/);
       await m.handleChatUi(phone,ui('deal:'+own));assert.equal(rows.whatsappUserContextsTable[0].activeDealId,own);
+      assert.equal(state.interactive.at(-1).body.action.buttons[0].reply.id,'udc:track');
+      rows.shipmentsTable=[
+        {id:'own-shipment',dealId:own,status:'in_transit',carrier:'Synthetic Carrier',trackingNumber:'QA-100',origin:'Kochi',destination:'Jebel Ali',estimatedArrival:new Date('2026-11-05T12:00:00Z'),updatedAt:new Date('2026-11-01T10:00:00Z')},
+        {id:'other-shipment',dealId:other,status:'disputed',carrier:'PRIVATE CARRIER',trackingNumber:'SECRET-999',origin:'PRIVATE ORIGIN',destination:'PRIVATE DESTINATION',updatedAt:new Date('2026-11-02T10:00:00Z')},
+      ];
+      await m.handleChatUi(phone,ui('track'));
+      assert.match(last(),/UDC-OWN/);assert.match(last(),/Synthetic Carrier/);assert.match(last(),/QA-100/);
+      assert.match(last(),/Last UDC update: 2026-11-01 10:00 UTC/);
+      assert.doesNotMatch(last(),/SECRET|PRIVATE CARRIER|PRIVATE DESTINATION/);
+      const beforeRevoked=buyer.status;buyer.status='under_review';
+      await m.handleChatUi(phone,ui('track'));assert.match(last(),/pending UDC approval/);
+      buyer.status=beforeRevoked;
       const agent=rows.usersTable.find((u:any)=>u.role==='agent');await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/Verified agent approval/);agent.status='verified';
       await m.handleChatUi(agent.phone,ui('menu'));
       const shortcuts=state.interactive.at(-1).body.action.buttons.map((b:any)=>b.reply.id);
@@ -118,7 +131,12 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
 
       rows.commissionsTable=[{beneficiaryUserId:agent.id,currency:'USD',amount:'50',status:'pending'},{beneficiaryUserId:'other',currency:'USD',amount:'999999',status:'paid'}];await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/50/);assert.doesNotMatch(last(),/999999/);
       rows.dealParticipantsTable=[{dealId:own,userId:agent.id,participantRole:'agent',status:'active'}];await m.handleChatUi(agent.phone,ui('deals'));assert.equal(state.interactive.at(-1).body.action.sections[0].rows.length,1);
+      await m.handleChatUi(agent.phone,ui('deal:'+own));
+      await m.handleChatUi(agent.phone,ui('track'));
+      assert.match(last(),/Shipment 1: in_transit/);
+      assert.doesNotMatch(last(),/QA-100|Synthetic Carrier|Kochi|Jebel Ali|SECRET-999/);
       rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);
+      await m.handleChatUi(agent.phone,ui('track'));assert.match(last(),/no longer available/);assert.doesNotMatch(last(),/QA-100|Synthetic Carrier/);
     });
     await t.test('company PDFs need an owned quoted request and remain private, reviewed and idempotent',async()=>{
       const buyer=rows.usersTable.find((u:any)=>u.phone===phone);await m.handleChatUi(phone,ui('documents'));const request=state.sent.length;
