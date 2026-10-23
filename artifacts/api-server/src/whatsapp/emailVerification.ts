@@ -26,7 +26,7 @@ export async function handleEmailVerification(
       if ((await emailAuth.status(user.id)).emailVerified)
         return "Your email is already verified. Company approval is a separate UDC review.";
       await emailAuth.requestVerification(user.id);
-      return "Check your registered email for an 6-digit code. Reply Email code followed by the code. It expires in 10 minutes; wait one minute before requesting another.";
+      return "Check your registered email for a 6-digit code. Reply Email code followed by the code. It expires in 10 minutes; wait one minute before requesting another.";
     }
     if (!/^\d{6}$/.test(confirm![1] ?? ""))
       return "Reply Email code followed by the 6-digit code from your email.";
