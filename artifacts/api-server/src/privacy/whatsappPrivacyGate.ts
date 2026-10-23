@@ -5,6 +5,8 @@ import {
   db,
   notificationPreferencesTable,
   usersTable,
+  whatsappChatSessionsTable,
+  whatsappIntakeDraftsTable,
 } from "@workspace/db";
 import {
   decideWhatsAppConsent,
@@ -13,6 +15,7 @@ import {
 } from "./whatsappConsent";
 import { POLICY_VERSION, SUPPORT_EMAIL } from "./policies";
 const policyBase = "https://udc-backend.onrender.com";
+const consentNotice = `Before we start, UDC is for business representatives aged 18 or older. We process your messages and submitted trade documents with Meta and our configured service/AI providers for the trade services you request.\\nPrivacy: ${policyBase}/privacy\\nTerms and fees: ${policyBase}/terms\\nReply AGREE only if you are 18+, authorized to represent your business, accept the terms and acknowledge this processing. Otherwise, do not submit personal information or documents. Optional marketing is not included. For help or data requests: ${SUPPORT_EMAIL}`;
 export async function whatsappPrivacyGate(
   phone: string,
   text?: string,
@@ -58,6 +61,65 @@ export async function whatsappPrivacyGate(
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext(${`whatsapp-consent:${fingerprint}`}))`,
     );
+    // A UDC operator may request a one-time test onboarding reset for a
+    // specific existing user ID. The marker is written by an operator, never
+    // by an unauthenticated WhatsApp message. Retain historical deals, users,
+    // and verification evidence while releasing only the phone identity.
+    const [account] = await tx
+      .select({ id: usersTable.id })
+      .from(usersTable)
+      .where(eq(usersTable.phone, phone))
+      .limit(1);
+    if (account) {
+      const [resetRequest] = await tx
+        .select({ id: auditLogsTable.id })
+        .from(auditLogsTable)
+        .where(
+          and(
+            eq(auditLogsTable.actorUserId, account.id),
+            eq(auditLogsTable.action, "whatsapp_test_onboarding_reset_requested"),
+            sql`${auditLogsTable.metadata}->>'state' = 'pending'`,
+          ),
+        )
+        .orderBy(desc(auditLogsTable.createdAt))
+        .limit(1);
+      if (resetRequest) {
+        const [applied] = await tx
+          .select({ id: auditLogsTable.id })
+          .from(auditLogsTable)
+          .where(
+            and(
+              eq(auditLogsTable.action, "whatsapp_test_onboarding_reset_applied"),
+              sql`${auditLogsTable.metadata}->>'resetRequestId' = ${resetRequest.id}`,
+            ),
+          )
+          .limit(1);
+        if (!applied) {
+          const guidedChatHash = createHmac("sha256", process.env.WHATSAPP_APP_SECRET!)
+            .update("UDC_GUIDED_CHAT_V1\\0" + phone)
+            .digest("hex");
+          await tx.delete(whatsappIntakeDraftsTable).where(eq(whatsappIntakeDraftsTable.phone, phone));
+          await tx.delete(whatsappChatSessionsTable).where(eq(whatsappChatSessionsTable.phoneHash, guidedChatHash));
+          await tx.update(usersTable)
+            .set({ phone: null, updatedAt: new Date() })
+            .where(eq(usersTable.id, account.id));
+          await tx.insert(auditLogsTable).values({
+            action: "whatsapp_test_onboarding_reset_applied",
+            entityType: "user",
+            actorUserId: account.id,
+            entityId: account.id,
+            metadata: { resetRequestId: resetRequest.id, scope: "phone_identity_only" },
+          });
+          await tx.insert(auditLogsTable).values({
+            createdAt: sql`clock_timestamp()`,
+            action: "whatsapp_privacy_notice_presented",
+            entityType: "whatsapp_consent",
+            metadata: { fingerprint, policyVersion: POLICY_VERSION, status: "notice_sent" },
+          });
+          return consentNotice;
+        }
+      }
+    }
     const [current] = await tx
       .select()
       .from(auditLogsTable)
@@ -112,6 +174,6 @@ export async function whatsappPrivacyGate(
           },
         });
     }
-    return `Before we start, UDC is for business representatives aged 18 or older. We process your messages and submitted trade documents with Meta and our configured service/AI providers for the trade services you request.\nPrivacy: ${policyBase}/privacy\nTerms and fees: ${policyBase}/terms\nReply AGREE only if you are 18+, authorized to represent your business, accept the terms and acknowledge this processing. Otherwise, do not submit personal information or documents. Optional marketing is not included. For help or data requests: ${SUPPORT_EMAIL}`;
+    return consentNotice;
   });
 }
