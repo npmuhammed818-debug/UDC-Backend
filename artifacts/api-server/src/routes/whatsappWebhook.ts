@@ -1,4 +1,5 @@
 import { handleEmailVerification } from '../whatsapp/emailVerification';
+import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
@@ -996,6 +997,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");
           continue;
         }
+      }
+      if (message.from && typeof message.text?.body === 'string') {
+        const recoveryReply = await handlePhoneRecovery(message.from,message.text.body);
+        if (recoveryReply !== null) { await deliverWhatsAppReply(message.from,recoveryReply); continue; }
       }
       if (message.from && typeof message.text?.body === 'string') {
         const emailReply = await handleEmailVerification(message.from,message.text.body);
