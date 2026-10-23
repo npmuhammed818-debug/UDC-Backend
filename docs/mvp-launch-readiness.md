@@ -13,8 +13,8 @@ later in this file belongs to its stated date/revision.
 | Feature | Implementation / genuine gap | Current evidence and remaining acceptance |
 | --- | --- | --- |
 | Consent and buyer/seller/agent registration | Implemented; manual company verification remains required | PASSED signed webhook + real local PostgreSQL for all roles during simulated AI outages, pending company state, email-conflict correction and duplicate buyer submit. Real WhatsApp delivery and company-review workflow NOT YET TESTED on combined branch. |
-| Email OTP / email ownership verification | **MISSING**: no send/verify challenge API, expiring single-use challenge storage, mail delivery adapter, verified-email record or ownership gate. Generic unused OTP UI is not this feature. | NOT IMPLEMENTED; email syntax/domain checks and manual company review do not prove mailbox ownership. Needs rate limits, resend/expiry/replay tests and fictional mailbox acceptance. |
-| Email password recovery | **MISSING** email reset request/consume flow and transactional mail delivery | NOT IMPLEMENTED; WhatsApp sign-in challenges are a separate capability. |
+| Email OTP / email ownership verification | Implemented in #125: expiring single-use codes, purpose/user/email-bound hashes, persistent limits, browser and signed WhatsApp flows | Isolated mocked checks passed on #125; combined results are recorded in the integration report. Real email adapter remains disabled and live delivery NOT YET TESTED. Company approval stays manual. |
+| Email password recovery | Implemented for proven password accounts with verified current email; atomic password/session changes | Mocked regression evidence in #125; combined results in integration report. Legacy enrollment, migration and mail-provider approval remain rollout prerequisites. WhatsApp-only accounts are excluded. |
 | WhatsApp menus and trade intake | Implemented guided forms, drafts, requirements and multiple offers | PASSED local signed conversations, scalar kg/AED fields, two seller offers, retained rejected draft and all four cross-role intake rejections. Live Meta menus/delivery NOT YET TESTED. |
 | Akif intelligence, memory, languages and fallbacks | Implemented provider chain, memory and offline guided intake; shared fallback deadline in #121 | PASSED isolated deadline/provider-error/memory checks; real provider availability, naturalness, translation accuracy and latency NOT YET TESTED. |
 | Matching, negotiations and private rooms | Implemented matching, approval, private relay, permissions and history | PASSED isolated regression groups; multi-participant persisted workflow and live selective delivery NOT YET TESTED here. |
@@ -28,7 +28,7 @@ later in this file belongs to its stated date/revision.
 | Buyer pooling, privacy and data protection | Allocations, locking, role checks, consent/opt-out and deletion-review paths implemented | PASSED isolated concurrency/privacy checks; bank-reviewed pooling and actual storage/RLS/deletion acceptance NOT YET TESTED. Strict database TLS fix #123 is separate and excluded from this integration. |
 | Research, learning and external integrations | Clients/prompts exist | External keys, provider health, accuracy and actual connected workflows remain unverified; presence of a client is not completed integration. |
 
-Combined integration evidence and exact revisions: [integration #119–122](integration-119-122.md).
+Combined integration evidence: [#124 + #125](integration-124-125.md). Historical #124 evidence: [#119–122](integration-119-122.md).
 Separate TLS compatibility investigation: [Supabase TLS](supabase-tls-investigation.md).
 No production settings, deployments, customer records or approval states were changed.
 

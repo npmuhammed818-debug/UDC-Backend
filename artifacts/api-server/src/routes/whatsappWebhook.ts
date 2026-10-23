@@ -1,3 +1,4 @@
+import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
@@ -995,6 +996,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");
           continue;
         }
+      }
+      if (message.from && typeof message.text?.body === 'string') {
+        const emailReply = await handleEmailVerification(message.from,message.text.body);
+        if (emailReply !== null) { await deliverWhatsAppReply(message.from,emailReply); continue; }
       }
       // Explicit menu requests take precedence over AI guidance. Never open
       // the menu for ordinary greetings, consent, or unrelated chat messages.

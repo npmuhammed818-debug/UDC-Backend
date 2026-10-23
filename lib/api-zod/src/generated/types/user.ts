@@ -12,6 +12,9 @@ export interface User {
   email?: string | null;
   /** @nullable */
   fullName?: string | null;
+  emailVerified?: boolean;
+  /** @nullable */
+  emailVerifiedAt?: Date | null;
   role: string;
   status: string;
   [key: string]: unknown;

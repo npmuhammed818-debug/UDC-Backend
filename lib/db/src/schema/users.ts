@@ -1,6 +1,7 @@
 import { createInsertSchema } from "drizzle-zod";
 import {
   index,
+  boolean,
   pgTable,
   text,
   timestamp,
@@ -17,6 +18,9 @@ export const usersTable = pgTable(
     phone: text("phone"),
     fullName: text("full_name"),
     passwordHash: text("password_hash").notNull(),
+    passwordRecoveryEnabled: boolean("password_recovery_enabled").notNull().default(false),
+    verifiedEmail: text("verified_email"),
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     role: text("role").notNull().default("buyer"),
     status: text("status").notNull().default("pending"),
     country: text("country"),
@@ -41,6 +45,9 @@ export const insertUserSchema = createInsertSchema(usersTable).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  passwordRecoveryEnabled: true,
+  verifiedEmail: true,
+  emailVerifiedAt: true,
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
