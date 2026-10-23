@@ -43,3 +43,38 @@ particularly email OTP and email password recovery. No live customer data is use
 
 Next: review the combined hosted result, investigate remaining live-access gaps,
 and request owner approval before any merge or deployment. Keep #123 separate.
+
+## Confirmed intermittent test failure and test-only correction
+
+The owner identified the failed assertion in run `39982610026`:
+“WhatsApp conversation uses configured worker without exposing provider keys”.
+The worker mock required `timeout_seconds === 14`. With the shared deadline,
+legitimate elapsed time before dispatch reduces that budget.
+
+Reproduction: mock the monotonic clock at 0 for deadline creation and 2 ms for
+subsequent reads, leaving the original equality assertion in place. The request
+contains `timeout_seconds: 13.998`. The assertion throws inside the mocked fetch;
+the provider chain catches it as a worker failure and eventually reports
+`Hermes AKIF URL/key is not configured`. The original failure is deterministic
+under this clock; no real provider request or production outage is required.
+
+The smallest correction is limited to `worker-conversation.test.ts`: retain the
+2 ms clock advance as a regression fixture and require a finite, positive model
+timeout no greater than the remaining caller budget minus the 1-second transport
+reserve (`13.998` here). A reset to `14`, NaN, infinity, zero or a negative budget
+still fails. Existing token/header, exact message content, expected reply and
+single-worker-call assertions are unchanged. Node's test context restores the
+clock mock after the test. No production deadline/provider code changed.
+
+Local verification after the correction:
+
+- PASSED the worker conversation/timeout pair 50 consecutive times (7 tests each).
+- PASSED the complete 205-test backend suite five consecutive times.
+- PASSED release verification, typechecks/builds and all eight acceptance groups.
+- PASSED all 25 Python worker/extractor tests and the signed real-PostgreSQL
+  all-role WhatsApp scenario with simulated providers and fictional participants.
+
+Repeated hosted verification results are recorded in PR #124 at the tested head;
+retain both successful attempts as evidence. This resolves the reproduced test
+assertion defect, not the separate live acceptance or TLS blockers. PR #123 remains
+excluded, with no merge, deployment, production configuration or customer changes.

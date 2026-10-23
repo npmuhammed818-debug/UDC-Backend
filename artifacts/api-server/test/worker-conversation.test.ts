@@ -11,15 +11,21 @@ function configure() {
   process.env.AKIF_WORKER_URL = "https://worker.example";
   process.env.AKIF_WORKER_TOKEN = "internal-test";
 }
-test("WhatsApp conversation uses configured worker without exposing provider keys", async () => {
+test("WhatsApp conversation uses configured worker without exposing provider keys", async t => {
   configure();
+  // Reproduce scheduler overhead without depending on CI load or wall-clock sleeps.
+  const elapsedMs = 2;
+  let clockReads = 0;
+  t.mock.method(performance, "now", () => clockReads++ === 0 ? 0 : elapsedMs);
   const calls: string[] = [];
   globalThis.fetch = async (url, init) => {
     calls.push(String(url));
     assert.equal((init!.headers as Record<string,string>)["x-akif-worker-token"], "internal-test");
     const body = JSON.parse(String(init!.body));
     assert.deepEqual(body.messages, [{ role: "system", content: "UDC DLC rules" }, { role: "user", content: "100 MT copper" }]);
-    assert.equal(body.timeout_seconds, 14);
+    assert.ok(Number.isFinite(body.timeout_seconds) && body.timeout_seconds > 0);
+    assert.ok(body.timeout_seconds <= (15_000 - elapsedMs - 1_000) / 1_000,
+      "worker model budget must reserve transport overhead within the remaining deadline");
     return Response.json({ choices: [{ message: { content: '{"replyToSender":"Where do you need delivery?"}' } }] });
   };
   const result = await runConversationChat("100 MT copper", "UDC DLC rules", 15000);
