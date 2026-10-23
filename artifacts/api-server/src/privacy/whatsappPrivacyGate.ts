@@ -93,7 +93,7 @@ export async function whatsappPrivacyGate(
             adultBusinessUser: true,
           },
         });
-      return "Thanks. What trade requirement or offer would you like to discuss?";
+      return { kind: "consent_accepted" as const };
     }
     if (
       current?.metadata?.status !== "notice_sent" ||
