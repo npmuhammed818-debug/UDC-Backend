@@ -73,6 +73,30 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       state.failAudit=true;await assert.rejects(m.submitChatFlow(phone,JSON.stringify({...form,flow_token:m.issueFlowToken(phone,'buyer')})),/audit_failure/);assert.equal(rows.buyerRequestsTable.length,1);
       const b=rows.usersTable.find((u:any)=>u.phone===phone);b.status='suspended';assert.match(await m.submitChatFlow(phone,JSON.stringify({...form,flow_token:m.issueFlowToken(phone,'buyer')})),/UDC review/);b.status='verified';
     });
+    await t.test('a rejected email conflict keeps the registration draft editable without merging accounts',async()=>{
+      const applicant='10000000081',oldFlow=state.flowId;
+      const existing=rows.usersTable.find((u:any)=>u.phone===phone);
+      const original=structuredClone(existing),before=rows.usersTable.length;
+      try{
+        state.flowId=null;
+        await m.handleChatUi(applicant,ui('buyer'));
+        await m.handleChatUi(applicant,{id:randomUUID(),text:{body:`full_name: QA Conflict Buyer; email: ${existing.email}; company_name: QA Conflict Imports Ltd; country: India`}});
+        const draft=rows.whatsappChatSessionsTable.find((r:any)=>r.purpose==='profile_buyer');
+        const draftId=draft.id;
+        await m.handleChatUi(applicant,ui('submit'));
+        assert.match(last(),/already belongs/);
+        assert.ok(rows.whatsappChatSessionsTable.some((r:any)=>r.id===draftId),'a rejected submission must retain all entered details');
+        assert.equal(rows.usersTable.length,before);
+        assert.deepEqual(existing,original,'email conflicts must never update another identity');
+        await m.handleChatUi(applicant,ui('restart'));
+        await m.handleChatUi(applicant,{id:randomUUID(),text:{body:'email: qa-conflict-corrected@example.invalid'}});
+        await m.handleChatUi(applicant,ui('submit'));
+        const created=rows.usersTable.find((u:any)=>u.phone===applicant);
+        assert.ok(created);assert.equal(created.email,'qa-conflict-corrected@example.invalid');
+        assert.equal(created.fullName,'QA Conflict Buyer');assert.equal(created.status,'pending');
+        assert.equal(rows.whatsappChatSessionsTable.some((r:any)=>r.id===draftId),false);
+      }finally{state.flowId=oldFlow;await m.handleChatUi(applicant,ui('cancel'));}
+    });
     await t.test('private data only comes from own deals, assignments, referrals and commissions',async()=>{
       const buyer=rows.usersTable.find((u:any)=>u.phone===phone),own=randomUUID(),other=randomUUID();
       rows.dealsTable=[{id:own,dealNumber:'UDC-OWN',buyerUserId:buyer.id,sellerUserId:'seller',status:'negotiation'},{id:other,dealNumber:'UDC-PRIVATE',buyerUserId:'other',sellerUserId:'other-seller',status:'banking'}];
