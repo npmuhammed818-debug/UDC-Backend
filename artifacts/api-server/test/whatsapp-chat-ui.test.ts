@@ -28,7 +28,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
   (globalThis as any).__chatUiFixture=state;
   const output=fileURLToPath(new URL(`./chat-ui-${randomUUID()}.mjs`,import.meta.url));
   const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
-    const fixtures:any={hermes:"export const runConversationChat=async()=>{const s=globalThis.__chatUiFixture;s.modelCalls++;return {content:s.modelOutput};};",db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const inArray=(a,list)=>({kind:'in',a,list});export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppTextWithMenu=async(to,body)=>{s.sent.push({to,body,withMenu:true});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';"};
+    const fixtures:any={hermes:"export const runConversationChat=async()=>{const s=globalThis.__chatUiFixture;s.modelCalls++;if(s.modelError)throw new DOMException('Synthetic provider deadline','TimeoutError');return {content:s.modelOutput};};",db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const inArray=(a,list)=>({kind:'in',a,list});export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppTextWithMenu=async(to,body)=>{s.sent.push({to,body,withMenu:true});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';"};
     for(const [filter,path] of [[/intelligence\/hermesClient$/,'hermes'],[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/whatsapp\/client$|^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
   }}]});
@@ -178,6 +178,79 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       const before=rows.buyerRequestsTable.length;
       const result=await m.submitChatFlow(sellerPhone,JSON.stringify({flow_token:m.issueFlowToken(sellerPhone,'seller'),product:'Test goods',quantity:'100',price:'490',incoterm:'EXW',destination:'Agreed warehouse',payment_terms:'30% advance, 70% on delivery'}));
       assert.match(result,/saved/);assert.equal(rows.sellerListingsTable.at(-1).paymentTerms,'30% advance, 70% on delivery');assert.equal(rows.sellerListingsTable.at(-1).status,'pending_admin_review');assert.equal(rows.buyerRequestsTable.length,before);
+    });
+    await t.test('plain buyer answers survive unavailable AI and still require explicit review submission',async()=>{
+      const buyerPhone='10000000078',oldFlow=state.flowId,oldOutput=state.modelOutput;
+      const beforeUsers=rows.usersTable.length,beforeRequests=rows.buyerRequestsTable.length;
+      try{
+        state.flowId=null;state.modelOutput='not json';state.modelError=true;
+        const calls=state.modelCalls;
+        await m.handleChatUi(buyerPhone,{text:{body:'Buyer'}});
+        assert.equal(await m.handleChatUi(buyerPhone,{text:{body:'Tell me about UDC'}},true),false,'a learning request must not become a name');
+        assert.equal(await m.handleChatUi(buyerPhone,{text:{body:'What is UDC?'}},true),false);
+        assert.equal(await m.handleChatUi(buyerPhone,{text:{body:'മലയാളം'}},true),false);
+        assert.equal(await m.handleChatUi(buyerPhone,{text:{body:'CIF Jebel Ali'}},true),false,'multiple fields need paragraph extraction');
+        for(const body of ['QA Test Buyer','qa-outage@example.invalid','UDC QA Test Imports Ltd','India']){
+          await m.handleChatUi(buyerPhone,{id:randomUUID(),text:{body}});
+        }
+        const draft=rows.whatsappChatSessionsTable.find((r:any)=>r.purpose==='profile_buyer');
+        assert.equal(draft.data.full_name,'QA Test Buyer','a plain name must not depend on AI availability');
+        assert.equal(draft.data.email,'qa-outage@example.invalid');
+        assert.equal(draft.data.company_name,'UDC QA Test Imports Ltd');
+        assert.equal(draft.data.country,'India');
+        assert.equal(rows.usersTable.length,beforeUsers,'draft must not register without confirmation');
+        await m.handleChatUi(buyerPhone,{...ui('submit'),id:randomUUID()});
+        const buyer=rows.usersTable.find((u:any)=>u.phone===buyerPhone);
+        assert.ok(buyer);assert.equal(buyer.status,'pending');
+        await m.handleChatUi(buyerPhone,ui('requirement'));
+        for(const body of ['Copper cathode','100','Jebel Ali','CIF']){
+          await m.handleChatUi(buyerPhone,{id:randomUUID(),text:{body}});
+        }
+        assert.equal(rows.buyerRequestsTable.length,beforeRequests);
+        await m.handleChatUi(buyerPhone,{...ui('submit'),id:randomUUID()});
+        const request=rows.buyerRequestsTable.at(-1);
+        assert.equal(rows.buyerRequestsTable.length,beforeRequests+1);
+        assert.equal(request.buyerUserId,buyer.id);assert.equal(request.quantity,'100');
+        assert.equal(request.destination,'Jebel Ali');assert.equal(request.preferredIncoterm,'CIF');
+        assert.equal(request.status,'pending_admin_review');
+        assert.equal(state.modelCalls,calls,'plain answers must bypass all unavailable providers');
+      }finally{state.flowId=oldFlow;state.modelOutput=oldOutput;state.modelError=false;await m.handleChatUi(buyerPhone,ui('cancel'));}
+    });
+    await t.test('seller registration and multiple exact-currency offers work without AI',async()=>{
+      const sellerPhone='10000000079',oldFlow=state.flowId,calls=state.modelCalls;
+      const before=rows.sellerListingsTable.length;
+      try{
+        state.flowId=null;state.modelError=true;
+        await m.handleChatUi(sellerPhone,ui('seller'));
+        for(const body of ['QA Test Seller','qa-seller-outage@example.invalid','QA Test Exports Ltd','Oman'])await m.handleChatUi(sellerPhone,{id:randomUUID(),text:{body}});
+        await m.handleChatUi(sellerPhone,ui('submit'));
+        const seller=rows.usersTable.find((u:any)=>u.phone===sellerPhone);
+        assert.ok(seller);assert.equal(seller.status,'pending');
+        for(const product of ['Copper cathode','Sugar']){
+          await m.handleChatUi(sellerPhone,ui('offer'));
+          for(const body of [product,'100','MT','5900','AED','Oman','CIF'])await m.handleChatUi(sellerPhone,{id:randomUUID(),text:{body}});
+          const count=rows.sellerListingsTable.length;
+          await m.handleChatUi(sellerPhone,ui('submit'));
+          assert.equal(rows.sellerListingsTable.length,count+1);
+          assert.equal(rows.sellerListingsTable.at(-1).currency,'AED');
+          assert.equal(rows.sellerListingsTable.at(-1).unit,'MT');
+          assert.equal(rows.sellerListingsTable.at(-1).status,'pending_admin_review');
+        }
+        assert.equal(rows.sellerListingsTable.length,before+2);
+        assert.equal(state.modelCalls,calls);
+      }finally{state.flowId=oldFlow;state.modelError=false;await m.handleChatUi(sellerPhone,ui('cancel'));}
+    });
+    await t.test('agent plain-name registration keeps personal-email support during an AI outage',async()=>{
+      const agentPhone='10000000080',oldFlow=state.flowId,calls=state.modelCalls;
+      try{
+        state.flowId=null;state.modelError=true;
+        await m.handleChatUi(agentPhone,ui('agent'));
+        for(const body of ['QA Test Agent','qa-outage-agent@gmail.com'])await m.handleChatUi(agentPhone,{id:randomUUID(),text:{body}});
+        await m.handleChatUi(agentPhone,ui('submit'));
+        const agent=rows.usersTable.find((u:any)=>u.phone===agentPhone);
+        assert.ok(agent);assert.equal(agent.role,'agent');assert.equal(agent.status,'pending');
+        assert.equal(agent.email,'qa-outage-agent@gmail.com');assert.equal(state.modelCalls,calls);
+      }finally{state.flowId=oldFlow;state.modelError=false;await m.handleChatUi(agentPhone,ui('cancel'));}
     });
     await t.test('fresh WhatsApp buyer completes registration then one private requirement without live customer writes',async()=>{
       const buyerPhone='10000000077';

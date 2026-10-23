@@ -10,13 +10,19 @@ const allowed: Record<string, string[]> = {
   buyer: ['product','quantity','specification','destination','incoterm','target_price','delivery_time','payment_terms'],
   seller: ['product','quantity','unit','specification','price','currency','origin','incoterm','availability','destination','payment_terms'],
 };
-export async function extractParagraph(purpose: FlowPurpose, message: string): Promise<Record<string,string>> {
+export function extractLabelledParagraph(purpose: FlowPurpose, message: string): Record<string,string> {
   if (!message.trim() || message.length > 6000) return {};
-  // Explicit field labels need no model call. Unlabelled prose uses the existing provider.
   const keys=allowed[purpose];
   const labelled: Record<string,string>={};
   const parts=message.split(/[;\n]/);
   for(const part of parts){const match=/^\s*([a-z_ ]+)\s*:\s*(.+)\s*$/i.exec(part);if(match){const key=match[1].trim().toLowerCase().replaceAll(' ','_');if(keys.includes(key))labelled[key]=match[2].trim();}}
+  return labelled;
+}
+export async function extractParagraph(purpose: FlowPurpose, message: string): Promise<Record<string,string>> {
+  if (!message.trim() || message.length > 6000) return {};
+  // Explicit field labels need no model call. Unlabelled prose uses the existing provider.
+  const keys=allowed[purpose];
+  const labelled=extractLabelledParagraph(purpose,message);
   if(Object.keys(labelled).length) return labelled;
   try {
     const {content}=await runConversationChat(JSON.stringify({message}),
