@@ -3,6 +3,7 @@
 //   node artifacts/api-server/test/integration/whatsapp-buyer-postgres.mjs
 // Actual signed webhook, consent, sessions, transactions and persistence;
 // outbound Meta/AI requests are intercepted, never sent to real services.
+// Combined #119-122 integration: all roles, retries, offers and permissions.
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
@@ -12,9 +13,12 @@ import { build } from 'esbuild';
 const url = new URL(process.env.UDC_QA_DATABASE_URL ?? 'http://missing.invalid');
 assert.ok(['postgres:', 'postgresql:'].includes(url.protocol));
 assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname), 'only a local QA database is allowed');
+assert.ok(!url.searchParams.has('host') || ['127.0.0.1','localhost'].includes(url.searchParams.get('host')), 'a host override must also stay local');
 assert.match(url.pathname, /^\/udc_qa_[a-z0-9_]+$/, 'use a dedicated QA database');
 const secret = randomBytes(32).toString('hex');
 const phone = `1000${Date.now()}`;
+const testPhones = new Set([phone]);
+let forcedDecision = null;
 const label = `UDC QA ${randomUUID().slice(0, 8)}`;
 const email = `qa-${randomUUID()}@example.invalid`;
 // Ignore any real integration configuration inherited by the developer shell.
@@ -45,11 +49,12 @@ globalThis.fetch = async (input, init) => {
   if (destination.origin === localOrigin) return fetchBefore(input, init);
   if (destination.hostname === 'graph.facebook.com' && destination.pathname.endsWith('/messages')) {
     const body = JSON.parse(init.body);
-    assert.equal(body.to, phone, 'never address a real recipient');
+    assert.ok(testPhones.has(body.to), 'never address a real recipient');
     sent.push(body);
     return Response.json({ messages: [{ id: `qa-out-${sent.length}` }] });
   }
   if (destination.hostname === 'worker.example.invalid') {
+    if (forcedDecision) return Response.json({choices:[{message:{content:JSON.stringify(forcedDecision)}}]});
     providerCalls.push('worker_timeout');
     throw new DOMException('Synthetic worker timeout', 'AbortError');
   }
@@ -82,10 +87,10 @@ try {
   server = module.default.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   localOrigin = `http://127.0.0.1:${server.address().port}`;
-  async function post(text, id = randomUUID()) {
+  async function post(text, id = randomUUID(), from = phone) {
     const raw = JSON.stringify({ entry: [{ changes: [{ value: {
       contacts: [{ profile: { name: label } }],
-      messages: [{ id, from: phone, ...(typeof text==='string'?{text:{body:text}}:{interactive:text}) }],
+      messages: [{ id, from, ...(typeof text==='string'?{text:{body:text}}:{interactive:text}) }],
     } }] }] });
     const response = await fetch(`${localOrigin}/api/webhooks/whatsapp`, {
       method: 'POST', headers: {
@@ -130,6 +135,59 @@ try {
   assert.equal(providerCalls.length, calls);
   const { rows: [unchanged] } = await pool.query('select status from users where id=$1', [buyer.id]);
   assert.equal(unchanged.status, 'pending');
+
+  const sellerPhone=phone+'1',agentPhone=phone+'2',conflictPhone=phone+'3';
+  for(const sender of [sellerPhone,agentPhone,conflictPhone])testPhones.add(sender);
+  const sendAs=(sender,text)=>post(text,randomUUID(),sender);
+  for(const [role,sender,answers] of [
+    ['seller',sellerPhone,[label+' Seller',`seller-${randomUUID()}@example.invalid`,label+' Test Exports Ltd','Oman']],
+    ['agent',agentPhone,[label+' Agent',`qa-${randomUUID()}@gmail.com`]],
+  ]){
+    for(const text of ['Hello','AGREE',role,...answers])await sendAs(sender,text);
+    assert.equal(await count('select count(*) from users where phone=$1',[sender]),0);
+    await sendAs(sender,'Submit');
+    const {rows:[account]}=await pool.query('select id,role,status from users where phone=$1',[sender]);
+    assert.ok(account);assert.equal(account.role,role);assert.equal(account.status,'pending');
+    if(role==='agent')assert.equal(await count('select count(*) from companies where owner_user_id=$1',[account.id]),0);
+    else assert.equal(await count('select count(*) from companies where owner_user_id=$1 and verification_status=$2',[account.id,'pending']),1);
+  }
+  for(const product of ['Copper cathode','Sugar']){
+    await sendAs(sellerPhone,{type:'list_reply',list_reply:{id:'udc:offer'}});
+    for(const answer of [product,'125','kg','7','AED','Oman','FOB'])await sendAs(sellerPhone,answer);
+    await sendAs(sellerPhone,'Submit');
+  }
+  const {rows:offers}=await pool.query('select sl.unit,sl.currency,sl.quantity,sl.price,sl.status from seller_listings sl join users u on u.id=sl.seller_user_id where u.phone=$1',[sellerPhone]);
+  assert.equal(offers.length,2);
+  for(const offer of offers){assert.equal(offer.unit,'kg');assert.equal(offer.currency,'AED');assert.equal(Number(offer.quantity),125);assert.equal(Number(offer.price),7);assert.equal(offer.status,'pending_admin_review');}
+  assert.equal(providerCalls.length,calls,'seller and agent scalar flows should remain usable offline');
+
+  for(const text of ['Hello','AGREE','Buyer',`full_name: ${label} Retry; email: ${email}; company_name: QA Retry Imports Ltd; country: India`,'Submit'])await sendAs(conflictPhone,text);
+  assert.match(sent.at(-1).text.body,/already belongs/);
+  assert.equal(await count('select count(*) from users where phone=$1',[conflictPhone]),0);
+  const {rows:drafts}=await pool.query("select data from whatsapp_chat_sessions where data->>'email'=$1 and purpose='profile_buyer'",[email]);
+  assert.equal(drafts.length,1);assert.equal(drafts[0].data.company_name,'QA Retry Imports Ltd');
+  for(const text of ['Edit',`email: retry-${randomUUID()}@example.invalid`,'Submit'])await sendAs(conflictPhone,text);
+  assert.equal(await count('select count(*) from users where phone=$1 and status=$2',[conflictPhone,'pending']),1);
+  const {rows:[originalBuyer]}=await pool.query('select email,role,status from users where id=$1',[buyer.id]);
+  assert.equal(originalBuyer.email,email);assert.equal(originalBuyer.role,'buyer');assert.equal(originalBuyer.status,'pending');
+
+  for(const [sender,role,attempt] of [[agentPhone,'agent','buyer'],[agentPhone,'agent','seller'],[phone,'buyer','seller'],[sellerPhone,'seller','buyer']]){
+    const {rows:[beforeAccount]}=await pool.query('select id,full_name,email,role,status from users where phone=$1',[sender]);
+    const beforeRequests=await count('select count(*) from buyer_requests where buyer_user_id=$1',[beforeAccount.id]);
+    const beforeOffers=await count('select count(*) from seller_listings where seller_user_id=$1',[beforeAccount.id]);
+    forcedDecision={role:attempt,newIntake:true,fields:{product:'Sugar',quantity:100,targetPrice:500,price:490,destination:'Mombasa'},reply:'I will send this for review.'};
+    const text=attempt==='buyer'?'New separate test requirement: I need 100 MT Sugar to Mombasa at USD 500 per MT.':'New separate test offer: I can supply 100 MT Sugar at USD 490 per MT.';
+    await sendAs(sender,text);
+    forcedDecision=null;
+    assert.match(sent.at(-1).text.body,new RegExp('registered as '+role));
+    assert.equal(await count('select count(*) from buyer_requests where buyer_user_id=$1',[beforeAccount.id]),beforeRequests);
+    assert.equal(await count('select count(*) from seller_listings where seller_user_id=$1',[beforeAccount.id]),beforeOffers);
+    assert.equal(await count('select count(*) from whatsapp_intake_drafts where phone=$1',[sender]),0);
+    const {rows:[afterAccount]}=await pool.query('select id,full_name,email,role,status from users where phone=$1',[sender]);
+    assert.deepEqual(afterAccount,beforeAccount,'cross-role attempts must not mutate the existing account');
+  }
+  console.log('PASSED additionally with real local PostgreSQL: seller and agent registration, two kg/AED offers, retained rejected registration + successful edit/retry, existing account unchanged, and signed cross-role intake blocked.');
+
   console.log('PASSED: signed webhook, privacy consent, worker timeout + fallback error, plain buyer registration, pending company review, private requirement persistence and duplicate submit protection (real local PostgreSQL; no live messages).');
 } finally {
   globalThis.fetch = fetchBefore;
