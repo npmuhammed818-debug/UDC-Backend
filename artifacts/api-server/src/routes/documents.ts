@@ -5,6 +5,7 @@ import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath } from "../supabase/storage";
 
 import { dealAccess } from "../deals/access";
+import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
 
@@ -37,9 +38,11 @@ router.get("/documents", requireAuth, async (req, res) => {
 
     const accessibleDocuments = await Promise.all(documents.map(async (document) => ({
       ...document,
-      fileUrl: parseStoragePath(document.fileUrl)
-        ? await createSignedDownloadUrl(parseStoragePath(document.fileUrl)!)
-        : document.fileUrl,
+      // Legacy/unmanaged URLs and wrong-deal object paths never become
+      // bearer download links for traders, regardless of stale grants.
+      fileUrl: managedDealDocumentPath(document.fileUrl,document.dealId)
+        ? await createSignedDownloadUrl(managedDealDocumentPath(document.fileUrl,document.dealId)!)
+        : null,
     })));
 
     res.json({ documents: accessibleDocuments });
