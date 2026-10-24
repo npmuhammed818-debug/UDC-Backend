@@ -430,8 +430,10 @@ try {
   );
 } finally {
   if (pool) await pool.end();
+  // Pool.end() must close all QA connections; do not force-kill an idle client
+  // because that can produce a late unhandled pg error after the tests pass.
   if (created)
-    await control.query(`DROP DATABASE "${databaseName}" WITH (FORCE)`);
+    await control.query(`DROP DATABASE "${databaseName}"`);
   for (const role of madeRoles.reverse())
     await control.query(`DROP ROLE ${role}`);
   await control.end();
