@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, db, notificationsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
-import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { createSignedDownloadUrl, uploadDocumentBytes } from "../supabase/storage";
 import { managedCompanyDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
