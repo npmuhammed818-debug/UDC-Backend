@@ -69,9 +69,9 @@ async function signature(pool,table){
 }
 async function security(pool){
   for(const table of fixtureTables){
-    const catalog=await pool.query(`
-      SELECT relrowsecurity AS rls FROM pg_catalog.pg_class
-      WHERE oid=${("public."+table)}::regclass`);
+    const catalog=await pool.query(
+      "SELECT relrowsecurity AS rls FROM pg_catalog.pg_class WHERE oid=to_regclass($1)",
+      ["public."+table]);
     assert.equal(catalog.rows[0].rls,true,table+" must retain row-level security");
     for(const role of ["anon","authenticated"]){
       for(const op of ["SELECT","INSERT","UPDATE","DELETE"]){
