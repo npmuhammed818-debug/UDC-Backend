@@ -28,13 +28,63 @@ try{
   created=true;
   const child=new URL(url);child.pathname="/"+databaseName;
   pool=new Pool({connectionString:child.href,max:2});
-  await pool.query(`CREATE TABLE public.users(id uuid primary key);
+  await pool.query(`CREATE TABLE public.users(id uuid primary key,email text UNIQUE,phone text UNIQUE);
     CREATE TABLE public.deals(id uuid primary key);
     CREATE TABLE public.shipments(id uuid primary key,deal_id uuid REFERENCES public.deals(id));`);
   const userId=randomUUID(),dealId=randomUUID(),shipmentId=randomUUID(),key=randomUUID();
   await pool.query("insert into users(id) values($1)",[userId]);
   await pool.query("insert into deals(id) values($1)",[dealId]);
   await pool.query("insert into shipments(id,deal_id) values($1,$2)",[shipmentId,dealId]);
+  await pool.query(
+    "UPDATE public.users SET email='qa-migration@example.invalid', phone='10000000001' WHERE id=$1",[userId]
+  );
+  // All independent migrations must coexist in ONE fictional PostgreSQL DB.
+  // This verifies their release order, not merely isolated per-feature runs.
+  const emailMigration=await readFile(new URL(
+    "../../../../lib/db/migrations/20261023_email_authentication.sql",import.meta.url
+  ),"utf8");
+  const numberRecoveryMigration=await readFile(new URL(
+    "../../../../lib/db/migrations/20261024_whatsapp_phone_recovery.sql",import.meta.url
+  ),"utf8");
+  for(const ddl of [emailMigration,numberRecoveryMigration]){
+    await pool.query(ddl);
+    await pool.query(ddl);
+  }
+  for(const table of ["email_auth_challenges","email_auth_limits","whatsapp_phone_link_challenges"]){
+    assert.equal((await pool.query(
+      "select relrowsecurity from pg_class where oid=to_regclass($1)",["public."+table]
+    )).rows[0].relrowsecurity,true,table+" must have RLS");
+    for(const role of ["anon","authenticated"]){
+      for(const privilege of ["SELECT","INSERT","UPDATE","DELETE"]){
+        assert.equal((await pool.query(
+          "select has_table_privilege($1,$2,$3) AS allowed",
+          [role,"public."+table,privilege]
+        )).rows[0].allowed,false,role+" must not "+privilege+" "+table);
+      }
+    }
+    for(const privilege of ["TRUNCATE","REFERENCES","TRIGGER"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege('service_role',$1,$2) AS allowed",
+        ["public."+table,privilege]
+      )).rows[0].allowed,false,"service role must not "+privilege+" "+table);
+    }
+  }
+  await pool.query(`INSERT INTO public.email_auth_challenges
+    (user_id,email,purpose,code_hash,expires_at)
+    VALUES($1,'qa-migration@example.invalid','verify_email','synthetic-private-hash',now()+interval '10 minutes')`,
+    [userId]);
+  await pool.query(`INSERT INTO public.whatsapp_phone_link_challenges
+    (user_id,email,old_phone,new_phone,code_hash,expires_at)
+    VALUES($1,'qa-migration@example.invalid','10000000001','10000000002','synthetic-private-hash',now()+interval '10 minutes')`,
+    [userId]);
+  await assert.rejects(pool.query(`INSERT INTO public.whatsapp_phone_link_challenges
+    (user_id,email,new_phone,code_hash,expires_at)
+    VALUES($1,'qa-migration@example.invalid','10000000003','hash',now())`,[randomUUID()]),
+    error=>error.code==="23503");
+  assert.equal((await pool.query(
+    "SELECT phone FROM public.users WHERE id=$1",[userId]
+  )).rows[0].phone,"10000000001","applying recovery DDL must not rebind any WhatsApp number");
+  console.log("PASSED: email OTP, WhatsApp account recovery and all shipment/outbox migrations share a single isolated PostgreSQL database with private grants and preserved identity.");
   await pool.query(migration);
   await pool.query(migration);
   const meta=(await pool.query(
