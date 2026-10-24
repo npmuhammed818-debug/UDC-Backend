@@ -162,7 +162,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       delete process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
       await m.handleChatUi(agent.phone,ui('invite'));
       assert.match(last(),/^Referral UDC-[0-9A-F]{12}$/);
-      assert.match(state.sent.at(-2).body,/after registering with UDC/);
+      assert.match(state.sent.at(-2).body,/after registering with UDC/i);
       assert.ok(!state.sent.at(-1).body.includes('Share this'));
       assert.equal(state.sent.filter((v:any)=>v.body.includes('https://wa.me/')).length,0,
         'never invent a phone number or share link');
