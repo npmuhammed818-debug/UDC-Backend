@@ -369,18 +369,20 @@ try {
       "delete from email_auth_limits where key='synthetic-server-key'",
     );
   });
-  const servicePrivileges = (
-    await pool.query(
-      "select has_table_privilege('service_role','email_auth_challenges','TRUNCATE') as truncate,has_table_privilege('service_role','email_auth_challenges','TRIGGER') as trigger",
-    )
-  ).rows[0];
-  assert.equal(servicePrivileges.truncate, true);
-  assert.equal(servicePrivileges.trigger, true);
+  // Service role has only the operations needed by OTP issuance/validation/rate limits.
+  // Do not permit destructive TRUNCATE, schema references or user-defined triggers.
+  for(const table of ["email_auth_challenges","email_auth_limits"]){
+    for(const privilege of ["SELECT","INSERT","UPDATE","DELETE"]){
+      const {rows}=await pool.query("select has_table_privilege('service_role',$1,$2) AS allowed",["public."+table,privilege]);
+      assert.equal(rows[0].allowed,true,`service_role requires ${privilege} on ${table}`);
+    }
+    for(const privilege of ["TRUNCATE","REFERENCES","TRIGGER"]){
+      const {rows}=await pool.query("select has_table_privilege('service_role',$1,$2) AS allowed",["public."+table,privilege]);
+      assert.equal(rows[0].allowed,false,`service_role must not ${privilege} on ${table}`);
+    }
+  }
   pass(
-    "representative trusted BYPASSRLS service role can execute backend operations; client roles remain restricted",
-  );
-  console.log(
-    "REVIEW NOTE: GRANT ALL also grants TRUNCATE/TRIGGER/REFERENCES to the trusted service role; scope/least-privilege review remains a rollout prerequisite.",
+    "trusted BYPASSRLS service role can read/write email challenges and limits with no destructive grants; clients remain restricted",
   );
   const func = (
     await pool.query(
