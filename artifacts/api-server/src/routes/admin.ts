@@ -9,7 +9,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -414,6 +414,20 @@ const shipmentStatusSchema = z.object({
   notes: z.string().max(2000).optional(),
   estimatedArrival: z.coerce.date().optional(),
 });
+const shipmentMilestoneSchema=z.object({
+  kind:z.enum(["planned","booked","departed","in_transit","arrived","customs","inspection","delivered","delay","exception","status_update"]),
+  occurredAt:z.coerce.date(),
+  location:z.string().trim().min(2).max(160).optional(),
+  note:z.string().trim().min(3).max(500).optional(),
+  source:z.enum(["udc_manual","carrier_reported","document_checked"]).default("udc_manual"),
+  sourceReference:z.string().trim().min(2).max(160).optional(),
+}).superRefine((value,ctx)=>{
+  if(value.source!=="udc_manual"&&!value.sourceReference)
+    ctx.addIssue({code:"custom",path:["sourceReference"],message:"A carrier or document source reference is required."});
+  if(value.occurredAt.getTime()>Date.now()+5*60_000)
+    ctx.addIssue({code:"custom",path:["occurredAt"],message:"Future events are not recorded as completed milestones."});
+});
+
 
 const createFinancialInstrumentSchema = z.object({
   dealId: z.string().uuid(),
@@ -1736,6 +1750,10 @@ router.post("/admin/shipments", requireRole("admin"), async (req, res) => {
       notes: input.notes, status: "planned",
     }).returning();
       await tx.insert(auditLogsTable).values({ actorUserId: req.authUser!.id, action: "shipment_created", entityType: "deal", entityId: deal.id, metadata: { shipmentId: shipment.id, status: shipment.status } });
+      await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:shipment.id,dealId:deal.id,kind:"planned",shipmentStatus:"planned",
+        source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+      });
       return shipment;
     });
     await notifyDealCounterparties(deal.id, "shipment_created", "Shipment recorded", "A shipment has been recorded for your deal. Open the deal for the carrier and tracking reference.", `/deals/${deal.id}`);
@@ -1764,16 +1782,23 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       res.status(404).json({ error: "shipment_not_found" });
       return;
     }
-    const [shipment] = await db.update(shipmentsTable)
-      .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
-      .where(eq(shipmentsTable.id, shipmentId))
-      .returning();
-    await db.insert(auditLogsTable).values({
-      actorUserId: req.authUser!.id,
-      action: "shipment_status_updated",
-      entityType: "deal",
-      entityId: shipment.dealId,
-      metadata: { shipmentId: shipment.id, previousStatus: existing.status, newStatus: shipment.status },
+    const [shipment] = await db.transaction(async tx=>{
+      const [updated]=await tx.update(shipmentsTable)
+        .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
+        .where(eq(shipmentsTable.id, shipmentId))
+        .returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "shipment_status_updated",
+        entityType: "deal",
+        entityId: updated.dealId,
+        metadata: { shipmentId: updated.id, previousStatus: existing.status, newStatus: updated.status },
+      });
+      if(existing.status!==updated.status)await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:updated.id,dealId:updated.dealId,kind:"status_update",shipmentStatus:updated.status,
+        source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+      });
+      return [updated];
     });
     if (existing.status !== shipment.status) {
       await notifyDealCounterparties(
@@ -1791,6 +1816,39 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       return;
     }
     res.status(500).json({ error: "shipment_update_failed" });
+  }
+});
+
+
+router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
+    const input=shipmentMilestoneSchema.parse(req.body);
+    const [shipment]=await db.select({id:shipmentsTable.id,dealId:shipmentsTable.dealId})
+      .from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);
+    if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+    const event=await db.transaction(async tx=>{
+      const [inserted]=await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:shipment.id,dealId:shipment.dealId,kind:input.kind,
+        location:input.location,note:input.note,source:input.source,
+        sourceReference:input.sourceReference,occurredAt:input.occurredAt,
+        recordedByUserId:req.authUser!.id,
+      }).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"shipment_milestone_recorded",
+        entityType:"deal",entityId:shipment.dealId,
+        metadata:{shipmentId:shipment.id,eventId:inserted.id,kind:inserted.kind,source:inserted.source},
+      });
+      return inserted;
+    });
+    // Notify only after a durable event; no private references or tracking data sent as text.
+    await notifyDealCounterparties(shipment.dealId,"shipment_milestone",
+      "Shipment milestone recorded","UDC recorded a shipment update. Open Track shipment in your deal to see its progress.",
+      `/deals/${shipment.dealId}/tracking`);
+    res.status(201).json({event});
+  }catch(error){
+    if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    res.status(500).json({error:"shipment_milestone_create_failed"});
   }
 });
 
