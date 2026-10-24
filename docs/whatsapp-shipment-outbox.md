@@ -22,6 +22,8 @@ The dispatcher requires *all* of: `enabled:true`, injected test/approved transpo
 
 Before a send, it loads the account's **current** phone and status, matching notification, current deal membership or active agent assignment, WhatsApp notification preferences, and mandatory messaging policy authorization.
 
+Operators can review sanitized status, attempt counts and safe failure categories from `GET /admin/notifications/whatsapp-shipment-outbox?status=uncertain` (admin-only). This endpoint does not reveal phone numbers or message content, and cannot force a resend.
+
 ## Migration and acceptance
 
 Apply `lib/db/migrations/20261024_whatsapp_shipment_outbox.sql` **only to staging** after the cargo and ETA migrations, following a reviewed backup and rollback plan. RLS is on, client roles have no direct grants, and `service_role` has SELECT, INSERT and UPDATE only. PostgreSQL rejects inconsistent leases and duplicate notification keys.
