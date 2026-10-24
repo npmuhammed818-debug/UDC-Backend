@@ -55,5 +55,6 @@ router.use(akifImpexqRouter);
 router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
 router.use(whatsappTemplateReadinessRouter);
+router.use(roleChangeReviewRouter);
 
 export default router;
