@@ -198,7 +198,6 @@ router.get("/admin/company-verification-documents", requireRole("admin"), async 
       .innerJoin(usersTable, eq(companiesTable.ownerUserId, usersTable.id))
       .orderBy(desc(companyVerificationDocumentsTable.createdAt));
     res.json({ documents: await Promise.all(rows.map(async (item) => {
-      const path = parseStoragePath(item.fileUrl);
       const [screening]=await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,item.id),eq(auditLogsTable.action,'company_document_screened'))).orderBy(desc(auditLogsTable.createdAt)).limit(1);
       const ownedPath = managedCompanyDocumentPath(item.fileUrl,item.companyId);
       return { ...item, screening:(screening?.metadata as any)?.profileFingerprint===companyProfileFingerprint(item)?screening!.metadata:null, fileUrl: ownedPath ? await createSignedDownloadUrl(ownedPath) : null };
