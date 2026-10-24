@@ -28,6 +28,9 @@ try{
   created=true;
   const child=new URL(url);child.pathname="/"+databaseName;
   pool=new Pool({connectionString:child.href,max:2});
+  // Mirror Supabase's broad default table grants to catch missing service-role revocation.
+  // The fake cluster is loopback-only; default privileges are scoped to this disposable child DB.
+  await pool.query('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role');
   await pool.query(`CREATE TABLE public.users(id uuid primary key,email text UNIQUE,phone text UNIQUE);
     CREATE TABLE public.deals(id uuid primary key);
     CREATE TABLE public.shipments(id uuid primary key,deal_id uuid REFERENCES public.deals(id));`);

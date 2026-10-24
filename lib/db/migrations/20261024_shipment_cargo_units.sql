@@ -34,6 +34,7 @@ DO $$ BEGIN
   REVOKE ALL ON public.shipment_cargo_units FROM authenticated;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  REVOKE ALL ON public.shipment_cargo_units FROM service_role;
   GRANT SELECT, INSERT, UPDATE ON public.shipment_cargo_units TO service_role;
  END IF;
 END $$;
