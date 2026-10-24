@@ -1817,6 +1817,7 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
         `/deals/${shipment.dealId}/tracking`,
       );
     }
+    if(statusChanged)await notifyAssignedDealAgents(shipment.dealId,"shipment_milestone");
     res.json({ shipment });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1827,6 +1828,29 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
   }
 });
 
+
+// Agents receive only milestone existence and a deal-navigation prompt. Never
+// include carrier IDs, shipment locations, financial terms or counterparty details.
+async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|"shipment_delay"){
+  const agents=await db.select({userId:usersTable.id,phone:usersTable.phone})
+    .from(dealParticipantsTable).innerJoin(usersTable,eq(dealParticipantsTable.userId,usersTable.id))
+    .where(and(eq(dealParticipantsTable.dealId,dealId),
+      eq(dealParticipantsTable.participantRole,"agent"),eq(dealParticipantsTable.status,"active"),
+      eq(usersTable.role,"agent"),eq(usersTable.status,"verified")));
+  if(!agents.length)return;
+  const body=kind==="shipment_delay"
+    ?"A shipment delay or exception was recorded for an assigned UDC deal. Open My deals → Track shipment."
+    :"A shipment milestone was recorded for an assigned UDC deal. Open My deals → Track shipment.";
+  await db.insert(notificationsTable).values(agents.map(a=>({
+    userId:a.userId,type:kind,title:"Assigned deal shipment update",body,
+    link:`/deals/${dealId}/tracking`,
+  })));
+  await Promise.all(agents.map(async a=>{
+    if(!a.phone)return;
+    try{await sendWhatsAppText(a.phone,body);}
+    catch{/* Notification is persisted; WhatsApp provider failure must not change trade history. */}
+  }));
+}
 
 router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
   try{
@@ -1874,6 +1898,8 @@ router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req
           "UDC recorded a shipment update. Open Track shipment in your deal to see its progress.",
         `/deals/${shipment.dealId}/tracking`);
     }
+    if(result.created)await notifyAssignedDealAgents(shipment.dealId,
+      input.kind==="delay"||input.kind==="exception"?"shipment_delay":"shipment_milestone");
     res.status(result.created?201:200).json({event:result.event});
   }catch(error){
     if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
