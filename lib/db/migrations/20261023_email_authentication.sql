@@ -34,7 +34,9 @@ DO $$ BEGIN
     REVOKE ALL ON public.email_auth_challenges, public.email_auth_limits FROM authenticated;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    GRANT ALL ON public.email_auth_challenges, public.email_auth_limits TO service_role;
+    -- Revoke excessive grants from earlier QA migrations before applying the minimum.
+    REVOKE ALL ON public.email_auth_challenges, public.email_auth_limits FROM service_role;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.email_auth_challenges, public.email_auth_limits TO service_role;
   END IF;
 END $$;
 -- Invalidate proof and outstanding codes even if an email is changed outside the API.
