@@ -1,4 +1,5 @@
 import { handleEmailVerification } from '../whatsapp/emailVerification';
+import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
@@ -969,12 +970,25 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
+    // Provider status callbacks contain no inbound text; never route them to
+    // intake, AI, consent or a trade action. Only signed Meta bodies reach here.
+    if(Array.isArray(value?.statuses) && value.statuses.length){
+      try{
+        await recordSignedShipmentStatuses(value.statuses.slice(0,50));
+      }catch{
+        // Returning non-2xx gives Meta a chance to retry an otherwise lost
+        // receipt. No raw phone/provider payloads are logged.
+        req.log.error({flow:"whatsapp_shipment_receipt",reason:"persistence_failed"},
+          "Signed WhatsApp receipt could not be persisted");
+        res.sendStatus(503);return;
+      }
+    }
     for (const message of value?.messages ?? []) {
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
