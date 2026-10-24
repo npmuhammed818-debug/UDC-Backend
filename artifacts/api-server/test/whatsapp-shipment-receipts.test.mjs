@@ -88,7 +88,7 @@ test("Meta receipt handler is monotonic, bound to outbox recipient and replay-sa
     rows.users[0].phone="10000000003";
     result=await run([status("read","wamid.synthetic.2")]);
     assert.equal(result.unmatched,1,"old number must not bind current account after migration");
-    assert.equal(rows.receipts.length,7);
+    assert.equal(rows.receipts.length,8);
   }finally{
     await unlink(file);delete globalThis.__udcReceiptTestDb;
   }
