@@ -3,7 +3,7 @@ import { Router, raw, type IRouter } from "express";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
@@ -461,7 +461,7 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
       return;
     }
 
-    const [inspections, shipments] = await Promise.all([
+    const [inspections, shipments, events] = await Promise.all([
       db
         .select({
           id: inspectionsTable.id,
@@ -489,9 +489,32 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
         .from(shipmentsTable)
         .where(eq(shipmentsTable.dealId, deal.id))
         .orderBy(desc(shipmentsTable.updatedAt)),
+      db.select({
+        id:shipmentTrackingEventsTable.id,shipmentId:shipmentTrackingEventsTable.shipmentId,
+        kind:shipmentTrackingEventsTable.kind,shipmentStatus:shipmentTrackingEventsTable.shipmentStatus,
+        location:shipmentTrackingEventsTable.location,note:shipmentTrackingEventsTable.note,
+        source:shipmentTrackingEventsTable.source,sourceReference:shipmentTrackingEventsTable.sourceReference,
+        occurredAt:shipmentTrackingEventsTable.occurredAt,createdAt:shipmentTrackingEventsTable.createdAt,
+      }).from(shipmentTrackingEventsTable).where(eq(shipmentTrackingEventsTable.dealId,deal.id))
+        .orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(100),
     ]);
 
-    res.json({ deal, inspections, shipments });
+    // Agents receive milestones and ETAs only; no location, carrier identifiers,
+    // free-form notes, source references or inspection evidence from this endpoint.
+    const assignedAgent=req.authUser!.role==="agent";
+    res.json({
+      deal,inspections:assignedAgent?inspections.map(i=>({
+        id:i.id,status:i.status,scheduledAt:i.scheduledAt,updatedAt:i.updatedAt,
+      })):inspections,
+      shipments:assignedAgent?shipments.map(item=>({
+        id:item.id,status:item.status,estimatedArrival:item.estimatedArrival,updatedAt:item.updatedAt,
+      })):shipments,
+      events:assignedAgent?events.map(event=>({
+        id:event.id,shipmentId:event.shipmentId,kind:event.kind,
+        shipmentStatus:event.shipmentStatus,occurredAt:event.occurredAt,createdAt:event.createdAt,
+      })):events,
+      sourceDisclosure:"UDC-recorded milestones are not live GPS or independently verified carrier feeds",
+    });
   } catch {
     res.status(500).json({ error: "deal_tracking_fetch_failed" });
   }

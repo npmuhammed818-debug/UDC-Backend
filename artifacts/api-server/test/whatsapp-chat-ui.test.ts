@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 test('native WhatsApp menus and forms preserve role, privacy, review and replay boundaries',async t=>{
-  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable'];
+  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable'];
   const tables:any=Object.fromEntries(names.map(n=>[n,new Proxy({_table:n},{get:(_,k)=>k==='_table'?n:{column:k,table:n}})]));
   const rows:any=Object.fromEntries(names.map(n=>[n,[]]));
   const value=(x:any,r:any):any=>x?.column?(r[x.table]??r)[x.column]:x;
@@ -109,7 +109,14 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         {id:'own-shipment',dealId:own,status:'in_transit',carrier:'Synthetic Carrier',trackingNumber:'QA-100',origin:'Kochi',destination:'Jebel Ali',estimatedArrival:new Date('2026-11-05T12:00:00Z'),updatedAt:new Date('2026-11-01T10:00:00Z')},
         {id:'other-shipment',dealId:other,status:'disputed',carrier:'PRIVATE CARRIER',trackingNumber:'SECRET-999',origin:'PRIVATE ORIGIN',destination:'PRIVATE DESTINATION',updatedAt:new Date('2026-11-02T10:00:00Z')},
       ];
+      rows.shipmentTrackingEventsTable=[
+        {shipmentId:'own-shipment',dealId:own,kind:'departed',location:'Mundra Port',note:'QA carrier document checked',source:'document_checked',occurredAt:new Date('2026-11-01T06:00:00Z')},
+        {shipmentId:'other-shipment',dealId:other,kind:'exception',location:'PRIVATE PORT',note:'SECRET DOCUMENT',source:'carrier_reported',occurredAt:new Date('2026-11-02T06:00:00Z')},
+      ];
       await m.handleChatUi(phone,ui('track'));
+      assert.match(last(),/Recent shipment milestones/);assert.match(last(),/Shipment 1: departed/);
+      assert.match(last(),/Mundra Port/);assert.match(last(),/document-checked/);
+      assert.doesNotMatch(last(),/PRIVATE PORT|SECRET DOCUMENT/);
       assert.match(last(),/UDC-OWN/);assert.match(last(),/Synthetic Carrier/);assert.match(last(),/QA-100/);
       assert.match(last(),/Last UDC update: 2026-11-01 10:00 UTC/);
       assert.doesNotMatch(last(),/SECRET|PRIVATE CARRIER|PRIVATE DESTINATION/);
@@ -135,6 +142,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(agent.phone,ui('track'));
       assert.match(last(),/Shipment 1: in_transit/);
       assert.doesNotMatch(last(),/QA-100|Synthetic Carrier|Kochi|Jebel Ali|SECRET-999/);
+      assert.match(last(),/departed/);assert.doesNotMatch(last(),/Mundra Port|QA carrier document checked|document-checked|PRIVATE PORT/);
       rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);
       await m.handleChatUi(agent.phone,ui('track'));assert.match(last(),/no longer available/);assert.doesNotMatch(last(),/QA-100|Synthetic Carrier/);
     });

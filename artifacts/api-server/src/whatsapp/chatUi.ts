@@ -5,7 +5,7 @@ import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { z } from 'zod/v4';
-import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
+import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
@@ -237,7 +237,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       return true;
     }
     const shipments=await db.select({
-      carrier:shipmentsTable.carrier,trackingNumber:shipmentsTable.trackingNumber,
+      id:shipmentsTable.id,carrier:shipmentsTable.carrier,trackingNumber:shipmentsTable.trackingNumber,
       status:shipmentsTable.status,origin:shipmentsTable.origin,destination:shipmentsTable.destination,
       estimatedArrival:shipmentsTable.estimatedArrival,updatedAt:shipmentsTable.updatedAt,
     }).from(shipmentsTable).where(eq(shipmentsTable.dealId,deal.id))
@@ -260,6 +260,28 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       if(eta)lines.push(`Recorded ETA: ${eta}`);
       const updated=shipment.updatedAt?date(shipment.updatedAt):'';
       if(updated)lines.push(`Last UDC update: ${updated}`);
+    }
+    const events=await db.select({
+      shipmentId:shipmentTrackingEventsTable.shipmentId,kind:shipmentTrackingEventsTable.kind,shipmentStatus:shipmentTrackingEventsTable.shipmentStatus,
+      source:shipmentTrackingEventsTable.source,sourceReference:shipmentTrackingEventsTable.sourceReference,
+      location:shipmentTrackingEventsTable.location,note:shipmentTrackingEventsTable.note,
+      occurredAt:shipmentTrackingEventsTable.occurredAt,
+    }).from(shipmentTrackingEventsTable).where(eq(shipmentTrackingEventsTable.dealId,deal.id))
+      .orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(50);
+    const visible=events.filter(event=>shipments.some(s=>s.id===event.shipmentId)).slice(0,5);
+    if(visible.length){
+      lines.push('Recent shipment milestones:');
+      for(const event of visible){
+        const dateLabel=date(event.occurredAt);
+        const shipmentPosition=shipments.findIndex(s=>s.id===event.shipmentId)+1;
+        lines.push(`• Shipment ${shipmentPosition}: ${safe(event.kind)}${event.shipmentStatus?' ('+safe(event.shipmentStatus)+')':''}${dateLabel?' · '+dateLabel:''}`);
+        if(user.role!=='agent'){
+          if(event.location)lines.push(`Location recorded: ${safe(event.location)}`);
+          if(event.note)lines.push(`UDC note: ${safe(event.note)}`);
+          const source=event.source==='carrier_reported'?'carrier-reported':event.source==='document_checked'?'document-checked':'manually recorded';
+          lines.push(`Source: ${source}`);
+        }
+      }
     }
     lines.push('These are UDC-recorded updates, not live carrier GPS. Confirm details against shipping documents.');
     await sendWhatsAppTextWithMenu(phone,lines.join('\n'));

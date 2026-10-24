@@ -312,8 +312,44 @@ test('admin trade workflows preserve verification, ownership, review and payment
     await t.test('inspection, shipment and customs records use existing audited operations',async()=>{
       const inspection=await request('/admin/inspections',{dealId,inspectorName:'Synthetic SGS',scheduledAt:'2026-11-01T10:00:00Z'});assert.equal(inspection.status,201);
       assert.equal((await request(`/admin/inspections/${inspection.data.inspection.id}`,{status:'passed',resultSummary:'Synthetic reviewed evidence'},'PATCH')).status,200);
+      records.usersTable.push({id:'milestone-agent',role:'agent',status:'verified',phone:'10000004004'});
+      records.dealParticipantsTable.push({dealId,userId:'milestone-agent',participantRole:'agent',status:'active'});
       const shipment=await request('/admin/shipments',{dealId,carrier:'Synthetic carrier',trackingNumber:'TEST-ONLY',origin:'Santos',destination:'Mombasa'});assert.equal(shipment.status,201);
       assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit',notes:'Synthetic confirmed departure'},'PATCH')).status,200);
+      const timeline=records.shipmentTrackingEventsTable;
+      assert.equal(timeline.length,2);assert.deepEqual(timeline.map((e:any)=>e.kind),['planned','status_update']);
+      assert.equal(timeline[1].shipmentStatus,'in_transit');assert.equal(timeline[1].source,'udc_manual');
+      const eventPath=`/admin/shipments/${shipment.data.shipment.id}/events`;
+      const milestone={idempotencyKey:randomUUID(),kind:'departed',occurredAt:new Date(Date.now()-60_000).toISOString(),location:'Synthetic Port',source:'carrier_reported',sourceReference:'QA-BL-001',note:'Carrier message recorded, not live GPS'};
+      assert.equal((await request(eventPath,{...milestone,sourceReference:undefined})).status,400);
+      assert.equal((await request(eventPath,{...milestone,occurredAt:new Date(Date.now()+86_400_000).toISOString()})).status,400);
+      assert.equal(timeline.length,2);
+      const added=await request(eventPath,milestone);assert.equal(added.status,201);
+      assert.equal(timeline.length,3);assert.equal(timeline[2].source,'carrier_reported');
+      assert.equal(timeline[2].location,'Synthetic Port');assert.equal(timeline[2].recordedByUserId,'admin');
+      assert.equal((await request(eventPath,milestone)).status,200,'same idempotency key reuses the original event');
+      assert.equal(timeline.length,3,'retry cannot duplicate a milestone');
+      assert.equal((await request(eventPath,{...milestone,note:'modified with same key'})).status,409);
+      assert.equal(timeline.length,3,'key reuse with changed details cannot overwrite or duplicate event');
+
+      assert.ok(records.auditLogsTable.some((r:any)=>r.action==='shipment_milestone_recorded'));
+      state.failAudit=true;
+      assert.equal((await request(eventPath,{...milestone,idempotencyKey:randomUUID(),kind:'delay'})).status,500);
+      assert.equal(records.shipmentTrackingEventsTable.length,3,'failed audit cannot persist milestone');
+      const priorCount=records.shipmentTrackingEventsTable.length;
+      assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit'},'PATCH')).status,200);
+      assert.equal(records.shipmentTrackingEventsTable.length,priorCount,'same status cannot append a fake milestone');
+      const sentAgentNotes=records.notificationsTable.filter((n:any)=>n.userId==='milestone-agent');
+      assert.ok(sentAgentNotes.length>=2,'verified assigned agent receives recorded milestone status');
+      assert.ok(sentAgentNotes.every((n:any)=>!JSON.stringify(n).includes('TEST-ONLY')&&!JSON.stringify(n).includes('Santos')&&!JSON.stringify(n).includes('Mombasa')));
+      const beforeRevoke=sentAgentNotes.length;
+      records.dealParticipantsTable.find((p:any)=>p.userId==='milestone-agent').status='revoked';
+      const delay=await request(eventPath,{...milestone,idempotencyKey:randomUUID(),kind:'delay'});
+      assert.equal(delay.status,201);
+      assert.ok(records.notificationsTable.some((n:any)=>n.type==='shipment_delay'),'delay must notify counterparties');
+      assert.equal(records.notificationsTable.filter((n:any)=>n.userId==='milestone-agent').length,beforeRevoke,'revoked agent receives no new alert');
+
+
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'submitted',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'cleared',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
       assert.equal(records.customsClearanceTable.length,1);assert.equal(records.customsClearanceTable[0].status,'cleared');assert.ok(records.customsClearanceTable[0].clearedAt);
