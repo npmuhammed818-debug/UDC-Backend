@@ -1,5 +1,6 @@
 import { EmailVerificationPanel, PasswordRecovery } from '@/components/email-auth';
 import { WhatsAppSignin } from '@/components/whatsapp-signin';
+import { ImpexqTestPage } from '@/components/impexq-test';
 import { AgentInvitationCard } from '@/components/agent-invitation-card';
 import { DealExecutionView } from '@/components/deal-execution-view';
 import { DealExecutionControls } from '@/components/deal-execution-controls';
@@ -62,6 +63,7 @@ const adminNavGroups = [
   { title: 'OPERATIONS', items: [
     { href: '/admin/deals', label: 'Deals', icon: BriefcaseBusiness },
     { href: '/admin/agents', label: 'Agents', icon: CircleUserRound },
+    { href: '/admin/impexq', label: 'Test ImpexQ', icon: Sparkles },
     { href: '/admin#audit-log', label: 'Activity history', icon: ClipboardList },
   ] },
 ];
@@ -130,7 +132,7 @@ function Shell({ children, user }: { children: ReactNode; user: AnyRecord }) {
       <div className="sidebar-user"><div className="avatar">{initials(user?.fullName)}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-bold">{user?.fullName || 'Workspace user'}</div><div className="truncate text-[11px] text-sidebar-foreground/60">{user?.email || user?.role}</div></div><button onClick={() => logout.mutate()} className="icon-btn text-sidebar-foreground/60 hover:text-sidebar-foreground" data-testid="button-logout" aria-label="Sign out" title="Sign out"><LogOut size={16} /></button></div>
     </aside>
     <main className="main-shell" id="main-content" tabIndex={-1}>
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded={mobileOpen} data-testid="button-open-menu"><Menu size={21} /></button><div className="breadcrumb"><span>UDC / Admin /</span><strong>{activePath === '/admin/deals' ? 'Deals' : activePath === '/admin/agents' ? 'Agents' : 'Overview'}</strong></div><div className="topbar-actions"><div className="topbar-user"><div className="avatar avatar-small">{initials(user?.fullName)}</div><span>{user?.fullName || 'Operator'}</span></div></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded={mobileOpen} data-testid="button-open-menu"><Menu size={21} /></button><div className="breadcrumb"><span>UDC / Admin /</span><strong>{activePath === '/admin/deals' ? 'Deals' : activePath === '/admin/agents' ? 'Agents' : activePath === '/admin/impexq' ? 'ImpexQ' : 'Overview'}</strong></div><div className="topbar-actions"><div className="topbar-user"><div className="avatar avatar-small">{initials(user?.fullName)}</div><span>{user?.fullName || 'Operator'}</span></div></div></header>
       <div className="page-wrap">{children}</div>
     </main>
   </div>;
@@ -807,7 +809,7 @@ function Admin() {
     finally { setBusy(''); }
   };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
-  return <><PageHeader eyebrow="UDC ADMIN" title="Admin overview" body="Start with the items waiting for your review. Use the left menu for verification, trade submissions, deals, and people." />
+  return <><PageHeader eyebrow="UDC ADMIN" title="Admin overview" body="Start with the items waiting for your review. Use the left menu for verification, trade submissions, deals, and people." action={<Button asChild variant="outline" size="sm" data-testid="link-impexq-quick-test"><Link href="/admin/impexq"><Sparkles size={15} /> Test ImpexQ</Link></Button>} />
     <section id="review-queue" className="admin-review-overview" aria-label="Review queue overview">
       <div className="admin-review-total"><span>Waiting for review</span><strong>{reviewCountsLoading ? '…' : reviewCountsFailed ? '!' : pendingReviewCount}</strong><small>{reviewCountsLoading ? 'Loading review lists…' : reviewCountsFailed ? 'Some lists did not load. Retry below.' : pendingReviewCount === 0 ? 'You are all caught up.' : 'Open a list below to review and decide.'}</small></div>
       <nav className="admin-review-nav" aria-label="Jump to review queue">
@@ -879,6 +881,6 @@ function FormCard({ title, onSubmit, onCancel, pending, children }: { title: str
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 
-function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/password-recovery"><PasswordRecovery /></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route><Protected>{() => <Admin />}</Protected></Route></Switch></ErrorBoundary>; }
+function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/password-recovery"><PasswordRecovery /></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin/impexq"><Protected>{() => <ImpexqTestPage />}</Protected></Route><Route><Protected>{() => <Admin />}</Protected></Route></Switch></ErrorBoundary>; }
 
 export default function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><PolicyFooter /><CookieControls /><Toaster /></TooltipProvider></QueryClientProvider>; }
