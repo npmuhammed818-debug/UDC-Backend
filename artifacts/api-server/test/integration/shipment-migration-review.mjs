@@ -244,6 +244,51 @@ try{
     [outboxId])).rows[0].delivery_status,"read");
   console.log("PASSED: exact receipt migration, stable sender status, RLS, unique signed callbacks, provider IDs and restricted grants.");
 
+  const windowSql=await readFile(new URL("../../../../lib/db/migrations/20261024_whatsapp_customer_windows.sql",import.meta.url),"utf8");
+  await pool.query(windowSql);
+  await pool.query(windowSql);
+  assert.equal((await pool.query(
+    "select relrowsecurity from pg_class where oid='public.whatsapp_customer_windows'::regclass"
+  )).rows[0].relrowsecurity,true);
+  for(const role of ["anon","authenticated"]){
+    for(const op of ["SELECT","INSERT","UPDATE","DELETE"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege($1,'public.whatsapp_customer_windows',$2) as allowed",
+        [role,op])).rows[0].allowed,false);
+    }
+  }
+  for(const op of ["SELECT","INSERT","UPDATE"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.whatsapp_customer_windows',$1) as allowed",
+      [op])).rows[0].allowed,true);
+  }
+  for(const op of ["DELETE","TRUNCATE","REFERENCES","TRIGGER"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.whatsapp_customer_windows',$1) as allowed",
+      [op])).rows[0].allowed,false);
+  }
+  const validHash="f".repeat(64),messageHash="a".repeat(64);
+  await pool.query(`INSERT INTO whatsapp_customer_windows
+    (user_id,phone_fingerprint,provider_message_fingerprint,last_inbound_at)
+    VALUES ($1,$2,$3,'2026-10-24T08:30:00Z')`,
+    [userId,validHash,messageHash]);
+  await assert.rejects(pool.query(`INSERT INTO whatsapp_customer_windows
+    (user_id,phone_fingerprint,provider_message_fingerprint,last_inbound_at)
+    VALUES ($1,'10000000001',$2,now())`,[randomUUID(),messageHash]),e=>e.code==="23514"||e.code==="23503");
+  const replay=await pool.query(`INSERT INTO whatsapp_customer_windows
+    (user_id,phone_fingerprint,provider_message_fingerprint,last_inbound_at)
+    VALUES ($1,$2,$3,'2026-10-24T08:20:00Z')
+    ON CONFLICT(user_id) DO UPDATE SET
+      last_inbound_at=EXCLUDED.last_inbound_at
+    WHERE whatsapp_customer_windows.last_inbound_at<EXCLUDED.last_inbound_at
+    RETURNING user_id`,[userId,validHash,messageHash]);
+  assert.equal(replay.rowCount,0,"replay of earlier signed inbound cannot extend current service window");
+  assert.equal((await pool.query(
+    "select last_inbound_at from whatsapp_customer_windows where user_id=$1",[userId]
+  )).rows[0].last_inbound_at.toISOString(),"2026-10-24T08:30:00.000Z");
+  console.log("PASSED: signed WhatsApp customer window migration RLS, least-privilege grants, HMAC-only fingerprints and monotonic replay.");
+
+
 
 
 

@@ -35,3 +35,4 @@ export * from "./shipmentCargoUnits";
 export * from "./shipmentEtaFollowups";
 export * from "./whatsappShipmentOutbox";
 export * from "./whatsappShipmentReceipts";
+export * from "./whatsappCustomerWindows";
