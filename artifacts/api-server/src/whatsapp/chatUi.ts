@@ -237,7 +237,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       return true;
     }
     const shipments=await db.select({
-      carrier:shipmentsTable.carrier,trackingNumber:shipmentsTable.trackingNumber,
+      id:shipmentsTable.id,carrier:shipmentsTable.carrier,trackingNumber:shipmentsTable.trackingNumber,
       status:shipmentsTable.status,origin:shipmentsTable.origin,destination:shipmentsTable.destination,
       estimatedArrival:shipmentsTable.estimatedArrival,updatedAt:shipmentsTable.updatedAt,
     }).from(shipmentsTable).where(eq(shipmentsTable.dealId,deal.id))
@@ -262,17 +262,19 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       if(updated)lines.push(`Last UDC update: ${updated}`);
     }
     const events=await db.select({
-      kind:shipmentTrackingEventsTable.kind,shipmentStatus:shipmentTrackingEventsTable.shipmentStatus,
+      shipmentId:shipmentTrackingEventsTable.shipmentId,kind:shipmentTrackingEventsTable.kind,shipmentStatus:shipmentTrackingEventsTable.shipmentStatus,
       source:shipmentTrackingEventsTable.source,sourceReference:shipmentTrackingEventsTable.sourceReference,
       location:shipmentTrackingEventsTable.location,note:shipmentTrackingEventsTable.note,
       occurredAt:shipmentTrackingEventsTable.occurredAt,
     }).from(shipmentTrackingEventsTable).where(eq(shipmentTrackingEventsTable.dealId,deal.id))
-      .orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(5);
-    if(events.length){
+      .orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(50);
+    const visible=events.filter(event=>shipments.some(s=>s.id===event.shipmentId)).slice(0,5);
+    if(visible.length){
       lines.push('Recent shipment milestones:');
-      for(const event of events){
+      for(const event of visible){
         const dateLabel=date(event.occurredAt);
-        lines.push(`• ${safe(event.kind)}${event.shipmentStatus?' ('+safe(event.shipmentStatus)+')':''}${dateLabel?' · '+dateLabel:''}`);
+        const shipmentPosition=shipments.findIndex(s=>s.id===event.shipmentId)+1;
+        lines.push(`• Shipment ${shipmentPosition}: ${safe(event.kind)}${event.shipmentStatus?' ('+safe(event.shipmentStatus)+')':''}${dateLabel?' · '+dateLabel:''}`);
         if(user.role!=='agent'){
           if(event.location)lines.push(`Location recorded: ${safe(event.location)}`);
           if(event.note)lines.push(`UDC note: ${safe(event.note)}`);
