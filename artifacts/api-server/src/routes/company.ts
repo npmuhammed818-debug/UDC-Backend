@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, db, notificationsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { managedCompanyDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
 
@@ -81,7 +82,7 @@ router.get("/company/documents", requireAuth, async (req, res) => {
       .where(eq(companyVerificationDocumentsTable.companyId, company.id))
       .orderBy(desc(companyVerificationDocumentsTable.createdAt));
     res.json({ documents: await Promise.all(documents.map(async (item) => {
-      const path = parseStoragePath(item.fileUrl);
+      const path = managedCompanyDocumentPath(item.fileUrl,company.id);
       return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : null };
     })) });
   } catch { res.status(500).json({ error: "company_documents_fetch_failed" }); }
