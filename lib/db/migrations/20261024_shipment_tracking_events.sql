@@ -28,6 +28,7 @@ DO $$ BEGIN
   REVOKE ALL ON public.shipment_tracking_events FROM authenticated;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  REVOKE ALL ON public.shipment_tracking_events FROM service_role;
   GRANT SELECT,INSERT ON public.shipment_tracking_events TO service_role;
  END IF;
 END $$;

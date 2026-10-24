@@ -29,6 +29,7 @@ DO $$ BEGIN
     REVOKE ALL ON public.whatsapp_phone_link_challenges FROM authenticated;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+    REVOKE ALL ON public.whatsapp_phone_link_challenges FROM service_role;
     GRANT SELECT, INSERT, UPDATE, DELETE ON public.whatsapp_phone_link_challenges TO service_role;
   END IF;
 END $$;
