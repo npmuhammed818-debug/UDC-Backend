@@ -30,7 +30,16 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
    const lib=await import(file);
    const tables=lib.requiredMvpTables;
    assert.equal(tables.length,9);
-   const allPresent=tables.map(table_name=>({table_name,rls_enabled:true}));
+   const fullRights=new Set(["email_auth_challenges","email_auth_limits",
+     "whatsapp_phone_link_challenges","whatsapp_shipment_receipts"]);
+   const updateRights=new Set(["shipment_cargo_units","whatsapp_shipment_outbox","whatsapp_customer_windows"]);
+   const allPresent=tables.map(table_name=>({
+     table_name,rls_enabled:true,roles_present:true,client_can_crud:false,
+     service_select:true,service_insert:true,
+     service_update:fullRights.has(table_name)||updateRights.has(table_name),
+     service_delete:fullRights.has(table_name),service_extra:false,
+     critical_unique_present:true,
+   }));
    s.rows=allPresent;
    const env={WHATSAPP_APP_SECRET:"PRIVATE_META_SECRET",WHATSAPP_ACCESS_TOKEN:"PRIVATE_TOKEN",
      WHATSAPP_PHONE_NUMBER_ID:"123",WHATSAPP_BUSINESS_ACCOUNT_ID:"456",
@@ -46,6 +55,8 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
    assert.ok(!JSON.stringify(checks).includes("PRIVATE_"));
    let report=await lib.buildMvpStagingReadiness({env});
    assert.equal(report.schema.allPresentWithRls,true);
+   assert.equal(report.schema.catalogGuardsPass,true,"complete metadata is necessary but not sufficient");
+   assert.equal(report.schema.criticalIndexCount,9);
    assert.equal(report.launchReady,false);
    assert.equal(report.schemaVerified,false);
    assert.equal(report.stagingApproved,false);
@@ -55,6 +66,30 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
    assert.equal(report.schema.allPresentWithRls,false);
    assert.equal(report.schema.objects[0].present,false);
    assert.equal(report.schema.objects[2].rlsEnabled,false);
+   // Any extra client grant, broad backend power or missing unique key must
+   // block a positive catalog report (even if RLS remains on).
+   s.rows=allPresent.map((r,i)=>i===0?{...r,client_can_crud:true}:r);
+   report=await lib.buildMvpStagingReadiness({env});
+   assert.equal(report.schema.allPresentWithRls,true);
+   assert.equal(report.schema.catalogGuardsPass,false,"RLS alone does not imply access safety");
+   assert.equal(report.schema.objects[0].clientGrantsDenied,false);
+   s.rows=allPresent.map((r,i)=>i===2?{...r,service_extra:true}:r);
+   report=await lib.buildMvpStagingReadiness({env});
+   assert.equal(report.schema.catalogGuardsPass,false,"TRUNCATE or TRIGGER grants are excessive");
+   assert.equal(report.schema.objects[2].servicePrivilegesValid,false);
+   s.rows=allPresent.map((r,i)=>i===6?{...r,critical_unique_present:false}:r);
+   report=await lib.buildMvpStagingReadiness({env});
+   assert.equal(report.schema.catalogGuardsPass,false,"missing replay uniqueness is unsafe");
+   assert.equal(report.schema.objects[6].criticalUniqueIndexPresent,false);
+   s.rows=allPresent.map((r,i)=>i===1?{...r,roles_present:false}:r);
+   report=await lib.buildMvpStagingReadiness({env});
+   assert.equal(report.schema.catalogGuardsPass,false,"missing client/database roles not proven safe");
+   assert.equal(report.schema.objects[1].clientRolesPresent,false);
+   s.rows=allPresent.map((r,i)=>i===1?{...r,service_update:false}:r);
+   report=await lib.buildMvpStagingReadiness({env});
+   assert.equal(report.schema.catalogGuardsPass,false,"OTP adapter needs explicit correct backend grants");
+   assert.equal(report.schema.objects[1].servicePrivilegesValid,false);
+   s.rows=allPresent;
    s.dbError=true;
    report=await lib.buildMvpStagingReadiness({env:{}});
    assert.equal(report.schema,null);
@@ -81,6 +116,7 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
    assert.equal(payload.launchReady,false);
    assert.equal(payload.stagingApproved,false);
    assert.equal(payload.schemaVerified,false);
+   assert.equal(payload.schema.catalogGuardsPass,true);
    assert.ok(!JSON.stringify(payload).includes("PRIVATE_"));
  }finally{
    if(server)await new Promise(resolve=>server.close(resolve));
