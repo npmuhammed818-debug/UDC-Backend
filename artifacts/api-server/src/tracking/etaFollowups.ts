@@ -4,6 +4,7 @@ import {
   shipmentEtaFollowupsTable,usersTable,
 } from "@workspace/db";
 import {etaAdvisory} from "./etaAdvisory";
+import {enqueueShipmentWhatsApp} from "../notifications/shipmentOutbox";
 
 const PAGE_SIZE=200;
 const activeStatuses=["planned","booked","in_transit","on_hold"];
@@ -60,10 +61,19 @@ export async function runEtaFollowups(options:{
         const body=reason==="overdue_unconfirmed"
           ?"A recorded cargo ETA has passed without an arrival confirmation. UDC must verify with the shipping party."
           :"The last recorded cargo update is over 48 hours old. UDC must request a status confirmation.";
-        if(recipients.length)await tx.insert(notificationsTable).values(recipients.map(recipient=>({
-          userId:recipient.id,type:"shipment_eta_followup",title,body,
-          link:`/deals/${unit.dealId}/tracking`,
-        })));
+        if(recipients.length){
+          const notices=await tx.insert(notificationsTable).values(recipients.map(recipient=>({
+            userId:recipient.id,type:"shipment_eta_followup",title,body,
+            link:`/deals/${unit.dealId}/tracking`,
+          }))).returning({id:notificationsTable.id,userId:notificationsTable.userId});
+          // Queue intent in SAME transaction as in-app notice and audit.
+          // No live provider request is made by this producer.
+          for(const notice of notices){
+            await enqueueShipmentWhatsApp(tx,{
+              notificationId:notice.id,dealId:unit.dealId,recipientUserId:notice.userId,
+            });
+          }
+        }
         await tx.insert(auditLogsTable).values({
           actorUserId:options.actorUserId??null,
           action:"shipment_eta_followup_created",
@@ -77,5 +87,5 @@ export async function runEtaFollowups(options:{
     if(page.length<PAGE_SIZE)break;
     cursor=page[page.length-1].id;
   }
-  return {scanned,created,deduplicated,dayKey,channel:"in_app_only" as const};
+  return {scanned,created,deduplicated,dayKey,channel:"in_app_and_dormant_whatsapp_outbox" as const};
 }
