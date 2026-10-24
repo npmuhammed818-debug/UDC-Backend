@@ -123,6 +123,17 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
       }
       assert.deepEqual(signed, []);
     });
+    await t.test("unverified trade accounts cannot mint signed document links",async()=>{
+      for(const status of ["pending","under_review","rejected"]){
+        for(const path of ["/documents",`/deals/${dealId}/documents`]){
+          const before=signed.length;
+          const result=await request("buyer",path,undefined,status);
+          assert.equal(result.status,403);
+          assert.equal(result.data.error,"verification_required");
+          assert.equal(signed.length,0);
+        }
+      }
+    });
     await t.test("outsiders cannot read or upload into another deal", async () => {
       for (const suffix of ["", "/messages", "/documents", "/execution"]) {
         assert.equal((await request("outsider", `/deals/${dealId}${suffix}`)).status, 404);
