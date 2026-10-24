@@ -8,7 +8,7 @@ import {randomUUID} from "node:crypto";
 test("admin role review cannot grant a different role or bypass authentication",async()=>{
  const userId="11111111-1111-4111-8111-111111111111";
  const id="22222222-2222-4222-8222-222222222222";
- const state={role:"admin",reviewerId:"33333333-3333-4333-8333-333333333333",
+ const state:any={role:"admin",reviewerId:"33333333-3333-4333-8333-333333333333",
    account:{id:userId,role:"buyer",status:"verified",phone:"10000000001"},
    requests:[{id,userId,fromRole:"buyer",toRole:"agent",status:"pending",createdAt:new Date()}],
    audits:[],notifications:[],reads:0,failAudit:false};
@@ -16,7 +16,7 @@ test("admin role review cannot grant a different role or bypass authentication",
  const tables=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{
    get:(_,key)=>key==="_table"?name:{column:key},
  })]));
- const db={execute:async q=>{
+ const db:any={execute:async (q:any)=>{
    const statement=q.parts.join("?").toLowerCase().replace(/\s+/g," ").trim();
    if(statement.startsWith("select r.id,r.user_id")) {
      state.reads++;
@@ -34,21 +34,21 @@ test("admin role review cannot grant a different role or bypass authentication",
      return {rows:[]};
    }
    throw Error("unexpected SQL "+statement.slice(0,80));
- },select:fields=>{
-   const q={from:()=>q,orderBy:()=>q,limit:async limit=>{
+ },select:(fields:any)=>{
+   const q:any={from:()=>q,orderBy:()=>q,limit:async (limit:number)=>{
      state.reads++;
      return state.requests.slice(0,limit).map(row=>Object.fromEntries(Object.entries(fields)
        .map(([k,col])=>[k,row[col.column]])));
    }};
    return q;
- },insert:table=>({values:async entry=>{
+ },insert:(table:any)=>({values:async (entry:any)=>{
    if(table._table==="auditLogsTable"){
      if(state.failAudit){state.failAudit=false;throw Error("synthetic_audit_failure");}
      state.audits.push(entry);
    }else if(table._table==="notificationsTable")state.notifications.push(entry);
    else throw Error("unknown table");
    return [];
- }}),transaction:async fn=>{
+ }}),transaction:async (fn:any)=>{
    const snapshot={requests:structuredClone(state.requests),audits:structuredClone(state.audits),
      notifications:structuredClone(state.notifications)};
    try{return await fn(db);}catch(e){
@@ -56,7 +56,7 @@ test("admin role review cannot grant a different role or bypass authentication",
      state.notifications=snapshot.notifications;throw e;
    }
  }};
- globalThis.__roleReviewQa={state,db,tables};
+ (globalThis as any).__roleReviewQa={state,db,tables};
  const file=fileURLToPath(new URL(`./role-review-${randomUUID()}.mjs`,import.meta.url));
  const result=await build({stdin:{
      contents:"import express from 'express';import router from '../src/routes/roleChangeReview.ts';const app=express();app.use(express.json());app.use((req,res,next)=>{const s=globalThis.__roleReviewQa.state;req.authUser={id:s.reviewerId,role:s.role,status:'verified'};next()});app.use(router);export default app;",
@@ -81,7 +81,7 @@ test("admin role review cannot grant a different role or bypass authentication",
    await new Promise(resolve=>server.once("listening",resolve));
    const base=`http://127.0.0.1:${server.address().port}`;
    const get=()=>fetch(base+"/admin/role-change-requests");
-   const review=(id,decision,note)=>fetch(base+"/admin/role-change-requests/"+id+"/review",{
+   const review=(id:string,decision:string,note?:string)=>fetch(base+"/admin/role-change-requests/"+id+"/review",{
      method:"POST",headers:{"content-type":"application/json"},
      body:JSON.stringify({decision,note}),
    });
@@ -125,6 +125,6 @@ test("admin role review cannot grant a different role or bypass authentication",
    assert.equal(state.audits.length,1);
  }finally{
    if(server)await new Promise(resolve=>server.close(resolve));
-   await unlink(file);delete globalThis.__roleReviewQa;
+   await unlink(file);delete (globalThis as any).__roleReviewQa;
  }
 });
