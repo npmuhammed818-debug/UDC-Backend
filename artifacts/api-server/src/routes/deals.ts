@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { requireNonAgentDealAccess } from "../auth/agentDealPrivacy";
 import { createSignedDownloadUrl, uploadDocumentBytes } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
 import { createSpaDraft } from "../deals/spaDraft";
@@ -20,7 +21,7 @@ const router: IRouter = Router();
 const documentType = z.enum(["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA", "SGS", "BL", "CO", "COA", "trade_document", "company_registration", "business_license", "certificate", "invoice", "packing_list", "bill_of_lading", "inspection_report", "certificate_of_origin", "other"]);
 
 
-router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
+router.get("/deals/:dealId/documents", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   if(req.authUser!.role!=="admin" && req.authUser!.status!=="verified"){
     res.status(403).json({error:"verification_required"});return;
   }
@@ -50,7 +51,7 @@ router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
   } catch { res.status(500).json({ error: "deal_documents_fetch_failed" }); }
 });
 
-router.post("/deals/:dealId/documents/upload", requireAuth,
+router.post("/deals/:dealId/documents/upload", requireAuth, requireNonAgentDealAccess,
   raw({ type: "application/pdf", limit: "5mb" }), async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
@@ -83,7 +84,7 @@ router.post("/deals/:dealId/documents/upload", requireAuth,
   }
 });
 
-router.get("/deals/:dealId/messages", requireAuth, async (req, res) => {
+router.get("/deals/:dealId/messages", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = String(req.params["dealId"] ?? "");
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
@@ -97,7 +98,7 @@ router.get("/deals/:dealId/messages", requireAuth, async (req, res) => {
   } catch { res.status(500).json({ error: "deal_messages_fetch_failed" }); }
 });
 
-router.get("/deals/:dealId/execution", requireAuth, async (req, res) => {
+router.get("/deals/:dealId/execution", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
@@ -113,7 +114,7 @@ router.get("/deals/:dealId/execution", requireAuth, async (req, res) => {
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_deal_id" }); return; } res.status(500).json({ error: "deal_execution_fetch_failed" }); }
 });
 
-router.post("/deals/:dealId/feedback", requireAuth, async (req, res) => {
+router.post("/deals/:dealId/feedback", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
     const input = z.object({ rating: z.number().int().min(1).max(5), comment: z.string().trim().max(1500).optional() }).parse(req.body);
@@ -131,7 +132,7 @@ router.post("/deals/:dealId/feedback", requireAuth, async (req, res) => {
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "feedback_submit_failed" }); }
 });
 
-router.get("/deals", requireAuth, async (req, res) => {
+router.get("/deals", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const deals = await db
       .select({
@@ -158,7 +159,7 @@ router.get("/deals", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/deals/:dealId", requireAuth, async (req, res) => {
+router.get("/deals/:dealId", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = String(req.params["dealId"] ?? "");
     if (!dealId) {
@@ -196,7 +197,7 @@ router.get("/deals/:dealId", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/deals/:dealId/ncnda-draft", requireAuth, async (req, res) => {
+router.post("/deals/:dealId/ncnda-draft", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
     z.object({ confirmTerms: z.literal(true) }).strict().parse(req.body);
@@ -216,7 +217,7 @@ router.post("/deals/:dealId/ncnda-draft", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/deals/:dealId/spa-draft", requireAuth, async (req, res) => {
+router.post("/deals/:dealId/spa-draft", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   const confirmation = z.object({ confirmTerms: z.literal(true) });
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
@@ -276,7 +277,7 @@ router.post("/deals/:dealId/spa-draft", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/deals/:dealId/loi-draft", requireAuth, async (req, res) => {
+router.post("/deals/:dealId/loi-draft", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
     z.object({ confirmTerms: z.literal(true) }).parse(req.body);
@@ -334,7 +335,7 @@ router.post("/deals/:dealId/loi-draft", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/deals/:dealId/icpo-draft", requireAuth, async (req, res) => {
+router.post("/deals/:dealId/icpo-draft", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
     z.object({ confirmTerms: z.literal(true) }).parse(req.body);
@@ -392,7 +393,7 @@ router.post("/deals/:dealId/icpo-draft", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/deals/:dealId/fco-draft", requireAuth, async (req, res) => {
+router.post("/deals/:dealId/fco-draft", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = z.string().uuid().parse(req.params["dealId"]);
     z.object({ confirmTerms: z.literal(true) }).parse(req.body);
@@ -553,7 +554,7 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/deals/:dealId/payment-status", requireAuth, async (req, res) => {
+router.get("/deals/:dealId/payment-status", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = String(req.params["dealId"] ?? "");
     if (!dealId) {
@@ -591,7 +592,7 @@ router.get("/deals/:dealId/payment-status", requireAuth, async (req, res) => {
   }
 });
 
-router.get("/deals/:dealId/timeline", requireAuth, async (req, res) => {
+router.get("/deals/:dealId/timeline", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   try {
     const dealId = String(req.params["dealId"] ?? "");
     const [deal] = await db.select({ id: dealsTable.id, dealNumber: dealsTable.dealNumber })
