@@ -48,23 +48,102 @@ export function evaluateMvpEnvironment(env:NodeJS.ProcessEnv=process.env):Readin
       detail:"Buyer, seller, agent, SGS/DLC, OTP, signed Meta and rollback testing require human evidence."},
   ];
 }
-export type SchemaState={id:string;present:boolean;rlsEnabled:boolean};
+// A missing or untrusted migration index must be treated as a fail-closed
+// report, even if the table exists and RLS was enabled separately.
+const criticalIndexByTable:Record<(typeof requiredMvpTables)[number],string>={
+  email_auth_challenges:"email_auth_challenges_pkey",
+  email_auth_limits:"email_auth_limits_pkey",
+  whatsapp_phone_link_challenges:"whatsapp_phone_link_challenges_pkey",
+  shipment_tracking_events:"shipment_tracking_events_idempotency_key_idx",
+  shipment_cargo_units:"shipment_cargo_units_ref_unique",
+  shipment_eta_followups:"shipment_eta_followups_unique_day_idx",
+  whatsapp_shipment_outbox:"whatsapp_shipment_outbox_notification_unique",
+  whatsapp_shipment_receipts:"whatsapp_shipment_receipt_event_unique",
+  whatsapp_customer_windows:"whatsapp_customer_windows_pkey",
+};
+const expectedServiceGrants:Record<(typeof requiredMvpTables)[number],string>={
+  email_auth_challenges:"SELECT,INSERT,UPDATE,DELETE",
+  email_auth_limits:"SELECT,INSERT,UPDATE,DELETE",
+  whatsapp_phone_link_challenges:"SELECT,INSERT,UPDATE,DELETE",
+  shipment_tracking_events:"SELECT,INSERT",
+  shipment_cargo_units:"SELECT,INSERT,UPDATE",
+  shipment_eta_followups:"SELECT,INSERT",
+  whatsapp_shipment_outbox:"SELECT,INSERT,UPDATE",
+  whatsapp_shipment_receipts:"SELECT,INSERT,UPDATE,DELETE",
+  whatsapp_customer_windows:"SELECT,INSERT,UPDATE",
+};
+export type SchemaState={
+  id:string;present:boolean;rlsEnabled:boolean;clientRolesPresent:boolean;
+  clientGrantsDenied:boolean;servicePrivilegesValid:boolean;criticalUniqueIndexPresent:boolean;
+};
 export async function inspectMvpSchema(executor:Pick<typeof db,"execute">=db){
-  // Read-only PostgreSQL catalogs. Never enumerate user records or infer that
-  // existence of a table means migrations were applied correctly.
+  // Read-only pg_catalog probe; never enumerate customer records or values.
+  // Role OIDs are looked up safely: a missing Supabase role fails closed
+  // instead of throwing or inadvertently reporting the privilege as secure.
   const result=await executor.execute(sql`
-    SELECT c.relname AS table_name,c.relrowsecurity AS rls_enabled
+    SELECT c.relname AS table_name,c.relrowsecurity AS rls_enabled,
+      (SELECT COUNT(*)=3 FROM pg_catalog.pg_roles
+        WHERE rolname IN ('anon','authenticated','service_role')) AS roles_present,
+      (
+        COALESCE(pg_catalog.has_table_privilege(
+          (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='anon'),c.oid,'SELECT,INSERT,UPDATE,DELETE'),false)
+        OR COALESCE(pg_catalog.has_table_privilege(
+          (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='authenticated'),c.oid,'SELECT,INSERT,UPDATE,DELETE'),false)
+      ) AS client_can_crud,
+      COALESCE(pg_catalog.has_table_privilege(
+        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='service_role'),c.oid,'SELECT'),false) AS service_select,
+      COALESCE(pg_catalog.has_table_privilege(
+        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='service_role'),c.oid,'INSERT'),false) AS service_insert,
+      COALESCE(pg_catalog.has_table_privilege(
+        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='service_role'),c.oid,'UPDATE'),false) AS service_update,
+      COALESCE(pg_catalog.has_table_privilege(
+        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='service_role'),c.oid,'DELETE'),false) AS service_delete,
+      COALESCE(pg_catalog.has_table_privilege(
+        (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='service_role'),c.oid,'TRUNCATE,TRIGGER,REFERENCES'),false) AS service_extra,
+      EXISTS (
+        SELECT 1 FROM pg_catalog.pg_index pi
+        JOIN pg_catalog.pg_class ix ON ix.oid=pi.indexrelid
+        WHERE pi.indrelid=c.oid AND pi.indisunique AND pi.indisvalid
+          AND ix.relname=CASE c.relname
+            WHEN 'email_auth_challenges' THEN 'email_auth_challenges_pkey'
+            WHEN 'email_auth_limits' THEN 'email_auth_limits_pkey'
+            WHEN 'whatsapp_phone_link_challenges' THEN 'whatsapp_phone_link_challenges_pkey'
+            WHEN 'shipment_tracking_events' THEN 'shipment_tracking_events_idempotency_key_idx'
+            WHEN 'shipment_cargo_units' THEN 'shipment_cargo_units_ref_unique'
+            WHEN 'shipment_eta_followups' THEN 'shipment_eta_followups_unique_day_idx'
+            WHEN 'whatsapp_shipment_outbox' THEN 'whatsapp_shipment_outbox_notification_unique'
+            WHEN 'whatsapp_shipment_receipts' THEN 'whatsapp_shipment_receipt_event_unique'
+            WHEN 'whatsapp_customer_windows' THEN 'whatsapp_customer_windows_pkey'
+            ELSE '__not_a_udc_index__' END
+      ) AS critical_unique_present
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relkind IN ('r','p')
       AND c.relname = ANY(${[...requiredMvpTables]}::text[])
   `);
-  const found=new Map(result.rows.map(r=>[String(r.table_name),
-    r.rls_enabled===true]));
-  const objects:SchemaState[]=requiredMvpTables.map(id=>({
-    id,present:found.has(id),rlsEnabled:found.get(id)===true,
-  }));
-  return {objects,allPresentWithRls:objects.every(o=>o.present&&o.rlsEnabled)};
+  const found=new Map(result.rows.map(r=>[String(r.table_name),r]));
+  const objects:SchemaState[]=requiredMvpTables.map(id=>{
+    const r=found.get(id);
+    const expected=expectedServiceGrants[id].split(",");
+    const correctGrants=!!r && !r.service_extra && expected.every(grant=>
+      r["service_"+grant.toLowerCase()]===true)
+      && ["SELECT","INSERT","UPDATE","DELETE"].filter(grant=>!expected.includes(grant))
+        .every(grant=>r["service_"+grant.toLowerCase()]===false);
+    return {id,present:!!r,rlsEnabled:r?.rls_enabled===true,
+      clientRolesPresent:r?.roles_present===true,
+      clientGrantsDenied:r?.client_can_crud===false && r?.roles_present===true,
+      servicePrivilegesValid:correctGrants,
+      criticalUniqueIndexPresent:r?.critical_unique_present===true,
+    };
+  });
+  return {
+    objects,
+    allPresentWithRls:objects.every(o=>o.present&&o.rlsEnabled),
+    catalogGuardsPass:objects.every(o=>o.present&&o.rlsEnabled&&o.clientRolesPresent&&
+      o.clientGrantsDenied&&o.servicePrivilegesValid&&o.criticalUniqueIndexPresent),
+    // The expected names are static developer-reviewed DDL, not fetched from data.
+    criticalIndexCount:Object.keys(criticalIndexByTable).length,
+  };
 }
 export async function buildMvpStagingReadiness(
   options:{env?:NodeJS.ProcessEnv;executor?:Pick<typeof db,"execute">}={}
