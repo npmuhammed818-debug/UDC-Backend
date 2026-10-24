@@ -1005,6 +1005,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
       if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
         try {
+          // UDC/AKIF can occur in a person's or company's name. Consume a
+          // clear answer to the active form before keyword-based tutoring;
+          // actual learning questions still bypass intake without a model call.
+          if (await handleChatUi(message.from, message, true)) continue;
           const reply = await answerGuidance(message.from, message.text.body, message.id);
           if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
         } catch {
@@ -1337,6 +1341,17 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
       const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
+      if (message.from) {
+        const [account] = await db.select({ role: usersTable.role }).from(usersTable)
+          .where(eq(usersTable.phone, message.from)).limit(1);
+        // Model extraction cannot authorize another account role. Apply the
+        // same boundary as native forms before writes or intake-memory changes.
+        if (account && account.role !== intakeRole) {
+          await deliverWhatsAppReply(message.from,
+            `Your account is registered as ${account.role}. UDC must review role changes before you submit as a ${intakeRole}.`);
+          continue;
+        }
+      }
       const previousDraft = !explicitNewIntake && (repeatedSubmittedIntake || !intakeDecision.newIntake) && savedIntake?.role === intakeRole
         ? savedIntake.draft : null;
 
