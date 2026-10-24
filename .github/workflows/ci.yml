@@ -77,6 +77,8 @@ jobs:
           node artifacts/api-server/test/integration/whatsapp-buyer-postgres.mjs 2>&1 | tee .acceptance-results/whatsapp-postgres.log
         env:
           UDC_QA_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
+      - name: Verify ETA follow-up pagination and retry safety (no provider sends)
+        run: node --test artifacts/api-server/test/eta-followups.test.mjs
       - run: pnpm run acceptance
       - uses: actions/upload-artifact@v4
         if: always()
