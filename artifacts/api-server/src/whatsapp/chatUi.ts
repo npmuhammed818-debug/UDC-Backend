@@ -56,7 +56,7 @@ export async function sendChatHome(phone:string){
   const role=user?.email?user.role:undefined;
   try{
     if(role)await sendWhatsAppInteractive(phone,{type:'button',body:{text:'What would you like to do? Choose below, or message Akif normally.'},action:{buttons:primaryActions(role)}});
-    else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. Are you a buyer, seller or agent? Please choose below.'},action:{buttons:[['buyer','Buyer'],['seller','Seller'],['agent','Agent']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
+    else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.'},action:{buttons:[['buyer','Buyer'],['seller','Seller'],['agent','Agent']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
   }catch{await sendWhatsAppText(phone,role?'Menu unavailable. You can still message Akif, or send “My code”, “My deals”, or “More options”.':'Role buttons unavailable. Reply Buyer, Seller or Agent to continue registration, or type Menu to try again.');}
 }
 async function sendChatMore(phone:string){
@@ -107,7 +107,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
       if(role!=='agent'&&(!businessEmail(input.email)||!input.company_name||!input.country))return 'Buyers and sellers need a company email, company name and country. Open My profile to submit those details. Agents may use personal or business email.';
       // An email is contact data; never bind it to an unrelated existing web identity.
       const [emailOwner]=await tx.select({id:usersTable.id}).from(usersTable).where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1);
-      if(emailOwner&&emailOwner.id!==existing?.id)return 'This email already belongs to a UDC profile. Ask UDC to review the accounts; profiles are never merged automatically.';
+      if(emailOwner&&emailOwner.id!==existing?.id)return 'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
       if(existing){[user]=await tx.update(usersTable).set({fullName:input.full_name,email:input.email,country:input.country||null,...(existing.status==='verified' && (existing.email!==input.email || existing.fullName!==input.full_name || (existing.country||null)!==(input.country||null))?{status:'under_review'}:{}),updatedAt:new Date()}).where(eq(usersTable.id,existing.id)).returning();}
       else{[user]=await tx.insert(usersTable).values({phone,fullName:input.full_name,email:input.email,country:input.country||null,role,status:'pending',passwordHash:await hashPassword(randomBytes(32).toString('base64url'))}).returning();}
       if(input.company_name){

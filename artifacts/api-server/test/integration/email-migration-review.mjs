@@ -369,19 +369,18 @@ try {
       "delete from email_auth_limits where key='synthetic-server-key'",
     );
   });
-  const servicePrivileges = (
-    await pool.query(
-      "select has_table_privilege('service_role','email_auth_challenges','TRUNCATE') as truncate,has_table_privilege('service_role','email_auth_challenges','TRIGGER') as trigger",
-    )
-  ).rows[0];
-  assert.equal(servicePrivileges.truncate, true);
-  assert.equal(servicePrivileges.trigger, true);
-  pass(
-    "representative trusted BYPASSRLS service role can execute backend operations; client roles remain restricted",
-  );
-  console.log(
-    "REVIEW NOTE: GRANT ALL also grants TRUNCATE/TRIGGER/REFERENCES to the trusted service role; scope/least-privilege review remains a rollout prerequisite.",
-  );
+  // Narrow OTP table permissions to the operations actually used by the backend.
+  for (const table of ["email_auth_challenges","email_auth_limits"]) {
+    for (const privilege of ["SELECT","INSERT","UPDATE","DELETE"]) {
+      const {rows}=await pool.query("select has_table_privilege('service_role',$1,$2) AS allowed",["public."+table,privilege]);
+      assert.equal(rows[0].allowed,true,`service_role requires ${privilege} on ${table}`);
+    }
+    for (const privilege of ["TRUNCATE","REFERENCES","TRIGGER"]) {
+      const {rows}=await pool.query("select has_table_privilege('service_role',$1,$2) AS allowed",["public."+table,privilege]);
+      assert.equal(rows[0].allowed,false,`service_role must not ${privilege} on ${table}`);
+    }
+  }
+  pass("trusted service_role can read/write OTP challenges and limits without destructive grants; clients remain restricted");
   const func = (
     await pool.query(
       "select prosecdef,proconfig from pg_proc where oid='public.invalidate_udc_email_proof()'::regprocedure",
@@ -419,7 +418,21 @@ try {
   );
   const afterUsers = await userSnapshot(),
     afterSessions = await sessionSnapshot();
+  // Simulate a legacy installation that had GRANT ALL, then verify that
+  // the idempotent migration REVOKES the extra rights.
+  await pool.query("GRANT ALL ON email_auth_challenges,email_auth_limits TO service_role");
+  assert.equal((await pool.query(
+    "select has_table_privilege('service_role','email_auth_limits','TRUNCATE') AS allowed"
+  )).rows[0].allowed,true);
   await pool.query(migration);
+  for (const table of ["email_auth_challenges","email_auth_limits"]) {
+    for (const privilege of ["TRUNCATE","REFERENCES","TRIGGER"]) {
+      assert.equal((await pool.query(
+        "select has_table_privilege('service_role',$1,$2) AS allowed",
+        ["public."+table,privilege]
+      )).rows[0].allowed,false,`legacy ${privilege} grant must be revoked`);
+    }
+  }
   assert.equal(await userSnapshot(), afterUsers);
   assert.equal(await sessionSnapshot(), afterSessions);
   pass(

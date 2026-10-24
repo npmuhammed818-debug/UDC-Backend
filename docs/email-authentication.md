@@ -42,7 +42,7 @@ verification of the current email. These are separate from company verification.
 
 ## Protocol and abuse controls
 
-- Cryptographically random eight-digit codes, including leading zeroes; ten-minute
+- Cryptographically random six-digit codes, including leading zeroes; ten-minute
   expiry; keyed HMAC at rest bound to user, exact email, challenge UUID and purpose.
   The HMAC uses the server's existing `SESSION_SECRET` (at least 32 characters).
 - Constant-time digest comparison, five guesses per challenge and atomic single use.
