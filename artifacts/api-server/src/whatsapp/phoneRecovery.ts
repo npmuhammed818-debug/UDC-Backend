@@ -105,19 +105,34 @@ export function createPhoneRecoveryService(options: {
     if (!/^\d{6}$/.test(code)) return denied;
     const changed = await database.transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"phone_recovery:" + phone}))`);
+      // Lock ordering matters: the winning confirmation later consumes ALL
+      // outstanding codes for this account. Locking a challenge first and then
+      // the account can deadlock when another phone holds its challenge while
+      // waiting for the same user. Resolve the candidate with a nonlocking
+      // lookup, lock the user FIRST, then lock/re-read this phone's challenge.
+      // The phone-scoped advisory lock serializes replacement/reissue for
+      // this destination; the user row lock serializes competing destinations.
+      const {rows: candidates} = await tx.execute(
+        sql`select user_id from public.whatsapp_phone_link_challenges
+            where new_phone=${phone} order by created_at desc,id desc limit 1`
+      );
+      const candidate = candidates[0] as {user_id: string} | undefined;
+      if (!candidate) return false;
+      const {rows: accounts} = await tx.execute(
+        sql`select id,email,verified_email,email_verified_at,phone,status,role
+            from public.users where id=${candidate.user_id} for update`
+      );
+      const user = accounts[0] as UserRow | undefined;
+      if (!user) return false;
       const {rows} = await tx.execute(
         sql`select id,user_id,email,old_phone,new_phone,code_hash,attempts,expires_at,consumed_at
             from public.whatsapp_phone_link_challenges where new_phone=${phone}
             order by created_at desc,id desc limit 1 for update`
       );
       const c = rows[0] as Challenge | undefined;
-      if (!c || c.consumed_at || c.attempts >= EMAIL_CODE_ATTEMPTS ||
+      if (!c || c.user_id !== user.id || c.consumed_at ||
+        c.attempts >= EMAIL_CODE_ATTEMPTS ||
         new Date(c.expires_at).getTime() <= now().getTime()) return false;
-      const {rows: accounts} = await tx.execute(
-        sql`select id,email,verified_email,email_verified_at,phone,status,role
-            from public.users where id=${c.user_id} for update`
-      );
-      const user = accounts[0] as UserRow | undefined;
       const valid = Boolean(user && user.email &&
         user.email.trim().toLowerCase()===c.email &&
         user.verified_email===c.email && user.email_verified_at &&
