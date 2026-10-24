@@ -35,7 +35,7 @@ export function agentReferralWhatsAppCommand(agentId:string){
  * Never create a link when the public number is not explicitly configured.
  */
 export function agentReferralWhatsAppLink(agentId:string, publicNumber:unknown){
-  if(typeof publicNumber!=="string" || !/^\\+?[1-9]\\d{7,14}$/.test(publicNumber))return null;
-  const to=publicNumber.replace(/^\\+/,"");
+  if(typeof publicNumber!=="string" || !/^\+?[1-9]\d{7,14}$/.test(publicNumber))return null;
+  const to=publicNumber.replace(/^\+/,"");
   return `https://wa.me/${to}?text=${encodeURIComponent(agentReferralWhatsAppCommand(agentId))}`;
 }
