@@ -158,10 +158,21 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       const allOptions=state.interactive.at(-1).body.action.sections[0].rows;
       assert.ok(allOptions.some((r:any)=>r.id==='udc:commissions'));
       assert.ok(allOptions.some((r:any)=>r.id==='udc:profile'));
+      const priorPublicNumber=process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
+      delete process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
       await m.handleChatUi(agent.phone,ui('invite'));
-      assert.match(last(),/^UDC-[0-9A-F]{12}$/);
-      assert.match(state.sent.at(-2).body,/after joining UDC/);
+      assert.match(last(),/^Referral UDC-[0-9A-F]{12}$/);
+      assert.match(state.sent.at(-2).body,/after registering with UDC/);
       assert.ok(!state.sent.at(-1).body.includes('Share this'));
+      assert.equal(state.sent.filter((v:any)=>v.body.includes('https://wa.me/')).length,0,
+        'never invent a phone number or share link');
+      process.env.UDC_WHATSAPP_PUBLIC_NUMBER='+15551234567';
+      await m.handleChatUi(agent.phone,ui('invite'));
+      assert.match(state.sent.at(-2).body,/^Referral UDC-[0-9A-F]{12}$/);
+      assert.match(last(),/^Optional UDC WhatsApp shortcut/);
+      assert.match(last(),/https:\/\/wa.me\/15551234567\?text=Referral%20UDC-/);
+      if(priorPublicNumber===undefined)delete process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
+      else process.env.UDC_WHATSAPP_PUBLIC_NUMBER=priorPublicNumber;
 
       rows.commissionsTable=[{beneficiaryUserId:agent.id,currency:'USD',amount:'50',status:'pending'},{beneficiaryUserId:'other',currency:'USD',amount:'999999',status:'paid'}];await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/50/);assert.doesNotMatch(last(),/999999/);
       rows.dealParticipantsTable=[{dealId:own,userId:agent.id,participantRole:'agent',status:'active'}];await m.handleChatUi(agent.phone,ui('deals'));assert.equal(state.interactive.at(-1).body.action.sections[0].rows.length,1);
