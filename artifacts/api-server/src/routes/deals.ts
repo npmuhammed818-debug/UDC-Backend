@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
-import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { createSignedDownloadUrl, uploadDocumentBytes } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
 import { createSpaDraft } from "../deals/spaDraft";
 import { createLoiDraft } from "../deals/loiDraft";
@@ -14,12 +14,16 @@ import { createFcoDraft } from "../deals/fcoDraft";
 import { createIcpoDraft } from "../deals/icpoDraft";
 
 import { dealAccess } from "../deals/access";
+import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
 const documentType = z.enum(["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA", "SGS", "BL", "CO", "COA", "trade_document", "company_registration", "business_license", "certificate", "invoice", "packing_list", "bill_of_lading", "inspection_report", "certificate_of_origin", "other"]);
 
 
 router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
+  if(req.authUser!.role!=="admin" && req.authUser!.status!=="verified"){
+    res.status(403).json({error:"verification_required"});return;
+  }
   try {
     const dealId = String(req.params["dealId"] ?? "");
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
@@ -37,8 +41,11 @@ router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
         or(eq(documentsTable.status, "approved"), eq(documentsTable.uploadedBy, req.authUser!.id)),
       )).orderBy(desc(documentsTable.createdAt));
     res.json({ documents: await Promise.all(documents.map(async (item) => {
-      const path = parseStoragePath(item.fileUrl);
-      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+      const ownedPath = item.status==="approved" || item.status==="pending"
+        ? managedDealDocumentPath(item.fileUrl,deal.id) : null;
+      // Rejected or failed files remain visible for review but cannot be
+      // distributed as bearer URLs, including to the original uploader.
+      return { ...item, fileUrl: ownedPath ? await createSignedDownloadUrl(ownedPath) : null };
     })) });
   } catch { res.status(500).json({ error: "deal_documents_fetch_failed" }); }
 });

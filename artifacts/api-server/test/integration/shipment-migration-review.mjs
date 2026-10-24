@@ -338,6 +338,46 @@ try{
   )).rows[0].last_inbound_at.toISOString(),"2026-10-24T08:30:00.000Z");
   console.log("PASSED: signed WhatsApp customer window migration RLS, least-privilege grants, HMAC-only fingerprints and monotonic replay.");
 
+  const roleReviewSql=await readFile(new URL("../../../../lib/db/migrations/20261024_user_role_change_review.sql",import.meta.url),"utf8");
+  await pool.query(roleReviewSql);
+  await pool.query(roleReviewSql);
+  assert.equal((await pool.query("select relrowsecurity from pg_class where oid='public.user_role_change_requests'::regclass")).rows[0].relrowsecurity,true);
+  for(const role of ["anon","authenticated"]){
+    for(const operation of ["SELECT","INSERT","UPDATE","DELETE"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege($1,'public.user_role_change_requests',$2) as allowed",
+        [role,operation])).rows[0].allowed,false);
+    }
+  }
+  for(const operation of ["SELECT","INSERT","UPDATE"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.user_role_change_requests',$1) as allowed",
+      [operation])).rows[0].allowed,true);
+  }
+  for(const operation of ["DELETE","TRUNCATE","REFERENCES","TRIGGER"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.user_role_change_requests',$1) as allowed",
+      [operation])).rows[0].allowed,false);
+  }
+  const roleRequestId=randomUUID();
+  await pool.query(`insert into user_role_change_requests(id,user_id,from_role,to_role)
+    values($1,$2,'buyer','agent')`,[roleRequestId,userId]);
+  await assert.rejects(pool.query(`insert into user_role_change_requests(user_id,from_role,to_role)
+    values($1,'buyer','seller')`,[userId]),e=>e.code==="23505");
+  await assert.rejects(pool.query(`insert into user_role_change_requests(user_id,from_role,to_role)
+    values($1,'buyer','buyer')`,[userId]),e=>e.code==="23514");
+  await assert.rejects(pool.query(`update user_role_change_requests set status='reviewed'
+    where id=$1`,[roleRequestId]),e=>e.code==="23514");
+  await pool.query(`update user_role_change_requests set status='reviewed',
+    reviewer_user_id=$2,reviewed_at=now() where id=$1`,[roleRequestId,userId]);
+  await pool.query(`insert into user_role_change_requests(user_id,from_role,to_role)
+    values($1,'buyer','seller')`,[userId]);
+  assert.equal((await pool.query("select count(*)::int as total from user_role_change_requests")).rows[0].total,2);
+  assert.equal((await pool.query("select phone from users where id=$1",[userId])).rows[0].phone,"10000000001",
+    "request and review migration must never change account credentials");
+  console.log("PASSED: role-change review RLS, least privilege, single pending request, review consistency and stable account identity.");
+
+
 
 
 
