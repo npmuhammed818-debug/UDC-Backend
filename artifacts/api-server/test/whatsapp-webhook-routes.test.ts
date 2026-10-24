@@ -65,6 +65,10 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   state.db.transaction = async (callback: any) => callback(state.db);
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
+    "../whatsapp/emailVerification": "export const handleEmailVerification=async(phone,text)=>{if(!/^(?:verify email|email code(?:\\s|$))/i.test(text))return null;s.emailCalls=(s.emailCalls||0)+1;return 'Fixture email verification reply';};",
+    "../whatsapp/phoneRecovery": "export const handlePhoneRecovery=async(phone,text)=>{if(!/^(?:(?:sign in|recover account|change number)(?:\\s|$)|phone code(?:\\s|$))/i.test(text))return null;s.recoveryCalls=(s.recoveryCalls||0)+1;return 'Fixture private phone recovery reply';};",
+    "../whatsapp/customerServiceWindow": "export const recordSignedCustomerInbound=async input=>{s.windowEvidence.push(input);return {recorded:true};};",
+    "../whatsapp/shipmentDeliveryReceipts": "export const recordSignedShipmentStatuses=async values=>{s.receipts.push(...values);if(s.failReceipt)throw Error('synthetic_DB_error');return {received:values.length};};",
     "../whatsapp/chatUi": "export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};export const sendChatHome=async(phone)=>{s.homeCalls=(s.homeCalls||0)+1;};",
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
@@ -106,6 +110,9 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
+    state.receipts=[];state.failReceipt=false;
+    state.windowEvidence=[];
+    state.fromWabaPhoneId="qa-sender-number";
     state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
   };
   function seedDeal() {
@@ -121,7 +128,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     await new Promise(resolve => server.once("listening", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
     async function message(fields: any, signature = true) {
-      const body = JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ id: randomUUID(), from: "10000000001", ...fields }] } }] }] });
+      const body = JSON.stringify({ entry: [{ changes: [{ value: { metadata:{phone_number_id:state.fromWabaPhoneId??"qa-sender-number"},messages: [{ id: randomUUID(), from: "10000000001", ...fields }] } }] }] });
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
@@ -137,6 +144,59 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.doesNotMatch(state.sent.at(-1).body,/couldn.t read|PRIVATE/);state.guidanceFailure=false;
       state.privacyReply='Reply AGREE';state.guidanceCalls=[];
       await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
+    });
+    await t.test("24h window evidence accepts only signed, consented, verified inbound messages",async()=>{
+      reset();seedDeal();
+      const priorPhoneId=process.env.WHATSAPP_PHONE_NUMBER_ID;
+      process.env.WHATSAPP_PHONE_NUMBER_ID="qa-sender-number";
+      process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED="true";
+      try{
+        const content={text:{body:"Hi UDC"},timestamp:"1792800000"};
+        assert.equal((await message(content,false)).status,401);
+        assert.equal(state.windowEvidence.length,0,"invalid HMAC cannot update window");
+        state.privacyReply="Reply AGREE";await message(content);
+        assert.equal(state.windowEvidence.length,0,"no evidence before consent");
+        state.privacyReply=null;rows.usersTable[0].status="pending";
+        await message(content);assert.equal(state.windowEvidence.length,0,"unverified cannot send");
+        rows.usersTable[0].status="suspended";await message(content);
+        assert.equal(state.windowEvidence.length,0,"suspended cannot open send window");
+        rows.usersTable[0].status="verified";
+        state.fromWabaPhoneId="different-waba-phone";
+        await message(content);
+        assert.equal(state.windowEvidence.length,0,"signed messages for another business number cannot open window");
+        state.fromWabaPhoneId="qa-sender-number";
+        await message(content);
+        assert.equal(state.windowEvidence.length,1,"verified signed consented message on UDC's number records evidence");
+        assert.equal(state.windowEvidence[0].phone,"10000000001");
+        assert.equal(state.windowEvidence[0].timestamp,content.timestamp);
+        delete process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED;
+        await message(content);
+        assert.equal(state.windowEvidence.length,1,"feature disabled by default");
+      }finally{
+        delete process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED;
+        if(priorPhoneId===undefined)delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+        else process.env.WHATSAPP_PHONE_NUMBER_ID=priorPhoneId;
+      }
+    });
+    await t.test("delivery receipts require Meta HMAC and never reach trade or AI",async()=>{
+      reset();seedDeal();
+      const status={id:"wamid.synthetic.abc",status:"delivered",timestamp:"1792800000",recipient_id:"10000000001"};
+      async function receipt(signed=true){
+        const body=JSON.stringify({entry:[{changes:[{value:{statuses:[status]}}]}]});
+        return fetch(base+"/webhooks/whatsapp",{method:"POST",headers:{
+          "content-type":"application/json",
+          "x-hub-signature-256":signed?"sha256="+createHmac("sha256","fixture-secret").update(body).digest("hex"):"sha256=invalid",
+        },body});
+      }
+      assert.equal((await receipt(false)).status,401);
+      assert.equal(state.receipts.length,0);
+      assert.equal((await receipt()).status,200);
+      assert.equal(state.receipts.length,1);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.intake,[]);
+      assert.equal(state.dealCalls,0);assert.deepEqual(state.recorded,[]);
+      state.failReceipt=true;
+      assert.equal((await receipt()).status,503,"database loss must cause Meta retry, not silent success");
+      state.failReceipt=false;
     });
     await t.test("accepting consent opens role selection without sending AGREE to trade intelligence", async () => {
       reset();state.privacyReply={kind:"consent_accepted"};
@@ -170,6 +230,28 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply=null;rows.usersTable.push({phone:'10000000001',status:'suspended'});
       await message(text);assert.equal(state.signins,0);rows.usersTable=[];
       await message(text);assert.equal(state.signins,1);assert.equal(state.sent.at(-1).body,'Fixture sign-in confirmation');assert.deepEqual(state.intake,[]);
+    });
+    await t.test("phone recovery remains behind Meta signature and consent and never reaches AI",async()=>{
+      reset();state.recoveryCalls=0;
+      const request={text:{body:"Sign in owner@example.invalid"}};
+      await message(request,false);assert.equal(state.recoveryCalls,0);
+      state.privacyReply="Reply AGREE";await message(request);assert.equal(state.recoveryCalls,0);
+      state.privacyReply=null;rows.usersTable.push({phone:"10000000001",status:"suspended"});
+      await message(request);assert.equal(state.recoveryCalls,0);rows.usersTable=[];
+      await message(request);assert.equal(state.recoveryCalls,1);
+      assert.equal(state.sent.at(-1).body,"Fixture private phone recovery reply");
+      await message({text:{body:"Phone code 123456"}});assert.equal(state.recoveryCalls,2);
+      assert.deepEqual(state.intake,[]);assert.deepEqual(state.recorded,[]);
+      assert.equal(state.dealCalls,0);assert.deepEqual(state.guidanceCalls,[]);
+    });
+    await t.test('email code commands require signed consented nonblocked senders and never reach AI or memory',async()=>{
+      reset();state.emailCalls=0;
+      const text={text:{body:'Email code 123456'}};
+      await message(text,false);assert.equal(state.emailCalls,0);
+      state.privacyReply='Reply AGREE';await message(text);assert.equal(state.emailCalls,0);
+      state.privacyReply=null;rows.usersTable.push({phone:'10000000001',status:'suspended'});await message(text);assert.equal(state.emailCalls,0);
+      rows.usersTable=[];await message(text);assert.equal(state.emailCalls,1);
+      assert.equal(state.sent.at(-1).body,'Fixture email verification reply');assert.deepEqual(state.intake,[]);assert.deepEqual(state.recorded,[]);assert.equal(state.dealCalls,0);assert.deepEqual(state.guidanceCalls,[]);assert.equal(rows.dealConversationEventsTable.length,0);
     });
     await t.test("agent registration is consent-gated, pending, idempotent and never changes an existing trader role", async () => {
       reset(); state.privacyReply = "Reply AGREE";
@@ -223,8 +305,24 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.saved, null);
       assert.deepEqual(state.intake, []);
     });
+    await t.test("natural intake cannot use AI output to cross an existing account's role", async () => {
+      for (const [role, requestedRole] of [['buyer','seller'],['seller','buyer'],['agent','buyer'],['agent','seller']]) {
+        reset();
+        rows.usersTable = [{ id:'qa-identity', phone:'10000000001', role, status:'pending' }];
+        state.decision = { role:requestedRole, newIntake:true,
+          fields:{ product:'Sugar',quantity:100,price:490,targetPrice:500,destination:'Mombasa' },
+          reply:'I will send this for review.' };
+        const original = structuredClone(rows.usersTable);
+        const text = requestedRole==='seller'?'I can supply 100 MT Sugar at USD 490 per MT.':'I need 100 MT Sugar to Mombasa at USD 500 per MT.';
+        assert.equal((await message({text:{body:text}})).status,200);
+        assert.deepEqual(state.recorded,[],`${role} must not submit as ${requestedRole}`);
+        assert.equal(state.saved,null,'a conflicting model decision must not replace intake memory');
+        assert.deepEqual(rows.usersTable,original);
+        assert.match(state.sent.at(-1).body,/registered as|account role/i);
+      }
+    });
     await t.test("pending users can finish intake; suspended users cannot submit", async () => {
-      reset(); rows.usersTable = [{ id: "buyer", phone: "10000000001", status: "pending" }];
+      reset(); rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "pending" }];
       state.decision = { role: "buyer", fields: {}, reply: "Which product do you need?" };
       await message({ text: { body: "What can I buy?" } }); assert.equal(state.intake.length, 1);
       rows.usersTable[0].status = "suspended";

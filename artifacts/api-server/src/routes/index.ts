@@ -24,6 +24,7 @@ import referralRouter from "./referrals";
 import submissionRouter from "./submissions";
 import whatsappBuyerIntakeRouter from "./whatsappBuyerIntake";
 import whatsappWebhookRouter from "./whatsappWebhook";
+import whatsappTemplateReadinessRouter from "./whatsappTemplateReadiness";
 
 const router: IRouter = Router();
 
@@ -52,5 +53,6 @@ router.use(akifOfficialSourcesRouter);
 router.use(akifImpexqRouter);
 router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
+router.use(whatsappTemplateReadinessRouter);
 
 export default router;

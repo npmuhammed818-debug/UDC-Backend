@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 test('admin trade workflows preserve verification, ownership, review and payment controls', async t => {
   const source=await readFile(new URL('../src/routes/admin.ts',import.meta.url),'utf8');
   const dealSource=await readFile(new URL('../src/routes/deals.ts',import.meta.url),'utf8');
-  const names=[...new Set((source+dealSource).match(/\b\w+Table\b/g))];
+  const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable'])];
   const tables:any=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{get:(t,k)=>k==='_table'?name:{column:k,table:name}})]));
   const records:any=Object.fromEntries(names.map(name=>[name,[]]));
+  records.whatsappShipmentOutboxTable=[];
   const dealId='11111111-1111-4111-8111-111111111111';
   records.dealsTable=[{id:dealId,buyerUserId:'buyer',sellerUserId:'seller'}];
   records.usersTable=[{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'}];
@@ -48,14 +49,25 @@ test('admin trade workflows preserve verification, ownership, review and payment
   }
   const key='__adminMeetingFixture';
   const state:any={tables,db:{select,insert:(t:any)=>mutation(t),update:(t:any)=>mutation(t,true)},user:null};
-  state.sent=[];state.db.locks=[];state.db.execute=async(query:any)=>{state.db.locks.push(query.values?.[0]);};
+  state.sent=[];state.db.locks=[];state.db.execute=async(query:any)=>{
+    const statement=(query.parts||[]).join(' ').replace(/\s+/g,' ').toLowerCase();
+    if(statement.includes('insert into public.whatsapp_shipment_outbox')){
+      const [notificationId,dealId,recipientUserId]=query.values;
+      records.whatsappShipmentOutboxTable??=[];
+      if(records.whatsappShipmentOutboxTable.some((r:any)=>r.notificationId===notificationId))return {rows:[]};
+      const row={id:randomUUID(),notificationId,dealId,recipientUserId,status:'pending'};
+      records.whatsappShipmentOutboxTable.push(row);
+      return {rows:[{id:row.id}]};
+    }
+    state.db.locks.push(query.values?.[0]);return {rows:[]};
+  };
   state.db.transaction=async(f:any)=>{const before=structuredClone(records);try{return await f(state.db);}catch(error){for(const name of Object.keys(records))records[name]=before[name];throw error;}};
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
   const result=await build({stdin:{contents:`import express from 'express';export { respondToTerms,presentInitialVerifiedOffer } from '../src/marketplace/termAgreement';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
-      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});`,
+      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});export const asc=x=>x;export const gt=(a,b)=>({kind:'gt',a,b});`,
       sessions:'export const getAuthenticatedUser=async()=>null;',
       whatsapp:'export const sendWhatsAppText=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};export const sendWhatsAppInteractive=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};',
       storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
@@ -312,8 +324,83 @@ test('admin trade workflows preserve verification, ownership, review and payment
     await t.test('inspection, shipment and customs records use existing audited operations',async()=>{
       const inspection=await request('/admin/inspections',{dealId,inspectorName:'Synthetic SGS',scheduledAt:'2026-11-01T10:00:00Z'});assert.equal(inspection.status,201);
       assert.equal((await request(`/admin/inspections/${inspection.data.inspection.id}`,{status:'passed',resultSummary:'Synthetic reviewed evidence'},'PATCH')).status,200);
+      records.usersTable.push({id:'milestone-agent',role:'agent',status:'verified',phone:'10000004004'});
+      records.dealParticipantsTable.push({dealId,userId:'milestone-agent',participantRole:'agent',status:'active'});
       const shipment=await request('/admin/shipments',{dealId,carrier:'Synthetic carrier',trackingNumber:'TEST-ONLY',origin:'Santos',destination:'Mombasa'});assert.equal(shipment.status,201);
+      const shipId=shipment.data.shipment.id;
+      const route=`/admin/shipments/${shipId}/cargo-units`;
+      const sea={transportMode:'sea',unitReference:'MSCU1234567',vesselName:'QA Vessel',voyageNumber:'QA-V01',billOfLading:'QA-BL-001',estimatedArrival:'2026-11-15T00:00:00Z'};
+      assert.equal((await request(route,{...sea,flightNumber:'QA-008'})).status,400,'cannot mix sea and air fields');
+      assert.equal((await request(route,{...sea,transportMode:'unknown'})).status,400);
+      const unit=await request(route,sea);assert.equal(unit.status,201);
+      assert.equal(unit.data.unit.dealId,dealId);
+      assert.equal(unit.data.unit.unitReference,'MSCU1234567');
+      assert.equal((await request(route,sea)).status,409,'same container reference must not duplicate the unit');
+      const air=await request(route,{transportMode:'air',unitReference:'AWB-001',flightNumber:'QA101',airWaybill:'123-45678901'});
+      assert.equal(air.status,201,'same shipment may have more than one unit and transport mode');
+      const road=await request(route,{transportMode:'road',unitReference:'TRUCK-01',vehicleReference:'QA-TRUCK'});
+      assert.equal(road.status,201);
+      assert.equal(records.shipmentCargoUnitsTable.length,3);
+      const unitPath=`/admin/cargo-units/${unit.data.unit.id}`;
+      assert.equal((await request(unitPath,{status:'in_transit',currentLocation:'Synthetic Port'},'PATCH')).status,200);
+      assert.equal(records.shipmentCargoUnitsTable[0].status,'in_transit');
+      assert.equal(records.shipmentCargoUnitsTable[0].lastUpdateSource,'udc_manual');
+      assert.equal(records.shipmentTrackingEventsTable.length,2,'cargo update records parent shipment milestone');
+      assert.match(records.shipmentTrackingEventsTable[1].note,/MSCU1234567/);
+      assert.ok(records.notificationsTable.some((n:any)=>n.type==='cargo_unit_status_updated'));
+      assert.ok(records.whatsappShipmentOutboxTable.length>=2,"shipment alerts use durable queue");
+      const review=await fetch(base+'/admin/notifications/whatsapp-shipment-outbox?status=pending');
+      assert.equal(review.status,200);
+      const reviewData=await review.json();
+      assert.ok(reviewData.entries.length>=2);
+      assert.equal(reviewData.providerAcceptanceDoesNotEqualDelivered,true);
+      assert.ok(reviewData.entries.every((r:any)=>!('phone' in r)&&!('body' in r)));
+      assert.equal((await fetch(base+'/admin/notifications/whatsapp-shipment-outbox?status=fake')).status,400);
+
+      assert.equal(state.sent.filter((x:any)=>/shipment|cargo/i.test(x.body)).length,0,"shipment alerts never use direct sends");
+      state.failAudit=true;
+      assert.equal((await request(unitPath,{status:'arrived'},'PATCH')).status,500,'audit failure rolls back cargo update');
+      assert.equal(records.shipmentCargoUnitsTable[0].status,'in_transit');
+      assert.ok(records.auditLogsTable.some((a:any)=>a.action==='shipment_cargo_unit_created'));
+      assert.ok(records.auditLogsTable.some((a:any)=>a.action==='shipment_cargo_unit_updated'));
+      assert.equal((await fetch(base+route).then(r=>r.json())).units.length,3);
+
       assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit',notes:'Synthetic confirmed departure'},'PATCH')).status,200);
+      const timeline=records.shipmentTrackingEventsTable;
+      assert.equal(timeline.length,3);assert.deepEqual(timeline.map((e:any)=>e.kind),['planned','status_update','status_update']);
+      assert.equal(timeline[2].shipmentStatus,'in_transit');assert.equal(timeline[2].source,'udc_manual');
+      const eventPath=`/admin/shipments/${shipment.data.shipment.id}/events`;
+      const milestone={idempotencyKey:randomUUID(),kind:'departed',occurredAt:new Date(Date.now()-60_000).toISOString(),location:'Synthetic Port',source:'carrier_reported',sourceReference:'QA-BL-001',note:'Carrier message recorded, not live GPS'};
+      assert.equal((await request(eventPath,{...milestone,sourceReference:undefined})).status,400);
+      assert.equal((await request(eventPath,{...milestone,occurredAt:new Date(Date.now()+86_400_000).toISOString()})).status,400);
+      assert.equal(timeline.length,3);
+      const added=await request(eventPath,milestone);assert.equal(added.status,201);
+      assert.equal(timeline.length,4);assert.equal(timeline[3].source,'carrier_reported');
+      assert.equal(timeline[3].location,'Synthetic Port');assert.equal(timeline[3].recordedByUserId,'admin');
+      assert.equal((await request(eventPath,milestone)).status,200,'same idempotency key reuses the original event');
+      assert.equal(timeline.length,4,'retry cannot duplicate a milestone');
+      assert.equal((await request(eventPath,{...milestone,note:'modified with same key'})).status,409);
+      assert.equal(timeline.length,4,'key reuse with changed details cannot overwrite or duplicate event');
+
+      assert.ok(records.auditLogsTable.some((r:any)=>r.action==='shipment_milestone_recorded'));
+      state.failAudit=true;
+      assert.equal((await request(eventPath,{...milestone,idempotencyKey:randomUUID(),kind:'delay'})).status,500);
+      assert.equal(records.shipmentTrackingEventsTable.length,4,'failed audit cannot persist milestone');
+      const priorCount=records.shipmentTrackingEventsTable.length;
+      assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit'},'PATCH')).status,200);
+      assert.equal(records.shipmentTrackingEventsTable.length,priorCount,'same status cannot append a fake milestone');
+      const sentAgentNotes=records.notificationsTable.filter((n:any)=>n.userId==='milestone-agent');
+      assert.ok(sentAgentNotes.length>=2,'verified assigned agent receives recorded milestone status');
+      assert.ok(sentAgentNotes.every((n:any)=>!JSON.stringify(n).includes('TEST-ONLY')&&!JSON.stringify(n).includes('Santos')&&!JSON.stringify(n).includes('Mombasa')));
+      const beforeRevoke=sentAgentNotes.length;
+      records.dealParticipantsTable.find((p:any)=>p.userId==='milestone-agent').status='revoked';
+      const delay=await request(eventPath,{...milestone,idempotencyKey:randomUUID(),kind:'delay'});
+      assert.equal(delay.status,201);
+      assert.ok(records.notificationsTable.some((n:any)=>n.type==='shipment_delay'),'delay must notify counterparties');
+      assert.equal(records.notificationsTable.filter((n:any)=>n.userId==='milestone-agent').length,beforeRevoke,'revoked agent receives no new alert');
+      assert.ok(records.whatsappShipmentOutboxTable.length>0,"agent alerts have durable outbox records");
+
+
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'submitted',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'cleared',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
       assert.equal(records.customsClearanceTable.length,1);assert.equal(records.customsClearanceTable[0].status,'cleared');assert.ok(records.customsClearanceTable[0].clearedAt);

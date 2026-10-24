@@ -5,13 +5,17 @@ import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marke
 import { udcPaymentTerms } from '../marketplace/paymentPolicy';
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, whatsappShipmentOutboxTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
+import { enqueueShipmentWhatsApp } from "../notifications/shipmentOutbox";
+import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
+import { runEtaFollowups } from "../tracking/etaFollowups";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
@@ -414,6 +418,44 @@ const shipmentStatusSchema = z.object({
   notes: z.string().max(2000).optional(),
   estimatedArrival: z.coerce.date().optional(),
 });
+const cargoUnitSchema=z.object({
+  transportMode:z.enum(["sea","air","road"]),
+  unitReference:z.string().trim().min(2).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9\-_/ ]*$/),
+  vesselName:z.string().trim().min(2).max(120).optional(),
+  voyageNumber:z.string().trim().min(2).max(80).optional(),
+  flightNumber:z.string().trim().min(2).max(60).optional(),
+  vehicleReference:z.string().trim().min(2).max(80).optional(),
+  billOfLading:z.string().trim().min(2).max(100).optional(),
+  airWaybill:z.string().trim().min(2).max(100).optional(),
+  estimatedArrival:z.coerce.date().optional(),
+}).superRefine((v,ctx)=>{
+  if(v.transportMode==="sea" && (v.flightNumber||v.airWaybill||v.vehicleReference))
+    ctx.addIssue({code:"custom",path:["transportMode"],message:"Sea cargo must not contain air or road references"});
+  if(v.transportMode==="air" && (v.vesselName||v.voyageNumber||v.billOfLading||v.vehicleReference))
+    ctx.addIssue({code:"custom",path:["transportMode"],message:"Air cargo must not contain sea or road references"});
+  if(v.transportMode==="road" && (v.vesselName||v.voyageNumber||v.billOfLading||v.flightNumber||v.airWaybill))
+    ctx.addIssue({code:"custom",path:["transportMode"],message:"Road cargo must not contain sea or air references"});
+});
+const cargoUnitUpdateSchema=z.object({
+  status:z.enum(["planned","booked","in_transit","arrived","delivered","cancelled","on_hold"]),
+  currentLocation:z.string().trim().min(2).max(160).optional(),
+  estimatedArrival:z.coerce.date().optional(),
+});
+const shipmentMilestoneSchema=z.object({
+  idempotencyKey:z.string().uuid(),
+  kind:z.enum(["planned","booked","departed","in_transit","arrived","customs","inspection","delivered","delay","exception","status_update"]),
+  occurredAt:z.coerce.date(),
+  location:z.string().trim().min(2).max(160).optional(),
+  note:z.string().trim().min(3).max(500).optional(),
+  source:z.enum(["udc_manual","carrier_reported","document_checked"]).default("udc_manual"),
+  sourceReference:z.string().trim().min(2).max(160).optional(),
+}).superRefine((value,ctx)=>{
+  if(value.source!=="udc_manual"&&!value.sourceReference)
+    ctx.addIssue({code:"custom",path:["sourceReference"],message:"A carrier or document source reference is required."});
+  if(value.occurredAt.getTime()>Date.now()+5*60_000)
+    ctx.addIssue({code:"custom",path:["occurredAt"],message:"Future events are not recorded as completed milestones."});
+});
+
 
 const createFinancialInstrumentSchema = z.object({
   dealId: z.string().uuid(),
@@ -450,6 +492,22 @@ async function notifyDealCounterparties(
 
   if (!deal) return;
 
+  // Shipment alerts must not use both the old direct-send path and the
+  // transactional outbox. The queue has NO active production dispatcher.
+  if(type.startsWith("shipment_")||type==="cargo_unit_status_updated"){
+    await db.transaction(async tx=>{
+      const notices=await tx.insert(notificationsTable).values([
+        {userId:deal.buyerUserId,type,title,body,link},
+        {userId:deal.sellerUserId,type,title,body,link},
+      ]).returning({id:notificationsTable.id,userId:notificationsTable.userId});
+      for(const notice of notices)
+        await enqueueShipmentWhatsApp(tx,{
+          notificationId:notice.id,dealId,recipientUserId:notice.userId,
+        });
+    });
+    return;
+  }
+
   await db.insert(notificationsTable).values([
     { userId: deal.buyerUserId, type, title, body, link },
     { userId: deal.sellerUserId, type, title, body, link },
@@ -479,6 +537,54 @@ async function notifyDealCounterparties(
     }
   }));
 }
+
+// Explicit operator-triggered scan; safe in CI and staging because it queues only
+// in-app follow-ups. The autonomous runner is a separately gated deployment opt-in.
+// Read-only operator view. Accepted means Meta acknowledged, not delivered.
+// Never return phone numbers, chat content, identity proofs or access tokens.
+// Admin-only metadata reconciliation for previously signed Meta receipts.
+// Zero provider calls; cannot send or retry a WhatsApp message.
+router.post("/admin/notifications/whatsapp-shipment-receipts/reconcile",
+  requireRole("admin"),async(_req,res)=>{
+    try{res.json(await reconcileStoredShipmentReceipts());}
+    catch{res.status(503).json({error:"shipment_receipt_reconciliation_unavailable"});}
+  });
+
+router.get("/admin/notifications/whatsapp-shipment-outbox",requireRole("admin"),async(req,res)=>{
+  try{
+    const status=z.enum(["pending","leased","retry","accepted","uncertain","cancelled","failed","blocked"])
+      .optional().parse(req.query.status);
+    const rows=await db.select({
+      id:whatsappShipmentOutboxTable.id,
+      notificationId:whatsappShipmentOutboxTable.notificationId,
+      dealId:whatsappShipmentOutboxTable.dealId,
+      status:whatsappShipmentOutboxTable.status,
+      attempts:whatsappShipmentOutboxTable.attempts,
+      deliveryStatus:whatsappShipmentOutboxTable.deliveryStatus,
+      deliveredAt:whatsappShipmentOutboxTable.deliveredAt,
+      readAt:whatsappShipmentOutboxTable.readAt,
+      failedAt:whatsappShipmentOutboxTable.failedAt,
+      lastFailureCategory:whatsappShipmentOutboxTable.lastFailureCategory,
+      nextAttemptAt:whatsappShipmentOutboxTable.nextAttemptAt,
+      updatedAt:whatsappShipmentOutboxTable.updatedAt,
+    }).from(whatsappShipmentOutboxTable)
+      .where(status?eq(whatsappShipmentOutboxTable.status,status):undefined)
+      .orderBy(desc(whatsappShipmentOutboxTable.updatedAt)).limit(100);
+    res.json({entries:rows,providerAcceptanceDoesNotEqualDelivered:true});
+  }catch(error){
+    if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    res.status(500).json({error:"outbox_list_failed"});
+  }
+});
+
+router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const result=await runEtaFollowups({actorUserId:req.authUser!.id});
+    res.json(result);
+  }catch{
+    res.status(500).json({error:"eta_followup_run_failed"});
+  }
+});
 
 router.post("/admin/deal-escalations/run", requireRole("admin"), async (req, res) => {
   try {
@@ -1736,6 +1842,10 @@ router.post("/admin/shipments", requireRole("admin"), async (req, res) => {
       notes: input.notes, status: "planned",
     }).returning();
       await tx.insert(auditLogsTable).values({ actorUserId: req.authUser!.id, action: "shipment_created", entityType: "deal", entityId: deal.id, metadata: { shipmentId: shipment.id, status: shipment.status } });
+      await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:shipment.id,dealId:deal.id,kind:"planned",shipmentStatus:"planned",idempotencyKey:randomUUID(),
+        source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+      });
       return shipment;
     });
     await notifyDealCounterparties(deal.id, "shipment_created", "Shipment recorded", "A shipment has been recorded for your deal. Open the deal for the carrier and tracking reference.", `/deals/${deal.id}`);
@@ -1764,18 +1874,31 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       res.status(404).json({ error: "shipment_not_found" });
       return;
     }
-    const [shipment] = await db.update(shipmentsTable)
-      .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
-      .where(eq(shipmentsTable.id, shipmentId))
-      .returning();
-    await db.insert(auditLogsTable).values({
-      actorUserId: req.authUser!.id,
-      action: "shipment_status_updated",
-      entityType: "deal",
-      entityId: shipment.dealId,
-      metadata: { shipmentId: shipment.id, previousStatus: existing.status, newStatus: shipment.status },
+    const {shipment,statusChanged}=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"shipment_status:"+shipmentId}))`);
+      const [before]=await tx.select({status:shipmentsTable.status})
+        .from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);
+      if(!before)throw new Error("shipment_disappeared");
+      const [updated]=await tx.update(shipmentsTable)
+        .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
+        .where(eq(shipmentsTable.id, shipmentId))
+        .returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId: req.authUser!.id,
+        action: "shipment_status_updated",
+        entityType: "deal",
+        entityId: updated.dealId,
+        metadata: { shipmentId: updated.id, previousStatus: before.status, newStatus: updated.status },
+      });
+      const statusChanged=before.status!==updated.status;
+      if(statusChanged)await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:updated.id,dealId:updated.dealId,kind:"status_update",
+        shipmentStatus:updated.status,idempotencyKey:randomUUID(),
+        source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+      });
+      return {shipment:updated,statusChanged};
     });
-    if (existing.status !== shipment.status) {
+    if (statusChanged) {
       await notifyDealCounterparties(
         shipment.dealId,
         "shipment_status_updated",
@@ -1784,6 +1907,7 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
         `/deals/${shipment.dealId}/tracking`,
       );
     }
+    if(statusChanged)await notifyAssignedDealAgents(shipment.dealId,"shipment_milestone");
     res.json({ shipment });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1791,6 +1915,182 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       return;
     }
     res.status(500).json({ error: "shipment_update_failed" });
+  }
+});
+
+
+// Agents receive only milestone existence and a deal-navigation prompt. Never
+// include carrier IDs, shipment locations, financial terms or counterparty details.
+async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|"shipment_delay"){
+  const agents=await db.select({userId:usersTable.id,phone:usersTable.phone})
+    .from(dealParticipantsTable).innerJoin(usersTable,eq(dealParticipantsTable.userId,usersTable.id))
+    .where(and(eq(dealParticipantsTable.dealId,dealId),
+      eq(dealParticipantsTable.participantRole,"agent"),eq(dealParticipantsTable.status,"active"),
+      eq(usersTable.role,"agent"),eq(usersTable.status,"verified")));
+  if(!agents.length)return;
+  const body=kind==="shipment_delay"
+    ?"A shipment delay or exception was recorded for an assigned UDC deal. Open My deals → Track shipment."
+    :"A shipment milestone was recorded for an assigned UDC deal. Open My deals → Track shipment.";
+  await db.transaction(async tx=>{
+    const notices=await tx.insert(notificationsTable).values(agents.map(a=>({
+      userId:a.userId,type:kind,title:"Assigned deal shipment update",body,
+      link:`/deals/${dealId}/tracking`,
+    }))).returning({id:notificationsTable.id,userId:notificationsTable.userId});
+    for(const notice of notices)
+      await enqueueShipmentWhatsApp(tx,{
+        notificationId:notice.id,dealId,recipientUserId:notice.userId,
+      });
+  });
+}
+
+router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
+    const input=shipmentMilestoneSchema.parse(req.body);
+    const [shipment]=await db.select({id:shipmentsTable.id,dealId:shipmentsTable.dealId})
+      .from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);
+    if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+    const result=await db.transaction(async tx=>{
+      // Serialize same-key requests across application workers.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"shipment_event:"+input.idempotencyKey}))`);
+      const [previous]=await tx.select().from(shipmentTrackingEventsTable)
+        .where(eq(shipmentTrackingEventsTable.idempotencyKey,input.idempotencyKey)).limit(1);
+      if(previous){
+        if(previous.shipmentId!==shipment.id ||
+          previous.kind!==input.kind || previous.source!==input.source ||
+          (previous.location??null)!==(input.location??null) ||
+          (previous.note??null)!==(input.note??null) ||
+          (previous.sourceReference??null)!==(input.sourceReference??null) ||
+          new Date(previous.occurredAt).getTime()!==input.occurredAt.getTime())
+          return {event:previous,created:false,conflict:true};
+        return {event:previous,created:false,conflict:false};
+      }
+      const [inserted]=await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:shipment.id,dealId:shipment.dealId,kind:input.kind,
+        idempotencyKey:input.idempotencyKey,location:input.location,note:input.note,
+        source:input.source,sourceReference:input.sourceReference,
+        occurredAt:input.occurredAt,recordedByUserId:req.authUser!.id,
+      }).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"shipment_milestone_recorded",
+        entityType:"deal",entityId:shipment.dealId,
+        metadata:{shipmentId:shipment.id,eventId:inserted.id,kind:inserted.kind,source:inserted.source},
+      });
+      return {event:inserted,created:true,conflict:false};
+    });
+    if(result.conflict){res.status(409).json({error:"idempotency_key_conflict"});return;}
+    if(result.created){
+      const urgent=input.kind==="delay"||input.kind==="exception";
+      // Never include personal/counterparty details or unverified carrier claims in alerts.
+      await notifyDealCounterparties(shipment.dealId,
+        urgent?"shipment_delay":"shipment_milestone",
+        urgent?"Shipment delay or exception recorded":"Shipment milestone recorded",
+        urgent?"UDC recorded a shipment delay or exception. Open Track shipment for the recorded details.":
+          "UDC recorded a shipment update. Open Track shipment in your deal to see its progress.",
+        `/deals/${shipment.dealId}/tracking`);
+    }
+    if(result.created)await notifyAssignedDealAgents(shipment.dealId,
+      input.kind==="delay"||input.kind==="exception"?"shipment_delay":"shipment_milestone");
+    res.status(result.created?201:200).json({event:result.event});
+  }catch(error){
+    if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    res.status(500).json({error:"shipment_milestone_create_failed"});
+  }
+});
+
+// Cargo units are multiple discrete loads/containers within a shipment.
+// Operators record references; this is not a live carrier data integration.
+router.get("/admin/shipments/:shipmentId/cargo-units",requireRole("admin"),async(req,res)=>{
+  try{
+    const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
+    const [shipment]=await db.select({id:shipmentsTable.id}).from(shipmentsTable)
+      .where(eq(shipmentsTable.id,shipmentId)).limit(1);
+    if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+    const units=await db.select().from(shipmentCargoUnitsTable)
+      .where(eq(shipmentCargoUnitsTable.shipmentId,shipmentId))
+      .orderBy(shipmentCargoUnitsTable.createdAt);
+    res.json({units});
+  }catch(error){
+    res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?"validation_error":"cargo_units_fetch_failed"});
+  }
+});
+
+router.post("/admin/shipments/:shipmentId/cargo-units",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
+    const input=cargoUnitSchema.parse(req.body);
+    const [shipment]=await db.select({id:shipmentsTable.id,dealId:shipmentsTable.dealId})
+      .from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);
+    if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+    const existing=await db.select({id:shipmentCargoUnitsTable.id})
+      .from(shipmentCargoUnitsTable)
+      .where(and(eq(shipmentCargoUnitsTable.shipmentId,shipmentId),
+        eq(shipmentCargoUnitsTable.unitReference,input.unitReference))).limit(1);
+    if(existing.length){res.status(409).json({error:"unit_reference_conflict"});return;}
+    const unit=await db.transaction(async tx=>{
+      const [created]=await tx.insert(shipmentCargoUnitsTable).values({
+        shipmentId,dealId:shipment.dealId,transportMode:input.transportMode,
+        unitReference:input.unitReference,estimatedArrival:input.estimatedArrival,
+        vesselName:input.vesselName,voyageNumber:input.voyageNumber,
+        flightNumber:input.flightNumber,vehicleReference:input.vehicleReference,
+        billOfLading:input.billOfLading,airWaybill:input.airWaybill,
+      }).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"shipment_cargo_unit_created",
+        entityType:"deal",entityId:shipment.dealId,
+        metadata:{shipmentId,unitId:created.id,transportMode:created.transportMode},
+      });
+      return created;
+    });
+    res.status(201).json({unit});
+  }catch(error){
+    if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    if((error as {code?:string})?.code==="23505"){res.status(409).json({error:"unit_reference_conflict"});return;}
+    res.status(500).json({error:"cargo_unit_create_failed"});
+  }
+});
+
+router.patch("/admin/cargo-units/:unitId",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const unitId=z.string().uuid().parse(req.params["unitId"]);
+    const input=cargoUnitUpdateSchema.parse(req.body);
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"cargo_unit:"+unitId}))`);
+      const [previous]=await tx.select().from(shipmentCargoUnitsTable)
+        .where(eq(shipmentCargoUnitsTable.id,unitId)).limit(1);
+      if(!previous)return null;
+      const [unit]=await tx.update(shipmentCargoUnitsTable)
+        .set({status:input.status,
+          ...(input.currentLocation===undefined?{}:{currentLocation:input.currentLocation}),
+          ...(input.estimatedArrival===undefined?{}:{estimatedArrival:input.estimatedArrival}),
+          lastUpdateSource:"udc_manual",lastReportedAt:new Date(),updatedAt:new Date(),
+        }).where(eq(shipmentCargoUnitsTable.id,unitId)).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"shipment_cargo_unit_updated",
+        entityType:"deal",entityId:unit.dealId,
+        metadata:{shipmentId:unit.shipmentId,unitId:unit.id,previousStatus:previous.status,newStatus:unit.status},
+      });
+      const changed=previous.status!==unit.status;
+      if(changed){
+        await tx.insert(shipmentTrackingEventsTable).values({
+          shipmentId:unit.shipmentId,dealId:unit.dealId,kind:"status_update",
+          shipmentStatus:unit.status,idempotencyKey:randomUUID(),
+          note:"Cargo unit "+unit.unitReference+" status updated",
+          source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+        });
+      }
+      return {unit,changed};
+    });
+    if(!result){res.status(404).json({error:"cargo_unit_not_found"});return;}
+    if(result.changed){
+      await notifyDealCounterparties(result.unit.dealId,"cargo_unit_status_updated",
+        "Cargo progress updated","UDC recorded new cargo-unit progress. Open Track shipment for the details.",
+        `/deals/${result.unit.dealId}/tracking`);
+      await notifyAssignedDealAgents(result.unit.dealId,"shipment_milestone");
+    }
+    res.json({unit:result.unit});
+  }catch(error){
+    res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?"validation_error":"cargo_unit_update_failed"});
   }
 });
 

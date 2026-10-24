@@ -1,3 +1,7 @@
+import { handleEmailVerification } from '../whatsapp/emailVerification';
+import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
+import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
+import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
@@ -968,12 +972,25 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { metadata?: {phone_number_id?: string}; statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; timestamp?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
+    // Provider status callbacks contain no inbound text; never route them to
+    // intake, AI, consent or a trade action. Only signed Meta bodies reach here.
+    if(Array.isArray(value?.statuses) && value.statuses.length){
+      try{
+        await recordSignedShipmentStatuses(value.statuses.slice(0,50));
+      }catch{
+        // Returning non-2xx gives Meta a chance to retry an otherwise lost
+        // receipt. No raw phone/provider payloads are logged.
+        req.log.error({flow:"whatsapp_shipment_receipt",reason:"persistence_failed"},
+          "Signed WhatsApp receipt could not be persisted");
+        res.sendStatus(503);return;
+      }
+    }
     for (const message of value?.messages ?? []) {
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
@@ -990,11 +1007,37 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             await deliverWhatsAppReply(message.from, "Your UDC account needs admin review before I can process trade messages.");
             continue;
           }
+          // Signed, consented, verified inbound evidence only. Default OFF:
+          // migration must be approved before this gate is enabled in staging.
+          if (account?.status === "verified" &&
+              process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED === "true" &&
+              typeof value?.metadata?.phone_number_id === "string" &&
+              value.metadata.phone_number_id === process.env.WHATSAPP_PHONE_NUMBER_ID) {
+            try {
+              await recordSignedCustomerInbound({
+                phone:message.from,providerMessageId:message.id,
+                timestamp:message.timestamp,
+              });
+            } catch {
+              // Never claim a valid customer-service window if storing the
+              // evidence fails; leave chatbot processing otherwise unchanged.
+              req.log.warn({flow:"whatsapp_customer_window",reason:"evidence_unavailable"},
+                "Inbound message evidence unavailable; outbound authorization remains blocked");
+            }
+          }
         } catch {
           req.log.error({ flow: "privacy_consent", reason: "consent_check_failed" }, "UDC privacy check unavailable");
           await deliverWhatsAppReply(message.from, "I couldn’t check your privacy preferences. Please try again shortly.");
           continue;
         }
+      }
+      if (message.from && typeof message.text?.body === 'string') {
+        const recoveryReply = await handlePhoneRecovery(message.from,message.text.body);
+        if (recoveryReply !== null) { await deliverWhatsAppReply(message.from,recoveryReply); continue; }
+      }
+      if (message.from && typeof message.text?.body === 'string') {
+        const emailReply = await handleEmailVerification(message.from,message.text.body);
+        if (emailReply !== null) { await deliverWhatsAppReply(message.from,emailReply); continue; }
       }
       // Explicit menu requests take precedence over AI guidance. Never open
       // the menu for ordinary greetings, consent, or unrelated chat messages.
@@ -1005,6 +1048,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
       if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
         try {
+          // UDC/AKIF can occur in a person's or company's name. Consume a
+          // clear answer to the active form before keyword-based tutoring;
+          // actual learning questions still bypass intake without a model call.
+          if (await handleChatUi(message.from, message, true)) continue;
           const reply = await answerGuidance(message.from, message.text.body, message.id);
           if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
         } catch {
@@ -1337,6 +1384,17 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
       const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
+      if (message.from) {
+        const [account] = await db.select({ role: usersTable.role }).from(usersTable)
+          .where(eq(usersTable.phone, message.from)).limit(1);
+        // Model extraction cannot authorize another account role. Apply the
+        // same boundary as native forms before writes or intake-memory changes.
+        if (account && account.role !== intakeRole) {
+          await deliverWhatsAppReply(message.from,
+            `Your account is registered as ${account.role}. UDC must review role changes before you submit as a ${intakeRole}.`);
+          continue;
+        }
+      }
       const previousDraft = !explicitNewIntake && (repeatedSubmittedIntake || !intakeDecision.newIntake) && savedIntake?.role === intakeRole
         ? savedIntake.draft : null;
 

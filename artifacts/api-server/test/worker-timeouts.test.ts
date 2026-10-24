@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeAkifProduct, runAkifReasoning } from "../src/akif/intelligence/workerClient.ts";
+import { analyzeAkifProduct, runAkifReasoning, runAkifWorkerChat } from "../src/akif/intelligence/workerClient.ts";
 const fetchBefore = globalThis.fetch;
 const setTimeoutBefore = globalThis.setTimeout;
 const urlBefore = process.env.AKIF_WORKER_URL;
@@ -27,4 +27,17 @@ test("worker deadlines allow one model call or all three specialist calls to fin
   await runAkifReasoning({ mode: "single" });
   await runAkifReasoning({ mode: "specialist_review" });
   assert.deepEqual(deadlines, [25_000, 25_000, 70_000]);
+});
+
+test("worker conversation transport never extends a short remaining caller budget", async () => {
+  process.env.AKIF_WORKER_URL = "https://worker.example";
+  process.env.AKIF_WORKER_TOKEN = "dummy";
+  let requestedTimeout = 0;
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay: number) => {
+    requestedTimeout = delay;
+    return setTimeoutBefore(callback, delay);
+  }) as typeof setTimeout;
+  globalThis.fetch = async () => Response.json({ choices: [{ message: { content: "quick reply" } }] });
+  assert.equal((await runAkifWorkerChat("hello", undefined, 100)).content, "quick reply");
+  assert.ok(requestedTimeout <= 100, "worker transport must respect the caller's remaining time");
 });
