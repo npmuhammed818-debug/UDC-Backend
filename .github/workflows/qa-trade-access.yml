@@ -1,0 +1,35 @@
+name: QA buyer seller agent access gates
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/qa-trade-access.yml"
+      - "artifacts/api-server/src/auth/verificationGate.ts"
+      - "artifacts/api-server/src/auth/agentDealPrivacy.ts"
+      - "artifacts/api-server/src/routes/marketplace.ts"
+      - "artifacts/api-server/src/routes/deals.ts"
+      - "artifacts/api-server/src/routes/documents.ts"
+      - "artifacts/api-server/test/marketplaceVerifiedGate.test.ts"
+      - "artifacts/api-server/test/agentDealPrivacy.test.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  permission-negative-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test permission and route-wiring regressions without any real credentials
+        shell: bash
+        run: |
+          if test -f artifacts/api-server/test/marketplaceVerifiedGate.test.ts; then
+            node --experimental-strip-types --test artifacts/api-server/test/marketplaceVerifiedGate.test.ts
+          fi
+          if test -f artifacts/api-server/test/agentDealPrivacy.test.ts; then
+            node --experimental-strip-types --test artifacts/api-server/test/agentDealPrivacy.test.ts
+          fi
