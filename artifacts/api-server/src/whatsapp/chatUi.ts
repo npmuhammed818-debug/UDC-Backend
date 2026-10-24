@@ -15,9 +15,10 @@ import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
 import { agentReferralCode } from '../referrals/invitation';
+import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
-const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile'] as const;
+const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile','change_role'] as const;
 export function chatAction(message:ChatMessage){
   const i=message.interactive;
   if(i?.type==='button_reply'||i?.type==='list_reply'){
@@ -36,11 +37,14 @@ export function chatAction(message:ChatMessage){
   };
   // A menu is shown ONLY after an explicit menu request or menu-button selection.
   // Greetings, 'help' and ordinary chat must remain conversations with Akif.
-  return text ? typed[text] ?? (text==='more'?'more':/^(?:(?:open|show|show me|show me the|send|send me)\s+)?(?:udc\s+)?menu[.!?]*$/.test(text)?'menu':null) : null;
+  if(!text)return null;
+  const roleRequest=/^(?:switch|change)(?: me)?(?: my role)? to (?:a |an )?(buyer|seller|agent)[.!?]*$/.exec(text);
+  if(roleRequest)return roleRequest[1];
+  return typed[text] ?? (text==='more'?'more':/^(?:(?:open|show|show me|show me the|send|send me)\s+)?(?:udc\s+)?menu[.!?]*$/.test(text)?'menu':null);
 }
 const row=(id:string,title:string,description?:string)=>({id:'udc:'+id,title,...(description?{description}:{})});
 export function menuForRole(role?:string){
-  const common=[row('profile','My profile','View or edit saved details'),row('verification','Verification status'),row('track','Track shipment','Latest recorded shipment update'),row('documents','Upload documents','Company verification PDF'),row('ask','Ask Akif','Trade guidance and learning')];
+  const common=[row('profile','My profile','View or edit saved details'),row('change_role','Change role','Request review before switching'),row('verification','Verification status'),row('track','Track shipment','Latest recorded shipment update'),row('documents','Upload documents','Company verification PDF'),row('ask','Ask Akif','Trade guidance and learning')];
   if(role==='buyer')return [row('requirement','New requirement'),row('deals','My deals'),row('meeting','Request a meeting'),...common];
   if(role==='seller')return [row('offer','New product offer'),row('deals','My deals'),row('meeting','Request a meeting'),...common];
   if(role==='agent')return [row('invite','My referral code','Copy and share your code'),row('referrals','My referrals'),row('commissions','My commissions'),row('deals','Assigned deals'),...common.filter(item=>item.id!=='udc:documents')];
@@ -180,8 +184,18 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
   if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppTextWithMenu(phone,'Your account needs UDC review.');return true;}
   if(action==='invalid'){await sendWhatsAppText(phone,'That option is no longer available. Send Menu if you want to see the current options.');return true;}
+  if(action==='change_role'){
+    if(!user){await sendWhatsAppText(phone,'Register first, then request a new role.');return true;}
+    await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Which role would you like UDC to review? Your existing verification and deal permissions remain unchanged until admin approval.'},
+      action:{buttons:[['buyer','Buyer'],['seller','Seller'],['agent','Agent']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
+    return true;
+  }
   if(['buyer','seller','agent'].includes(action)){
-    if(user&&user.role!==action){await sendWhatsAppTextWithMenu(phone,`Your account is registered as ${user.role}. UDC must review role changes.`);return true;}
+    if(user&&user.role!==action){
+      const target=action as 'buyer'|'seller'|'agent';
+      const result=await requestRoleChange(phone,target);
+      await sendWhatsAppText(phone,roleChangeReply(result.status,target));return true;
+    }
     await sendForm(phone,('profile_'+action) as FlowPurpose);return true;
   }
   if(!user){await sendWhatsAppText(phone,'Please register before using this feature. Send Menu to choose your role.');return true;}

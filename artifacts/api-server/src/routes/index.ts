@@ -25,6 +25,7 @@ import submissionRouter from "./submissions";
 import whatsappBuyerIntakeRouter from "./whatsappBuyerIntake";
 import whatsappWebhookRouter from "./whatsappWebhook";
 import whatsappTemplateReadinessRouter from "./whatsappTemplateReadiness";
+import roleChangeReviewRouter from "./roleChangeReview";
 
 const router: IRouter = Router();
 
@@ -54,5 +55,6 @@ router.use(akifImpexqRouter);
 router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
 router.use(whatsappTemplateReadinessRouter);
+router.use(roleChangeReviewRouter);
 
 export default router;
