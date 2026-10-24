@@ -38,7 +38,10 @@ router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
         or(eq(documentsTable.status, "approved"), eq(documentsTable.uploadedBy, req.authUser!.id)),
       )).orderBy(desc(documentsTable.createdAt));
     res.json({ documents: await Promise.all(documents.map(async (item) => {
-      const ownedPath=managedDealDocumentPath(item.fileUrl,deal.id);
+      const ownedPath = item.status==="approved" || item.status==="pending"
+        ? managedDealDocumentPath(item.fileUrl,deal.id) : null;
+      // Rejected or failed files remain visible for review but cannot be
+      // distributed as bearer URLs, including to the original uploader.
       return { ...item, fileUrl: ownedPath ? await createSignedDownloadUrl(ownedPath) : null };
     })) });
   } catch { res.status(500).json({ error: "deal_documents_fetch_failed" }); }
