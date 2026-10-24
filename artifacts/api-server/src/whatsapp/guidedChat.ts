@@ -2,7 +2,7 @@ import { extractParagraph } from './paragraphIntake';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
-import { db, whatsappChatSessionsTable as sessions } from '@workspace/db';
+import { auditLogsTable, db, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail } from './registrationEmail';
@@ -114,8 +114,11 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     case 'review':await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
-      await db.delete(sessions).where(and(eq(sessions.id,result.id),eq(sessions.phoneHash,fingerprint)));
-      await sendWhatsAppTextWithMenu(phone,reply);return true;
+      // Validation and identity conflicts return a useful reply without saving.
+      // Only the transaction's success marker proves it is safe to clear a draft.
+      const [saved]=await db.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'whatsapp_chat_form_saved'),sql`${auditLogsTable.metadata}->>'nonce' = ${result.id}`)).limit(1);
+      if(saved)await db.delete(sessions).where(and(eq(sessions.id,result.id),eq(sessions.phoneHash,fingerprint),eq(sessions.data,result.data)));
+      await sendWhatsAppTextWithMenu(phone,saved?reply:`${reply}\nYour details are still here. Reply Edit to change them or Cancel.`);return true;
     }
   }
 }
