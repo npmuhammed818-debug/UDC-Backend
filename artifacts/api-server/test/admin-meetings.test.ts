@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 test('admin trade workflows preserve verification, ownership, review and payment controls', async t => {
   const source=await readFile(new URL('../src/routes/admin.ts',import.meta.url),'utf8');
   const dealSource=await readFile(new URL('../src/routes/deals.ts',import.meta.url),'utf8');
-  const names=[...new Set((source+dealSource).match(/\b\w+Table\b/g))];
+  const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable'])];
   const tables:any=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{get:(t,k)=>k==='_table'?name:{column:k,table:name}})]));
   const records:any=Object.fromEntries(names.map(name=>[name,[]]));
   const dealId='11111111-1111-4111-8111-111111111111';
@@ -55,7 +55,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
   const result=await build({stdin:{contents:`import express from 'express';export { respondToTerms,presentInitialVerifiedOffer } from '../src/marketplace/termAgreement';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
-      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});`,
+      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});export const asc=x=>x;export const gt=(a,b)=>({kind:'gt',a,b});`,
       sessions:'export const getAuthenticatedUser=async()=>null;',
       whatsapp:'export const sendWhatsAppText=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};export const sendWhatsAppInteractive=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};',
       storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',

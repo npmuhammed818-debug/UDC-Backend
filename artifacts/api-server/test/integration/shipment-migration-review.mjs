@@ -106,6 +106,45 @@ try{
   await assert.rejects(pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference)
     values($1,$2,'road','QA-INVALID-SHIPMENT')`,[randomUUID(),dealId]),error=>error.code==="23503");
   console.log("PASSED: exact cargo-unit migration, sea/air/road records, unique references, transport constraints and private role permissions.");
+  const followupSql=await readFile(new URL("../../../../lib/db/migrations/20261024_shipment_eta_followups.sql",import.meta.url),"utf8");
+  await pool.query(followupSql);
+  await pool.query(followupSql);
+  const followupRls=(await pool.query(
+    "select relrowsecurity from pg_class where oid='public.shipment_eta_followups'::regclass")).rows[0];
+  assert.equal(followupRls.relrowsecurity,true);
+  for(const role of ["anon","authenticated"]){
+    for(const operation of ["SELECT","INSERT","UPDATE","DELETE"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege($1,'public.shipment_eta_followups',$2) AS allowed",
+        [role,operation])).rows[0].allowed,false);
+    }
+  }
+  for(const operation of ["SELECT","INSERT"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.shipment_eta_followups',$1) AS allowed",
+      [operation])).rows[0].allowed,true);
+  }
+  for(const operation of ["UPDATE","DELETE","TRUNCATE","TRIGGER","REFERENCES"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.shipment_eta_followups',$1) AS allowed",
+      [operation])).rows[0].allowed,false);
+  }
+  const unitId=(await pool.query(
+    "select id from shipment_cargo_units where unit_reference='MSCU1111111'")).rows[0].id;
+  const followupId=randomUUID();
+  await pool.query(`insert into shipment_eta_followups (id,cargo_unit_id,deal_id,reason,day_key)
+    values($1,$2,$3,'overdue_unconfirmed','2026-10-24')`,[followupId,unitId,dealId]);
+  await assert.rejects(pool.query(`insert into shipment_eta_followups (cargo_unit_id,deal_id,reason,day_key)
+    values($1,$2,'overdue_unconfirmed','2026-10-24')`,[unitId,dealId]),e=>e.code==="23505");
+  await pool.query(`insert into shipment_eta_followups(cargo_unit_id,deal_id,reason,day_key)
+    values($1,$2,'last_report_stale','2026-10-24')`,[unitId,dealId]);
+  await pool.query(`insert into shipment_eta_followups(cargo_unit_id,deal_id,reason,day_key)
+    values($1,$2,'overdue_unconfirmed','2026-10-25')`,[unitId,dealId]);
+  await assert.rejects(pool.query(`insert into shipment_eta_followups(cargo_unit_id,deal_id,reason,day_key)
+    values($1,$2,'fabricated_actual_delay','2026-10-26')`,[unitId,dealId]),e=>e.code==="23514");
+  assert.equal((await pool.query("select count(*)::integer AS total from shipment_eta_followups")).rows[0].total,3);
+  console.log("PASSED: exact ETA follow-up migration, RLS, least-privilege service-role grants, daily deduplication and honest reasons.");
+
 
 } finally {
   if(pool)await pool.end();

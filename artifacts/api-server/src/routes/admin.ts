@@ -13,6 +13,7 @@ import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/payment
 import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
+import { runEtaFollowups } from "../tracking/etaFollowups";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
@@ -518,6 +519,17 @@ async function notifyDealCounterparties(
     }
   }));
 }
+
+// Explicit operator-triggered scan; safe in CI and staging because it queues only
+// in-app follow-ups. The autonomous runner is a separately gated deployment opt-in.
+router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const result=await runEtaFollowups({actorUserId:req.authUser!.id});
+    res.json(result);
+  }catch{
+    res.status(500).json({error:"eta_followup_run_failed"});
+  }
+});
 
 router.post("/admin/deal-escalations/run", requireRole("admin"), async (req, res) => {
   try {
