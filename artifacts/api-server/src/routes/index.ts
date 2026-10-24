@@ -25,6 +25,7 @@ import submissionRouter from "./submissions";
 import whatsappBuyerIntakeRouter from "./whatsappBuyerIntake";
 import whatsappWebhookRouter from "./whatsappWebhook";
 import whatsappTemplateReadinessRouter from "./whatsappTemplateReadiness";
+import roleChangeReviewRouter from "./roleChangeReview";
 
 const router: IRouter = Router();
 
