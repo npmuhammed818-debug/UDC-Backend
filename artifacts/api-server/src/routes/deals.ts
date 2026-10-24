@@ -14,6 +14,7 @@ import { createFcoDraft } from "../deals/fcoDraft";
 import { createIcpoDraft } from "../deals/icpoDraft";
 
 import { dealAccess } from "../deals/access";
+import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
 const documentType = z.enum(["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA", "SGS", "BL", "CO", "COA", "trade_document", "company_registration", "business_license", "certificate", "invoice", "packing_list", "bill_of_lading", "inspection_report", "certificate_of_origin", "other"]);
@@ -37,8 +38,8 @@ router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
         or(eq(documentsTable.status, "approved"), eq(documentsTable.uploadedBy, req.authUser!.id)),
       )).orderBy(desc(documentsTable.createdAt));
     res.json({ documents: await Promise.all(documents.map(async (item) => {
-      const path = parseStoragePath(item.fileUrl);
-      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+      const ownedPath=managedDealDocumentPath(item.fileUrl,deal.id);
+      return { ...item, fileUrl: ownedPath ? await createSignedDownloadUrl(ownedPath) : null };
     })) });
   } catch { res.status(500).json({ error: "deal_documents_fetch_failed" }); }
 });
