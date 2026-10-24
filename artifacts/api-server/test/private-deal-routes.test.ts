@@ -22,13 +22,24 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
     { id: "other-deal", buyerUserId: "outsider", sellerUserId: "other-seller" }];
   records.dealParticipantsTable = [{ dealId, userId: "agent", participantRole: "agent", status: "active" }];
   records.documentsTable = [
-    { id: "shared", dealId, uploadedBy: "seller", status: "approved", fileUrl: "storage://udc-documents/shared.pdf" },
-    { id: "private-pending", dealId, uploadedBy: "seller", status: "pending", fileUrl: "storage://udc-documents/private.pdf" },
-    { id: "other-file", dealId: "other-deal", uploadedBy: "outsider", status: "approved", fileUrl: "storage://udc-documents/other.pdf" },
+    { id: "shared", dealId, uploadedBy: "seller", status: "approved", fileUrl: `storage://udc-documents/deals/${dealId}/shared.pdf` },
+    { id: "private-pending", dealId, uploadedBy: "seller", status: "pending", fileUrl: `storage://udc-documents/deals/${dealId}/private.pdf` },
+    { id: "other-file", dealId: "other-deal", uploadedBy: "outsider", status: "approved", fileUrl: "storage://udc-documents/deals/other-deal/other.pdf" },
   ];
+  records.documentsTable.push(
+    {id:"wrong-path",dealId,uploadedBy:"seller",status:"approved",
+      fileUrl:"storage://udc-documents/deals/other-deal/secret.pdf"},
+    {id:"external-url",dealId,uploadedBy:"seller",status:"approved",
+      fileUrl:"https://files.example.invalid/untrusted-legacy-document"},
+    {id:"traversal",dealId,uploadedBy:"seller",status:"approved",
+      fileUrl:`storage://udc-documents/deals/${dealId}/../other.pdf`},
+    {id:"rejected",dealId,uploadedBy:"seller",status:"rejected",
+      fileUrl:`storage://udc-documents/deals/${dealId}/rejected.pdf`},
+  );
   records.documentAccessTable = [
     ...["buyer", "seller", "agent"].map(userId => ({ documentId: "shared", userId })),
     { documentId: "private-pending", userId: "seller" },
+    ...["wrong-path","external-url","traversal","rejected"].flatMap(documentId=>["buyer","seller"].map(userId=>({documentId,userId}))),
     // A stale explicit grant must not bypass current deal membership.
     { documentId: "other-file", userId: "buyer" },
   ];
@@ -127,17 +138,22 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
     });
     await t.test("sharing grants and review status control signed document access", async () => {
       const buyer = await request("buyer", `/deals/${dealId}/documents`);
-      assert.deepEqual(buyer.data.documents.map((item: any) => item.id), ["shared"]);
-      assert.deepEqual(signed, ["shared.pdf"]);
+      assert.deepEqual(buyer.data.documents.map((item: any) => item.id), ["shared","wrong-path","external-url","traversal"]);
+      for(const x of buyer.data.documents.filter((item:any)=>item.id!=="shared"))
+        assert.equal(x.fileUrl,null,"wrong-deal/unmanaged/unsafe path must not sign");
+      assert.deepEqual(signed, [`deals/${dealId}/shared.pdf`]);
       const seller = await request("seller", `/deals/${dealId}/documents`);
-      assert.deepEqual(seller.data.documents.map((item: any) => item.id), ["shared", "private-pending"]);
-      assert.deepEqual(signed, ["shared.pdf", "private.pdf"]);
+      assert.deepEqual(seller.data.documents.map((item: any) => item.id),
+        ["shared", "private-pending","wrong-path","external-url","traversal","rejected"]);
+      assert.ok(seller.data.documents.filter((d:any)=>!["shared","private-pending"].includes(d.id)).every((d:any)=>d.fileUrl===null));
+      assert.deepEqual(signed, [`deals/${dealId}/shared.pdf`, `deals/${dealId}/private.pdf`]);
     });
     await t.test("a stale global document grant cannot cross deal boundaries", async () => {
       const response = await request("buyer", "/documents");
       assert.equal(response.status, 200);
-      assert.deepEqual(response.data.documents.map((item: any) => item.id), ["shared"]);
-      assert.deepEqual(signed, ["shared.pdf"]);
+      assert.deepEqual(response.data.documents.map((item: any) => item.id), ["shared","wrong-path","external-url","traversal"]);
+      assert.equal(response.data.documents.filter((d:any)=>d.fileUrl!==null).length,1);
+      assert.deepEqual(signed, [`deals/${dealId}/shared.pdf`]);
     });
     await t.test("agent tracking is redacted and revoked memberships lose milestone access",async()=>{
       records.shipmentsTable=[{id:"shipment-a",dealId,status:"in_transit",carrier:"PRIVATE CARRIER",trackingNumber:"SECRET TRACK",origin:"PRIVATE ORIGIN",destination:"PRIVATE DESTINATION",estimatedArrival:new Date("2026-11-04")}];
