@@ -1,4 +1,4 @@
-import {createHmac} from "node:crypto";
+import {createHmac,timingSafeEqual} from "node:crypto";
 import {sql} from "drizzle-orm";
 import {db} from "@workspace/db";
 
@@ -88,4 +88,51 @@ export async function recordSignedShipmentStatuses(statuses:MetaStatus[],options
     }else counts.unmatched++;
   }
   return counts;
+}
+
+// Reconciles a signed receipt journal entry that arrived BEFORE an outbound
+// Meta ID was committed. Does NOT send a message or trust new client input.
+// Only the same current recipient, proven by the stored HMAC, can be updated.
+export async function reconcileStoredShipmentReceipts(options:{
+  executor?:Executor;secret?:string;now?:Date;limit?:number;
+}={}){
+  const executor=options.executor??db;
+  const secret=options.secret??process.env.WHATSAPP_APP_SECRET??"";
+  if(!secret)throw new Error("missing_whatsapp_signature_secret");
+  const now=options.now??new Date();
+  if(!Number.isFinite(now.valueOf()))throw new Error("invalid_now");
+  const limit=Math.max(1,Math.min(100,Math.trunc(options.limit??50)));
+  const list=await executor.execute(sql`
+    SELECT r.provider_message_id,r.provider_status,r.provider_timestamp,
+      r.recipient_fingerprint,u.phone
+    FROM public.whatsapp_shipment_receipts r
+    JOIN public.whatsapp_shipment_outbox o
+      ON o.provider_message_id=r.provider_message_id AND o.status='accepted'
+    JOIN public.users u ON u.id=o.recipient_user_id
+    WHERE r.applied_at IS NULL AND u.phone IS NOT NULL
+      AND r.created_at>=${new Date(now.getTime()-30*24*60*60_000)}
+    ORDER BY r.created_at,r.id
+    LIMIT ${limit}
+  `);
+  const totals={checked:0,applied:0,recipientChanged:0};
+  for(const row of list.rows as Array<{provider_message_id:string;
+    provider_status:string;provider_timestamp:Date;recipient_fingerprint:string;phone:string}>){
+    totals.checked++;
+    const expected=fingerprintRecipient(row.phone,secret);
+    const left=Buffer.from(expected,"hex"),right=Buffer.from(row.recipient_fingerprint??"","hex");
+    if(left.length!==right.length||!timingSafeEqual(left,right)){
+      totals.recipientChanged++;continue;
+    }
+    const event={id:row.provider_message_id,status:row.provider_status,
+      recipient_id:row.phone,timestamp:Math.floor(new Date(row.provider_timestamp).getTime()/1000).toString()};
+    const result=await recordSignedShipmentStatuses([event],{executor,now,secret});
+    totals.applied+=result.applied;
+  }
+  // Retain only 30 days of receipt metadata, including unmatched IDs. No
+  // raw messages or phone numbers were ever stored in this table.
+  await executor.execute(sql`
+    DELETE FROM public.whatsapp_shipment_receipts
+    WHERE created_at<${new Date(now.getTime()-30*24*60*60_000)}
+  `);
+  return totals;
 }
