@@ -18,6 +18,7 @@ import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryRec
 import { runEtaFollowups } from "../tracking/etaFollowups";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
+import { managedDealDocumentPath, managedCompanyDocumentPath } from "../supabase/documentAccessPath";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 import { canAllocateCommissionShare, nextReferralPosition } from "../referrals/agentChain";
 
@@ -197,9 +198,9 @@ router.get("/admin/company-verification-documents", requireRole("admin"), async 
       .innerJoin(usersTable, eq(companiesTable.ownerUserId, usersTable.id))
       .orderBy(desc(companyVerificationDocumentsTable.createdAt));
     res.json({ documents: await Promise.all(rows.map(async (item) => {
-      const path = parseStoragePath(item.fileUrl);
       const [screening]=await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,item.id),eq(auditLogsTable.action,'company_document_screened'))).orderBy(desc(auditLogsTable.createdAt)).limit(1);
-      return { ...item, screening:(screening?.metadata as any)?.profileFingerprint===companyProfileFingerprint(item)?screening!.metadata:null, fileUrl: path ? await createSignedDownloadUrl(path) : null };
+      const ownedPath = managedCompanyDocumentPath(item.fileUrl,item.companyId);
+      return { ...item, screening:(screening?.metadata as any)?.profileFingerprint===companyProfileFingerprint(item)?screening!.metadata:null, fileUrl: ownedPath ? await createSignedDownloadUrl(ownedPath) : null };
     })) });
   } catch { res.status(500).json({ error: "company_verification_documents_fetch_failed" }); }
 });
@@ -352,7 +353,10 @@ const commissionStatusSchema = z.object({
 const createDocumentSchema = z.object({
   dealId: z.string().uuid(),
   documentType: z.string().min(2).max(80),
-  fileUrl: z.string().refine((value) => value.startsWith("storage://udc-documents/") || value.startsWith("https://"), "secure_url_required"),
+  fileUrl: z.string().max(550),
+}).refine((value)=>managedDealDocumentPath(value.fileUrl,value.dealId)!==null,{
+  message:"document_path_must_belong_to_deal",
+  path:["fileUrl"],
 });
 
 const documentStatusSchema = z.object({
@@ -1405,8 +1409,8 @@ router.get("/admin/documents", requireRole("admin"), async (req, res) => {
     : await db.select().from(documentsTable).orderBy(desc(documentsTable.createdAt));
   try {
     res.json({ documents: await Promise.all(documents.map(async (item) => {
-      const path = parseStoragePath(item.fileUrl);
-      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : item.fileUrl };
+      const path = managedDealDocumentPath(item.fileUrl,item.dealId);
+      return { ...item, fileUrl: path ? await createSignedDownloadUrl(path) : null };
     })) });
   } catch { res.status(503).json({ error: "document_storage_unavailable" }); }
 });
