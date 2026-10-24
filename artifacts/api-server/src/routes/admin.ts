@@ -2002,9 +2002,24 @@ router.patch("/admin/cargo-units/:unitId",requireRole("admin"),async(req:Authent
         entityType:"deal",entityId:unit.dealId,
         metadata:{shipmentId:unit.shipmentId,unitId:unit.id,previousStatus:previous.status,newStatus:unit.status},
       });
-      return {unit,changed:previous.status!==unit.status};
+      const changed=previous.status!==unit.status;
+      if(changed){
+        await tx.insert(shipmentTrackingEventsTable).values({
+          shipmentId:unit.shipmentId,dealId:unit.dealId,kind:"status_update",
+          shipmentStatus:unit.status,idempotencyKey:randomUUID(),
+          note:"Cargo unit "+unit.unitReference+" status updated",
+          source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+        });
+      }
+      return {unit,changed};
     });
     if(!result){res.status(404).json({error:"cargo_unit_not_found"});return;}
+    if(result.changed){
+      await notifyDealCounterparties(result.unit.dealId,"cargo_unit_status_updated",
+        "Cargo progress updated","UDC recorded new cargo-unit progress. Open Track shipment for the details.",
+        `/deals/${result.unit.dealId}/tracking`);
+      await notifyAssignedDealAgents(result.unit.dealId,"shipment_milestone");
+    }
     res.json({unit:result.unit});
   }catch(error){
     res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?"validation_error":"cargo_unit_update_failed"});
