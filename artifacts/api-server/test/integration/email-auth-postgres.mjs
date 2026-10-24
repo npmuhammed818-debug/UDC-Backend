@@ -719,7 +719,7 @@ try {
   const requestB=await competing.request(candidateB,concurrentEmail);
   assert.equal(requestA,requestB,"phone recovery responses must not reveal identity");
   assert.equal(proofMails.length,2,"both independently eligible numbers receive fictional codes");
-  assert.ok(proofMails.every(m=>m.purpose==="link_phone" && /^\\d{6}$/.test(m.code)));
+  assert.ok(proofMails.every(m=>m.purpose==="link_phone" && /^\d{6}$/.test(m.code)));
   const challenges=(await pool.query(
     "select new_phone,consumed_at from whatsapp_phone_link_challenges where user_id=$1 order by created_at,id",
     [concurrentId]
