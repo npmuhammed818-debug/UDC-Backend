@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { db, documentAccessTable, documentsTable, dealsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { requireNonAgentDealAccess } from "../auth/agentDealPrivacy";
 import { createSignedDownloadUrl } from "../supabase/storage";
 
 import { dealAccess } from "../deals/access";
@@ -9,7 +10,7 @@ import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
 
-router.get("/documents", requireAuth, async (req, res) => {
+router.get("/documents", requireAuth, requireNonAgentDealAccess, async (req, res) => {
   if(req.authUser!.role!=="admin" && req.authUser!.status!=="verified"){
     res.status(403).json({error:"verification_required"});return;
   }
