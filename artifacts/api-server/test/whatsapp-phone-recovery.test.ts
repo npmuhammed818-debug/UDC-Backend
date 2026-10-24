@@ -28,7 +28,7 @@ test("verified email is required before migrating a WhatsApp number to its origi
     const records=()=>({
       accounts:[{id:"existing",email:"owner@example.invalid",verified_email:"owner@example.invalid",
         email_verified_at:new Date("2026-01-01"),phone:"11111111111",status:"verified",role:"buyer"}],
-      challenges:[],sessions:[{user_id:"existing",revoked_at:null}],audits:[],draftDeletions:0,
+      challenges:[],sessions:[{user_id:"existing",revoked_at:null}],audits:[],draftDeletions:0,queryOrder:[],
     });
     const now=()=>new Date("2026-10-24T00:00:00Z");
     function create(r:any,send?:any){
@@ -36,6 +36,7 @@ test("verified email is required before migrating a WhatsApp number to its origi
       function rowOrNone(x:any){return {rows:x};}
       const db:any={execute:async(q:any)=>{
         const s=String(q.text).replace(/\s+/g," ").toLowerCase().trim(),v=q.params;
+         r.queryOrder.push(s);
         if(s.startsWith("select pg_advisory_xact_lock"))return rowOrNone([]);
         if(s.startsWith("select id from public.users where phone="))
           return rowOrNone(r.accounts.filter((u:any)=>u.phone===v[0]).map((u:any)=>({id:u.id})));
@@ -51,7 +52,11 @@ test("verified email is required before migrating a WhatsApp number to its origi
           r.challenges.push({id,user_id,email,old_phone,new_phone,code_hash,expires_at,
             consumed_at:null,attempts:0,created_at:now()});return rowOrNone([]);
         }
-        if(s.startsWith("select id,user_id,email,old_phone,new_phone"))
+        if(s.startsWith("select user_id from public.whatsapp_phone_link_challenges"))
+           return rowOrNone(r.challenges.filter((c:any)=>c.new_phone===v[0])
+             .sort((a:any,b:any)=>b.created_at-a.created_at||b.id.localeCompare(a.id))
+             .slice(0,1).map((c:any)=>({user_id:c.user_id})));
+         if(s.startsWith("select id,user_id,email,old_phone,new_phone"))
           return rowOrNone(r.challenges.filter((c:any)=>c.new_phone===v[0])
             .sort((a:any,b:any)=>b.created_at-a.created_at||b.id.localeCompare(a.id)).slice(0,1));
         if(s.startsWith("update public.whatsapp_phone_link_challenges set attempts=")){
@@ -110,6 +115,10 @@ test("verified email is required before migrating a WhatsApp number to its origi
       assert.equal(r.challenges[0].code_hash.includes(x.emailOutbox[0].code),false);
       const result=await x.service.confirm("22222222222",x.emailOutbox[0].code);
       assert.match(result,/original UDC account/);
+       const userLockIndex=r.queryOrder.findIndex((q:string)=>q.includes("from public.users where id=")&&q.includes("for update"));
+       const otpLockIndex=r.queryOrder.findIndex((q:string)=>q.startsWith("select id,user_id,email,old_phone")&&q.includes("for update"));
+       assert.ok(userLockIndex>=0 && otpLockIndex>userLockIndex,
+         "acquire shared account row before OTP challenge row to avoid cross-phone deadlocks");
       assert.equal(r.accounts.length,1);assert.equal(r.accounts[0].id,"existing");
       assert.equal(r.accounts[0].phone,"22222222222");
       assert.equal(r.accounts.some((u:any)=>u.phone==="11111111111"),false);
