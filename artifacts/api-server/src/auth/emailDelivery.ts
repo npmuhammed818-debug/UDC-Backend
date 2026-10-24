@@ -1,5 +1,5 @@
 import type { EmailPurpose } from "./emailCodes";
-import {createResendAuthSender,resendTransportConfigured} from "./resendAuthProvider";
+import {createResendAuthSender,resendTransportConfigured} from "./resendAuthProvider.ts";
 
 export type AuthEmail = {
   to: string;
