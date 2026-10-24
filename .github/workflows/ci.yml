@@ -177,6 +177,14 @@ jobs:
           node artifacts/api-server/test/integration/shipment-migration-review.mjs 2>&1 | tee shipment-migration-review.log
         env:
           UDC_MIGRATION_QA_DATABASE_URL: postgresql://udc_migration_test@127.0.0.1:5432/udc_qa_migration_review?sslmode=disable
+      - name: Rehearse fictional MVP database backup and restore with pinned PostgreSQL client
+        id: mvp_restore_rehearsal
+        run: |
+          set -o pipefail
+          node artifacts/api-server/test/integration/mvp-backup-restore-rehearsal.mjs 2>&1 | tee mvp-backup-restore-rehearsal.log
+        env:
+          UDC_MIGRATION_QA_DATABASE_URL: postgresql://udc_migration_test@127.0.0.1:5432/udc_qa_migration_review?sslmode=disable
+          UDC_QA_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
       - name: Annotate isolated migration failures
         if: failure() && steps.migration_review.outcome == 'failure'
         run: |
@@ -192,3 +200,4 @@ jobs:
           path: |
             email-migration-review.log
             shipment-migration-review.log
+            mvp-backup-restore-rehearsal.log
