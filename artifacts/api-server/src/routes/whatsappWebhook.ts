@@ -1,5 +1,6 @@
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
+import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
@@ -970,7 +971,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; timestamp?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
@@ -1004,6 +1005,22 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           if (account?.status === "suspended" || account?.status === "rejected") {
             await deliverWhatsAppReply(message.from, "Your UDC account needs admin review before I can process trade messages.");
             continue;
+          }
+          // Signed, consented, verified inbound evidence only. Default OFF:
+          // migration must be approved before this gate is enabled in staging.
+          if (account?.status === "verified" &&
+              process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED === "true") {
+            try {
+              await recordSignedCustomerInbound({
+                phone:message.from,providerMessageId:message.id,
+                timestamp:message.timestamp,
+              });
+            } catch {
+              // Never claim a valid customer-service window if storing the
+              // evidence fails; leave chatbot processing otherwise unchanged.
+              req.log.warn({flow:"whatsapp_customer_window",reason:"evidence_unavailable"},
+                "Inbound message evidence unavailable; outbound authorization remains blocked");
+            }
           }
         } catch {
           req.log.error({ flow: "privacy_consent", reason: "consent_check_failed" }, "UDC privacy check unavailable");
