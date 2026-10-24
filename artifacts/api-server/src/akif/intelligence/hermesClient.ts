@@ -207,10 +207,26 @@ export async function runConversationChat(
   system?: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<{ content: string; raw: HermesChatResponse }> {
+  // One caller deadline covers the whole provider chain, including response
+  // parsing. A failed provider must not give every fallback a fresh timeout.
+  const deadline = performance.now() + timeoutMs;
+  const remaining = () => {
+    const budget = Math.ceil(deadline - performance.now());
+    if (!Number.isFinite(budget) || budget <= 0) {
+      throw new DOMException("AKIF conversation deadline exceeded", "AbortError");
+    }
+    return budget;
+  };
+  const withinDeadline = async (request: (budget: number) => Promise<{ content: string; raw: HermesChatResponse }>) => {
+    const response = await request(remaining());
+    remaining();
+    return response;
+  };
   if (isAkifBrainConfigured()) {
     try {
-      return await runAkifBrainChat(message, system, timeoutMs);
+      return await withinDeadline(budget => runAkifBrainChat(message, system, budget));
     } catch (error) {
+      remaining();
       const statusMatch = error instanceof Error
         ? error.message.match(/AKIF brain returned HTTP (\d{3})/)
         : null;
@@ -225,8 +241,9 @@ export async function runConversationChat(
 
   if (isAkifWorkerConversationEnabled()) {
     try {
-      return await runAkifWorkerChat(message, system, timeoutMs);
+      return await withinDeadline(budget => runAkifWorkerChat(message, system, budget));
     } catch (error) {
+      remaining();
       const statusMatch = error instanceof Error
         ? error.message.match(/AKIF worker returned HTTP (\d{3})/)
         : null;
@@ -239,8 +256,9 @@ export async function runConversationChat(
 
   if (isNvidiaConfigured()) {
     try {
-      return await runNvidiaChat(message, system, timeoutMs);
+      return await withinDeadline(budget => runNvidiaChat(message, system, budget));
     } catch (error) {
+      remaining();
       const statusMatch = error instanceof Error
         ? error.message.match(/NVIDIA returned HTTP (\d{3})/)
         : null;
@@ -257,8 +275,9 @@ export async function runConversationChat(
 
   if (isOpenAIConfigured()) {
     try {
-      return await runOpenAIChat(message, system, timeoutMs);
+      return await withinDeadline(budget => runOpenAIChat(message, system, budget));
     } catch (error) {
+      remaining();
       const statusMatch = error instanceof Error
         ? error.message.match(/OpenAI returned HTTP (\d{3})/)
         : null;
@@ -273,7 +292,7 @@ export async function runConversationChat(
     console.warn("Direct OpenAI conversation skipped", { reason: "not_configured" });
   }
 
-  return runHermesChat(message, system, timeoutMs);
+  return withinDeadline(budget => runHermesChat(message, system, budget));
 }
 
 function hermesConfig() {
