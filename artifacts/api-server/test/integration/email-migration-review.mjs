@@ -421,7 +421,21 @@ try {
   );
   const afterUsers = await userSnapshot(),
     afterSessions = await sessionSnapshot();
+  // Simulate an existing installation where the earlier GRANT ALL migration ran.
+  // Rerunning the reviewed migration must REVOKE those excess rights.
+  await pool.query("GRANT ALL ON email_auth_challenges,email_auth_limits TO service_role");
+  assert.equal((await pool.query(
+    "select has_table_privilege('service_role','email_auth_limits','TRUNCATE') as allowed",
+  )).rows[0].allowed,true);
   await pool.query(migration);
+  for(const table of ["email_auth_challenges","email_auth_limits"]){
+    for(const privilege of ["TRUNCATE","REFERENCES","TRIGGER"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege('service_role',$1,$2) as allowed",
+        ["public."+table,privilege],
+      )).rows[0].allowed,false,`legacy ${privilege} grant must be revoked`);
+    }
+  }
   assert.equal(await userSnapshot(), afterUsers);
   assert.equal(await sessionSnapshot(), afterSessions);
   pass(
