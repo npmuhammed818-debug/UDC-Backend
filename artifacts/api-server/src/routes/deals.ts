@@ -21,6 +21,9 @@ const documentType = z.enum(["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA", "SGS",
 
 
 router.get("/deals/:dealId/documents", requireAuth, async (req, res) => {
+  if(req.authUser!.role!=="admin" && req.authUser!.status!=="verified"){
+    res.status(403).json({error:"verification_required"});return;
+  }
   try {
     const dealId = String(req.params["dealId"] ?? "");
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable)
