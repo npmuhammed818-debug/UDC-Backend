@@ -13,6 +13,20 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+        env:
+          POSTGRES_USER: udc_dev
+          POSTGRES_DB: udc_qa_registration
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U udc_dev -d udc_qa_registration"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -24,6 +38,15 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run release:verify
+      - name: Initialize isolated WhatsApp QA database
+        run: pnpm --filter @workspace/db run push
+        env:
+          SUPABASE_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
+          SUPABASE_DIRECT_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
+      - name: Verify signed buyer registration with real PostgreSQL and unavailable AI
+        run: node artifacts/api-server/test/integration/whatsapp-buyer-postgres.mjs
+        env:
+          UDC_QA_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
       - run: pnpm run acceptance
       - uses: actions/upload-artifact@v4
         if: always()

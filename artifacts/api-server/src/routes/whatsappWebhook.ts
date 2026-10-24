@@ -1005,6 +1005,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
       if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
         try {
+          // UDC/AKIF can occur in a person's or company's name. Consume a
+          // clear answer to the active form before keyword-based tutoring;
+          // actual learning questions still bypass intake without a model call.
+          if (await handleChatUi(message.from, message, true)) continue;
           const reply = await answerGuidance(message.from, message.text.body, message.id);
           if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
         } catch {
