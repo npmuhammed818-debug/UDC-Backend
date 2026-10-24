@@ -808,7 +808,7 @@ function Admin() {
     finally { setBusy(''); }
   };
   if (!allowed) return <><PageHeader eyebrow="RESTRICTED" title="Review queue" /><div className="panel"><EmptyState icon={ShieldCheck} title="Admin access required" body="Only UDC administrators can review trade records." /></div></>;
-  return <><PageHeader eyebrow="UDC ADMIN" title="Admin overview" body="Start with the items waiting for your review. Use the left menu for verification, trade submissions, deals, and people." action={<Link href="/admin/impexq"><Button variant="outline" size="sm" data-testid="link-impexq-quick-test"><Sparkles size={15} /> Test ImpexQ</Button></Link>} />
+  return <><PageHeader eyebrow="UDC ADMIN" title="Admin overview" body="Start with the items waiting for your review. Use the left menu for verification, trade submissions, deals, and people." action={<Button asChild variant="outline" size="sm" data-testid="link-impexq-quick-test"><Link href="/admin/impexq"><Sparkles size={15} /> Test ImpexQ</Link></Button>} />
     <section id="review-queue" className="admin-review-overview" aria-label="Review queue overview">
       <div className="admin-review-total"><span>Waiting for review</span><strong>{reviewCountsLoading ? '…' : reviewCountsFailed ? '!' : pendingReviewCount}</strong><small>{reviewCountsLoading ? 'Loading review lists…' : reviewCountsFailed ? 'Some lists did not load. Retry below.' : pendingReviewCount === 0 ? 'You are all caught up.' : 'Open a list below to review and decide.'}</small></div>
       <nav className="admin-review-nav" aria-label="Jump to review queue">
