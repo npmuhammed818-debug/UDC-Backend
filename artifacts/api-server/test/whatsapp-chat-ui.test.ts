@@ -114,7 +114,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         {shipmentId:'other-shipment',dealId:other,kind:'exception',location:'PRIVATE PORT',note:'SECRET DOCUMENT',source:'carrier_reported',occurredAt:new Date('2026-11-02T06:00:00Z')},
       ];
       await m.handleChatUi(phone,ui('track'));
-      assert.match(last(),/Recent shipment milestones/);assert.match(last(),/departed/);
+      assert.match(last(),/Recent shipment milestones/);assert.match(last(),/Shipment 1: departed/);
       assert.match(last(),/Mundra Port/);assert.match(last(),/document-checked/);
       assert.doesNotMatch(last(),/PRIVATE PORT|SECRET DOCUMENT/);
       assert.match(last(),/UDC-OWN/);assert.match(last(),/Synthetic Carrier/);assert.match(last(),/QA-100/);
