@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 test("private deal routes enforce membership, sharing, suspension and agent revocation", async (t) => {
   const tableNames = ["auditLogsTable", "buyerRequestsTable", "companiesTable", "dealFinancialsTable",
     "dealParticipantsTable", "dealsTable", "documentAccessTable", "documentsTable", "inspectionsTable",
-    "messagesTable", "productsTable", "sellerListingsTable", "shipmentsTable", "shipmentTrackingEventsTable", "dealMeetingsTable",
+    "messagesTable", "productsTable", "sellerListingsTable", "shipmentsTable", "shipmentTrackingEventsTable", "shipmentCargoUnitsTable", "dealMeetingsTable",
     "dealCasesTable", "customsClearanceTable", "dealFeedbackTable"];
   const tables: any = Object.fromEntries(tableNames.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
@@ -145,14 +145,20 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
         {id:"event-a",shipmentId:"shipment-a",dealId,kind:"departed",location:"PRIVATE PORT",note:"PRIVATE EVIDENCE",source:"carrier_reported",sourceReference:"PRIVATE REF",occurredAt:new Date("2026-11-02")},
         {id:"event-other",shipmentId:"outside",dealId:"other-deal",kind:"exception",location:"OTHER LOCATION",note:"OTHER EVIDENCE",source:"udc_manual",occurredAt:new Date("2026-11-03")},
       ];
+      records.shipmentCargoUnitsTable=[
+        {id:"cargo-secret",shipmentId:"shipment-a",dealId,transportMode:"sea",unitReference:"PRIVATE CONTAINER",status:"in_transit",vesselName:"SECRET VESSEL",voyageNumber:"SECRET VOYAGE",billOfLading:"SECRET BILL",currentLocation:"PRIVATE HARBOR",estimatedArrival:new Date("2026-11-04T00:00:00Z"),lastReportedAt:new Date("2026-11-02T00:00:00Z")},
+        {id:"other-cargo",shipmentId:"outside",dealId:"other-deal",transportMode:"air",unitReference:"UNRELATED AIR WAYBILL",status:"in_transit"}
+      ];
       const buyer=await request("buyer",`/deals/${dealId}/tracking`);
       assert.equal(buyer.status,200);assert.equal(buyer.data.shipments[0].trackingNumber,"SECRET TRACK");
       assert.equal(buyer.data.events.length,1);assert.equal(buyer.data.events[0].location,"PRIVATE PORT");
+      assert.equal(buyer.data.cargoUnits.length,1);assert.equal(buyer.data.cargoUnits[0].vesselName,"SECRET VESSEL");
       const agent=await request("agent",`/deals/${dealId}/tracking`);
       assert.equal(agent.status,200);assert.equal(agent.data.events.length,1);
       assert.equal(agent.data.events[0].kind,"departed");assert.equal(agent.data.events[0].location,undefined);
+      assert.equal(agent.data.cargoUnits.length,1);assert.equal(agent.data.cargoUnits[0].transportMode,"sea");assert.equal(agent.data.cargoUnits[0].unitReference,undefined);
       const raw=JSON.stringify(agent.data);
-      for(const secret of ["SECRET TRACK","PRIVATE CARRIER","PRIVATE PORT","PRIVATE EVIDENCE","PRIVATE REF","OTHER LOCATION"])assert.ok(!raw.includes(secret));
+      for(const secret of ["SECRET TRACK","PRIVATE CARRIER","PRIVATE PORT","PRIVATE EVIDENCE","PRIVATE REF","OTHER LOCATION","PRIVATE CONTAINER","SECRET VESSEL","SECRET VOYAGE","SECRET BILL","PRIVATE HARBOR","UNRELATED AIR WAYBILL"])assert.ok(!raw.includes(secret));
     });
     await t.test("agent removal revokes both deal and global document access", async () => {
       assert.equal((await request("agent", `/deals/${dealId}`)).status, 200);

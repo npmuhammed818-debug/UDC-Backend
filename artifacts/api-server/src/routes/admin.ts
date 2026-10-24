@@ -10,7 +10,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -414,6 +414,29 @@ const shipmentStatusSchema = z.object({
   status: z.enum(["planned", "booked", "in_transit", "arrived", "delivered", "cancelled"]),
   notes: z.string().max(2000).optional(),
   estimatedArrival: z.coerce.date().optional(),
+});
+const cargoUnitSchema=z.object({
+  transportMode:z.enum(["sea","air","road"]),
+  unitReference:z.string().trim().min(2).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9\-_/ ]*$/),
+  vesselName:z.string().trim().min(2).max(120).optional(),
+  voyageNumber:z.string().trim().min(2).max(80).optional(),
+  flightNumber:z.string().trim().min(2).max(60).optional(),
+  vehicleReference:z.string().trim().min(2).max(80).optional(),
+  billOfLading:z.string().trim().min(2).max(100).optional(),
+  airWaybill:z.string().trim().min(2).max(100).optional(),
+  estimatedArrival:z.coerce.date().optional(),
+}).superRefine((v,ctx)=>{
+  if(v.transportMode==="sea" && (v.flightNumber||v.airWaybill||v.vehicleReference))
+    ctx.addIssue({code:"custom",path:["transportMode"],message:"Sea cargo must not contain air or road references"});
+  if(v.transportMode==="air" && (v.vesselName||v.voyageNumber||v.billOfLading||v.vehicleReference))
+    ctx.addIssue({code:"custom",path:["transportMode"],message:"Air cargo must not contain sea or road references"});
+  if(v.transportMode==="road" && (v.vesselName||v.voyageNumber||v.billOfLading||v.flightNumber||v.airWaybill))
+    ctx.addIssue({code:"custom",path:["transportMode"],message:"Road cargo must not contain sea or air references"});
+});
+const cargoUnitUpdateSchema=z.object({
+  status:z.enum(["planned","booked","in_transit","arrived","delivered","cancelled","on_hold"]),
+  currentLocation:z.string().trim().min(2).max(160).optional(),
+  estimatedArrival:z.coerce.date().optional(),
 });
 const shipmentMilestoneSchema=z.object({
   idempotencyKey:z.string().uuid(),
@@ -1904,6 +1927,102 @@ router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req
   }catch(error){
     if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
     res.status(500).json({error:"shipment_milestone_create_failed"});
+  }
+});
+
+// Cargo units are multiple discrete loads/containers within a shipment.
+// Operators record references; this is not a live carrier data integration.
+router.get("/admin/shipments/:shipmentId/cargo-units",requireRole("admin"),async(req,res)=>{
+  try{
+    const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
+    const [shipment]=await db.select({id:shipmentsTable.id}).from(shipmentsTable)
+      .where(eq(shipmentsTable.id,shipmentId)).limit(1);
+    if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+    const units=await db.select().from(shipmentCargoUnitsTable)
+      .where(eq(shipmentCargoUnitsTable.shipmentId,shipmentId))
+      .orderBy(shipmentCargoUnitsTable.createdAt);
+    res.json({units});
+  }catch(error){
+    res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?"validation_error":"cargo_units_fetch_failed"});
+  }
+});
+
+router.post("/admin/shipments/:shipmentId/cargo-units",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
+    const input=cargoUnitSchema.parse(req.body);
+    const [shipment]=await db.select({id:shipmentsTable.id,dealId:shipmentsTable.dealId})
+      .from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);
+    if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+    const existing=await db.select({id:shipmentCargoUnitsTable.id})
+      .from(shipmentCargoUnitsTable)
+      .where(and(eq(shipmentCargoUnitsTable.shipmentId,shipmentId),
+        eq(shipmentCargoUnitsTable.unitReference,input.unitReference))).limit(1);
+    if(existing.length){res.status(409).json({error:"unit_reference_conflict"});return;}
+    const unit=await db.transaction(async tx=>{
+      const [created]=await tx.insert(shipmentCargoUnitsTable).values({
+        shipmentId,dealId:shipment.dealId,transportMode:input.transportMode,
+        unitReference:input.unitReference,estimatedArrival:input.estimatedArrival,
+        vesselName:input.vesselName,voyageNumber:input.voyageNumber,
+        flightNumber:input.flightNumber,vehicleReference:input.vehicleReference,
+        billOfLading:input.billOfLading,airWaybill:input.airWaybill,
+      }).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"shipment_cargo_unit_created",
+        entityType:"deal",entityId:shipment.dealId,
+        metadata:{shipmentId,unitId:created.id,transportMode:created.transportMode},
+      });
+      return created;
+    });
+    res.status(201).json({unit});
+  }catch(error){
+    if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    if((error as {code?:string})?.code==="23505"){res.status(409).json({error:"unit_reference_conflict"});return;}
+    res.status(500).json({error:"cargo_unit_create_failed"});
+  }
+});
+
+router.patch("/admin/cargo-units/:unitId",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    const unitId=z.string().uuid().parse(req.params["unitId"]);
+    const input=cargoUnitUpdateSchema.parse(req.body);
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"cargo_unit:"+unitId}))`);
+      const [previous]=await tx.select().from(shipmentCargoUnitsTable)
+        .where(eq(shipmentCargoUnitsTable.id,unitId)).limit(1);
+      if(!previous)return null;
+      const [unit]=await tx.update(shipmentCargoUnitsTable)
+        .set({status:input.status,
+          ...(input.currentLocation===undefined?{}:{currentLocation:input.currentLocation}),
+          ...(input.estimatedArrival===undefined?{}:{estimatedArrival:input.estimatedArrival}),
+          lastUpdateSource:"udc_manual",lastReportedAt:new Date(),updatedAt:new Date(),
+        }).where(eq(shipmentCargoUnitsTable.id,unitId)).returning();
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"shipment_cargo_unit_updated",
+        entityType:"deal",entityId:unit.dealId,
+        metadata:{shipmentId:unit.shipmentId,unitId:unit.id,previousStatus:previous.status,newStatus:unit.status},
+      });
+      const changed=previous.status!==unit.status;
+      if(changed){
+        await tx.insert(shipmentTrackingEventsTable).values({
+          shipmentId:unit.shipmentId,dealId:unit.dealId,kind:"status_update",
+          shipmentStatus:unit.status,idempotencyKey:randomUUID(),
+          note:"Cargo unit "+unit.unitReference+" status updated",
+          source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
+        });
+      }
+      return {unit,changed};
+    });
+    if(!result){res.status(404).json({error:"cargo_unit_not_found"});return;}
+    if(result.changed){
+      await notifyDealCounterparties(result.unit.dealId,"cargo_unit_status_updated",
+        "Cargo progress updated","UDC recorded new cargo-unit progress. Open Track shipment for the details.",
+        `/deals/${result.unit.dealId}/tracking`);
+      await notifyAssignedDealAgents(result.unit.dealId,"shipment_milestone");
+    }
+    res.json({unit:result.unit});
+  }catch(error){
+    res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?"validation_error":"cargo_unit_update_failed"});
   }
 });
 

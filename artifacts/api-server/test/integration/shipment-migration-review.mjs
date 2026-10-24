@@ -77,6 +77,36 @@ try{
     e=>e.code==="23503");
   assert.equal((await pool.query("select count(*)::integer AS total from shipment_tracking_events")).rows[0].total,1);
   console.log("PASSED: exact shipment milestone SQL reruns safely; RLS and restricted grants, events, provenance, FK and unique replay validated on disposable PostgreSQL.");
+  const cargoMigration=await readFile(new URL("../../../../lib/db/migrations/20261024_shipment_cargo_units.sql",import.meta.url),"utf8");
+  await pool.query(cargoMigration);
+  await pool.query(cargoMigration);
+  assert.equal((await pool.query("select relrowsecurity from pg_class where oid='public.shipment_cargo_units'::regclass")).rows[0].relrowsecurity,true);
+  for(const role of ["anon","authenticated"]){
+    for(const op of ["SELECT","INSERT","UPDATE","DELETE"]){
+      assert.equal((await pool.query("select has_table_privilege($1,'public.shipment_cargo_units',$2) AS allowed",[role,op])).rows[0].allowed,false);
+    }
+  }
+  for(const op of ["SELECT","INSERT","UPDATE"]){
+    assert.equal((await pool.query("select has_table_privilege('service_role','public.shipment_cargo_units',$1) AS allowed",[op])).rows[0].allowed,true);
+  }
+  for(const op of ["DELETE","TRUNCATE","REFERENCES","TRIGGER"]){
+    assert.equal((await pool.query("select has_table_privilege('service_role','public.shipment_cargo_units',$1) AS allowed",[op])).rows[0].allowed,false);
+  }
+  await pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference,vessel_name,estimated_arrival)
+    values($1,$2,'sea','MSCU1111111','Synthetic vessel','2026-11-04T00:00:00Z')`,[shipmentId,dealId]);
+  await pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference,flight_number)
+    values($1,$2,'air','QA-AWB-001','QA-100')`,[shipmentId,dealId]);
+  await pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference,vehicle_reference)
+    values($1,$2,'road','QA-TRUCK-001','QA-TRUCK')`,[shipmentId,dealId]);
+  assert.equal((await pool.query("select count(*)::int AS total from shipment_cargo_units where shipment_id=$1",[shipmentId])).rows[0].total,3);
+  await assert.rejects(pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference)
+    values($1,$2,'sea','MSCU1111111')`,[shipmentId,dealId]),error=>error.code==="23505");
+  await assert.rejects(pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference)
+    values($1,$2,'space','QA-SPACESHIP')`,[shipmentId,dealId]),error=>error.code==="23514");
+  await assert.rejects(pool.query(`insert into shipment_cargo_units(shipment_id,deal_id,transport_mode,unit_reference)
+    values($1,$2,'road','QA-INVALID-SHIPMENT')`,[randomUUID(),dealId]),error=>error.code==="23503");
+  console.log("PASSED: exact cargo-unit migration, sea/air/road records, unique references, transport constraints and private role permissions.");
+
 } finally {
   if(pool)await pool.end();
   if(created)await control.query(`DROP DATABASE "${databaseName}"`);

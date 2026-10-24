@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 test('native WhatsApp menus and forms preserve role, privacy, review and replay boundaries',async t=>{
-  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable'];
+  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable','shipmentCargoUnitsTable'];
   const tables:any=Object.fromEntries(names.map(n=>[n,new Proxy({_table:n},{get:(_,k)=>k==='_table'?n:{column:k,table:n}})]));
   const rows:any=Object.fromEntries(names.map(n=>[n,[]]));
   const value=(x:any,r:any):any=>x?.column?(r[x.table]??r)[x.column]:x;
@@ -27,7 +27,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
   let queue=Promise.resolve();state.db.transaction=(f:any)=>{const job=queue.then(async()=>{const before=structuredClone(rows);try{return await f(state.db);}catch(error){for(const n of names)rows[n]=before[n];throw error;}});queue=job.catch(()=>{});return job;};
   (globalThis as any).__chatUiFixture=state;
   const output=fileURLToPath(new URL(`./chat-ui-${randomUUID()}.mjs`,import.meta.url));
-  const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
+  const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';export * from '../src/tracking/etaAdvisory';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
     const fixtures:any={hermes:"export const runConversationChat=async()=>{const s=globalThis.__chatUiFixture;s.modelCalls++;if(s.modelError)throw new DOMException('Synthetic provider deadline','TimeoutError');return {content:s.modelOutput};};",db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const inArray=(a,list)=>({kind:'in',a,list});export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppTextWithMenu=async(to,body)=>{s.sent.push({to,body,withMenu:true});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';"};
     for(const [filter,path] of [[/intelligence\/hermesClient$/,'hermes'],[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/whatsapp\/client$|^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
@@ -113,7 +113,18 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         {shipmentId:'own-shipment',dealId:own,kind:'departed',location:'Mundra Port',note:'QA carrier document checked',source:'document_checked',occurredAt:new Date('2026-11-01T06:00:00Z')},
         {shipmentId:'other-shipment',dealId:other,kind:'exception',location:'PRIVATE PORT',note:'SECRET DOCUMENT',source:'carrier_reported',occurredAt:new Date('2026-11-02T06:00:00Z')},
       ];
+      rows.shipmentCargoUnitsTable=[
+        {id:'unit-sea',shipmentId:'own-shipment',dealId:own,transportMode:'sea',unitReference:'QA-CONTAINER-123',status:'in_transit',
+          vesselName:'Synthetic Vessel',voyageNumber:'SV-42',billOfLading:'QA-BL-101',currentLocation:'Synthetic Harbour',
+          lastReportedAt:new Date('2026-10-20T00:00:00Z'),estimatedArrival:new Date('2026-10-21T00:00:00Z')},
+        {id:'unit-air',shipmentId:'other-shipment',dealId:other,transportMode:'air',unitReference:'SECRET-AWB',
+          status:'in_transit',flightNumber:'SECRET FLIGHT',estimatedArrival:new Date('2026-10-22T00:00:00Z')},
+      ];
       await m.handleChatUi(phone,ui('track'));
+      assert.match(last(),/Cargo units/);
+      assert.match(last(),/QA-CONTAINER-123/);
+      assert.match(last(),/Recorded ETA has passed; arrival is not confirmed/);
+      assert.doesNotMatch(last(),/SECRET-AWB|SECRET FLIGHT/);
       assert.match(last(),/Recent shipment milestones/);assert.match(last(),/Shipment 1: departed/);
       assert.match(last(),/Mundra Port/);assert.match(last(),/document-checked/);
       assert.doesNotMatch(last(),/PRIVATE PORT|SECRET DOCUMENT/);
@@ -142,9 +153,20 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(agent.phone,ui('track'));
       assert.match(last(),/Shipment 1: in_transit/);
       assert.doesNotMatch(last(),/QA-100|Synthetic Carrier|Kochi|Jebel Ali|SECRET-999/);
+      assert.match(last(),/sea cargo/);assert.doesNotMatch(last(),/QA-CONTAINER-123|Synthetic Vessel|QA-BL-101|Synthetic Harbour/);
       assert.match(last(),/departed/);assert.doesNotMatch(last(),/Mundra Port|QA carrier document checked|document-checked|PRIVATE PORT/);
       rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);
       await m.handleChatUi(agent.phone,ui('track'));assert.match(last(),/no longer available/);assert.doesNotMatch(last(),/QA-100|Synthetic Carrier/);
+    });
+    await t.test('ETA advisory distinguishes unconfirmed lateness from a verified delay',()=>{
+      const now=new Date('2026-10-24T12:00:00Z');
+      assert.equal(m.etaAdvisory('delivered','2026-10-20T00:00:00Z',null,now),'complete');
+      assert.equal(m.etaAdvisory('in_transit','2026-10-20T00:00:00Z',null,now),'overdue_unconfirmed');
+      assert.equal(m.etaAdvisory('in_transit','2026-10-27T00:00:00Z','2026-10-20T00:00:00Z',now),'last_report_stale');
+      assert.equal(m.etaAdvisory('planned',null,null,now),'not_recorded');
+      assert.equal(m.etaAdvisory('in_transit','2026-10-27T00:00:00Z','2026-10-24T11:00:00Z',now),'on_schedule_unconfirmed');
+      assert.match(m.etaAdvisoryLabel('overdue_unconfirmed'),/arrival is not confirmed/);
+      assert.ok(!m.etaAdvisoryLabel('complete'));
     });
     await t.test('company PDFs need an owned quoted request and remain private, reviewed and idempotent',async()=>{
       const buyer=rows.usersTable.find((u:any)=>u.phone===phone);await m.handleChatUi(phone,ui('documents'));const request=state.sent.length;

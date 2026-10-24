@@ -1,9 +1,10 @@
+import { etaAdvisory } from "../tracking/etaAdvisory";
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { Router, raw, type IRouter } from "express";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
-import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
+import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
@@ -461,7 +462,7 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
       return;
     }
 
-    const [inspections, shipments, events] = await Promise.all([
+    const [inspections, shipments, events, cargoUnits] = await Promise.all([
       db
         .select({
           id: inspectionsTable.id,
@@ -497,6 +498,24 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
         occurredAt:shipmentTrackingEventsTable.occurredAt,createdAt:shipmentTrackingEventsTable.createdAt,
       }).from(shipmentTrackingEventsTable).where(eq(shipmentTrackingEventsTable.dealId,deal.id))
         .orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(100),
+      db.select({
+        id:shipmentCargoUnitsTable.id,shipmentId:shipmentCargoUnitsTable.shipmentId,
+        transportMode:shipmentCargoUnitsTable.transportMode,
+        unitReference:shipmentCargoUnitsTable.unitReference,
+        status:shipmentCargoUnitsTable.status,vesselName:shipmentCargoUnitsTable.vesselName,
+        voyageNumber:shipmentCargoUnitsTable.voyageNumber,
+        flightNumber:shipmentCargoUnitsTable.flightNumber,
+        vehicleReference:shipmentCargoUnitsTable.vehicleReference,
+        billOfLading:shipmentCargoUnitsTable.billOfLading,
+        airWaybill:shipmentCargoUnitsTable.airWaybill,
+        currentLocation:shipmentCargoUnitsTable.currentLocation,
+        lastUpdateSource:shipmentCargoUnitsTable.lastUpdateSource,
+        lastReportedAt:shipmentCargoUnitsTable.lastReportedAt,
+        estimatedArrival:shipmentCargoUnitsTable.estimatedArrival,
+        updatedAt:shipmentCargoUnitsTable.updatedAt,
+      }).from(shipmentCargoUnitsTable)
+        .where(eq(shipmentCargoUnitsTable.dealId,deal.id))
+        .orderBy(shipmentCargoUnitsTable.createdAt).limit(100),
     ]);
 
     // Agents receive milestones and ETAs only; no location, carrier identifiers,
@@ -513,7 +532,14 @@ router.get("/deals/:dealId/tracking", requireAuth, async (req, res) => {
         id:event.id,shipmentId:event.shipmentId,kind:event.kind,
         shipmentStatus:event.shipmentStatus,occurredAt:event.occurredAt,createdAt:event.createdAt,
       })):events,
-      sourceDisclosure:"UDC-recorded milestones are not live GPS or independently verified carrier feeds",
+      cargoUnits:assignedAgent?cargoUnits.map(unit=>({
+        id:unit.id,shipmentId:unit.shipmentId,transportMode:unit.transportMode,
+        status:unit.status,estimatedArrival:unit.estimatedArrival,
+        etaAdvisory:etaAdvisory(unit.status,unit.estimatedArrival,unit.lastReportedAt),
+      })):cargoUnits.map(unit=>({
+        ...unit,etaAdvisory:etaAdvisory(unit.status,unit.estimatedArrival,unit.lastReportedAt),
+      })),
+      sourceDisclosure:"UDC-recorded milestones and cargo details are not live GPS or independently verified carrier feeds",
     });
   } catch {
     res.status(500).json({ error: "deal_tracking_fetch_failed" });
