@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { db, documentAccessTable, documentsTable, dealsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
-import { createSignedDownloadUrl, parseStoragePath } from "../supabase/storage";
+import { createSignedDownloadUrl } from "../supabase/storage";
 
 import { dealAccess } from "../deals/access";
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
