@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS public.shipment_tracking_events (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  shipment_id uuid NOT NULL REFERENCES public.shipments(id) ON DELETE CASCADE,
  deal_id uuid NOT NULL REFERENCES public.deals(id) ON DELETE CASCADE,
- idempotency_key uuid NOT NULL UNIQUE,
+ idempotency_key uuid NOT NULL,
  kind text NOT NULL CHECK (kind IN ('planned','booked','departed','in_transit','arrived','customs','inspection','delivered','delay','exception','status_update')),
  shipment_status text,
  location text,
@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.shipment_tracking_events (
  recorded_by_user_id uuid REFERENCES public.users(id) ON DELETE SET NULL,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS shipment_tracking_events_idempotency_key_idx ON public.shipment_tracking_events(idempotency_key);
 CREATE INDEX IF NOT EXISTS shipment_tracking_events_shipment_time_idx ON public.shipment_tracking_events(shipment_id,occurred_at);
 CREATE INDEX IF NOT EXISTS shipment_tracking_events_deal_time_idx ON public.shipment_tracking_events(deal_id,occurred_at);
 ALTER TABLE public.shipment_tracking_events ENABLE ROW LEVEL SECURITY;
