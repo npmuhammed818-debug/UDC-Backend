@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod/v4";
 import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
-import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { createSignedDownloadUrl, uploadDocumentBytes } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
 import { createSpaDraft } from "../deals/spaDraft";
 import { createLoiDraft } from "../deals/loiDraft";
