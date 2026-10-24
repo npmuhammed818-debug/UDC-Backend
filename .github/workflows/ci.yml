@@ -77,6 +77,8 @@ jobs:
           node artifacts/api-server/test/integration/whatsapp-buyer-postgres.mjs 2>&1 | tee .acceptance-results/whatsapp-postgres.log
         env:
           UDC_QA_DATABASE_URL: postgresql://udc_dev@127.0.0.1:5432/udc_qa_registration?sslmode=disable
+      - name: Verify signed WhatsApp shipment receipt ordering, replay and recipient binding
+        run: node --test artifacts/api-server/test/whatsapp-shipment-receipts.test.mjs
       - name: Verify WhatsApp outbox leases, fail-closed delivery and retry safety (no provider sends)
         run: node --test artifacts/api-server/test/whatsapp-shipment-outbox.test.mjs
       - name: Verify ETA follow-up pagination and retry safety (no provider sends)

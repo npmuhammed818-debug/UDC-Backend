@@ -195,6 +195,56 @@ try{
   assert.equal((await pool.query("select status from whatsapp_shipment_outbox where id=$1",[outboxId])).rows[0].status,"uncertain");
   console.log("PASSED: exact WhatsApp shipment outbox SQL, RLS, client least privilege, replay key and ambiguous-leased state restrictions.");
 
+  const receiptSql=await readFile(new URL("../../../../lib/db/migrations/20261024_whatsapp_shipment_receipts.sql",import.meta.url),"utf8");
+  await pool.query(receiptSql);
+  await pool.query(receiptSql);
+  assert.equal((await pool.query(
+    "select relrowsecurity from pg_class where oid='public.whatsapp_shipment_receipts'::regclass")).rows[0].relrowsecurity,true);
+  for(const role of ["anon","authenticated"]){
+    for(const action of ["SELECT","INSERT","UPDATE","DELETE"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege($1,'public.whatsapp_shipment_receipts',$2) AS allowed",
+        [role,action])).rows[0].allowed,false);
+    }
+  }
+  for(const action of ["SELECT","INSERT","UPDATE","DELETE"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.whatsapp_shipment_receipts',$1) AS allowed",
+      [action])).rows[0].allowed,true);
+  }
+  for(const action of ["TRUNCATE","TRIGGER","REFERENCES"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.whatsapp_shipment_receipts',$1) AS allowed",
+      [action])).rows[0].allowed,false);
+  }
+  const syntheticMessageId="wamid.synthetic.qa.12345",fingerprint="a".repeat(64);
+  await pool.query(`update whatsapp_shipment_outbox
+    set status='accepted',provider_message_id=$2,accepted_at=now() where id=$1`,
+    [outboxId,syntheticMessageId]);
+  await pool.query(`insert into whatsapp_shipment_receipts
+    (provider_message_id,provider_status,recipient_fingerprint,provider_timestamp)
+    values($1,'delivered',$2,'2026-10-24T00:00:00Z')`,[syntheticMessageId,fingerprint]);
+  await assert.rejects(pool.query(`insert into whatsapp_shipment_receipts
+    (provider_message_id,provider_status,recipient_fingerprint,provider_timestamp)
+    values($1,'delivered',$2,'2026-10-24T00:00:00Z')`,[syntheticMessageId,fingerprint]),
+    e=>e.code==="23505");
+  await assert.rejects(pool.query(`insert into whatsapp_shipment_receipts
+    (provider_message_id,provider_status,recipient_fingerprint,provider_timestamp)
+    values($1,'fabricated_location',$2,now())`,[syntheticMessageId,fingerprint]),
+    e=>e.code==="23514");
+  await assert.rejects(pool.query(`insert into whatsapp_shipment_receipts
+    (provider_message_id,provider_status,recipient_fingerprint,provider_timestamp)
+    values($1,'read','plaintext-mobile-number',now())`,[syntheticMessageId]),
+    e=>e.code==="23514");
+  await pool.query(`update whatsapp_shipment_outbox
+    set delivery_status='read',read_at=now(),delivered_at=now() where id=$1`,[outboxId]);
+  await assert.rejects(pool.query(`update whatsapp_shipment_outbox
+    set delivery_status='fabricated' where id=$1`,[outboxId]),e=>e.code==="23514");
+  assert.equal((await pool.query("select delivery_status from whatsapp_shipment_outbox where id=$1",
+    [outboxId])).rows[0].delivery_status,"read");
+  console.log("PASSED: exact receipt migration, stable sender status, RLS, unique signed callbacks, provider IDs and restricted grants.");
+
+
 
 
 } finally {

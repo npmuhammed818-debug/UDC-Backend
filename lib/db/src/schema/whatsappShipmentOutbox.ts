@@ -18,10 +18,16 @@ export const whatsappShipmentOutboxTable=pgTable("whatsapp_shipment_outbox",{
   providerMessageId:text("provider_message_id"),
   lastFailureCategory:text("last_failure_category"),
   acceptedAt:timestamp("accepted_at",{withTimezone:true}),
+  deliveryStatus:text("delivery_status").notNull().default("unconfirmed"),
+  providerStatusAt:timestamp("provider_status_at",{withTimezone:true}),
+  deliveredAt:timestamp("delivered_at",{withTimezone:true}),
+  readAt:timestamp("read_at",{withTimezone:true}),
+  failedAt:timestamp("failed_at",{withTimezone:true}),
   createdAt:timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
   updatedAt:timestamp("updated_at",{withTimezone:true}).notNull().defaultNow(),
 },t=>[
   uniqueIndex("whatsapp_shipment_outbox_notification_unique").on(t.notificationId),
+  uniqueIndex("whatsapp_shipment_outbox_provider_id_unique").on(t.providerMessageId),
   index("whatsapp_shipment_outbox_next_idx").on(t.status,t.nextAttemptAt),
   index("whatsapp_shipment_outbox_recipient_idx").on(t.recipientUserId),
 ]);

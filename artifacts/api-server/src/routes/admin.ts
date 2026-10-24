@@ -14,6 +14,7 @@ import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commi
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { enqueueShipmentWhatsApp } from "../notifications/shipmentOutbox";
+import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
@@ -541,6 +542,14 @@ async function notifyDealCounterparties(
 // in-app follow-ups. The autonomous runner is a separately gated deployment opt-in.
 // Read-only operator view. Accepted means Meta acknowledged, not delivered.
 // Never return phone numbers, chat content, identity proofs or access tokens.
+// Admin-only metadata reconciliation for previously signed Meta receipts.
+// Zero provider calls; cannot send or retry a WhatsApp message.
+router.post("/admin/notifications/whatsapp-shipment-receipts/reconcile",
+  requireRole("admin"),async(_req,res)=>{
+    try{res.json(await reconcileStoredShipmentReceipts());}
+    catch{res.status(503).json({error:"shipment_receipt_reconciliation_unavailable"});}
+  });
+
 router.get("/admin/notifications/whatsapp-shipment-outbox",requireRole("admin"),async(req,res)=>{
   try{
     const status=z.enum(["pending","leased","retry","accepted","uncertain","cancelled","failed","blocked"])
@@ -551,6 +560,10 @@ router.get("/admin/notifications/whatsapp-shipment-outbox",requireRole("admin"),
       dealId:whatsappShipmentOutboxTable.dealId,
       status:whatsappShipmentOutboxTable.status,
       attempts:whatsappShipmentOutboxTable.attempts,
+      deliveryStatus:whatsappShipmentOutboxTable.deliveryStatus,
+      deliveredAt:whatsappShipmentOutboxTable.deliveredAt,
+      readAt:whatsappShipmentOutboxTable.readAt,
+      failedAt:whatsappShipmentOutboxTable.failedAt,
       lastFailureCategory:whatsappShipmentOutboxTable.lastFailureCategory,
       nextAttemptAt:whatsappShipmentOutboxTable.nextAttemptAt,
       updatedAt:whatsappShipmentOutboxTable.updatedAt,
