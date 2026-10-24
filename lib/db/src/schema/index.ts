@@ -33,3 +33,4 @@ export * from "./whatsappChatSessions";
 export * from "./shipmentTracking";
 export * from "./shipmentCargoUnits";
 export * from "./shipmentEtaFollowups";
+export * from "./whatsappShipmentOutbox";

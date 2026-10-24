@@ -145,6 +145,57 @@ try{
   assert.equal((await pool.query("select count(*)::integer AS total from shipment_eta_followups")).rows[0].total,3);
   console.log("PASSED: exact ETA follow-up migration, RLS, least-privilege service-role grants, daily deduplication and honest reasons.");
 
+  // Minimal dependency tables in this disposable child database only.
+  await pool.query(`CREATE TABLE public.notifications(
+    id uuid primary key,user_id uuid not null references public.users(id),
+    body text not null
+  )`);
+  const notificationId=randomUUID();
+  await pool.query("insert into public.notifications(id,user_id,body) values($1,$2,'Safe fictional shipment notice')",
+    [notificationId,userId]);
+  const outboxSql=await readFile(new URL("../../../../lib/db/migrations/20261024_whatsapp_shipment_outbox.sql",import.meta.url),"utf8");
+  await pool.query(outboxSql);
+  await pool.query(outboxSql);
+  assert.equal((await pool.query(
+    "select relrowsecurity from pg_class where oid='public.whatsapp_shipment_outbox'::regclass")).rows[0].relrowsecurity,true);
+  for(const role of ["anon","authenticated"]){
+    for(const operation of ["SELECT","INSERT","UPDATE","DELETE"]){
+      assert.equal((await pool.query(
+        "select has_table_privilege($1,'public.whatsapp_shipment_outbox',$2) as allowed",
+        [role,operation])).rows[0].allowed,false);
+    }
+  }
+  for(const operation of ["SELECT","INSERT","UPDATE"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.whatsapp_shipment_outbox',$1) as allowed",
+      [operation])).rows[0].allowed,true);
+  }
+  for(const operation of ["DELETE","TRUNCATE","REFERENCES","TRIGGER"]){
+    assert.equal((await pool.query(
+      "select has_table_privilege('service_role','public.whatsapp_shipment_outbox',$1) as allowed",
+      [operation])).rows[0].allowed,false);
+  }
+  const outboxId=randomUUID();
+  await pool.query(`insert into whatsapp_shipment_outbox(id,notification_id,deal_id,recipient_user_id)
+      values($1,$2,$3,$4)`,[outboxId,notificationId,dealId,userId]);
+  await assert.rejects(pool.query(`insert into whatsapp_shipment_outbox(notification_id,deal_id,recipient_user_id)
+      values($1,$2,$3)`,[notificationId,dealId,userId]),e=>e.code==="23505");
+  await assert.rejects(pool.query(`insert into whatsapp_shipment_outbox(notification_id,deal_id,recipient_user_id,status)
+      values($1,$2,$3,'fake_delivered')`,[randomUUID(),dealId,userId]),e=>e.code==="23514"||e.code==="23503");
+  await assert.rejects(pool.query(`update whatsapp_shipment_outbox set status='leased' where id=$1`,[outboxId]),
+    e=>e.code==="23514");
+  const claimed=await pool.query(`update whatsapp_shipment_outbox
+    set status='leased',attempts=1,claim_token=$2,lease_until=now()+interval '90 seconds'
+    where id=$1 returning status,attempts`,[outboxId,randomUUID()]);
+  assert.equal(claimed.rows[0].status,"leased");
+  assert.equal(claimed.rows[0].attempts,1);
+  await pool.query(`update whatsapp_shipment_outbox set status='uncertain',
+    claim_token=null,lease_until=null,last_failure_category='provider_outcome_unknown'
+    where id=$1`,[outboxId]);
+  assert.equal((await pool.query("select status from whatsapp_shipment_outbox where id=$1",[outboxId])).rows[0].status,"uncertain");
+  console.log("PASSED: exact WhatsApp shipment outbox SQL, RLS, client least privilege, replay key and ambiguous-leased state restrictions.");
+
+
 
 } finally {
   if(pool)await pool.end();

@@ -11,6 +11,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
   const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable'])];
   const tables:any=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{get:(t,k)=>k==='_table'?name:{column:k,table:name}})]));
   const records:any=Object.fromEntries(names.map(name=>[name,[]]));
+  records.whatsappShipmentOutboxTable=[];
   const dealId='11111111-1111-4111-8111-111111111111';
   records.dealsTable=[{id:dealId,buyerUserId:'buyer',sellerUserId:'seller'}];
   records.usersTable=[{id:'buyer',role:'buyer',status:'verified'},{id:'seller',role:'seller',status:'verified'}];
@@ -48,7 +49,18 @@ test('admin trade workflows preserve verification, ownership, review and payment
   }
   const key='__adminMeetingFixture';
   const state:any={tables,db:{select,insert:(t:any)=>mutation(t),update:(t:any)=>mutation(t,true)},user:null};
-  state.sent=[];state.db.locks=[];state.db.execute=async(query:any)=>{state.db.locks.push(query.values?.[0]);};
+  state.sent=[];state.db.locks=[];state.db.execute=async(query:any)=>{
+    const statement=(query.parts||[]).join(' ').replace(/\s+/g,' ').toLowerCase();
+    if(statement.includes('insert into public.whatsapp_shipment_outbox')){
+      const [notificationId,dealId,recipientUserId]=query.values;
+      records.whatsappShipmentOutboxTable??=[];
+      if(records.whatsappShipmentOutboxTable.some((r:any)=>r.notificationId===notificationId))return {rows:[]};
+      const row={id:randomUUID(),notificationId,dealId,recipientUserId,status:'pending'};
+      records.whatsappShipmentOutboxTable.push(row);
+      return {rows:[{id:row.id}]};
+    }
+    state.db.locks.push(query.values?.[0]);return {rows:[]};
+  };
   state.db.transaction=async(f:any)=>{const before=structuredClone(records);try{return await f(state.db);}catch(error){for(const name of Object.keys(records))records[name]=before[name];throw error;}};
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
@@ -336,6 +348,16 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.equal(records.shipmentTrackingEventsTable.length,2,'cargo update records parent shipment milestone');
       assert.match(records.shipmentTrackingEventsTable[1].note,/MSCU1234567/);
       assert.ok(records.notificationsTable.some((n:any)=>n.type==='cargo_unit_status_updated'));
+      assert.ok(records.whatsappShipmentOutboxTable.length>=2,"shipment alerts use durable queue");
+      const review=await fetch(base+'/admin/notifications/whatsapp-shipment-outbox?status=pending');
+      assert.equal(review.status,200);
+      const reviewData=await review.json();
+      assert.ok(reviewData.entries.length>=2);
+      assert.equal(reviewData.providerAcceptanceDoesNotEqualDelivered,true);
+      assert.ok(reviewData.entries.every((r:any)=>!('phone' in r)&&!('body' in r)));
+      assert.equal((await fetch(base+'/admin/notifications/whatsapp-shipment-outbox?status=fake')).status,400);
+
+      assert.equal(state.sent.filter((x:any)=>/shipment|cargo/i.test(x.body)).length,0,"shipment alerts never use direct sends");
       state.failAudit=true;
       assert.equal((await request(unitPath,{status:'arrived'},'PATCH')).status,500,'audit failure rolls back cargo update');
       assert.equal(records.shipmentCargoUnitsTable[0].status,'in_transit');
@@ -376,6 +398,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.equal(delay.status,201);
       assert.ok(records.notificationsTable.some((n:any)=>n.type==='shipment_delay'),'delay must notify counterparties');
       assert.equal(records.notificationsTable.filter((n:any)=>n.userId==='milestone-agent').length,beforeRevoke,'revoked agent receives no new alert');
+      assert.ok(records.whatsappShipmentOutboxTable.length>0,"agent alerts have durable outbox records");
 
 
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'submitted',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);

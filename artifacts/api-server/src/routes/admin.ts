@@ -10,9 +10,10 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, whatsappShipmentOutboxTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
+import { enqueueShipmentWhatsApp } from "../notifications/shipmentOutbox";
 import { runEtaFollowups } from "../tracking/etaFollowups";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
@@ -490,6 +491,22 @@ async function notifyDealCounterparties(
 
   if (!deal) return;
 
+  // Shipment alerts must not use both the old direct-send path and the
+  // transactional outbox. The queue has NO active production dispatcher.
+  if(type.startsWith("shipment_")||type==="cargo_unit_status_updated"){
+    await db.transaction(async tx=>{
+      const notices=await tx.insert(notificationsTable).values([
+        {userId:deal.buyerUserId,type,title,body,link},
+        {userId:deal.sellerUserId,type,title,body,link},
+      ]).returning({id:notificationsTable.id,userId:notificationsTable.userId});
+      for(const notice of notices)
+        await enqueueShipmentWhatsApp(tx,{
+          notificationId:notice.id,dealId,recipientUserId:notice.userId,
+        });
+    });
+    return;
+  }
+
   await db.insert(notificationsTable).values([
     { userId: deal.buyerUserId, type, title, body, link },
     { userId: deal.sellerUserId, type, title, body, link },
@@ -522,6 +539,31 @@ async function notifyDealCounterparties(
 
 // Explicit operator-triggered scan; safe in CI and staging because it queues only
 // in-app follow-ups. The autonomous runner is a separately gated deployment opt-in.
+// Read-only operator view. Accepted means Meta acknowledged, not delivered.
+// Never return phone numbers, chat content, identity proofs or access tokens.
+router.get("/admin/notifications/whatsapp-shipment-outbox",requireRole("admin"),async(req,res)=>{
+  try{
+    const status=z.enum(["pending","leased","retry","accepted","uncertain","cancelled","failed","blocked"])
+      .optional().parse(req.query.status);
+    const rows=await db.select({
+      id:whatsappShipmentOutboxTable.id,
+      notificationId:whatsappShipmentOutboxTable.notificationId,
+      dealId:whatsappShipmentOutboxTable.dealId,
+      status:whatsappShipmentOutboxTable.status,
+      attempts:whatsappShipmentOutboxTable.attempts,
+      lastFailureCategory:whatsappShipmentOutboxTable.lastFailureCategory,
+      nextAttemptAt:whatsappShipmentOutboxTable.nextAttemptAt,
+      updatedAt:whatsappShipmentOutboxTable.updatedAt,
+    }).from(whatsappShipmentOutboxTable)
+      .where(status?eq(whatsappShipmentOutboxTable.status,status):undefined)
+      .orderBy(desc(whatsappShipmentOutboxTable.updatedAt)).limit(100);
+    res.json({entries:rows,providerAcceptanceDoesNotEqualDelivered:true});
+  }catch(error){
+    if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    res.status(500).json({error:"outbox_list_failed"});
+  }
+});
+
 router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
   try{
     const result=await runEtaFollowups({actorUserId:req.authUser!.id});
@@ -1876,15 +1918,16 @@ async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|
   const body=kind==="shipment_delay"
     ?"A shipment delay or exception was recorded for an assigned UDC deal. Open My deals → Track shipment."
     :"A shipment milestone was recorded for an assigned UDC deal. Open My deals → Track shipment.";
-  await db.insert(notificationsTable).values(agents.map(a=>({
-    userId:a.userId,type:kind,title:"Assigned deal shipment update",body,
-    link:`/deals/${dealId}/tracking`,
-  })));
-  await Promise.all(agents.map(async a=>{
-    if(!a.phone)return;
-    try{await sendWhatsAppText(a.phone,body);}
-    catch{/* Notification is persisted; WhatsApp provider failure must not change trade history. */}
-  }));
+  await db.transaction(async tx=>{
+    const notices=await tx.insert(notificationsTable).values(agents.map(a=>({
+      userId:a.userId,type:kind,title:"Assigned deal shipment update",body,
+      link:`/deals/${dealId}/tracking`,
+    }))).returning({id:notificationsTable.id,userId:notificationsTable.userId});
+    for(const notice of notices)
+      await enqueueShipmentWhatsApp(tx,{
+        notificationId:notice.id,dealId,recipientUserId:notice.userId,
+      });
+  });
 }
 
 router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
