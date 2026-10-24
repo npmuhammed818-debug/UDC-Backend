@@ -314,6 +314,25 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.equal((await request(`/admin/inspections/${inspection.data.inspection.id}`,{status:'passed',resultSummary:'Synthetic reviewed evidence'},'PATCH')).status,200);
       const shipment=await request('/admin/shipments',{dealId,carrier:'Synthetic carrier',trackingNumber:'TEST-ONLY',origin:'Santos',destination:'Mombasa'});assert.equal(shipment.status,201);
       assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit',notes:'Synthetic confirmed departure'},'PATCH')).status,200);
+      const timeline=records.shipmentTrackingEventsTable;
+      assert.equal(timeline.length,2);assert.deepEqual(timeline.map((e:any)=>e.kind),['planned','status_update']);
+      assert.equal(timeline[1].shipmentStatus,'in_transit');assert.equal(timeline[1].source,'udc_manual');
+      const eventPath=`/admin/shipments/${shipment.data.shipment.id}/events`;
+      const milestone={kind:'departed',occurredAt:new Date(Date.now()-60_000).toISOString(),location:'Synthetic Port',source:'carrier_reported',sourceReference:'QA-BL-001',note:'Carrier message recorded, not live GPS'};
+      assert.equal((await request(eventPath,{...milestone,sourceReference:undefined})).status,400);
+      assert.equal((await request(eventPath,{...milestone,occurredAt:new Date(Date.now()+86_400_000).toISOString()})).status,400);
+      assert.equal(timeline.length,2);
+      const added=await request(eventPath,milestone);assert.equal(added.status,201);
+      assert.equal(timeline.length,3);assert.equal(timeline[2].source,'carrier_reported');
+      assert.equal(timeline[2].location,'Synthetic Port');assert.equal(timeline[2].recordedByUserId,'admin');
+      assert.ok(records.auditLogsTable.some((r:any)=>r.action==='shipment_milestone_recorded'));
+      state.failAudit=true;
+      assert.equal((await request(eventPath,{...milestone,kind:'delay'})).status,500);
+      assert.equal(records.shipmentTrackingEventsTable.length,3,'failed audit cannot persist milestone');
+      const priorCount=records.shipmentTrackingEventsTable.length;
+      assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit'},'PATCH')).status,200);
+      assert.equal(records.shipmentTrackingEventsTable.length,priorCount,'same status cannot append a fake milestone');
+
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'submitted',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
       assert.equal((await request(`/admin/deals/${dealId}/customs`,{status:'cleared',country:'Kenya',port:'Mombasa',reference:'SYNTHETIC'},'PUT')).status,200);
       assert.equal(records.customsClearanceTable.length,1);assert.equal(records.customsClearanceTable[0].status,'cleared');assert.ok(records.customsClearanceTable[0].clearedAt);
