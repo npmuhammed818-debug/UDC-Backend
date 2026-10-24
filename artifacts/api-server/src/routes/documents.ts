@@ -10,6 +10,9 @@ import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 const router: IRouter = Router();
 
 router.get("/documents", requireAuth, async (req, res) => {
+  if(req.authUser!.role!=="admin" && req.authUser!.status!=="verified"){
+    res.status(403).json({error:"verification_required"});return;
+  }
   try {
     const documents = await db
       .select({
