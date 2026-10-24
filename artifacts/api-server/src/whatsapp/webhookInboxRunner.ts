@@ -1,5 +1,7 @@
 import { and, asc, eq, isNull, lt } from "drizzle-orm";
 import { db, whatsappWebhookInboxTable } from "@workspace/db";
+import { logger } from "../lib/logger";
+import { runBackgroundTask } from "../lib/backgroundTask";
 
 const POLL_MS = 15_000;
 const GRACE_MS = 120_000;
@@ -79,9 +81,11 @@ export function startWhatsAppWebhookInboxRunner() {
   if (started) return;
   started = true;
 
-  void replayPendingWebhookInbox();
-  const timer = setInterval(() => {
-    void replayPendingWebhookInbox();
-  }, POLL_MS);
+  const run = () => runBackgroundTask(
+    replayPendingWebhookInbox,
+    () => logger.warn("WhatsApp inbox poll failed; retrying on next scheduled poll"),
+  );
+  run();
+  const timer = setInterval(run, POLL_MS);
   timer.unref();
 }
