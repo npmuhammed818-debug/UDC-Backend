@@ -3,7 +3,7 @@ import {CircleAlert,CheckCircle2,RefreshCw,ShieldCheck,ClipboardCheck} from "luc
 import {Button} from "@/components/ui/button";
 
 type Check={id:string;label:string;state:string;detail:string};
-type Schema={objects:Array<{id:string;present:boolean;rlsEnabled:boolean}>;allPresentWithRls:boolean};
+type Schema={objects:Array<{id:string;present:boolean;rlsEnabled:boolean;clientRolesPresent:boolean;clientGrantsDenied:boolean;servicePrivilegesValid:boolean;criticalUniqueIndexPresent:boolean}>;allPresentWithRls:boolean;catalogGuardsPass:boolean};
 type Report={launchReady:boolean;stagingApproved:boolean;readOnly:boolean;schemaVerified:boolean;
   schema:Schema|null;checks:Check[];nextAction:string};
 
@@ -74,14 +74,28 @@ export function MvpStagingReadinessPage(){
           <div className="rounded-lg border border-border p-4">
             <h3 className="font-bold">Required migration tables</h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Table existence and RLS only; not proof of full migration correctness.
+              Checks table existence, RLS, direct client grants, backend least privilege and replay uniqueness.
+              Catalog checks alone cannot prove a safe migration or live launch.
             </p>
+            {report.schema&&<p className={report.schema.catalogGuardsPass
+                ?"mt-2 text-xs text-emerald-600":"mt-2 text-xs text-destructive"}>
+              {report.schema.catalogGuardsPass
+                ?"Catalog checks passed; human staging acceptance is still required."
+                :"At least one database security or uniqueness check needs review."}
+            </p>}
             <div className="mt-3 space-y-2">
               {(report.schema?.objects??[]).map(table=>
                 <div key={table.id} className="flex justify-between gap-3 text-sm">
                   <span>{labels[table.id]??table.id}</span>
-                  <span className={table.present&&table.rlsEnabled?"text-emerald-600":"text-destructive"}>
-                    {table.present&&table.rlsEnabled?"Present · RLS on":table.present?"RLS missing":"Not installed"}
+                  <span className={table.present&&table.rlsEnabled&&table.clientRolesPresent&&
+                    table.clientGrantsDenied&&table.servicePrivilegesValid&&table.criticalUniqueIndexPresent
+                    ?"text-emerald-600":"text-destructive"}>
+                    {!table.present?"Not installed":!table.rlsEnabled?"RLS missing":
+                      !table.clientRolesPresent?"Database roles missing":
+                      !table.clientGrantsDenied?"Client grants exposed":
+                      !table.servicePrivilegesValid?"Service permissions need review":
+                      !table.criticalUniqueIndexPresent?"Unique index missing":
+                      "Catalog safeguards pass"}
                   </span>
                 </div>)}
               {report.schema===null&&<p className="text-sm text-destructive">
