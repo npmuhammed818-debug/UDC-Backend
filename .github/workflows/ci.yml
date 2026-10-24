@@ -164,6 +164,13 @@ jobs:
           node artifacts/api-server/test/integration/email-migration-review.mjs 2>&1 | tee email-migration-review.log
         env:
           UDC_MIGRATION_QA_DATABASE_URL: postgresql://udc_migration_test@127.0.0.1:5432/udc_qa_migration_review?sslmode=disable
+      - name: Review exact shipment milestones migration and restricted roles
+        id: shipment_migration_review
+        run: |
+          set -o pipefail
+          node artifacts/api-server/test/integration/shipment-migration-review.mjs 2>&1 | tee shipment-migration-review.log
+        env:
+          UDC_MIGRATION_QA_DATABASE_URL: postgresql://udc_migration_test@127.0.0.1:5432/udc_qa_migration_review?sslmode=disable
       - name: Annotate isolated migration failures
         if: failure() && steps.migration_review.outcome == 'failure'
         run: |
@@ -176,4 +183,6 @@ jobs:
         if: always()
         with:
           name: email-migration-review
-          path: email-migration-review.log
+          path: |
+            email-migration-review.log
+            shipment-migration-review.log
