@@ -1,3 +1,4 @@
+import { etaAdvisory, etaAdvisoryLabel } from "../tracking/etaAdvisory";
 import { handleWhatsAppIntroduction } from '../referrals/whatsappIntroduction';
 import { respondToTerms } from '../marketplace/termAgreement';
 import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
@@ -5,7 +6,7 @@ import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { z } from 'zod/v4';
-import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
+import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
@@ -260,6 +261,46 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       if(eta)lines.push(`Recorded ETA: ${eta}`);
       const updated=shipment.updatedAt?date(shipment.updatedAt):'';
       if(updated)lines.push(`Last UDC update: ${updated}`);
+    }
+    const cargoUnits=await db.select({
+      shipmentId:shipmentCargoUnitsTable.shipmentId,
+      transportMode:shipmentCargoUnitsTable.transportMode,
+      unitReference:shipmentCargoUnitsTable.unitReference,
+      status:shipmentCargoUnitsTable.status,
+      vesselName:shipmentCargoUnitsTable.vesselName,
+      voyageNumber:shipmentCargoUnitsTable.voyageNumber,
+      flightNumber:shipmentCargoUnitsTable.flightNumber,
+      vehicleReference:shipmentCargoUnitsTable.vehicleReference,
+      billOfLading:shipmentCargoUnitsTable.billOfLading,
+      airWaybill:shipmentCargoUnitsTable.airWaybill,
+      currentLocation:shipmentCargoUnitsTable.currentLocation,
+      lastReportedAt:shipmentCargoUnitsTable.lastReportedAt,
+      estimatedArrival:shipmentCargoUnitsTable.estimatedArrival,
+    }).from(shipmentCargoUnitsTable).where(eq(shipmentCargoUnitsTable.dealId,deal.id))
+      .orderBy(shipmentCargoUnitsTable.createdAt).limit(50);
+    const relatedUnits=cargoUnits.filter(unit=>shipments.some(shipment=>shipment.id===unit.shipmentId)).slice(0,6);
+    if(relatedUnits.length){
+      lines.push('Cargo units (UDC records):');
+      for(const unit of relatedUnits){
+        const shipmentPosition=shipments.findIndex(shipment=>shipment.id===unit.shipmentId)+1;
+        const advisory=etaAdvisory(unit.status,unit.estimatedArrival,unit.lastReportedAt);
+        if(user.role==='agent'){
+          lines.push(`Shipment ${shipmentPosition}: ${safe(unit.transportMode)} cargo · ${safe(unit.status)}`);
+        }else{
+          lines.push(`Shipment ${shipmentPosition}: ${safe(unit.transportMode)} · ${safe(unit.unitReference)} · ${safe(unit.status)}`);
+          const transitInfo=unit.transportMode==='sea'
+            ?[unit.vesselName,unit.voyageNumber,unit.billOfLading]
+            :unit.transportMode==='air'
+              ?[unit.flightNumber,unit.airWaybill]
+              :[unit.vehicleReference];
+          if(transitInfo.some(Boolean))lines.push(`Carrier details (recorded): ${transitInfo.map(safe).filter(Boolean).join(' / ')}`);
+          if(unit.currentLocation)lines.push(`Last recorded location: ${safe(unit.currentLocation)}`);
+          if(unit.estimatedArrival)lines.push(`Recorded unit ETA: ${date(unit.estimatedArrival)}`);
+        }
+        const text=etaAdvisoryLabel(advisory);
+        if(text)lines.push(text);
+      }
+      if(cargoUnits.length>relatedUnits.length)lines.push('More cargo records are available from UDC.');
     }
     const events=await db.select({
       shipmentId:shipmentTrackingEventsTable.shipmentId,kind:shipmentTrackingEventsTable.kind,shipmentStatus:shipmentTrackingEventsTable.shipmentStatus,
