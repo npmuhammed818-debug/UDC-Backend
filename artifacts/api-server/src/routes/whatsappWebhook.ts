@@ -24,6 +24,7 @@ import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuy
 import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
+import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { triageSellerOffer } from "../akif/sellerOfferTriage";
@@ -728,7 +729,7 @@ async function handleDealWhatsAppMessage(
       deliveryTarget === "counterparty" ? receiverUserId : sender.id);
 
     if (storedDocument) {
-      const storageObjectPath = parseStoragePath(storedDocument.fileUrl);
+      const storageObjectPath = managedDealDocumentPath(storedDocument.fileUrl,deal.id);
       if (storageObjectPath) {
         const extension = storageObjectPath.match(/\.([a-z0-9]{1,8})$/i)?.[1] ?? "pdf";
 
