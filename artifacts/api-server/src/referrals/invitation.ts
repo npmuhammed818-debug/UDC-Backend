@@ -23,3 +23,21 @@ export function verifyAgentInvitation(token: string, secret: string) {
 export function agentReferralCode(agentId: string) {
   return `UDC-${agentId.replaceAll('-', '').slice(0, 12).toUpperCase()}`;
 }
+
+/** Copy-ready WhatsApp message; the recipient must consent and confirm. */
+export function agentReferralWhatsAppCommand(agentId:string){
+  if(!uuid.test(agentId))throw Error("invalid_agent_id");
+  return "Referral "+agentReferralCode(agentId);
+}
+
+/**
+ * Optional human-facing wa.me convenience link for the registered UDC
+ * business number, NOT Meta's WHATSAPP_PHONE_NUMBER_ID (a numeric resource ID).
+ * Never create a link when the public number is not explicitly configured.
+ */
+export function agentReferralWhatsAppLink(agentId:string, publicNumber:unknown){
+  if(!uuid.test(agentId))return null;
+  if(typeof publicNumber!=="string" || !/^\+?[1-9]\d{7,14}$/.test(publicNumber))return null;
+  const to=publicNumber.replace(/^\+/,"");
+  return `https://wa.me/${to}?text=${encodeURIComponent(agentReferralWhatsAppCommand(agentId))}`;
+}
