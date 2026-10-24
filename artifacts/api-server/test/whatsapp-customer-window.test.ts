@@ -30,7 +30,7 @@ test("signed customer-message window expires, never extends via replay, and revo
     throw Error("unexpected query: "+sql.slice(0,160));
   }};
   (globalThis as any).__customerWindowDb=db;
-  const file=fileURLToPath(new URL(\`./customer-window-\${randomUUID()}.mjs\`,import.meta.url));
+  const file=fileURLToPath(new URL(`./customer-window-${randomUUID()}.mjs`,import.meta.url));
   const bundled=await build({
     stdin:{contents:"export * from '../src/whatsapp/customerServiceWindow.ts';",
       resolveDir:fileURLToPath(new URL(".",import.meta.url))},
