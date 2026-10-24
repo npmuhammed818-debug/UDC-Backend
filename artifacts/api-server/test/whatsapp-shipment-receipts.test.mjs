@@ -29,6 +29,18 @@ test("Meta receipt handler is monotonic, bound to outbox recipient and replay-sa
       if(status==="read")outbox.readAt??=date;
       return {rows:[{id:outbox.id}]};
     }
+    if(statement.startsWith("select r.provider_message_id")){
+      const found=rows.receipts.filter(r=>!r.appliedAt).flatMap(r=>{
+        const o=rows.outbox.find(o=>o.providerMessageId===r.id&&o.status==="accepted");
+        const u=rows.users.find(u=>u.id===o?.recipientUserId);
+        return u?.phone?[{provider_message_id:r.id,provider_status:r.status,
+          provider_timestamp:r.time,recipient_fingerprint:r.fingerprint,phone:u.phone}]:[];
+      });
+      return {rows:found};
+    }
+    if(statement.startsWith("delete from public.whatsapp_shipment_receipts")){
+      return {rows:[]};
+    }
     if(statement.startsWith("update public.whatsapp_shipment_receipts")){
       const [now,id,status,date,fingerprint]=v;
       rows.receipts.filter(r=>r.id===id&&r.status===status&&r.time.getTime()===date.getTime()&&r.fingerprint===fingerprint)
@@ -89,6 +101,24 @@ test("Meta receipt handler is monotonic, bound to outbox recipient and replay-sa
     result=await run([status("read","wamid.synthetic.2")]);
     assert.equal(result.unmatched,1,"old number must not bind current account after migration");
     assert.equal(rows.receipts.length,8);
+    rows.users[0].phone=phone;
+    const early=await run([status("delivered","wamid.early")]);
+    assert.equal(early.unmatched,1,"signed receipt can arrive before persisted provider ID");
+    rows.outbox.push({id:"early",recipientUserId:"buyer",providerMessageId:"wamid.early",
+      status:"accepted",deliveryStatus:"unconfirmed"});
+    const recovered=await mod.reconcileStoredShipmentReceipts({executor:db,now,secret});
+    assert.ok(recovered.applied>=1);
+    assert.equal(rows.outbox.at(-1).deliveryStatus,"delivered");
+    assert.ok(rows.receipts.find(r=>r.id==="wamid.early").appliedAt,
+      "journal entry marked applied after authorized reconciliation");
+    const different=await run([status("read","wamid.late")]);
+    assert.equal(different.unmatched,1);
+    rows.outbox.push({id:"late",recipientUserId:"buyer",providerMessageId:"wamid.late",
+      status:"accepted",deliveryStatus:"unconfirmed"});
+    rows.users[0].phone="10000000009";
+    const denied=await mod.reconcileStoredShipmentReceipts({executor:db,now,secret});
+    assert.ok(denied.recipientChanged>=1,"wrong/new account phone cannot claim old Meta receipt");
+    assert.equal(rows.outbox.at(-1).deliveryStatus,"unconfirmed");
   }finally{
     await unlink(file);delete globalThis.__udcReceiptTestDb;
   }
