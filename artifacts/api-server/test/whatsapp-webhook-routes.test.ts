@@ -369,17 +369,27 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     });
     await t.test("documents require review and explicit access before sharing", async () => {
       reset(); seedDeal();
-      rows.documentsTable = [{ id: "doc", dealId: "deal-a", documentType: "FCO", uploadedBy: "seller", status: "pending", fileUrl: "storage://udc-documents/fco.pdf" }];
+      rows.documentsTable = [{ id: "doc", dealId: "deal-a", documentType: "FCO", uploadedBy: "seller", status: "pending", fileUrl: "storage://udc-documents/deals/deal-a/fco.pdf" }];
       await message({ text: { body: "send FCO to me" } }); assert.deepEqual(state.signed, []);
       rows.documentsTable[0].status = "approved";
       await message({ text: { body: "send FCO to me" } }); assert.deepEqual(state.signed, []);
       rows.documentAccessTable = [{ documentId: "doc", userId: "buyer" }];
-      await message({ text: { body: "send FCO to me" } }); assert.deepEqual(state.signed, ["fco.pdf"]);
+      await message({ text: { body: "send FCO to me" } }); assert.deepEqual(state.signed, ["deals/deal-a/fco.pdf"]);
       state.signed = []; rows.usersTable[0].phone = "10000000003";
       await message({ from: "10000000002", text: { body: "deal UDC-A: send FCO to buyer" } });
-      assert.deepEqual(state.signed, ["fco.pdf"]);
+      assert.deepEqual(state.signed, ["deals/deal-a/fco.pdf"]);
       state.signed = []; rows.documentAccessTable = [];
       await message({ from: "10000000002", text: { body: "deal UDC-A: send FCO to buyer" } }); assert.deepEqual(state.signed, []);
+      // A stale grant or forged path must not forward a file from another deal.
+      rows.documentAccessTable=[{documentId:"doc",userId:"buyer"}];
+      rows.documentsTable[0].fileUrl="storage://udc-documents/deals/deal-b/other.pdf";
+      state.signed=[];
+      await message({ from: "10000000002", text: { body: "deal UDC-A: send FCO to buyer" } });
+      assert.deepEqual(state.signed,[],"wrong-deal storage URL cannot be forwarded");
+      rows.documentsTable[0].fileUrl="https://files.example.invalid/other.pdf";
+      await message({ text: { body: "send FCO to me" } });
+      assert.deepEqual(state.signed,[],"legacy HTTPS URL cannot be forwarded");
+
     });
     await t.test("media replies attach to the quoted deal, with an owner grant", async () => {
       reset(); seedDeal();
