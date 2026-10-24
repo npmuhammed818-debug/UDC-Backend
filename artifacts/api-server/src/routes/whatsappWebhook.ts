@@ -971,7 +971,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
   }
 
   const changes = Array.isArray(req.body?.entry)
-    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; timestamp?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
+    ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { metadata?: {phone_number_id?: string}; statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; timestamp?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
   for (const change of changes) {
@@ -1009,7 +1009,9 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           // Signed, consented, verified inbound evidence only. Default OFF:
           // migration must be approved before this gate is enabled in staging.
           if (account?.status === "verified" &&
-              process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED === "true") {
+              process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED === "true" &&
+              typeof value?.metadata?.phone_number_id === "string" &&
+              value.metadata.phone_number_id === process.env.WHATSAPP_PHONE_NUMBER_ID) {
             try {
               await recordSignedCustomerInbound({
                 phone:message.from,providerMessageId:message.id,
