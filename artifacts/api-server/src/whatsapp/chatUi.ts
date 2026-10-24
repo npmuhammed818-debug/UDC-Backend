@@ -14,7 +14,7 @@ import { downloadWhatsAppMedia, sendWhatsAppInteractive, sendWhatsAppText, sendW
 import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
-import { agentReferralCode } from '../referrals/invitation';
+import { agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
@@ -221,7 +221,16 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
     if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
-    if(action==='invite'){await sendWhatsAppText(phone,'Share the next message with your buyer or seller. They can send “Referral” followed by your code after joining UDC, then confirm the introduction. UDC reviews it; no commission is agreed automatically.');await sendWhatsAppText(phone,agentReferralCode(user.id));return true;}
+    if(action==='invite'){
+       const command=agentReferralWhatsAppCommand(user.id);
+       await sendWhatsAppText(phone,
+         'Forward or copy the NEXT message to your buyer or seller. After registering with UDC and agreeing to privacy terms, they must send the exact message to UDC and confirm your introduction. UDC reviews every referral; no commission or deal access is granted automatically.');
+       await sendWhatsAppText(phone,command);
+       const link=agentReferralWhatsAppLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER);
+       if(link)await sendWhatsAppText(phone,
+         'Optional UDC WhatsApp shortcut for your introduction (only after the buyer or seller registers): '+link);
+       return true;
+     }
     if(action==='referrals'){const rows=await db.select({code:referralsTable.referralCode,status:referralsTable.status}).from(referralsTable).where(eq(referralsTable.agentUserId,user.id)).orderBy(desc(referralsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.code}: ${r.status}`).join('\n'):'No referrals have been recorded for you yet.');return true;}
     const rows=await db.select({amount:commissionsTable.amount,currency:commissionsTable.currency,status:commissionsTable.status}).from(commissionsTable).where(eq(commissionsTable.beneficiaryUserId,user.id)).orderBy(desc(commissionsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.currency} ${r.amount}: ${r.status}`).join('\n'):'No agreed commissions have been recorded for you yet.');return true;
   }
