@@ -349,6 +349,14 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.match(records.shipmentTrackingEventsTable[1].note,/MSCU1234567/);
       assert.ok(records.notificationsTable.some((n:any)=>n.type==='cargo_unit_status_updated'));
       assert.ok(records.whatsappShipmentOutboxTable.length>=2,"shipment alerts use durable queue");
+      const review=await fetch(base+'/admin/notifications/whatsapp-shipment-outbox?status=pending');
+      assert.equal(review.status,200);
+      const reviewData=await review.json();
+      assert.ok(reviewData.entries.length>=2);
+      assert.equal(reviewData.providerAcceptanceDoesNotEqualDelivered,true);
+      assert.ok(reviewData.entries.every((r:any)=>!('phone' in r)&&!('body' in r)));
+      assert.equal((await fetch(base+'/admin/notifications/whatsapp-shipment-outbox?status=fake')).status,400);
+
       assert.equal(state.sent.filter((x:any)=>/shipment|cargo/i.test(x.body)).length,0,"shipment alerts never use direct sends");
       state.failAudit=true;
       assert.equal((await request(unitPath,{status:'arrived'},'PATCH')).status,500,'audit failure rolls back cargo update');
