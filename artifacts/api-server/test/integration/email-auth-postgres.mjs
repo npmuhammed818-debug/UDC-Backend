@@ -696,6 +696,68 @@ try {
   }
   assert.equal((await pool.query("select relrowsecurity from pg_class where oid='public.whatsapp_phone_link_challenges'::regclass")).rows[0].relrowsecurity,true);
   pass("real PostgreSQL: verified email permits safe second-number recovery without duplicate identity or client SQL access");
+  // Competing signed new-phone sessions can each receive a code. Their
+  // confirmation transactions MUST serialize on the same original user and
+  // cannot both move a previously verified account.
+  const concurrentId=randomUUID();
+  const concurrentEmail="race-"+randomUUID()+"@example.invalid";
+  const priorPhone="100000094444",candidateA="100000095555",candidateB="100000096666";
+  await pool.query(
+    "insert into users(id,email,verified_email,email_verified_at,phone,password_hash,role,status) values($1,$2,$2,now(),$3,$4,'seller','verified')",
+    [concurrentId,concurrentEmail,priorPhone,"synthetic-no-password-"+randomUUID()]
+  );
+  const totalBeforeRace=Number((await pool.query("select count(*) from users")).rows[0].count);
+  const proofMails=[];
+  let testClock=new Date();
+  const competing=app.createPhoneRecoveryService({
+    database:app.db,now:()=>testClock,
+    budget:async()=>{},
+    send:async mail=>{proofMails.push(mail);},
+  });
+  const requestA=await competing.request(candidateA,concurrentEmail);
+  testClock=new Date(testClock.getTime()+61_000);
+  const requestB=await competing.request(candidateB,concurrentEmail);
+  assert.equal(requestA,requestB,"phone recovery responses must not reveal identity");
+  assert.equal(proofMails.length,2,"both independently eligible numbers receive fictional codes");
+  assert.ok(proofMails.every(m=>m.purpose==="link_phone" && /^\\d{6}$/.test(m.code)));
+  const challenges=(await pool.query(
+    "select new_phone,consumed_at from whatsapp_phone_link_challenges where user_id=$1 order by created_at,id",
+    [concurrentId]
+  )).rows;
+  assert.equal(challenges.length,2);
+  assert.ok(challenges.every(c=>c.consumed_at===null));
+  const outcomes=await Promise.all([
+    competing.confirm(candidateA,proofMails[0].code),
+    competing.confirm(candidateB,proofMails[1].code),
+  ]);
+  const winners=outcomes.filter(x=>/original UDC account/.test(x));
+  const losers=outcomes.filter(x=>/invalid, expired or unavailable/.test(x));
+  assert.equal(winners.length,1,"exactly one concurrent phone reclaim must succeed");
+  assert.equal(losers.length,1,"other code must be invalidated after original identity moved");
+  const selected=outcomes.findIndex(x=>/original UDC account/.test(x))===0?candidateA:candidateB;
+  const rejected=selected===candidateA?candidateB:candidateA;
+  const finalUser=(await pool.query("select id,email,verified_email,phone,status,role from users where id=$1",
+    [concurrentId])).rows[0];
+  assert.equal(finalUser.id,concurrentId);
+  assert.equal(finalUser.phone,selected);
+  assert.equal(finalUser.verified_email,concurrentEmail);
+  assert.equal(finalUser.status,"verified");
+  assert.equal(finalUser.role,"seller");
+  assert.equal(Number((await pool.query("select count(*) from users")).rows[0].count),totalBeforeRace);
+  assert.equal((await pool.query("select id from users where phone=any($1::text[])",
+    [[priorPhone,rejected]])).rowCount,0);
+  assert.equal(Number((await pool.query(
+    "select count(*) from audit_logs where actor_user_id=$1 and action='whatsapp_number_recovered'",
+    [concurrentId]
+  )).rows[0].count),1,"exactly one audited takeover");
+  assert.equal(Number((await pool.query(
+    "select count(*) from whatsapp_phone_link_challenges where user_id=$1 and consumed_at is not null",
+    [concurrentId]
+  )).rows[0].count),2,"both parallel challenges become unusable");
+  const rejectedCode=selected===candidateA?proofMails[1].code:proofMails[0].code;
+  assert.match(await competing.confirm(rejected,rejectedCode),/invalid/);
+  pass("real PostgreSQL concurrency: two independently issued phone codes cannot rebind the same verified identity twice");
+
   const audit = JSON.stringify(
     (
       await pool.query(
