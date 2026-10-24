@@ -1784,7 +1784,11 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
       res.status(404).json({ error: "shipment_not_found" });
       return;
     }
-    const [shipment] = await db.transaction(async tx=>{
+    const {shipment,statusChanged}=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"shipment_status:"+shipmentId}))`);
+      const [before]=await tx.select({status:shipmentsTable.status})
+        .from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);
+      if(!before)throw new Error("shipment_disappeared");
       const [updated]=await tx.update(shipmentsTable)
         .set({ status: input.status, ...(input.notes === undefined ? {} : { notes: input.notes }), ...(input.estimatedArrival === undefined ? {} : { estimatedArrival: input.estimatedArrival }), updatedAt: new Date() })
         .where(eq(shipmentsTable.id, shipmentId))
@@ -1794,15 +1798,17 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
         action: "shipment_status_updated",
         entityType: "deal",
         entityId: updated.dealId,
-        metadata: { shipmentId: updated.id, previousStatus: existing.status, newStatus: updated.status },
+        metadata: { shipmentId: updated.id, previousStatus: before.status, newStatus: updated.status },
       });
-      if(existing.status!==updated.status)await tx.insert(shipmentTrackingEventsTable).values({
-        shipmentId:updated.id,dealId:updated.dealId,kind:"status_update",shipmentStatus:updated.status,idempotencyKey:randomUUID(),
+      const statusChanged=before.status!==updated.status;
+      if(statusChanged)await tx.insert(shipmentTrackingEventsTable).values({
+        shipmentId:updated.id,dealId:updated.dealId,kind:"status_update",
+        shipmentStatus:updated.status,idempotencyKey:randomUUID(),
         source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
       });
-      return [updated];
+      return {shipment:updated,statusChanged};
     });
-    if (existing.status !== shipment.status) {
+    if (statusChanged) {
       await notifyDealCounterparties(
         shipment.dealId,
         "shipment_status_updated",
