@@ -26,6 +26,7 @@ export function agentReferralCode(agentId: string) {
 
 /** Copy-ready WhatsApp message; the recipient must consent and confirm. */
 export function agentReferralWhatsAppCommand(agentId:string){
+  if(!uuid.test(agentId))throw Error("invalid_agent_id");
   return "Referral "+agentReferralCode(agentId);
 }
 
