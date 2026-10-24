@@ -318,16 +318,21 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.equal(timeline.length,2);assert.deepEqual(timeline.map((e:any)=>e.kind),['planned','status_update']);
       assert.equal(timeline[1].shipmentStatus,'in_transit');assert.equal(timeline[1].source,'udc_manual');
       const eventPath=`/admin/shipments/${shipment.data.shipment.id}/events`;
-      const milestone={kind:'departed',occurredAt:new Date(Date.now()-60_000).toISOString(),location:'Synthetic Port',source:'carrier_reported',sourceReference:'QA-BL-001',note:'Carrier message recorded, not live GPS'};
+      const milestone={idempotencyKey:randomUUID(),kind:'departed',occurredAt:new Date(Date.now()-60_000).toISOString(),location:'Synthetic Port',source:'carrier_reported',sourceReference:'QA-BL-001',note:'Carrier message recorded, not live GPS'};
       assert.equal((await request(eventPath,{...milestone,sourceReference:undefined})).status,400);
       assert.equal((await request(eventPath,{...milestone,occurredAt:new Date(Date.now()+86_400_000).toISOString()})).status,400);
       assert.equal(timeline.length,2);
       const added=await request(eventPath,milestone);assert.equal(added.status,201);
       assert.equal(timeline.length,3);assert.equal(timeline[2].source,'carrier_reported');
       assert.equal(timeline[2].location,'Synthetic Port');assert.equal(timeline[2].recordedByUserId,'admin');
+      assert.equal((await request(eventPath,milestone)).status,200,'same idempotency key reuses the original event');
+      assert.equal(timeline.length,3,'retry cannot duplicate a milestone');
+      assert.equal((await request(eventPath,{...milestone,note:'modified with same key'})).status,409);
+      assert.equal(timeline.length,3,'key reuse with changed details cannot overwrite or duplicate event');
+
       assert.ok(records.auditLogsTable.some((r:any)=>r.action==='shipment_milestone_recorded'));
       state.failAudit=true;
-      assert.equal((await request(eventPath,{...milestone,kind:'delay'})).status,500);
+      assert.equal((await request(eventPath,{...milestone,idempotencyKey:randomUUID(),kind:'delay'})).status,500);
       assert.equal(records.shipmentTrackingEventsTable.length,3,'failed audit cannot persist milestone');
       const priorCount=records.shipmentTrackingEventsTable.length;
       assert.equal((await request(`/admin/shipments/${shipment.data.shipment.id}`,{status:'in_transit'},'PATCH')).status,200);
