@@ -7,7 +7,7 @@ import {randomUUID} from "node:crypto";
 
 test("ETA follow-ups stay truthful, bounded and transactionally de-duplicated",async()=>{
   const tableNames=["shipmentCargoUnitsTable","dealsTable","shipmentEtaFollowupsTable",
-    "notificationsTable","auditLogsTable","usersTable"];
+    "notificationsTable","auditLogsTable","usersTable","whatsappShipmentOutboxTable"];
   const tables=Object.fromEntries(tableNames.map(name=>[name,new Proxy({_table:name},{
     get:(target,key)=>key==="_table"?name:{column:key,table:name},
   })]));
@@ -65,7 +65,13 @@ test("ETA follow-ups stay truthful, bounded and transactionally de-duplicated",a
     };
     return q;
   };
-  const db={select,insert,transaction:async callback=>{
+  const db={select,insert,execute:async query=>{
+    if(!query.parts.join(" ").includes("INSERT INTO public.whatsapp_shipment_outbox"))throw Error("Unexpected SQL");
+    const [notificationId,dealId,recipientUserId]=query.values;
+    if(rows.whatsappShipmentOutboxTable.some(r=>r.notificationId===notificationId))return {rows:[]};
+    const item={id:randomUUID(),notificationId,dealId,recipientUserId,status:"pending"};
+    rows.whatsappShipmentOutboxTable.push(item);return {rows:[{id:item.id}]};
+  },transaction:async callback=>{
     const before=structuredClone(rows);
     try{return await callback(db);}catch(error){
       for(const name of tableNames)rows[name]=before[name];
@@ -91,7 +97,7 @@ test("ETA follow-ups stay truthful, bounded and transactionally de-duplicated",a
             'export const inArray=(x,values)=>({kind:"in",x,values});'+
             'export const and=(...args)=>({kind:"and",args});'+
             'export const gt=(a,b)=>({kind:"gt",a,b});'+
-            'export const asc=x=>x;',
+            'export const asc=x=>x;export const sql=(parts,...values)=>({parts,values});',
       }));
     }}],
   });
@@ -120,14 +126,16 @@ test("ETA follow-ups stay truthful, bounded and transactionally de-duplicated",a
     const time=new Date("2026-10-24T12:00:00Z");
     const first=await runEtaFollowups({database:db,now:time,actorUserId:"admin"});
     assert.deepEqual(first,{scanned:203,created:202,deduplicated:0,
-      dayKey:"2026-10-24",channel:"in_app_only"});
+      dayKey:"2026-10-24",channel:"in_app_and_dormant_whatsapp_outbox"});
     assert.equal(rows.shipmentEtaFollowupsTable.length,202);
     assert.equal(rows.notificationsTable.length,404);
+    assert.equal(rows.whatsappShipmentOutboxTable.length,404);
     assert.equal(rows.auditLogsTable.length,202);
     assert.ok(rows.notificationsTable.every(x=>!JSON.stringify(x).includes("container")));
     assert.ok(rows.auditLogsTable.every(x=>x.action==="shipment_eta_followup_created"));
     const second=await runEtaFollowups({database:db,now:time});
     assert.equal(second.created,0);assert.equal(second.deduplicated,202);
+    assert.equal(rows.whatsappShipmentOutboxTable.length,404,"repeat scans never enqueue duplicate sends");
     assert.equal(rows.notificationsTable.length,404);
     assert.ok(rows.shipmentEtaFollowupsTable.some(x=>x.reason==="last_report_stale"));
     rows.shipmentCargoUnitsTable[0].status="arrived";
@@ -135,6 +143,7 @@ test("ETA follow-ups stay truthful, bounded and transactionally de-duplicated",a
     await assert.rejects(runEtaFollowups({database:db,now:new Date("2026-10-25T12:00:00Z")}),/synthetic_audit_failure/);
     assert.equal(rows.shipmentEtaFollowupsTable.length,202,"failed audit rolls back durable follow-up");
     assert.equal(rows.notificationsTable.length,404,"failed audit rolls back recipient alerts");
+    assert.equal(rows.whatsappShipmentOutboxTable.length,404,"failed audit rolls back queued sends");
   }finally{
     await unlink(path);delete globalThis.__etaFollowupsFixture;
   }
