@@ -43,12 +43,16 @@ export function startGuidedDraftCleanup(){
   const cleanup=()=>{void db.delete(sessions).where(lt(sessions.expiresAt,new Date())).catch(()=>undefined);};
   cleanup();const timer=setInterval(cleanup,15*60_000);timer.unref();
 }
+function rejectionNote(item:Question,error:unknown){
+  if(error instanceof z.ZodError)return item.kind==='email'?'That does not look like an email address. Please send it like name@yourcompany.com.':null;
+  return error instanceof Error?error.message:null;
+}
 function validate(question:Question,text:string,purpose:FlowPurpose){
   if(question.optional&&/^skip$/i.test(text))return '';
   if(text.length<1||text.length>(question.max??120))throw new Error('Please keep this answer within '+(question.max??120)+' characters.');
   if(question.kind==='email'){
     const email=z.string().email().parse(text).toLowerCase();
-    if(purpose!=='profile_agent'&&!businessEmail(email))throw new Error('Use your company email. Personal email is available for agents.');return email;
+    if(purpose!=='profile_agent'&&!businessEmail(email))throw new Error('Buyers and sellers need a company email (not Gmail, Yahoo or similar). Agents can use any email.');return email;
   }
   if(question.kind==='positive'){
     if(! /^\d+(?:\.\d+)?$/.test(text)||!Number.isFinite(Number(text))||Number(text)<=0)throw new Error('Send a positive number only, for example 100 or 5900.50.');return text;
@@ -74,7 +78,7 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
   const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
   if(!next)return null;
   let scalar=false;
-  if(next.kind==='email')scalar=/^[^\s@]+@[^\s@]+$/.test(text);
+  if(next.kind==='email')scalar=/^\S{1,80}$/.test(text); // a single word is an attempted email: validate it and explain what is wrong
   else if(next.kind==='positive')scalar=/^\d+(?:\.\d+)?$/.test(text);
   else if(next.kind==='incoterm')scalar=/^(?:EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)$/i.test(text);
   else if(next.name==='currency')scalar=/^[A-Za-z]{3}$/.test(text);
@@ -90,7 +94,7 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
     if(/\b(?:MT|KG|USD|AED|INR|EUR|EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)\b/i.test(text))scalar=false;
   }
   if(!scalar)return null;
-  try{return {[next.name]:validate(next,text,purpose)};}catch{return {};}
+  try{return {[next.name]:validate(next,text,purpose)};}catch(error){const note=rejectionNote(next,error);return note?{__note:note}:{};}
 }
 export async function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){
   const raw=message.text?.body?.trim();
@@ -107,10 +111,12 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length)return false;
   }
   let extracted:Record<string,string>|null=null;
+  let fromLocal=false;
   if(snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)){
     const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
     const local=Object.keys(labelled).length?labelled:directAnswer(snapshot.purpose as FlowPurpose,raw,snapshot.data);
     if(directOnly&&!local)return false;
+    fromLocal=!!local;
     extracted=local??await extractParagraph(snapshot.purpose as FlowPurpose,raw);
   }else if(directOnly)return false;
   const result=await db.transaction(async tx=>{
@@ -132,11 +138,13 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       // A concurrent edit/menu must never apply extraction to a different draft.
       if(!snapshot||snapshot.id!==session.id||snapshot.step!==session.step||JSON.stringify(snapshot.data)!==JSON.stringify(session.data))return {kind:'question' as const,purpose,step:session.step,data:session.data};
       const data:Record<string,string>={...session.data,__started:'1'};
-      for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details. */}}}
+      const notes:string[]=[];
+      for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details; the reason for a typed answer comes from directAnswer. */}}}
+      if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
       const complete=questions.every(q=>q.optional||data[q.name]);
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
-      return complete?{kind:'review' as const,purpose,data}:{kind:'question' as const,purpose,step,data};
+      return complete?{kind:'review' as const,purpose,data}:{kind:'question' as const,purpose,step,data,note:notes[0]};
     }
     if(!raw)return {kind:'question' as const,purpose,step:session.step};
     let answer:string;
@@ -151,7 +159,7 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Send Menu to start again.');return true;
     case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
     case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
-    case 'question':await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
+    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
     case 'review':await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
