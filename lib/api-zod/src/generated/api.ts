@@ -20,6 +20,9 @@ export const DatabaseHealthCheckResponse = zod.object({
 export const registerUserBodyPasswordMin = 12;
 export const registerUserBodyPasswordMax = 128;
 
+export const registerUserBodyCompanyNameMin = 2;
+export const registerUserBodyCompanyNameMax = 200;
+
 export const registerUserBodyReferralTokenMax = 120;
 
 
@@ -29,6 +32,7 @@ export const RegisterUserBody = zod.object({
   "email": zod.string(),
   "password": zod.string().min(registerUserBodyPasswordMin).max(registerUserBodyPasswordMax),
   "role": zod.enum(['buyer', 'seller', 'agent']),
+  "company_name": zod.string().min(registerUserBodyCompanyNameMin).max(registerUserBodyCompanyNameMax).optional(),
   "referral_token": zod.string().max(registerUserBodyReferralTokenMax).optional(),
   "accepted_terms": zod.literal(true),
   "adult_business_user": zod.literal(true)

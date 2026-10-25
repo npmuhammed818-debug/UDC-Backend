@@ -721,6 +721,7 @@ components:
         email: { type: string }
         password: { type: string, minLength: 12, maxLength: 128 }
         role: { type: string, enum: [buyer, seller, agent] }
+        company_name: { type: string, minLength: 2, maxLength: 200 }
         referral_token: { type: string, maxLength: 120 }
         accepted_terms: { type: boolean, enum: [true] }
         adult_business_user: { type: boolean, enum: [true] }
