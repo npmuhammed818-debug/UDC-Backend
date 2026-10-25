@@ -33,4 +33,7 @@ test("agent pool is half of the commission actually received, rounded once half 
   assert.equal(agentPoolFromReceived("0.03", "INR"), "0.02");
   assert.throws(() => agentPoolFromReceived("0", "USD"));
   assert.throws(() => agentPoolFromReceived("1000", "JPY"), /manual_review_currency_precision/);
+  assert.throws(() => agentPoolFromReceived("10.005", "USD"), /manual_review_received_amount_precision/);
+  assert.equal(agentPoolFromReceived("10", "USD"), "5.00");
+  assert.equal(agentPoolFromReceived("10.01", "USD"), "5.01");
 });

@@ -3,7 +3,7 @@ import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
 import { udcPaymentTerms } from '../marketplace/paymentPolicy';
-import { selectDefaultSellerRate } from "../referrals/defaultCommissionRule";
+import { selectDefaultSellerRate, TWO_DECIMAL_CURRENCIES } from "../referrals/defaultCommissionRule";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
 import { randomUUID } from "node:crypto";
@@ -1272,7 +1272,11 @@ router.post("/admin/deals/:dealId/default-commission-preview", requireRole("admi
     const invoiceValue = input.actualInvoiceValue ?? calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: "100" });
     const outcome = selectDefaultSellerRate({ invoiceValue, invoiceCurrency: deal.currency.toUpperCase(), invoiceDate: input.invoiceDate, rbiReferenceRateInrPerUnit: input.rbiReferenceRateInrPerUnit, rbiReferenceRateDate: input.rbiReferenceRateDate });
     if (outcome.status === "manual_review") { res.json({ dealId, status: "manual_review", reason: outcome.reason, valueBasis: estimated ? "estimate_quantity_x_agreed_price" : "admin_supplied_actual_invoice_value", note: "No rate selected. Supply the RBI reference rate dated the invoice date, or record a written fee schedule." }); return; }
-    const amount = calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: outcome.ratePercent });
+    if (!TWO_DECIMAL_CURRENCIES.has(deal.currency.toUpperCase())) {
+      res.json({ dealId, status: "rate_only", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, commissionAmount: null, reason: "currency_precision_unconfirmed", note: "Rate selected but no money amount computed: minor-unit rounding for this currency is not confirmed. Compute manually." });
+      return;
+    }
+    const amount = calculateCommissionAmount({ method: "percentage", quantity: "1", unit: "invoice", agreedPrice: invoiceValue, rate: outcome.ratePercent });
     res.json({ dealId, status: "rate", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, invoiceValueInr: outcome.invoiceValueInr, commissionAmount: amount, commissionCurrency: deal.currency.toUpperCase(), valueBasis: estimated ? "estimate_quantity_x_agreed_price" : "admin_supplied_actual_invoice_value", requiresInvoiceConfirmation: estimated, roundingNote: "Amount uses the existing commission math (2 decimals, half up); not confirmed for every currency.", note: (estimated ? "ESTIMATE from quantity x agreed price; freight, fees, discounts or a different price basis are not reflected. Supply actualInvoiceValue before relying on the rate. " : "") + "Preview only. Nothing recorded. Record via POST /admin/commissions with the percentage method after review." });
   } catch (error) {
     if (error instanceof CommissionCalculationError) { res.status(409).json({ error: error.message }); return; }

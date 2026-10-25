@@ -49,12 +49,17 @@ export function selectDefaultSellerRate(input: DefaultRuleInput): DefaultRuleRes
 // any other currency (0, 3 or 4 digits, unknown) needs manual review rather than a silent rounding policy.
 export const TWO_DECIMAL_CURRENCIES = new Set(["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD", "CHF"]);
 
-/** Agents collectively receive half of the commission UDC actually received (Agreement 3.2). Rounded once, half up, to cents like the rest of commission math. */
+/**
+ * Agents collectively receive half of the commission UDC actually received (Agreement 3.2).
+ * The received amount must already be quantized to 2 decimals in a known 2-decimal currency
+ * (excess precision or another currency -> manual review). Halving happens once; an odd cent is rounded half up.
+ */
 export function agentPoolFromReceived(receivedCommission: string, currency: string): string {
   if (!TWO_DECIMAL_CURRENCIES.has(currency)) throw new Error("manual_review_currency_precision");
-  const v = dec(receivedCommission);
-  if (!v || v.n <= 0n) throw new Error("invalid_received_commission");
-  const cents = (v.n * 100n + v.d / 2n) / v.d; // received, in cents
-  const half = (cents + 1n) / 2n; // half up
+  if (!/^\d+(?:\.\d{1,2})?$/.test(receivedCommission)) throw new Error("manual_review_received_amount_precision");
+  const [w, f = ""] = receivedCommission.split(".");
+  const cents = BigInt(w + f.padEnd(2, "0"));
+  if (cents <= 0n) throw new Error("invalid_received_commission");
+  const half = (cents + 1n) / 2n;
   return `${half / 100n}.${String(half % 100n).padStart(2, "0")}`;
 }
