@@ -140,6 +140,7 @@ try {
     email,
     password,
     role: "buyer",
+    company_name: "UDC QA Trading Co",
     accepted_terms: true,
     adult_business_user: true,
   });
