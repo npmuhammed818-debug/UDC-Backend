@@ -1,0 +1,12 @@
+-- DRAFT. NOT APPLIED. Needs the owner's explicit approval before any real database.
+-- Durable WhatsApp inbound de-duplication. Additive only: a new table, no existing table touched.
+BEGIN;
+CREATE TABLE IF NOT EXISTS "whatsapp_inbound_dedup" (
+  "id_hash" text PRIMARY KEY NOT NULL,
+  "claimed_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "completed_at" timestamp with time zone
+);
+CREATE INDEX IF NOT EXISTS "whatsapp_inbound_dedup_claimed_idx" ON "whatsapp_inbound_dedup" ("claimed_at");
+ALTER TABLE "whatsapp_inbound_dedup" ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE "whatsapp_inbound_dedup" FROM anon, authenticated;
+COMMIT;

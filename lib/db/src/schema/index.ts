@@ -38,3 +38,4 @@ export * from "./whatsappShipmentReceipts";
 export * from "./whatsappCustomerWindows";
 export * from "./userRoleChangeRequests";
 export * from "./vaultDocuments";
+export * from "./whatsappInboundDedup";
