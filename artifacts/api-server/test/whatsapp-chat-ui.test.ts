@@ -195,12 +195,13 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       assert.match(m.etaAdvisoryLabel('overdue_unconfirmed'),/arrival is not confirmed/);
       assert.ok(!m.etaAdvisoryLabel('complete'));
     });
-    await t.test('company PDFs need an owned quoted request and remain private, reviewed and idempotent',async()=>{
-      const buyer=rows.usersTable.find((u:any)=>u.phone===phone);await m.handleChatUi(phone,ui('documents'));const request=state.sent.length;
-      const doc={id:'synthetic-doc-message',context:{id:'out-'+request},document:{id:'media-1'}};
-      assert.equal(await m.handleChatUi('10000000003',doc),false);assert.equal(state.uploads.length,0);
-      assert.equal(await m.handleChatUi(phone,doc),true);assert.equal(rows.companyVerificationDocumentsTable.length,1);assert.equal(rows.companyVerificationDocumentsTable[0].uploadedBy,buyer.id);assert.equal(rows.companyVerificationDocumentsTable[0].status,'pending');assert.match(rows.companyVerificationDocumentsTable[0].fileUrl,/storage:\/\/private/);
-      await m.handleChatUi(phone,doc);assert.equal(state.uploads.length,1);assert.equal(rows.companyVerificationDocumentsTable.length,1);
+    await t.test('company PDFs are never accepted on WhatsApp: the vault link is offered instead',async()=>{
+      const before=state.uploads.length,rowsBefore=rows.companyVerificationDocumentsTable.length;
+      await m.handleChatUi(phone,ui('documents'));assert.match(last(),/don't send/i);assert.match(last(),/private upload link/);
+      const doc={id:'synthetic-doc-message',context:{id:'out-'+state.sent.length},document:{id:'media-1'}};
+      assert.equal(await m.handleChatUi('10000000003',doc),false);
+      await m.handleChatUi(phone,doc);
+      assert.equal(state.uploads.length,before);assert.equal(rows.companyVerificationDocumentsTable.length,rowsBefore);
       state.flowId=null;await m.handleChatUi(phone,ui('requirement'));assert.match(last(),/product/);delete rows.whatsappChatSessionsTable[0].data.__paragraph;assert.equal(rows.whatsappChatSessionsTable.length,1);
       assert.ok(state.sent.every((s:any)=>!s.body.includes('https://udc-backend.onrender.com/login')));
     });
