@@ -79,8 +79,18 @@ export function publicDocumentStatus(dbStatus: string | null | undefined): Publi
   return "unverified";
 }
 
+export function vaultPublicOrigin(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+    return url.origin;
+  } catch { return null; }
+}
+
 export function uploadPageUrl(baseUrl: string, token: string) {
-  const base = baseUrl.replace(/\/+$/, "");
+  const base = vaultPublicOrigin(baseUrl);
+  if (!base) throw Error('invalid_vault_public_origin');
   return `${base}/api/vault/upload/${encodeURIComponent(token)}`;
 }
 

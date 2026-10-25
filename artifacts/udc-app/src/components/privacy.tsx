@@ -151,7 +151,7 @@ export function PrivacySettings() {
       <p>
         For access, correction, consent withdrawal or a privacy grievance,
         contact{" "}
-        <a href="mailto:npmuhammed818@gmail.com">npmuhammed818@gmail.com</a>. Do
+        <a href="mailto:udc@updowncircle.site">udc@updowncircle.site</a>. Do
         not send passwords or banking credentials.
       </p>
       <Button variant="outline" disabled={busy} onClick={unsubscribe}>

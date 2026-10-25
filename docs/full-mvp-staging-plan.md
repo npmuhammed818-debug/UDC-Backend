@@ -1,5 +1,15 @@
 # Full MVP integration and controlled staging plan
 
+## Current verification review
+
+The follow-up `codex/mvp-verification-gaps` branch starts at acceptance commit
+`2ad7aa7a359adfd4b64d3a3527e673eda15f3170`. See the
+[eight-gap investigation and founder activation checklist](mvp-verification-gaps.md)
+and [fresh evidence matrix](release/full-mvp-acceptance.md). It fixes ambiguous
+Meta acknowledgement/replay handling, malformed vault upload origins and obsolete
+public/support identity, with no hosted operations or legal-prose rewrite. The
+original integration provenance below remains unchanged.
+
 ## Decision and boundaries
 
 This branch starts at `83fddc6cd8fba5f7fa6f2edc36a27aba9cdd2bb2` (#185).
@@ -171,7 +181,7 @@ do not describe those records as verified live carrier feeds.
 | P1 product decision | Canonical role activation is intentionally absent | Owner confirms request/review-only staging scope or approves a separate identity/access transition design; never silently change roles |
 | P1 infrastructure | Actual migration baseline, TLS/app principal/RLS and Storage access are unverified | Approved staged preflight, migration/permissions audit and complete database/object restore drill |
 | P1 external acceptance | Real email, Meta templates/receipts, model quality and human end-to-end UAT remain unverified | Provider/domain/number approval, protected test bindings, controlled tests and evidence |
-| P1 legal/operations | New consent wording/business support address are draft inputs | Confirm reviewed legal wording, notice URLs, mailbox ownership and operational review/recovery process |
+| P1 legal/operations | Approved legal publication/version provenance and mailbox operation remain unverified | Founder confirms canonical Terms, Agent Notice and Privacy URLs/versions/approval; business support is udc@updowncircle.site; do not rewrite approved text |
 | P2 scoped rollout | Three-decimal commission storage is still gated | Follow its separate migration/schema plan before testing those amounts |
 | Review tooling | GitHub API access has previously returned Forbidden | Retry draft creation/check inspection; if still blocked, enable API access or open the prepared draft manually |
 

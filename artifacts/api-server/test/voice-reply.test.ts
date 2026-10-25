@@ -18,10 +18,10 @@ test("off by default; needs a voice note from the user", () => {
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply: "Hello Rashid from Acme", enabled: true }), false);
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply, enabled: true }), true);
 });
-test("webhook speaks only the guidance reply path and always falls back to text", async () => {
+test("webhook speaks only the guidance path and falls back only for known failure", async () => {
   const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   assert.equal((w.match(/trySpeakReply\(/g) || []).length, 1);
-  assert.ok(w.includes("if (!spoken) await deliverWhatsAppReply(message.from, guidance)"));
+  assert.ok(w.includes("if (spoken===false) await deliverWhatsAppReply(message.from, guidance)"));
 });
 
 test("API allowlist and worker allowlist are identical (cross-language parity)", async () => {

@@ -1,26 +1,10 @@
+import {parseMessageAcknowledgement,readMetaJson} from './messageAcknowledgement.ts';
 import { getWhatsAppConfig } from './client.ts';
 import { GENERIC_NOTIFICATION_TEMPLATE_BODY } from '../notifications/deliveryContent.ts';
 
 export type NotificationTransportResult =
-  | { delivered: true; messageId?: string }
-  | { delivered: false; reason: 'not_configured' | 'preflight_unavailable' | 'provider_rejected' | 'provider_rate_limited' };
-
-async function boundedJson(response: Response, limit = 16_384): Promise<any> {
-  const reader = response.body?.getReader();
-  if (!reader) throw Error('invalid_meta_response');
-  let size = 0;
-  const chunks: Uint8Array[] = [];
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > limit) { await reader.cancel(); throw Error('oversized_meta_response'); }
-      chunks.push(value);
-    }
-  } finally { reader.releaseLock(); }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-}
+  | { delivered: true; messageId: string }
+  | { delivered: false; reason: 'not_configured' | 'preflight_unavailable' | 'provider_rejected' | 'provider_rate_limited' | 'provider_outcome_unknown' };
 
 // Uses the existing Meta integration's server credentials, API version and
 // messages endpoint. Unlike conversational replies, proactive sends must be
@@ -49,7 +33,7 @@ export async function sendWhatsAppNotification(input: {
     try {
       const response = await transport(url, { headers, signal: AbortSignal.timeout(5_000), redirect: 'error' });
       if (!response.ok) { await response.body?.cancel(); return { delivered: false, reason: 'preflight_unavailable' }; }
-      const data = await boundedJson(response, 96 * 1024);
+      const data = await readMetaJson(response, 96 * 1024);
       const template = Array.isArray(data?.data) && data.data.find((t: any) => t.name === name && t.language === language);
       if (!template || template.status !== 'APPROVED' || template.category !== 'UTILITY' ||
         !Array.isArray(template.components) || template.components.length !== 1 ||
@@ -64,13 +48,11 @@ export async function sendWhatsAppNotification(input: {
     method: 'POST', headers, signal: AbortSignal.timeout(10_000), redirect: 'error',
     body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: input.phone, ...message }),
   });
-  const payload = await boundedJson(response);
+  const payload = await readMetaJson(response);
   if (!response.ok) {
     if (response.status >= 400 && response.status < 500 && typeof payload?.error?.code === 'number')
       return { delivered: false, reason: response.status === 429 ? 'provider_rate_limited' : 'provider_rejected' };
     throw Error('meta_outcome_unknown');
   }
-  const id = payload?.messages?.[0]?.id;
-  return typeof id === 'string' && /^[\w.:-]{5,255}$/.test(id)
-    ? { delivered: true, messageId: id } : { delivered: true };
+  return parseMessageAcknowledgement(payload);
 }

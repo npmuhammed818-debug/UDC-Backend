@@ -1,6 +1,34 @@
-import { and, eq } from "drizzle-orm";
-import { db, dealsTable, notificationsTable, productsTable, usersTable } from "@workspace/db";
-import { sendWhatsAppText } from "./client";
+import {authorizeCustomerWindow,hasCurrentWhatsAppConsent} from './customerServiceWindow';
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { db, auditLogsTable, dealsTable, notificationsTable, productsTable, usersTable } from "@workspace/db";
+import { sendWhatsAppText, getWhatsAppConfig } from "./client";
+
+// A durable attempt is committed BEFORE calling Meta. Unlike an in-memory
+// sent flag, it survives a crash after submission and serializes replicas.
+// Never automatically repeat an ambiguous attempt or call it delivered.
+async function claimReplay(userId:string,phone:string,markerType:string,link:string,dealId?:string){
+  if(!getWhatsAppConfig())return false;
+  return db.transaction(async tx=>{
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'legacy-replay:'+userId+':'+markerType}))`);
+    const audience=await tx.execute(sql`
+      SELECT u.id FROM public.users u JOIN public.notification_preferences p ON p.user_id=u.id
+      WHERE u.id=${userId} AND u.phone=${phone} AND u.status='verified'
+        AND p.optional_whatsapp=true AND p.reminders=true
+        AND (${dealId??null}::uuid IS NULL OR EXISTS(SELECT 1 FROM public.deals d WHERE d.id=${dealId??null}::uuid
+          AND ((d.buyer_user_id=u.id AND u.role='buyer') OR (d.seller_user_id=u.id AND u.role='seller'))))
+    `);
+    if(!audience.rows.length||!await hasCurrentWhatsAppConsent(phone,{executor:tx})||
+      !await authorizeCustomerWindow(phone,userId,dealId??'',{executor:tx}))return false;
+    const [existing]=await tx.select({id:notificationsTable.id}).from(notificationsTable)
+      .where(and(eq(notificationsTable.userId,userId),inArray(notificationsTable.type,[markerType,markerType+'_attempted']))).limit(1);
+    const [attempt]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable)
+      .where(and(eq(auditLogsTable.entityId,userId),eq(auditLogsTable.action,'whatsapp_replay_attempted'),sql`${auditLogsTable.metadata}->>'markerType' = ${markerType}`)).limit(1);
+    if(existing||attempt)return false;
+    await tx.insert(auditLogsTable).values({actorUserId:userId,action:'whatsapp_replay_attempted',entityType:'user',entityId:userId,
+      metadata:{markerType,reference:link,automaticRetryAllowed:false}});
+    return true;
+  });
+}
 
 export async function replayVerificationWhatsAppNotifications() {
   const rawIds = process.env.WHATSAPP_VERIFICATION_REPLAY_USER_IDS?.trim();
@@ -10,6 +38,7 @@ export async function replayVerificationWhatsAppNotifications() {
   let sent = 0;
   let failed = 0;
   let skipped = 0;
+  let uncertain = 0;
 
   for (const userId of userIds) {
     const [user] = await db
@@ -23,19 +52,7 @@ export async function replayVerificationWhatsAppNotifications() {
       continue;
     }
 
-    const [alreadySent] = await db
-      .select({ id: notificationsTable.id })
-      .from(notificationsTable)
-      .where(and(
-        eq(notificationsTable.userId, user.id),
-        eq(notificationsTable.type, "verification_whatsapp_sent"),
-      ))
-      .limit(1);
-
-    if (alreadySent) {
-      skipped += 1;
-      continue;
-    }
+    if(!await claimReplay(user.id,user.phone,'verification_whatsapp_sent','/profile')){skipped+=1;continue;}
 
     try {
       const delivery = await sendWhatsAppText(
@@ -44,7 +61,7 @@ export async function replayVerificationWhatsAppNotifications() {
       );
 
       if (!delivery.delivered) {
-        failed += 1;
+        if(delivery.reason==='provider_outcome_unknown')uncertain+=1;else failed+=1;
         continue;
       }
 
@@ -61,7 +78,7 @@ export async function replayVerificationWhatsAppNotifications() {
     }
   }
 
-  return { configured: true as const, sent, failed, skipped };
+  return { configured: true as const, sent, failed, skipped, uncertain };
 }
 
 
@@ -95,6 +112,7 @@ export async function replayDealStatusWhatsAppNotification() {
   let sent = 0;
   let failed = 0;
   let skipped = 0;
+  let uncertain = 0;
 
   for (const user of targets) {
     if (!user.phone) {
@@ -103,25 +121,13 @@ export async function replayDealStatusWhatsAppNotification() {
     }
 
     const markerType = `deal_status_whatsapp_sent_${deal.id}_${deal.status}`;
-    const [alreadySent] = await db
-      .select({ id: notificationsTable.id })
-      .from(notificationsTable)
-      .where(and(
-        eq(notificationsTable.userId, user.id),
-        eq(notificationsTable.type, markerType),
-      ))
-      .limit(1);
-
-    if (alreadySent) {
-      skipped += 1;
-      continue;
-    }
+    if(!await claimReplay(user.id,user.phone,markerType,`/deals/${deal.id}`,deal.id)){skipped+=1;continue;}
 
     try {
       const message = `We’re at ${deal.status} now.`;
       const delivery = await sendWhatsAppText(user.phone, message);
       if (!delivery.delivered) {
-        failed += 1;
+        if(delivery.reason==='provider_outcome_unknown')uncertain+=1;else failed+=1;
         continue;
       }
 
@@ -147,7 +153,7 @@ export async function replayDealStatusWhatsAppNotification() {
     }
   }
 
-  return { configured: true as const, sent, failed, skipped };
+  return { configured: true as const, sent, failed, skipped, uncertain };
 }
 
 
@@ -194,6 +200,7 @@ export async function replayDealSummaryWhatsAppNotification() {
   let sent = 0;
   let failed = 0;
   let skipped = 0;
+  let uncertain = 0;
   const markerType = `deal_summary_whatsapp_sent_${deal.id}`;
   const productName = product?.name ?? "Product";
   const message =
@@ -206,24 +213,12 @@ export async function replayDealSummaryWhatsAppNotification() {
       continue;
     }
 
-    const [alreadySent] = await db
-      .select({ id: notificationsTable.id })
-      .from(notificationsTable)
-      .where(and(
-        eq(notificationsTable.userId, user.id),
-        eq(notificationsTable.type, markerType),
-      ))
-      .limit(1);
-
-    if (alreadySent) {
-      skipped += 1;
-      continue;
-    }
+    if(!await claimReplay(user.id,user.phone,markerType,`/deals/${deal.id}`,deal.id)){skipped+=1;continue;}
 
     try {
       const delivery = await sendWhatsAppText(user.phone, message);
       if (!delivery.delivered) {
-        failed += 1;
+        if(delivery.reason==='provider_outcome_unknown')uncertain+=1;else failed+=1;
         continue;
       }
 
@@ -240,5 +235,5 @@ export async function replayDealSummaryWhatsAppNotification() {
     }
   }
 
-  return { configured: true as const, sent, failed, skipped };
+  return { configured: true as const, sent, failed, skipped, uncertain };
 }

@@ -1,0 +1,507 @@
+{
+  "generatedAt": "2026-10-25T19:48:38.847Z",
+  "revision": "2ad7aa7a359adfd4b64d3a3527e673eda15f3170",
+  "sourceDigest": "918d24da06f980c1b360d9c22c5ddf3b332711f7e49b84c2ecc174bbddb874c1",
+  "localChecksPassed": true,
+  "fullMvpAccepted": false,
+  "stagingActivationApproved": false,
+  "parallelSources": {
+    "acceptanceBase": "2ad7aa7a359adfd4b64d3a3527e673eda15f3170",
+    "base": "83fddc6cd8fba5f7fa6f2edc36a27aba9cdd2bb2",
+    "pr181": "d71c1573bd0f96e19ba6bcbdbb914ec08283f5ca",
+    "pr182": "767f0fad88ba0fec3204d79f1a88f5fb4b406481",
+    "onboarding": "1578783b60c38c5e4b107f923e686e1dd8107606"
+  },
+  "stages": [
+    {
+      "id": "codegen",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 1618,
+      "log": "codegen.log"
+    },
+    {
+      "id": "legal-text-preserved",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 3,
+      "log": "legal-text-preserved.log"
+    },
+    {
+      "id": "generated-contracts",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 5,
+      "log": "generated-contracts.log"
+    },
+    {
+      "id": "release",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 20411,
+      "log": "release.log"
+    },
+    {
+      "id": "feature-groups",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 10189,
+      "log": "feature-groups.log"
+    },
+    {
+      "id": "javascript",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 545,
+      "log": "javascript.log"
+    },
+    {
+      "id": "python",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 1155,
+      "log": "python.log"
+    },
+    {
+      "id": "python-compile",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 26,
+      "log": "python-compile.log"
+    },
+    {
+      "id": "hermes-config",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 58,
+      "log": "hermes-config.log"
+    },
+    {
+      "id": "dependency-audit",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 632,
+      "log": "dependency-audit.log"
+    },
+    {
+      "id": "postgres",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 79649,
+      "log": "postgres.log"
+    },
+    {
+      "id": "email-migrations",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 2329,
+      "log": "email-migrations.log"
+    },
+    {
+      "id": "shipment-migrations",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 276,
+      "log": "shipment-migrations.log"
+    },
+    {
+      "id": "restore",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 596,
+      "log": "restore.log"
+    }
+  ],
+  "postgres": [
+    {
+      "id": "full-mvp-lifecycle",
+      "status": "PASS",
+      "log": "full-mvp-lifecycle-postgres.log"
+    },
+    {
+      "id": "whatsapp-onboarding-ux",
+      "status": "PASS",
+      "log": "whatsapp-onboarding-ux-postgres.log"
+    },
+    {
+      "id": "shipment-delivery",
+      "status": "PASS",
+      "log": "shipment-delivery-postgres.log"
+    },
+    {
+      "id": "whatsapp-buyer",
+      "status": "PASS",
+      "log": "whatsapp-buyer-postgres.log"
+    },
+    {
+      "id": "whatsapp-webhook-retry",
+      "status": "PASS",
+      "log": "whatsapp-webhook-retry-postgres.log"
+    },
+    {
+      "id": "email-auth",
+      "status": "PASS",
+      "log": "email-auth-postgres.log"
+    },
+    {
+      "id": "company-verification",
+      "status": "PASS",
+      "log": "company-verification-postgres.log"
+    },
+    {
+      "id": "p0-gates",
+      "status": "PASS",
+      "log": "p0-gates-postgres.log"
+    },
+    {
+      "id": "vault",
+      "status": "PASS",
+      "log": "vault-postgres.log"
+    },
+    {
+      "id": "buyer-pools",
+      "status": "PASS",
+      "log": "buyer-pools-postgres.log"
+    },
+    {
+      "id": "trade-journey",
+      "status": "PASS",
+      "log": "trade-journey-postgres.log"
+    },
+    {
+      "id": "commission-routes",
+      "status": "PASS",
+      "log": "commission-routes-postgres.log"
+    },
+    {
+      "id": "commission-migration",
+      "status": "PASS",
+      "log": "commission-migration-postgres.log"
+    }
+  ],
+  "capabilities": [
+    {
+      "capability": "Buyer/seller/agent signed WhatsApp consent, registration, retries and multiple offers",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:whatsapp-buyer",
+        "pg:whatsapp-onboarding-ux"
+      ],
+      "scope": "Signed webhook, real SQL, simulated Meta/AI/email"
+    },
+    {
+      "capability": "Continuous registered cohort: OTP \u2192 private company evidence \u2192 matching \u2192 documents \u2192 DLC/SGS \u2192 completion",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real web/API routes and SQL; mail/storage/model boundaries simulated; not one continuous live WhatsApp conversation"
+    },
+    {
+      "capability": "Email ownership, expiry, resends, guessing limits and one-time proof",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:email-auth"
+      ],
+      "scope": "Real routes, hashing and SQL; simulated mail"
+    },
+    {
+      "capability": "Password recovery and old-session revocation",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:email-auth"
+      ],
+      "scope": "Real SQL/concurrent login/reset; no real inbox"
+    },
+    {
+      "capability": "Same-email WhatsApp number continuity without duplicate identity/takeover",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:email-auth"
+      ],
+      "scope": "Real phone-recovery transactions, competing codes and identity checks"
+    },
+    {
+      "capability": "Failed company verification and matching gates",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:company-verification",
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Actual approved/rejected company proof and human verification routes"
+    },
+    {
+      "capability": "Seller multiple independent offers",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:whatsapp-buyer",
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Separate persisted units/currencies/prices"
+    },
+    {
+      "capability": "Buyer/seller matching, negotiation and private room permissions",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle",
+        "release"
+      ],
+      "scope": "Actual matching and stage routes plus isolated conversational regressions"
+    },
+    {
+      "capability": "LOI/ICPO/FCO/SPA/NCNDA drafting and approval boundaries",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real routes, draft status, recorded terms and role checks; not executed legal documents"
+    },
+    {
+      "capability": "DLC coordination, SGS evidence, completion and commission payout records",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real human-controlled record transitions; no bank instrument or payment executed"
+    },
+    {
+      "capability": "Agent referral code/invitation and referred users",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle",
+        "release"
+      ],
+      "scope": "Actual signed invite registration and referral association"
+    },
+    {
+      "capability": "Agent assigned deals/progress without confidential prices",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:p0-gates",
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real SQL/API privacy checks"
+    },
+    {
+      "capability": "Commission permissions, currency precision and agreed calculations",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:commission-routes",
+        "pg:commission-migration",
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real SQL; optional three-decimal rollout remains separate"
+    },
+    {
+      "capability": "Role-change request/review without privilege escalation",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real SQL regression; reviewed does not activate a new role"
+    },
+    {
+      "capability": "Cancellation, interrupted registration, cancel/edit/restart",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle",
+        "pg:whatsapp-onboarding-ux"
+      ],
+      "scope": "Separate admin cancellation boundary and signed interrupted conversations"
+    },
+    {
+      "capability": "Vault access, token expiry/single-use and deletion requests",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:vault",
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Real SQL/API, expiry/reuse/outsider denials, malformed upload-origin denial; storage operations simulated"
+    },
+    {
+      "capability": "Marketplace verification and tenant/agent isolation",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:p0-gates",
+        "pg:full-mvp-lifecycle"
+      ],
+      "scope": "Unverified/outsider/agent negative controls"
+    },
+    {
+      "capability": "Webhook HMAC, durable replay/crash/concurrency protection",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:whatsapp-webhook-retry",
+        "pg:shipment-delivery",
+        "release"
+      ],
+      "scope": "Signed synthetic HTTP and exact SQL migration"
+    },
+    {
+      "capability": "Shipment milestones, cargo ETA, notifications, templates and receipts",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:shipment-delivery",
+        "javascript"
+      ],
+      "scope": "Actual admin\u2192outbox\u2192simulated Meta\u2192signed callback; malformed 2xx quarantined without resend/false confirmation; concurrent legacy replays gated; flags enabled only in fixture"
+    },
+    {
+      "capability": "Buyer pools: acceptance/decline, capacity and expiry",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:buyer-pools"
+      ],
+      "scope": "Real SQL and routes; financial instruments unchanged"
+    },
+    {
+      "capability": "AKIF authorized SQL context, private history and action boundaries",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "pg:full-mvp-lifecycle",
+        "release"
+      ],
+      "scope": "Captured simulated model request; vault URLs/private counterparty history absent; no approvals executed"
+    },
+    {
+      "capability": "AKIF worker, model outages, media/voice and guidance safety",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "python",
+        "release",
+        "pg:whatsapp-onboarding-ux"
+      ],
+      "scope": "Isolated model/media fixtures and deterministic outage fallback; not natural-language quality proof"
+    },
+    {
+      "capability": "Logging, privacy consent, grievance/incident and admin regressions",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "release",
+        "feature-groups",
+        "legal-text-preserved"
+      ],
+      "scope": "Safety/authorization and canonical website/support regressions; approved legal source files unchanged; not legal certification"
+    },
+    {
+      "capability": "Generated API contracts, builds and dependency advisories",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "codegen",
+        "generated-contracts",
+        "release",
+        "dependency-audit"
+      ],
+      "scope": "Audit and current code checks; no guarantee against unknown vulnerabilities"
+    },
+    {
+      "capability": "Exact migration compatibility, restricted grants/RLS and lock rollback",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "email-migrations",
+        "shipment-migrations",
+        "pg:whatsapp-webhook-retry"
+      ],
+      "scope": "Disposable PostgreSQL roles only; not hosted project permissions"
+    },
+    {
+      "capability": "Selected new-table database backup/restore including vault and dedup",
+      "automated": "PASS",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [
+        "restore"
+      ],
+      "scope": "Real pinned pg_dump/pg_restore for 14 selected tables; excludes hosted Storage and full Supabase project restore"
+    },
+    {
+      "capability": "Actual canonical role activation / multi-role transition",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Not implemented by the reviewed request-only design; requires owner-approved access/identity transition policy"
+    },
+    {
+      "capability": "Live WhatsApp onboarding, natural multilingual guidance and complete human UAT",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Requires approved staging number, real provider and authorized participants"
+    },
+    {
+      "capability": "Real OTP inbox delivery, domain/provider readiness",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Requires verified sender/domain and separately approved test mail"
+    },
+    {
+      "capability": "Hosted private Storage signed access, expiry and physical deletion",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Requires approved test project/credentials; local fake storage is insufficient"
+    },
+    {
+      "capability": "Actual Supabase TLS, effective role grants/RLS and full project restore",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Requires approved isolated hosted target, CA and complete database/object backup"
+    },
+    {
+      "capability": "Live Meta templates, service windows, delivery/read/failure and billing acceptance",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Requires approved template/number/recipients and explicit sending approval"
+    },
+    {
+      "capability": "Real carrier data, SGS/banking evidence, transfers and signed legal documents",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "External/human authority; simulations do not execute or certify these"
+    },
+    {
+      "capability": "Legal notice, support mailbox and privacy/provider processing approval",
+      "automated": "NOT YET VERIFIED",
+      "realProvider": "NOT YET VERIFIED",
+      "evidence": [],
+      "scope": "Source wording integrated from draft PRs; legal/domain review remains a human gate"
+    }
+  ],
+  "testCounts": {
+    "typescript": 330,
+    "python": 29,
+    "javascript": 3,
+    "postgresPrograms": 13,
+    "featureGroupsOverlapping": 8,
+    "knownDependencyAdvisories": 0
+  },
+  "evidenceScope": "Local synthetic execution only; logs are ignored local artifacts; pre-commit revision plus verified source digest. No external provider or human acceptance."
+}

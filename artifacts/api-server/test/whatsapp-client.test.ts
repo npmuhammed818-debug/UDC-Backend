@@ -48,7 +48,7 @@ test("normalizes credentials and bounds outgoing request time", async () => {
     assert.equal(JSON.parse(String(init?.body)).text.body, "hello");
     return new Response("{}", { status: 200 });
   };
-  assert.deepEqual(await sendWhatsAppText("recipient", "hello"), { delivered: true });
+  assert.deepEqual(await sendWhatsAppText("recipient", "hello"), { delivered: false,reason:"provider_outcome_unknown" });
 });
 test("provider rejection preserves numeric diagnosis without leaking response data", async () => {
   configure();
@@ -71,7 +71,7 @@ test("network failures and non-JSON rejections are safe to report", async () => 
   globalThis.fetch = async () => { throw new Error("private-network-details"); };
   assert.deepEqual(await checkWhatsAppConnection(), { ok: false, reason: "meta_unreachable_or_timeout" });
   globalThis.fetch = async () => new Response("private proxy response", { status: 502 });
-  await assert.rejects(sendWhatsAppText("recipient", "hello"), { message: "whatsapp_delivery_failed http=502 code=unknown subcode=none" });
+  assert.deepEqual(await sendWhatsAppText("recipient", "hello"), { delivered:false,reason:"provider_outcome_unknown" });
 });
 
 

@@ -62,6 +62,6 @@ test('confirmed rejections are bounded retries; timeouts, 5xx and invalid acknow
   }
   await assert.rejects(sendWhatsAppNotification(input, { env, transport: async () => json({ error: { code: 123 } }, 503) }));
   await assert.rejects(sendWhatsAppNotification(input, { env, transport: async () => { throw Error('timeout'); } }));
-  assert.deepEqual(await sendWhatsAppNotification(input, { env, transport: async () => json({}) }), { delivered: true });
+  assert.deepEqual(await sendWhatsAppNotification(input, { env, transport: async () => json({}) }), { delivered: false, reason:'provider_outcome_unknown' });
   await assert.rejects(sendWhatsAppNotification(input, { env, transport: async () => new Response('x'.repeat(20_000)) }));
 });

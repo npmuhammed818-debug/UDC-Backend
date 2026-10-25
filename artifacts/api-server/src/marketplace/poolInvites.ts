@@ -63,10 +63,10 @@ export async function sendPoolInviteMessage(buyerUserId: string, allocationId: s
     const [buyer] = await db.select({ phone: usersTable.phone }).from(usersTable).where(eq(usersTable.id, buyerUserId)).limit(1);
     if (!buyer?.phone) return false;
     const days = summary.days ?? poolInviteExpiryDays();
-    await sendWhatsAppInteractive(buyer.phone, { type: "button",
+    const delivery=await sendWhatsAppInteractive(buyer.phone, { type: "button",
       body: { text: `UDC invites you to join a buyer pool for ${summary.quantity} ${summary.unit}. The pool goes ahead only if every buyer accepts. Declining is free. This invite closes in ${days} days.` },
       action: { buttons: [["accept", "Accept"], ["decline", "Decline"]].map(([a, title]) => ({ type: "reply" as const, reply: { id: `udc:pool:${a}:${allocationId}`, title } })) } });
-    return true;
+    return delivery.delivered;
   } catch { return false; }
 }
 

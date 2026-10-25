@@ -8,7 +8,7 @@ const allowed=new Set(["sent","delivered","read","failed"]);
 
 export function parseMetaDeliveryStatus(value:MetaStatus,now:Date=new Date()){
   if(!value || typeof value.id!=="string" ||
-    value.id.length<5 || value.id.length>255 || !/^[\w.:-]+$/.test(value.id) ||
+    value.id.length<5 || value.id.length>255 || !/^[A-Za-z0-9_.:+/=-]+$/.test(value.id) ||
     typeof value.recipient_id!=="string" || !/^\d{7,20}$/.test(value.recipient_id) ||
     typeof value.status!=="string" || !allowed.has(value.status))return null;
   const raw=value.timestamp;
