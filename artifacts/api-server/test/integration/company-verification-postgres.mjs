@@ -87,11 +87,20 @@ try {
   assert.equal((await pool.query("select verification_status from companies where id=$1", [companyId])).rows[0].verification_status, "pending");
   pass("company cannot be verified without an approved document (409, status unchanged)");
 
+  // Verifying the USER before any company evidence is refused
+  const userRefused = await call("PATCH", `/admin/users/${buyerId}/verification`, { status: "verified" }, cookie);
+  assert.equal(userRefused.status, 409);
+  assert.equal(userRefused.body.error, "verified_company_and_approved_document_required");
+  assert.notEqual((await pool.query("select status from users where id=$1", [buyerId])).rows[0].status, "verified");
+  pass("buyer cannot be verified through the admin route without a verified company and approved document (409)");
+
   // Approve a document, then verify
   const doc = (await pool.query("insert into company_verification_documents(company_id,uploaded_by,document_type,file_url,status) values($1,$2,'certificate','storage://private/qa/doc.pdf','pending') returning id", [companyId, buyerId])).rows[0].id;
   assert.equal((await call("PATCH", `/admin/company-verification-documents/${doc}/status`, { status: "approved" }, cookie)).status, 200);
   assert.equal((await call("PATCH", `/admin/companies/${companyId}/verification`, { verification_status: "verified" }, cookie)).status, 200);
-  await pool.query("update users set status='verified' where id=$1", [buyerId]);
+  const userVerified = await call("PATCH", `/admin/users/${buyerId}/verification`, { status: "verified" }, cookie);
+  assert.equal(userVerified.status, 200);
+  assert.equal((await pool.query("select status from users where id=$1", [buyerId])).rows[0].status, "verified");
   assert.equal(await app.approvedCompanyEvidence(buyerId), true);
   pass("approved document then verified company satisfies the marketplace evidence check");
 
