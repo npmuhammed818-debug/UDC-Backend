@@ -15,9 +15,10 @@ import {
   type WhatsAppPrivacyState,
 } from "./whatsappConsent";
 import { POLICY_VERSION, SUPPORT_EMAIL } from "./policies";
-import { buildConsentNotice, consentVersion, isWithdrawConsent, noticeHash, PRIVACY_URL, TERMS_URL, WITHDRAWN_REPLY } from "./consentNotice";
+import { buildConsentNotice, buildConsentReminder, isShowNoticeRequest, consentVersion, isWithdrawConsent, noticeHash, PRIVACY_URL, TERMS_URL, WITHDRAWN_REPLY } from "./consentNotice";
 const CONSENT_VERSION = consentVersion(POLICY_VERSION);
 const consentNotice = buildConsentNotice(SUPPORT_EMAIL);
+const consentReminder = buildConsentReminder(SUPPORT_EMAIL);
 const noticeMeta = { noticeHash: noticeHash(consentNotice), noticeText: consentNotice };
 export async function whatsappPrivacyGate(
   phone: string,
@@ -173,6 +174,8 @@ export async function whatsappPrivacyGate(
         });
       return { kind: "consent_accepted" as const };
     }
+    const noticeAlreadyShown = current?.metadata?.status === "notice_sent" && current.metadata.policyVersion === CONSENT_VERSION;
+    if (noticeAlreadyShown && !isShowNoticeRequest(text)) return consentReminder;
     if (
       current?.metadata?.status !== "notice_sent" ||
       current.metadata.policyVersion !== CONSENT_VERSION

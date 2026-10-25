@@ -24,7 +24,7 @@ function guidanceServiceFallback(trusted: string | null, language: string) {
       ? `${trusted}\n\nMy ${language} reply service is temporarily unavailable, so I’m answering in English for now.`
       : trusted;
   }
-  return 'My detailed trade-answer service is temporarily unavailable. I can still answer UDC’s saved company facts and basic trade questions in English; please try again shortly for a fuller answer.';
+  return 'My detailed trade-answer service is temporarily unavailable. I can still answer UDC’s saved company facts and basic trade questions in English. Please try again shortly for a fuller answer.';
 }
 export async function answerGuidance(phone: string, text: string, messageId?: string, voice = false, onlyWithHistory = false): Promise<string | null> {
   // A one-word Incoterm is commonly an answer to an active offer/intake prompt.
