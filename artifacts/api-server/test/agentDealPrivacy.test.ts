@@ -73,3 +73,44 @@ test("global document signing is agent-restricted too", () => {
   const src = readFileSync(new URL("../src/routes/documents.ts", import.meta.url), "utf8");
   assert.ok(src.includes('router.get("/documents", requireAuth, requireNonAgentDealAccess,'));
 });
+
+test("new deal/document API routes cannot silently bypass agent privacy rules", () => {
+  const sources = [
+    {
+      name: "deals.ts",
+      prefix: "/deals",
+      contents: readFileSync(new URL("../src/routes/deals.ts", import.meta.url), "utf8"),
+    },
+    {
+      name: "documents.ts",
+      prefix: "/documents",
+      contents: readFileSync(new URL("../src/routes/documents.ts", import.meta.url), "utf8"),
+    },
+  ];
+
+  for (const { name, prefix, contents } of sources) {
+    const declarations = [...contents.matchAll(
+      /\brouter\.(get|post|put|patch|delete)\(\s*["'](\/[^"']+)["']/g,
+    )].filter((match) => match[2] === prefix || match[2]?.startsWith(prefix + "/"));
+
+    const parsed = [...contents.matchAll(
+      /\brouter\.(get|post|put|patch|delete)\(\s*["'](\/[^"']+)["']\s*,\s*([\s\S]*?)\basync\s*\(\s*req\s*,\s*res\s*\)\s*=>/g,
+    )].filter((match) => match[2] === prefix || match[2]?.startsWith(prefix + "/"));
+
+    // A new callback style must be audited, not silently excluded.
+    assert.equal(parsed.length, declarations.length,
+      name + ": newly added or unrecognized route - review role authorization");
+
+    for (const [, method, routePath, middleware] of parsed) {
+      assert.match(middleware, /\brequireAuth\b/,
+        name + ": unauthenticated route " + method?.toUpperCase() + " " + routePath);
+
+      // Assigned agents may view the existing redacted milestones endpoint only.
+      const redactedTracking = method === "get" && routePath === "/deals/:dealId/tracking";
+      if (!redactedTracking) {
+        assert.match(middleware, /\brequireNonAgentDealAccess\b/,
+          name + ": missing agent privacy gate on " + method?.toUpperCase() + " " + routePath);
+      }
+    }
+  }
+});
