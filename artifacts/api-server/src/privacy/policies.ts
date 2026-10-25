@@ -1,5 +1,5 @@
 export const POLICY_VERSION = "2026-10-21";
-export const SUPPORT_EMAIL = "npmuhammed818@gmail.com";
+export const SUPPORT_EMAIL = "udc@updowncircle.site";
 export function escapeHtml(value: string) {
   return value.replace(
     /[&<>"']/g,
