@@ -1,3 +1,5 @@
+import QRCode from "qrcode";
+import { agentJoinLink } from "../referrals/joinInvite";
 import { createAgentInvitation, agentReferralCode } from "../referrals/invitation";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
@@ -90,6 +92,16 @@ router.get("/referrals", requireAuth, async (req, res) => {
     .orderBy(desc(referralsTable.updatedAt));
 
   res.json({ referrals });
+});
+
+router.get("/agent/invite", requireAuth, async (req, res) => {
+  if (req.authUser!.role !== "agent" || !["verified", "active"].includes(req.authUser!.status)) {
+    res.status(403).json({ error: "verified_agent_required" }); return;
+  }
+  const link = agentJoinLink(req.authUser!.id, process.env["UDC_WHATSAPP_PUBLIC_NUMBER"]);
+  if (!link) { res.status(503).json({ error: "invite_link_not_configured" }); return; }
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ code: agentReferralCode(req.authUser!.id), link, qrSvg: await QRCode.toString(link, { type: "svg", margin: 2, errorCorrectionLevel: "M" }) });
 });
 
 router.get("/agent/deals", requireAuth, async (req, res) => {

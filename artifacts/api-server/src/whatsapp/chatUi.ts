@@ -15,6 +15,8 @@ import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
 import { agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
+import { agentJoinLink } from '../referrals/joinInvite';
+import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, myInvitesReply } from '../referrals/joinService';
 import { getVaultLinkIssuer } from '../vault/issuer';
 import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
@@ -123,6 +125,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
       reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status. To confirm your email, send Verify email.':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review. To confirm your email, send Verify email.';
+      if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+='\n\n'+inviteNote;}
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
@@ -161,6 +164,15 @@ async function vaultReplyFor(user:{id:string;role:string},type:'company_registra
 
 export async function handleChatUi(phone:string,message:ChatMessage,directOnly=false){
   if(directOnly)return continueGuidedChat(phone,message,null,submitChatFlow,true);
+  {
+    const joinText=message.text?.body;
+    const joinReply=(await handleJoinMessage(phone,joinText))??(await handleInviteDecline(phone,joinText));
+    if(joinReply!==null){await sendWhatsAppText(phone,joinReply);return true;}
+    if(typeof joinText==='string'&&/^\s*my invites\s*$/i.test(joinText)){
+      const [agent]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+      if(agent?.role==='agent'&&agent.status==='verified'){await sendWhatsAppText(phone,await myInvitesReply(agent.id));return true;}
+    }
+  }
   if(await handleWhatsAppIntroduction(phone,message))return true;
   const termId=message.interactive?.button_reply?.id;
   const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
@@ -221,6 +233,13 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(['invite','referrals','commissions'].includes(action)){
     if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
     if(action==='invite'){
+       const joinLink=agentJoinLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER);
+       if(joinLink){
+         await sendWhatsAppText(phone,'Your personal invite link. When a buyer or seller taps it, WhatsApp opens the UDC chat with your code already typed. They only press send. UDC reviews every referral; no commission or deal access is granted automatically.');
+         await sendWhatsAppText(phone,joinLink);
+         await sendWhatsAppText(phone,'A QR code of this same link is available in the UDC web app under your invite page, for cards and events. Send "My invites" to see who joined.');
+         return true;
+       }
        const command=agentReferralWhatsAppCommand(user.id);
        await sendWhatsAppText(phone,
          'Forward or copy the NEXT message to your buyer or seller. After registering with UDC and agreeing to privacy terms, they must send the exact message to UDC and confirm your introduction. UDC reviews every referral; no commission or deal access is granted automatically.');

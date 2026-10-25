@@ -168,9 +168,8 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         'never invent a phone number or share link');
       process.env.UDC_WHATSAPP_PUBLIC_NUMBER='+15551234567';
       await m.handleChatUi(agent.phone,ui('invite'));
-      assert.match(state.sent.at(-2).body,/^Referral UDC-[0-9A-F]{12}$/);
-      assert.match(last(),/^Optional UDC WhatsApp shortcut/);
-      assert.match(last(),/https:\/\/wa.me\/15551234567\?text=Referral%20UDC-/);
+      assert.match(state.sent.at(-2).body,/^https:\/\/wa\.me\/15551234567\?text=JOIN%20UDC-[0-9A-F]{12}$/);
+      assert.match(last(),/QR code of this same link/);
       if(priorPublicNumber===undefined)delete process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
       else process.env.UDC_WHATSAPP_PUBLIC_NUMBER=priorPublicNumber;
 
