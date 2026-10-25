@@ -18,6 +18,9 @@ import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intellige
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
+import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievance/grievance";
+import { scrubAadhaar } from "../privacy/aadhaar";
+import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { react } from "../whatsapp/reactions";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
@@ -1084,6 +1087,21 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if(message.from && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
+      }
+      // Complaints are logged and acknowledged immediately, never answered by the model.
+      if (message.from && message.text?.body && isGrievance(message.text.body)) {
+        try {
+          const [who] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
+          const receivedAt = new Date();
+          const dueAt = grievanceDeadline(receivedAt);
+          const [row] = await db.insert(auditLogsTable).values({ actorUserId: who?.id ?? null, action: "grievance_received", entityType: "grievance", entityId: who?.id ?? null,
+            metadata: { channel: "whatsapp", providerMessageId: message.id ?? null, text: scrubAadhaar(message.text.body).slice(0, 2000), dueAt: dueAt.toISOString(), phoneHash: guidedChatPhoneHash(message.from) } }).returning({ id: auditLogsTable.id });
+          await deliverWhatsAppReply(message.from, acknowledgementReply(String(row!.id).slice(0, 8).toUpperCase(), dueAt));
+          continue;
+        } catch { /* fall through: a failed log must not silently drop the complaint */
+          await deliverWhatsAppReply(message.from, "I couldn't record your complaint just now. Please email npmuhammed818@gmail.com or try again shortly.").catch(() => undefined);
+          continue;
+        }
       }
       // A person asking for a human is never answered by the model: record it and say so honestly.
       if (message.from && message.text?.body && wantsHumanHelp(message.text.body)) {
