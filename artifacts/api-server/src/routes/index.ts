@@ -1,4 +1,6 @@
 import adminRouter from "./admin";
+import adminIncidentsRouter from "./adminIncidents";
+import adminGrievancesRouter from "./adminGrievances";
 import akifIntelligenceRouter from "./akifIntelligence";
 import akifOperationsRouter from "./akifOperations";
 import akifStoreRouter from "./akifStore";
@@ -27,6 +29,7 @@ import whatsappWebhookRouter from "./whatsappWebhook";
 import whatsappTemplateReadinessRouter from "./whatsappTemplateReadiness";
 import roleChangeReviewRouter from "./roleChangeReview";
 import stagingReadinessRouter from "./stagingReadiness";
+import vaultRouter from "./vault";
 
 const router: IRouter = Router();
 
@@ -47,6 +50,8 @@ router.use(dealRouter);
 router.use(buyerPoolsRouter);
 router.use(companyRouter);
 router.use(adminRouter);
+router.use(adminIncidentsRouter);
+router.use(adminGrievancesRouter);
 router.use(akifIntelligenceRouter);
 router.use(akifOperationsRouter);
 router.use(akifStoreRouter);
@@ -58,5 +63,6 @@ router.use(whatsappWebhookRouter);
 router.use(whatsappTemplateReadinessRouter);
 router.use(roleChangeReviewRouter);
 router.use(stagingReadinessRouter);
+router.use(vaultRouter);
 
 export default router;

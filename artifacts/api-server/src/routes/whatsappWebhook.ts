@@ -8,6 +8,7 @@ import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../wha
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { claimInboundMessage, completeInboundMessages } from "../whatsapp/inboundDedup";
 import { Router, type IRouter, type Request } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
@@ -17,6 +18,12 @@ import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
 import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
+import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
+import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievance/grievance";
+import { scrubAadhaar } from "../privacy/aadhaar";
+import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
+import { react } from "../whatsapp/reactions";
+import { trySpeakReply } from "../whatsapp/voiceSend";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
@@ -25,6 +32,9 @@ import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
+import { looksLikeConfidentialDocumentTopic, SENSITIVE_UPLOAD_WARNING, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
+import { wantsHumanHelp, HUMAN_HANDOFF_REPLY } from "../akif/conversationPolicy";
+import { getVaultLinkIssuer } from "../vault/issuer";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { triageSellerOffer } from "../akif/sellerOfferTriage";
@@ -34,6 +44,7 @@ import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
 import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraft } from "../deals/whatsappDraft";
 
 const router: IRouter = Router();
+
 
 function isEqual(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
@@ -278,6 +289,19 @@ async function setActiveDealContext(userId: string, dealId: string) {
     });
 }
 
+function confidentialDocumentKind(text: string): VaultDocumentType {
+  const v = text.toLowerCase();
+  const pick = (type: VaultDocumentType) => (VAULT_DOCUMENT_TYPES as readonly string[]).includes(type) ? type : "other";
+  if (/passport/.test(v)) return pick("passport");
+  if (/national id|emirates id|id card/.test(v)) return pick("national_id");
+  if (/bank/.test(v) || /account statement/.test(v)) return pick("bank_statement");
+  if (/licen[cs]e/.test(v)) return pick("business_license");
+  if (/tax/.test(v)) return pick("tax_certificate");
+  if (/registration|incorporation/.test(v)) return pick("company_registration");
+  if (/agreement|spa signed/.test(v)) return pick("commercial_agreement");
+  return "other";
+}
+
 function inferDocumentType(filename?: string, caption?: string) {
   const value = `${filename ?? ""} ${caption ?? ""}`.toLowerCase();
   if (/\bloi\b|letter of intent/.test(value)) return "LOI";
@@ -418,6 +442,21 @@ async function handleWhatsAppDealDocument(
     return { reply: "I got the file, but this number isn’t verified for UDC documents yet." };
   }
 
+  // Confidential identity, bank and company records never enter via WhatsApp:
+  // do not download, store or process the file; send a private upload link instead.
+  const confidentialText = `${document.filename ?? ""} ${document.caption ?? ""}`;
+  if (looksLikeConfidentialDocumentTopic(confidentialText)) {
+    const kind = confidentialDocumentKind(confidentialText);
+    let reply = vaultRedirectReply();
+    try {
+      const [account] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, sender.id)).limit(1);
+      const issue = getVaultLinkIssuer();
+      const link = issue ? await issue({ id: sender.id, role: account?.role ?? "" }, kind) : null;
+      if (link?.ok) reply = vaultRedirectReply({ url: link.url, expiresAt: link.expiresAt });
+    } catch { /* fall back to the text-only reply; never block on the vault */ }
+    return { reply };
+  }
+
   const dealId = await resolveActiveDealForUser(sender.id, replyToProviderMessageId);
   if (!dealId) {
     return { reply: "I got the file, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
@@ -439,6 +478,7 @@ async function handleWhatsAppDealDocument(
     }
   }
 
+  react("ack", from, inboundProviderMessageId);
   const media = await downloadWhatsAppMedia(document.id);
   if (media.bytes.byteLength > 25 * 1024 * 1024) {
     return { reply: "That file is over the 25 MB limit. Send a smaller copy and I’ll take it from there." };
@@ -474,6 +514,7 @@ async function handleWhatsAppDealDocument(
     mimeType: media.mimeType,
   })
     .then(async (result) => {
+      react("complete", from, inboundProviderMessageId);
       const warning = result.status === "needs_review"
         ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
         : "";
@@ -501,7 +542,7 @@ async function handleWhatsAppDealDocument(
   });
 
   return {
-    reply: `Got the ${documentType}. I’ll keep it here for review.`,
+    reply: `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
     dealId,
     recipientUserId: sender.id,
   };
@@ -976,6 +1017,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     ? req.body.entry.flatMap((entry: { changes?: Array<{ value?: { metadata?: {phone_number_id?: string}; statuses?: Array<{id?:unknown;status?:unknown;timestamp?:unknown;recipient_id?:unknown}>; contacts?: Array<{ profile?: { name?: string } }>; messages?: Array<{ id?: string; from?: string; timestamp?: string; context?: { id?: string }; text?: { body?: string }; interactive?: ChatMessage["interactive"]; audio?: { id?: string; mime_type?: string }; image?: { id?: string; mime_type?: string; caption?: string }; document?: { id?: string; filename?: string; mime_type?: string; caption?: string } }> } }> }) => entry.changes ?? [])
     : [];
 
+  const claimedInbound: unknown[] = [];
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
@@ -993,6 +1035,12 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
     }
     for (const message of value?.messages ?? []) {
+      if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
+      claimedInbound.push(message.id);
+      if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
+        try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
+        continue;
+      }
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);
@@ -1046,6 +1094,31 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
       }
+      // Complaints are logged and acknowledged immediately, never answered by the model.
+      if (message.from && message.text?.body && isGrievance(message.text.body)) {
+        try {
+          const [who] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
+          const receivedAt = new Date();
+          const dueAt = grievanceDeadline(receivedAt);
+          const [row] = await db.insert(auditLogsTable).values({ actorUserId: who?.id ?? null, action: "grievance_received", entityType: "grievance", entityId: who?.id ?? null,
+            metadata: { channel: "whatsapp", providerMessageId: message.id ?? null, text: scrubAadhaar(message.text.body).slice(0, 2000), dueAt: dueAt.toISOString(), phoneHash: guidedChatPhoneHash(message.from) } }).returning({ id: auditLogsTable.id });
+          await deliverWhatsAppReply(message.from, acknowledgementReply(String(row!.id).slice(0, 8).toUpperCase(), dueAt));
+          continue;
+        } catch { /* fall through: a failed log must not silently drop the complaint */
+          await deliverWhatsAppReply(message.from, "I couldn't record your complaint just now. Please email npmuhammed818@gmail.com or try again shortly.").catch(() => undefined);
+          continue;
+        }
+      }
+      // A person asking for a human is never answered by the model: record it and say so honestly.
+      if (message.from && message.text?.body && wantsHumanHelp(message.text.body)) {
+        try {
+          const [asker] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
+          await db.insert(auditLogsTable).values({ actorUserId: asker?.id ?? null, action: "akif_human_handoff_requested",
+            entityType: "user", entityId: asker?.id ?? null, metadata: { channel: "whatsapp", providerMessageId: message.id ?? null } });
+          await deliverWhatsAppReply(message.from, HUMAN_HANDOFF_REPLY);
+          continue;
+        } catch { /* fall through to normal handling rather than dropping the message */ }
+      }
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
       if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
         try {
@@ -1071,12 +1144,20 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         }
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
+          react("ack", message.from, message.id);
           const media = await downloadWhatsAppMedia(message.audio.id);
           voiceStage = 'transcription';
           const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
           voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true);
-          if (guidance !== null) { if (guidance) await deliverWhatsAppReply(message.from, guidance); continue; }
+          if (guidance !== null) {
+            if (guidance) {
+              // Draft voice reply: generic text only, user spoke first, flag on. Any failure falls back to text.
+              const spoken = await trySpeakReply(message.from, guidance);
+              if (!spoken) await deliverWhatsAppReply(message.from, guidance);
+            }
+            continue;
+          }
           voiceStage = 'trade_context';
           const [speaker] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
@@ -1527,6 +1608,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     }
   }
 
+  await completeInboundMessages(claimedInbound);
   res.sendStatus(200);
 });
 

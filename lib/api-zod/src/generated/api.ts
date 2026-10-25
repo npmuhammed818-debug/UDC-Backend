@@ -20,6 +20,9 @@ export const DatabaseHealthCheckResponse = zod.object({
 export const registerUserBodyPasswordMin = 12;
 export const registerUserBodyPasswordMax = 128;
 
+export const registerUserBodyCompanyNameMin = 2;
+export const registerUserBodyCompanyNameMax = 200;
+
 export const registerUserBodyReferralTokenMax = 120;
 
 
@@ -29,6 +32,7 @@ export const RegisterUserBody = zod.object({
   "email": zod.string(),
   "password": zod.string().min(registerUserBodyPasswordMin).max(registerUserBodyPasswordMax),
   "role": zod.enum(['buyer', 'seller', 'agent']),
+  "company_name": zod.string().min(registerUserBodyCompanyNameMin).max(registerUserBodyCompanyNameMax).optional(),
   "referral_token": zod.string().max(registerUserBodyReferralTokenMax).optional(),
   "accepted_terms": zod.literal(true),
   "adult_business_user": zod.literal(true)
@@ -95,16 +99,16 @@ export const RequestEmailVerificationBody = zod.object({
 
 export const RequestEmailVerificationResponse = zod.object({
   "message": zod.string(),
-  "challengeId": zod.string().uuid(),
+  "challengeId": zod.uuid(),
   "expiresInSeconds": zod.literal(600)
 })
 
 
-export const confirmEmailVerificationBodyCodeRegExp = new RegExp('^[0-9]{8}$');
+export const confirmEmailVerificationBodyCodeRegExp = new RegExp('^[0-9]{6}$');
 
 
 export const ConfirmEmailVerificationBody = zod.object({
-  "challengeId": zod.string().uuid(),
+  "challengeId": zod.uuid(),
   "code": zod.string().regex(confirmEmailVerificationBodyCodeRegExp)
 })
 
@@ -118,27 +122,27 @@ export const requestPasswordRecoveryBodyEmailMax = 254;
 
 
 export const RequestPasswordRecoveryBody = zod.object({
-  "email": zod.string().email().max(requestPasswordRecoveryBodyEmailMax)
+  "email": zod.email().max(requestPasswordRecoveryBodyEmailMax)
 })
 
 export const RequestPasswordRecoveryResponse = zod.object({
   "message": zod.string(),
-  "challengeId": zod.string().uuid(),
+  "challengeId": zod.uuid(),
   "expiresInSeconds": zod.literal(600)
 })
 
 
 export const confirmPasswordRecoveryBodyEmailMax = 254;
 
-export const confirmPasswordRecoveryBodyCodeRegExp = new RegExp('^[0-9]{8}$');
+export const confirmPasswordRecoveryBodyCodeRegExp = new RegExp('^[0-9]{6}$');
 export const confirmPasswordRecoveryBodyPasswordMin = 12;
 export const confirmPasswordRecoveryBodyPasswordMax = 128;
 
 
 
 export const ConfirmPasswordRecoveryBody = zod.object({
-  "email": zod.string().email().max(confirmPasswordRecoveryBodyEmailMax),
-  "challengeId": zod.string().uuid(),
+  "email": zod.email().max(confirmPasswordRecoveryBodyEmailMax),
+  "challengeId": zod.uuid(),
   "code": zod.string().regex(confirmPasswordRecoveryBodyCodeRegExp),
   "password": zod.string().min(confirmPasswordRecoveryBodyPasswordMin).max(confirmPasswordRecoveryBodyPasswordMax).describe('Uppercase')
 })
@@ -154,7 +158,7 @@ export const updateProfileBodyCurrentPasswordMax = 1024;
 
 export const UpdateProfileBody = zod.object({
   "full_name": zod.string().optional(),
-  "email": zod.string().email().optional(),
+  "email": zod.email().optional(),
   "current_password": zod.string().max(updateProfileBodyCurrentPasswordMax).optional().describe('Required when changing a password-enabled account email')
 })
 

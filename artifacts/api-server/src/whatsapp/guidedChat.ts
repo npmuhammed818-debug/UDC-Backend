@@ -6,6 +6,7 @@ import { auditLogsTable, db, whatsappChatSessionsTable as sessions } from '@work
 import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail } from './registrationEmail';
+import { classifyTurn } from '../akif/conversationPolicy';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 
 type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
@@ -97,6 +98,14 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
   const fingerprint=phoneHash(phone);
   const [snapshot]=await db.select().from(sessions).where(eq(sessions.phoneHash,fingerprint)).limit(1);
   if(snapshot&&message.id&&snapshot.lastMessageId===message.id)return true;
+  // A question, pause or resume while a question is pending must never be stored as the answer.
+  if(snapshot&&snapshot.expiresAt>new Date()&&raw&&!action&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&!/^(?:cancel|stop|edit|skip)$/i.test(raw)){
+    const turn=classifyTurn(raw,true);
+    const purpose=snapshot.purpose as FlowPurpose;
+    if(turn==='pause'){await sendWhatsAppTextWithMenu(phone,'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.');return true;}
+    if(turn==='resume'){await question(phone,purpose,snapshot.step,snapshot.data);return true;}
+    if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length)return false;
+  }
   let extracted:Record<string,string>|null=null;
   if(snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)){
     const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);

@@ -15,7 +15,12 @@ import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
 import { agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
+import { agentJoinLink } from '../referrals/joinInvite';
+import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, myInvitesReply } from '../referrals/joinService';
+import { getVaultLinkIssuer } from '../vault/issuer';
+import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
+import {PoolAllocationError,poolReplyText,respondToPoolInvite} from '../marketplace/poolInvites';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
 const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile','change_role'] as const;
@@ -121,6 +126,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
       reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status. To confirm your email, send Verify email.':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review. To confirm your email, send Verify email.';
+      if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+='\n\n'+inviteNote;}
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
@@ -148,27 +154,39 @@ async function companyDocument(phone:string,message:ChatMessage){
   const metadata=request.metadata as {companyId:string};
   const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.id,metadata.companyId),eq(companiesTable.ownerUserId,user.id))).limit(1);
   if(!company){await sendWhatsAppTextWithMenu(phone,'That company request is no longer available. Open My profile first.');return true;}
-  const media=await downloadWhatsAppMedia(message.document.id);
-  const bytes=Buffer.from(media.bytes);
-  if(bytes.length>5*1024*1024||bytes.subarray(0,5).toString()!=='%PDF-'){await sendWhatsAppTextWithMenu(phone,'Send a PDF under 5 MB as a reply to the document request.');return true;}
-  await db.transaction(async tx=>{
-    const fingerprint=message.id||message.document!.id!;
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_doc:'+fingerprint}))`);
-    const [seen]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'company_verification_document_uploaded'),eq(auditLogsTable.actorUserId,user.id),sql`${auditLogsTable.metadata}->>'providerMessageId' = ${fingerprint}`)).limit(1);
-    if(seen)return;
-    const fileUrl=await uploadDocumentBytes(`companies/${company.id}/${randomUUID()}.pdf`,bytes,'application/pdf');
-    const [document]=await tx.insert(companyVerificationDocumentsTable).values({companyId:company.id,uploadedBy:user.id,documentType:'registration',fileUrl,status:'pending'}).returning({id:companyVerificationDocumentsTable.id});
-    await tx.insert(auditLogsTable).values({actorUserId:user.id,action:'company_verification_document_uploaded',entityType:'company_verification_document',entityId:document.id,metadata:{companyId:company.id,channel:'whatsapp',providerMessageId:fingerprint}});
-  });
-  await sendWhatsAppTextWithMenu(phone,'Your company PDF is stored privately for UDC review. Uploading it does not verify your company.');return true;
+  // Company verification records are confidential: never download, store or process them from WhatsApp.
+  await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration'));return true;
+}
+
+async function vaultReplyFor(user:{id:string;role:string},type:'company_registration'){
+  try{const issue=getVaultLinkIssuer();const link=issue?await issue(user,type):null;if(link?.ok)return vaultRedirectReply({url:link.url,expiresAt:link.expiresAt});}catch{}
+  return vaultRedirectReply();
 }
 
 export async function handleChatUi(phone:string,message:ChatMessage,directOnly=false){
   if(directOnly)return continueGuidedChat(phone,message,null,submitChatFlow,true);
+  {
+    const joinText=message.text?.body;
+    const joinReply=(await handleJoinMessage(phone,joinText))??(await handleInviteDecline(phone,joinText));
+    if(joinReply!==null){await sendWhatsAppText(phone,joinReply);return true;}
+    if(typeof joinText==='string'&&/^\s*my invites\s*$/i.test(joinText)){
+      const [agent]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+      if(agent?.role==='agent'&&agent.status==='verified'){await sendWhatsAppText(phone,await myInvitesReply(agent.id));return true;}
+    }
+  }
   if(await handleWhatsAppIntroduction(phone,message))return true;
   const termId=message.interactive?.button_reply?.id;
   const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
   if(termAction){await respondToTerms(phone,termAction[2],termAction[1]==='accept');return true;}
+  const poolAction=typeof termId==='string'?/^udc:pool:(accept|decline):([a-f0-9-]{36})$/.exec(termId):null;
+  if(poolAction){
+    const decision=poolAction[1]==='accept'?'accepted' as const:'declined' as const;
+    const [buyer]=await db.select({id:usersTable.id,role:usersTable.role}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+    if(!buyer||buyer.role!=='buyer'){await sendWhatsAppText(phone,'That invite is not available for this number.');return true;}
+    try{const result=await respondToPoolInvite(buyer.id,poolAction[2],decision);await sendWhatsAppText(phone,poolReplyText(result,decision));}
+    catch(error){await sendWhatsAppText(phone,error instanceof PoolAllocationError&&error.message.startsWith('invite_already_')?'You have already answered this invite.':'That invite is not available.');}
+    return true;
+  }
   if(await companyDocument(phone,message))return true;
   const action=chatAction(message);
   if(!action || ['submit','restart','cancel'].includes(action)){
@@ -210,18 +228,28 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     if(user.role!==role){await sendWhatsAppText(phone,`Your account is registered as ${user.role}. Send Menu to see your available features.`);return true;}
     await sendForm(phone,role);return true;
   }
-  if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
+  if(action==='verification'){const [company]=await db.select({id:companiesTable.id,status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+    // Outcome states only: AKIF never reads or describes the document contents.
+    const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
+    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Ask for Menu, then Documents, to get a secure upload link.';
+    await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     if(!company){await sendWhatsAppTextWithMenu(phone,'Open My profile and add your company details first.');return true;}
-    const sent=await sendWhatsAppTextWithMenu(phone,'Reply to THIS message with your company registration PDF (under 5 MB). It will be private and pending UDC review. For a deal document, reply to that deal’s message instead.');
-    if(sent.delivered&&sent.messageId)await db.insert(auditLogsTable).values({actorUserId:user.id,action:'whatsapp_company_document_requested',entityType:'company',entityId:company.id,metadata:{companyId:company.id,messageId:sent.messageId}});return true;
+    await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration')+'\nFor a trade document inside a deal, reply to that deal’s message instead.');return true;
   }
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
     if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
     if(action==='invite'){
+       const joinLink=agentJoinLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER);
+       if(joinLink){
+         await sendWhatsAppText(phone,'Your personal invite link. When a buyer or seller taps it, WhatsApp opens the UDC chat with your code already typed. They only press send. UDC reviews every referral; no commission or deal access is granted automatically.');
+         await sendWhatsAppText(phone,joinLink);
+         await sendWhatsAppText(phone,'A QR code of this same link is available in the UDC web app under your invite page, for cards and events. Send "My invites" to see who joined.');
+         return true;
+       }
        const command=agentReferralWhatsAppCommand(user.id);
        await sendWhatsAppText(phone,
          'Forward or copy the NEXT message to your buyer or seller. After registering with UDC and agreeing to privacy terms, they must send the exact message to UDC and confirm your introduction. UDC reviews every referral; no commission or deal access is granted automatically.');

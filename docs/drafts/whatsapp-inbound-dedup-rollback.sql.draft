@@ -1,0 +1,2 @@
+-- DRAFT rollback. Safe at any time: the application falls back to its in-memory guard when the table is missing.
+DROP TABLE IF EXISTS "whatsapp_inbound_dedup";

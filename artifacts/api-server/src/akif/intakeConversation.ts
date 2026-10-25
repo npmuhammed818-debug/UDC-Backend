@@ -3,6 +3,7 @@ import { explicitBuyerPriceFollowup } from "./explicitIntakeFollowup";
 import { z } from "zod/v4";
 import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
+import { claimsUnverifiedFact } from "./conversationPolicy";
 import { intakeDecisionHint } from "./decisionModels";
 import { triageSellerOffer } from "./sellerOfferTriage";
 
@@ -72,6 +73,11 @@ export function parseIntakeConversation(content: string) {
   }
   if (!isSafeConversationText(result.data.reply)) {
     console.warn("AKIF intake response rejected", { reason: "unsafe_reply" });
+    return null;
+  }
+  // Intake happens before any deal exists: no payment, inspection, shipment, acceptance or match can be confirmed.
+  if (claimsUnverifiedFact(result.data.reply, {})) {
+    console.warn("AKIF intake response rejected", { reason: "unverified_claim" });
     return null;
   }
   return result.data;

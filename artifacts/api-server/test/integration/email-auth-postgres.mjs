@@ -96,8 +96,10 @@ try {
   );
   // Disposable CI Postgres may not predefine Supabase's NOLOGIN client roles.
   // Create them ONLY in this isolated QA container to test effective grants.
-  await pool.query("CREATE ROLE anon NOLOGIN");
-  await pool.query("CREATE ROLE authenticated NOLOGIN");
+  for (const role of ['anon', 'authenticated']) {
+    const { rows } = await pool.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [role]);
+    if (!rows.length) await pool.query(`CREATE ROLE ${role} NOLOGIN`);
+  }
   const phoneMigration = await readFile(new URL("../../../../lib/db/migrations/20261024_whatsapp_phone_recovery.sql",import.meta.url),"utf8");
   await pool.query(phoneMigration);
   await pool.query(phoneMigration);
@@ -140,6 +142,7 @@ try {
     email,
     password,
     role: "buyer",
+    company_name: "UDC QA Trading Co",
     accepted_terms: true,
     adult_business_user: true,
   });

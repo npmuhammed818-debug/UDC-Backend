@@ -241,3 +241,41 @@ export async function downloadWhatsAppMedia(mediaId: string) {
     fileSize: typeof metadata.file_size === "number" ? metadata.file_size : bytes.byteLength,
   };
 }
+
+/** Emoji reaction on an inbound message (Cloud API `reaction` type). Best effort. */
+export async function sendWhatsAppReaction(to: string, inboundMessageId: string, emoji: string) {
+  const config = getConfig();
+  if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  const response = await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "reaction", reaction: { message_id: inboundMessageId, emoji } }),
+  });
+  await response.body?.cancel();
+  return response.ok ? { delivered: true as const } : { delivered: false as const, reason: "provider_rejected" as const };
+}
+
+/** Uploads OGG/Opus bytes and sends them as a WhatsApp voice message. */
+export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
+  const config = getConfig();
+  if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  const form = new FormData();
+  form.set("messaging_product", "whatsapp");
+  form.set("type", "audio/ogg");
+  const copy = new Uint8Array(ogg.length); copy.set(ogg);
+  form.set("file", new Blob([copy.buffer], { type: "audio/ogg" }), "reply.ogg");
+  const up = await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/media`, {
+    method: "POST", signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${config.accessToken}` }, body: form,
+  });
+  if (!up.ok) { await up.body?.cancel(); return { delivered: false as const, reason: "upload_failed" as const }; }
+  const mediaId = ((await up.json().catch(() => null)) as { id?: unknown } | null)?.id;
+  if (typeof mediaId !== "string") return { delivered: false as const, reason: "upload_failed" as const };
+  const sent = await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST", signal: AbortSignal.timeout(10_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId } }),
+  });
+  await sent.body?.cancel();
+  return sent.ok ? { delivered: true as const } : { delivered: false as const, reason: "send_failed" as const };
+}

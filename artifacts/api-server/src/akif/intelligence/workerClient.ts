@@ -250,3 +250,19 @@ export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: 
   if (typeof result.text !== "string" || !result.text.trim()) throw new Error("akif_audio_empty");
   return result.text.trim().slice(0, 30_000);
 }
+
+/** Draft: speech for short generic replies. Returns OGG/Opus bytes. Worker enforces its own gates. */
+export async function synthesizeAkifSpeech(text: string): Promise<Uint8Array> {
+  const config = workerConfig();
+  if (!config) throw new Error("akif_speech_not_configured");
+  const response = await fetch(`${config.baseUrl}/speech/synthesize`, {
+    method: "POST",
+    headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("akif_speech_size_invalid");
+  return bytes;
+}

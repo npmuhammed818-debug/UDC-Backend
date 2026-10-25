@@ -10,6 +10,44 @@ permissions:
   contents: read
 
 jobs:
+  extended-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres@sha256:858bb5e98eed02eb8cafbcdc007f9a65d1b613972028944a8ec2133ccaf80d27
+        env:
+          POSTGRES_USER: udc_dev
+          POSTGRES_DB: udc_qa_control
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U udc_dev -d udc_qa_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Exercise real PostgreSQL journeys and security boundaries
+        run: node scripts/qa/run-postgres-integration.mjs --extended
+        env:
+          UDC_QA_POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extended-postgres-report
+          path: .acceptance-results/
+          include-hidden-files: true
+          if-no-files-found: error
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15

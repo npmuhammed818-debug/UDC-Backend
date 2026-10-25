@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 test('native WhatsApp menus and forms preserve role, privacy, review and replay boundaries',async t=>{
-  const names=['auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable','shipmentCargoUnitsTable'];
+  const names=['buyerPoolsTable','buyerPoolAllocationsTable','auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable','shipmentCargoUnitsTable'];
   const tables:any=Object.fromEntries(names.map(n=>[n,new Proxy({_table:n},{get:(_,k)=>k==='_table'?n:{column:k,table:n}})]));
   const rows:any=Object.fromEntries(names.map(n=>[n,[]]));
   const value=(x:any,r:any):any=>x?.column?(r[x.table]??r)[x.column]:x;
@@ -168,9 +168,8 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         'never invent a phone number or share link');
       process.env.UDC_WHATSAPP_PUBLIC_NUMBER='+15551234567';
       await m.handleChatUi(agent.phone,ui('invite'));
-      assert.match(state.sent.at(-2).body,/^Referral UDC-[0-9A-F]{12}$/);
-      assert.match(last(),/^Optional UDC WhatsApp shortcut/);
-      assert.match(last(),/https:\/\/wa.me\/15551234567\?text=Referral%20UDC-/);
+      assert.match(state.sent.at(-2).body,/^https:\/\/wa\.me\/15551234567\?text=JOIN%20UDC-[0-9A-F]{12}$/);
+      assert.match(last(),/QR code of this same link/);
       if(priorPublicNumber===undefined)delete process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
       else process.env.UDC_WHATSAPP_PUBLIC_NUMBER=priorPublicNumber;
 
@@ -195,12 +194,13 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       assert.match(m.etaAdvisoryLabel('overdue_unconfirmed'),/arrival is not confirmed/);
       assert.ok(!m.etaAdvisoryLabel('complete'));
     });
-    await t.test('company PDFs need an owned quoted request and remain private, reviewed and idempotent',async()=>{
-      const buyer=rows.usersTable.find((u:any)=>u.phone===phone);await m.handleChatUi(phone,ui('documents'));const request=state.sent.length;
-      const doc={id:'synthetic-doc-message',context:{id:'out-'+request},document:{id:'media-1'}};
-      assert.equal(await m.handleChatUi('10000000003',doc),false);assert.equal(state.uploads.length,0);
-      assert.equal(await m.handleChatUi(phone,doc),true);assert.equal(rows.companyVerificationDocumentsTable.length,1);assert.equal(rows.companyVerificationDocumentsTable[0].uploadedBy,buyer.id);assert.equal(rows.companyVerificationDocumentsTable[0].status,'pending');assert.match(rows.companyVerificationDocumentsTable[0].fileUrl,/storage:\/\/private/);
-      await m.handleChatUi(phone,doc);assert.equal(state.uploads.length,1);assert.equal(rows.companyVerificationDocumentsTable.length,1);
+    await t.test('company PDFs are never accepted on WhatsApp: the vault link is offered instead',async()=>{
+      const before=state.uploads.length,rowsBefore=rows.companyVerificationDocumentsTable.length;
+      await m.handleChatUi(phone,ui('documents'));assert.match(last(),/don't send/i);assert.match(last(),/private upload link/);
+      const doc={id:'synthetic-doc-message',context:{id:'out-'+state.sent.length},document:{id:'media-1'}};
+      assert.equal(await m.handleChatUi('10000000003',doc),false);
+      await m.handleChatUi(phone,doc);
+      assert.equal(state.uploads.length,before);assert.equal(rows.companyVerificationDocumentsTable.length,rowsBefore);
       state.flowId=null;await m.handleChatUi(phone,ui('requirement'));assert.match(last(),/product/);delete rows.whatsappChatSessionsTable[0].data.__paragraph;assert.equal(rows.whatsappChatSessionsTable.length,1);
       assert.ok(state.sent.every((s:any)=>!s.body.includes('https://udc-backend.onrender.com/login')));
     });
@@ -216,6 +216,16 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,{...ui('submit'),id:'guided-confirm'});assert.equal(rows.buyerRequestsTable.length,before+1);assert.equal(rows.whatsappChatSessionsTable.length,0);
       await m.handleChatUi(phone,{...ui('submit'),id:'guided-confirm'});assert.equal(rows.buyerRequestsTable.length,before+1);
       assert.equal(rows.buyerRequestsTable.at(-1).targetPrice,'5900');assert.equal(rows.buyerRequestsTable.at(-1).status,'pending_admin_review');
+    });
+    await t.test('a question, pause or resume mid-form is never stored as the pending answer',async()=>{
+      const answer=(body:string)=>m.handleChatUi(phone,{id:randomUUID(),text:{body}});
+      await m.handleChatUi(phone,ui('requirement'));delete rows.whatsappChatSessionsTable[0].data.__paragraph;
+      const before=JSON.stringify(rows.whatsappChatSessionsTable[0]);
+      assert.equal(await answer('What is CIF?'),false);assert.equal(JSON.stringify(rows.whatsappChatSessionsTable[0]),before);
+      assert.equal(await answer('wait'),true);assert.match(last(),/saved for about 30 minutes/);assert.equal(JSON.stringify(rows.whatsappChatSessionsTable[0]),before);
+      assert.equal(await answer('continue'),true);assert.match(last(),/product/i);assert.equal(JSON.stringify(rows.whatsappChatSessionsTable[0]),before);
+      await answer('Sugar');assert.equal(rows.whatsappChatSessionsTable[0].step,1);
+      await m.handleChatUi(phone,ui('cancel'));assert.equal(rows.whatsappChatSessionsTable.length,0);
     });
     await t.test('guided drafts support editing, cancellation, expiry and safe retry after audit failure',async()=>{
       const answer=(body:string)=>m.handleChatUi(phone,{id:randomUUID(),text:{body}});
