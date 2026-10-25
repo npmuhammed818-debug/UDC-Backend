@@ -1,10 +1,13 @@
 import {randomUUID} from "node:crypto";
 import {sql} from "drizzle-orm";
 import {db} from "@workspace/db";
+import {notificationText} from "./deliveryContent";
+import type {NotificationTransportResult} from "../whatsapp/notificationTransport";
 type Client=Pick<typeof db,"execute">;
 type Job={id:string,deal_id:string,recipient_user_id:string,claim_token:string,attempts:number};
-type Recipient={phone:string,body:string,user_id:string};
-type Result={delivered:true;messageId?:string}|{delivered:false;reason:"not_configured"|"preflight_unavailable"|"provider_rejected"};
+type Recipient={phone:string,user_id:string,role:string,type:string};
+export type DeliveryContext={userId:string;dealId:string;jobId:string};
+type Result=NotificationTransportResult;
 export async function enqueueShipmentWhatsApp(executor:Client,input:{
   notificationId:string;dealId:string;recipientUserId:string;
 }){
@@ -22,7 +25,7 @@ export async function enqueueShipmentWhatsApp(executor:Client,input:{
 export async function runShipmentWhatsAppOutbox(options:{
   executor?:Client;
   enabled?:boolean;
-  send?:(phone:string,body:string)=>Promise<Result>;
+  send?:(phone:string,body:string,context:DeliveryContext)=>Promise<Result>;
   policyAuthorized?:(phone:string,userId:string,dealId:string)=>Promise<boolean>;
   now?:Date;
   batchSize?:number;
@@ -35,9 +38,12 @@ export async function runShipmentWhatsAppOutbox(options:{
   const counts={enabled:true,claimed:0,accepted:0,retry:0,uncertain:0,blocked:0,cancelled:0};
   // Expired leases are ambiguous: a worker could have contacted Meta.
   await executor.execute(sql`
-    UPDATE public.whatsapp_shipment_outbox SET status='uncertain',claim_token=NULL,
+    WITH expired AS (UPDATE public.whatsapp_shipment_outbox SET status='uncertain',claim_token=NULL,
       lease_until=NULL,last_failure_category='provider_outcome_unknown',updated_at=${now}
-    WHERE status='leased' AND lease_until<=${now}
+    WHERE status='leased' AND lease_until<=${now} RETURNING id,attempts)
+    INSERT INTO public.audit_logs(action,entity_type,entity_id,metadata)
+    SELECT 'whatsapp_notification_lease_expired','whatsapp_outbox',id,
+      jsonb_build_object('status','uncertain','attempts',attempts) FROM expired
   `);
   for(let i=0;i<Math.max(1,Math.min(10,Math.trunc(options.batchSize??5)));i++){
     const token=randomUUID(),leaseEnd=new Date(now.getTime()+90_000);
@@ -62,14 +68,24 @@ export async function runShipmentWhatsAppOutbox(options:{
       const waitMinutes=[1,5,30][Math.min(job!.attempts-1,2)];
       const notBefore=new Date(now.getTime()+waitMinutes*60_000);
       const updated=await executor.execute(sql`
-        UPDATE public.whatsapp_shipment_outbox SET status=${state},
+        WITH updated AS (UPDATE public.whatsapp_shipment_outbox SET status=${state},
           claim_token=NULL,lease_until=NULL,next_attempt_at=${notBefore},
           provider_message_id=${messageId??null},
           accepted_at=${state==="accepted"?now:null},updated_at=${now},
           last_failure_category=${reason??null}
         WHERE id=${job!.id} AND status='leased' AND claim_token=${token}
           AND lease_until>${now}
-        RETURNING id
+        RETURNING id,status,attempts,provider_message_id,deal_id,recipient_user_id),
+        contexts AS (
+          INSERT INTO public.whatsapp_message_contexts(provider_message_id,deal_id,recipient_user_id,kind)
+          SELECT provider_message_id,deal_id,recipient_user_id,'shipment_notification' FROM updated
+          WHERE status='accepted' AND provider_message_id IS NOT NULL
+          ON CONFLICT(provider_message_id) DO NOTHING
+        )
+        INSERT INTO public.audit_logs(action,entity_type,entity_id,metadata)
+        SELECT 'whatsapp_notification_outcome','whatsapp_outbox',id,
+          jsonb_build_object('status',status,'attempts',attempts) FROM updated
+        RETURNING entity_id AS id
       `);
       if(!updated.rows.length)throw Error("outbox_lease_lost");
       if(state==="accepted")counts.accepted++;
@@ -80,16 +96,16 @@ export async function runShipmentWhatsAppOutbox(options:{
     }
     // Recover current recipient state; never use a stale phone stored in queue.
     const audience=await executor.execute(sql`
-      SELECT u.id AS user_id,u.phone,n.body
+      SELECT u.id AS user_id,u.phone,u.role,n.type
       FROM public.whatsapp_shipment_outbox o
       JOIN public.notifications n ON n.id=o.notification_id AND n.user_id=o.recipient_user_id
       JOIN public.users u ON u.id=o.recipient_user_id
       JOIN public.deals d ON d.id=o.deal_id
       JOIN public.notification_preferences p ON p.user_id=u.id
       WHERE o.id=${job.id} AND o.claim_token=${token}
-        AND u.status IN ('verified','active') AND u.phone IS NOT NULL
+        AND u.status='verified' AND u.phone IS NOT NULL
         AND p.optional_whatsapp=true AND p.reminders=true
-        AND (d.buyer_user_id=u.id OR d.seller_user_id=u.id
+        AND ((d.buyer_user_id=u.id AND u.role='buyer') OR (d.seller_user_id=u.id AND u.role='seller')
           OR (u.role='agent' AND EXISTS(
             SELECT 1 FROM public.deal_participants dp
             WHERE dp.deal_id=d.id AND dp.user_id=u.id
@@ -98,15 +114,17 @@ export async function runShipmentWhatsAppOutbox(options:{
     `);
     const user=audience.rows[0] as Recipient|undefined;
     if(!user){await finish("cancelled","recipient_ineligible");continue;}
+    const body=notificationText(user.type,user.role);
+    if(!body){await finish("cancelled","recipient_ineligible");continue;}
     let allowed=false;
     try{allowed=await options.policyAuthorized(user.phone,user.user_id,job.deal_id);}
     catch{allowed=false;}
     if(!allowed){await finish("blocked","policy_unverified");continue;}
     try{
-      const result=await options.send(user.phone,user.body);
+      const result=await options.send(user.phone,body,{userId:user.user_id,dealId:job.deal_id,jobId:job.id});
       if(result.delivered&&result.messageId)await finish("accepted",undefined,result.messageId);
-      else if(!result.delivered && (result.reason==="not_configured"||result.reason==="preflight_unavailable"))
-        await finish("retry","configuration_missing");
+      else if(!result.delivered && (result.reason==="not_configured"||result.reason==="preflight_unavailable"||result.reason==="provider_rate_limited"))
+        await finish("retry",result.reason==="not_configured"?"configuration_missing":"retryable_preflight_error");
       else if(!result.delivered && result.reason==="provider_rejected")
         await finish("blocked","provider_rejected");
       else await finish("uncertain","provider_outcome_unknown");

@@ -23,7 +23,7 @@ Use a *separate staging project* with fabricated identities, trade documents and
 | --- | --- |
 | Real six-digit OTP mail | `UDC_AUTH_EMAIL_SEND_ENABLED` must stay false/unset; requires verified UDC-controlled sending domain and approved provider key |
 | WhatsApp free-form permission evidence | `UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED` stays false/unset until Meta WABA/phone ID and real signed webhook tests |
-| Shipment outbound WhatsApp outbox | No real worker or policy-approved send adapter is wired; no automated Meta sends even if a queue record exists |
+| Shipment outbound WhatsApp outbox | Adapter/worker implemented in the shipment delivery follow-up; `UDC_SHIPMENT_WHATSAPP_SEND_ENABLED` stays false/unset until staging approval. See `whatsapp-shipment-outbox.md` |
 | Overdue ETA reminder scanner | `UDC_ETA_FOLLOWUPS_ENABLED` stays false/unset until staging accepted; scanner creates in-app advisories, not verified physical delay claims |
 | Meta template readiness screen | READ-ONLY WABA template statuses; does not send, approve or authorize templates |
 | ImpexQ | Sandbox reference only; HSN/RoDTEP/calculator data are mocks; FTA eligibility unverified. Never treat provider reference as binding advice |

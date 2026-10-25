@@ -57,9 +57,9 @@ export async function recordSignedCustomerInbound(
 }
 
 // Authorization for OUTBOUND PLAIN-TEXT only. Outside this period, UDC must
-// use a separately approved template implementation (not yet shipped).
+// use the approved-template path in notificationTransport.
 // The shipment outbox also verifies current user/phone, preferences and deal
-// membership before calling this function. No live worker is wired to it.
+// membership before calling this function; the worker remains disabled by default.
 export async function authorizeCustomerWindow(
   phone:string,userId:string,_dealId:string,
   options:{executor?:Executor;now?:Date;secret?:string}={}

@@ -11,6 +11,7 @@ assert.match(container, /^[a-f0-9]{64}$/, 'identify the isolated PostgreSQL serv
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
   ['PATH', 'HOME', 'TMPDIR', 'DOCKER_HOST', 'DOCKER_CONFIG'].includes(k)));
 const cases = [
+  ['delivery', 'UDC_DELIVERY_QA_DATABASE_URL', 'shipment-delivery'],
   ['registration', 'UDC_QA_DATABASE_URL', 'whatsapp-buyer'],
   ['retry', 'UDC_QA_DATABASE_URL', 'whatsapp-webhook-retry'],
   ['email_auth', 'UDC_EMAIL_QA_DATABASE_URL', 'email-auth'],

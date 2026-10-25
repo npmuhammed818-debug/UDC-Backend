@@ -14,16 +14,16 @@ The table stores user ID, HMAC-SHA256 fingerprint of their current WhatsApp phon
 
 `authorizeCustomerWindow(phone,userId,dealId)` can be injected as the outbox's `policyAuthorized` callback **only after owner-approved staging acceptance**. It matches the current account's verified phone and stored fingerprint and rejects customer windows within five minutes of expiry, missing/stale/old-number evidence, revoked user, altered hashes or configuration errors.
 
-This is one gate, not the entire consent policy. The outbox also checks current identity, explicit opt-in, deal membership and status before attempting a message. The optional production sender remains **dormant**. No Meta API sending or automatic template approval is added.
+This is one gate, not the entire consent policy. The outbox also checks current identity, explicit opt-in, deal membership and status before attempting a message. The sender in `notificationTransport.ts` and its worker remain disabled by default. Template approval is always read from Meta, never granted by UDC.
 
-Outside the 24-hour customer window the free-form sender returns false; UDC must either notify in-app, request a customer reply on WhatsApp, or **later** implement reviewed, approved Meta templates with separate content and recipient-consent checks. Do not circumvent these rules or claim live delivery.
+Outside the window (including its five-minute safety margin), the dispatcher uses only an exact approved UTILITY template from the configured WABA. It checks current consent separately. See [shipment delivery activation](whatsapp-shipment-outbox.md); missing or paused approval prevents the POST.
 
 ## Staging and release gates
 
 1. Review and apply additive `20261024_whatsapp_customer_windows.sql` in a separate staging database; verify safe repeat-run, role grants, backup and rollback. It depends on existing users, not new cargo migrations.
 2. Use Meta's sandbox/approved test number and actual signed incoming WhatsApp messages for QA (without real customers).
 3. Verify STOP opt-outs, expired window, replayed payloads, number recovery, template approval status, provider receipts and operator escalation with human acceptance.
-4. Wire a separately approved sender adapter and disabled-by-default worker **only after** the company approves live messaging and API billing. Do not silently send queued outbound messages.
+4. Enable the implemented sender/worker **only after** the owner approves staging messaging and any associated API billing. Inspect the pending queue first; activation processes existing eligible queued records.
 5. Confirm email OTP provider, number onboarding and other draft MVP migrations independently. Passing GitHub tests does not mean production is ready.
 
 There is **no live deployment**, no new Meta messages or production database migration in this PR.

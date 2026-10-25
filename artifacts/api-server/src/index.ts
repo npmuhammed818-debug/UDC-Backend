@@ -10,6 +10,7 @@ import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./wh
 import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
 import { startWhatsAppWebhookInboxRunner } from "./whatsapp/webhookInboxRunner";
 import { startEtaFollowupRunner } from "./tracking/etaFollowupRunner";
+import { startShipmentNotificationRunner } from "./notifications/shipmentRunner";
 
 const rawPort = process.env["PORT"];
 
@@ -39,6 +40,7 @@ app.listen(port, (err) => {
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
   startEtaFollowupRunner();
+  startShipmentNotificationRunner();
   if (isAkifWorkerConfigured()) {
     void getAkifWorkerCapabilities().then((worker) => {
       const gateway = worker.capabilities.llm_gateway as { configured?: boolean; model?: string; missing_configuration?: string | null } | undefined;

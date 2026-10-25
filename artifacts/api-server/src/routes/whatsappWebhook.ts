@@ -1023,7 +1023,9 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     const fullName = value?.contacts?.[0]?.profile?.name;
     // Provider status callbacks contain no inbound text; never route them to
     // intake, AI, consent or a trade action. Only signed Meta bodies reach here.
-    if(Array.isArray(value?.statuses) && value.statuses.length){
+    if(Array.isArray(value?.statuses) && value.statuses.length &&
+      value?.metadata?.phone_number_id===process.env.WHATSAPP_PHONE_NUMBER_ID &&
+      Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID)){
       try{
         await recordSignedShipmentStatuses(value.statuses.slice(0,50));
       }catch{
