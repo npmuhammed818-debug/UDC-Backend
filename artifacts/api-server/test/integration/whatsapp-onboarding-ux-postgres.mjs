@@ -33,6 +33,7 @@ Object.assign(process.env, {
   SESSION_SECRET: secret,
   SUPABASE_DATABASE_URL: url.href,
   WHATSAPP_APP_SECRET: secret,
+  WHATSAPP_INBOUND_PER_MINUTE: '100000',
   WHATSAPP_ACCESS_TOKEN: 'synthetic-no-network-token',
   WHATSAPP_PHONE_NUMBER_ID: 'synthetic-phone-id',
   AKIF_WORKER_CONVERSATION_ENABLED: 'true',
