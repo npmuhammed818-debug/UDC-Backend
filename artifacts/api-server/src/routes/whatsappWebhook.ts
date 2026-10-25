@@ -17,6 +17,7 @@ import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
 import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
+import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
 import { react } from "../whatsapp/reactions";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
@@ -286,7 +287,7 @@ function confidentialDocumentKind(text: string): VaultDocumentType {
   const v = text.toLowerCase();
   const pick = (type: VaultDocumentType) => (VAULT_DOCUMENT_TYPES as readonly string[]).includes(type) ? type : "other";
   if (/passport/.test(v)) return pick("passport");
-  if (/national id|aadhaar|aadhar|emirates id|id card/.test(v)) return pick("national_id");
+  if (/national id|emirates id|id card/.test(v)) return pick("national_id");
   if (/bank/.test(v) || /account statement/.test(v)) return pick("bank_statement");
   if (/licen[cs]e/.test(v)) return pick("business_license");
   if (/tax/.test(v)) return pick("tax_certificate");
@@ -1027,6 +1028,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
     }
     for (const message of value?.messages ?? []) {
+      if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
+        try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
+        continue;
+      }
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
           const privacyReply = await whatsappPrivacyGate(message.from, message.text?.body);

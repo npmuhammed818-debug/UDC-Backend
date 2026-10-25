@@ -94,7 +94,7 @@ export function vaultRedirectReply(link?: { url: string; expiresAt: Date }) {
   return `${intro} Use this private upload link instead (single use, expires in 15 minutes):\n${link.url}\nOnly UDC's verification team can open what you upload. I only get the result, never the document.`;
 }
 
-const CONFIDENTIAL_WORDS = /\b(passport|national id|aadhaar|aadhar|emirates id|id card|bank statement|bank letter|account statement|kyc|trade licen[cs]e|company registration|incorporation certificate|tax certificate|spa signed|signed agreement)\b/i;
+const CONFIDENTIAL_WORDS = /\b(passport|national id|emirates id|id card|bank statement|bank letter|account statement|kyc|trade licen[cs]e|company registration|incorporation certificate|tax certificate|spa signed|signed agreement)\b/i;
 export function looksLikeConfidentialDocumentTopic(text: string | null | undefined) {
   return typeof text === "string" && CONFIDENTIAL_WORDS.test(text);
 }
