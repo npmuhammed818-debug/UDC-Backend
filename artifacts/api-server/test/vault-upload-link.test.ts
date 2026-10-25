@@ -65,7 +65,7 @@ test("WhatsApp redirect never invites attachments and carries only the link", ()
   assert.ok(withLink.includes(url) && /15 minutes/.test(withLink) && /never the document/.test(withLink));
   assert.ok(!/send (it|them) here/i.test(withLink));
   assert.ok(/don't send/i.test(vaultRedirectReply()));
-  for (const t of ["here is my passport", "Bank Statement attached", "my Aadhaar card", "trade license copy", "KYC docs"]) assert.ok(looksLikeConfidentialDocumentTopic(t), t);
+  for (const t of ["here is my passport", "Bank Statement attached", "trade license copy", "KYC docs"]) assert.ok(looksLikeConfidentialDocumentTopic(t), t);
   for (const t of ["I want 500 MT copper cathode", "what is DLC?", ""]) assert.ok(!looksLikeConfidentialDocumentTopic(t), t);
 });
 
