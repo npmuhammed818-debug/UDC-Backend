@@ -3,6 +3,7 @@ import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
 import { udcPaymentTerms } from '../marketplace/paymentPolicy';
+import { selectDefaultSellerRate } from "../referrals/defaultCommissionRule";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
 import { randomUUID } from "node:crypto";
@@ -1246,6 +1247,35 @@ router.get("/admin/deals/:dealId/audit-log", requireRole("admin"), async (req, r
 router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
   const commissions = await db.select().from(commissionsTable).orderBy(desc(commissionsTable.updatedAt));
   res.json({ commissions });
+});
+
+const defaultCommissionPreviewSchema = z.object({
+  invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  rbiReferenceRateInrPerUnit: z.string().regex(/^\d+(?:\.\d{1,8})?$/).optional(),
+  rbiReferenceRateDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+// Read-only preview of the published default seller rule (1% at INR 25 lakh+, 2% below, seller pays).
+// Never writes, never fetches an exchange rate: an admin supplies the RBI reference rate for the invoice date.
+// Foreign invoices without a matching rate return manual_review. A written per-deal fee schedule overrides this.
+router.post("/admin/deals/:dealId/default-commission-preview", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const input = defaultCommissionPreviewSchema.parse(req.body);
+    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const quantity = Number(deal.quantity), price = Number(deal.agreedPrice);
+    if (!Number.isFinite(quantity) || !Number.isFinite(price)) { res.status(409).json({ error: "deal_value_unavailable" }); return; }
+    const invoiceValue = calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: "100" });
+    const outcome = selectDefaultSellerRate({ invoiceValue, invoiceCurrency: deal.currency.toUpperCase(), invoiceDate: input.invoiceDate, rbiReferenceRateInrPerUnit: input.rbiReferenceRateInrPerUnit, rbiReferenceRateDate: input.rbiReferenceRateDate });
+    if (outcome.status === "manual_review") { res.json({ dealId, status: "manual_review", reason: outcome.reason, note: "No rate selected. Supply the RBI reference rate dated the invoice date, or record a written fee schedule." }); return; }
+    const amount = calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: outcome.ratePercent });
+    res.json({ dealId, status: "rate", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, invoiceValueInr: outcome.invoiceValueInr, commissionAmount: amount, commissionCurrency: deal.currency.toUpperCase(), note: "Preview only. Nothing recorded. Record via POST /admin/commissions with the percentage method after review." });
+  } catch (error) {
+    if (error instanceof CommissionCalculationError) { res.status(409).json({ error: error.message }); return; }
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "default_commission_preview_failed" });
+  }
 });
 
 router.post("/admin/commissions", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
