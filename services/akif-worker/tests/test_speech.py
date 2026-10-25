@@ -4,10 +4,14 @@ from fastapi import HTTPException
 from app import speech
 
 
-def test_only_generic_short_text_is_allowed():
-    assert speech.speech_text_allowed("Sure, tell me what product you want to buy and where it should go.")
-    for bad in ["Price is 450 per MT", "Visit https://x.example", "mail me a@b.co", "Total $5", "", "x" * 351, "Order #12", "Call www.x.com"]:
+def test_default_deny_exact_allowlist_only():
+    assert speech.ALLOWED_TEXTS
+    for ok in speech.ALLOWED_TEXTS:
+        assert speech.speech_text_allowed(ok)
+    for bad in ["Hello Rashid from Acme Traders in Kochi", "Sure, what product do you need?", "Price is 450 per MT", "", "x" * 351]:
         assert not speech.speech_text_allowed(bad), bad
+    first = next(iter(speech.ALLOWED_TEXTS))
+    assert not speech.speech_text_allowed(first + " ")
 
 
 def test_disabled_by_default_and_gates(monkeypatch):
@@ -28,7 +32,7 @@ def test_disallowed_text_never_reaches_provider(monkeypatch):
     called = []
     monkeypatch.setattr(speech.urllib.request, "urlopen", lambda *a, **k: called.append(1))
     with pytest.raises(HTTPException) as e:
-        speech.synthesize("The price is 450 USD")
+        speech.synthesize("Hello Rashid from Acme Traders")
     assert e.value.status_code == 422 and not called
 
 
