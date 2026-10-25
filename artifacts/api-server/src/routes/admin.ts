@@ -3,6 +3,8 @@ import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
 import { udcPaymentTerms } from '../marketplace/paymentPolicy';
+import { buildDefaultCommissionPreview } from "../referrals/defaultCommissionRule";
+import { commissionAmountFitsStorage } from "../referrals/currencyPrecision";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
 import { randomUUID } from "node:crypto";
@@ -1248,6 +1250,33 @@ router.get("/admin/commissions", requireRole("admin"), async (_req, res) => {
   res.json({ commissions });
 });
 
+const defaultCommissionPreviewSchema = z.object({
+  invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  rbiReferenceRateInrPerUnit: z.string().regex(/^\d+(?:\.\d{1,8})?$/).optional(),
+  rbiReferenceRateDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Actual invoice value (deal currency) from the real invoice. Without it the preview is only an estimate.
+  actualInvoiceValue: z.string().regex(/^\d+(?:\.\d{1,6})?$/).optional(),
+});
+
+// Read-only preview of the published default seller rule (1% at INR 25 lakh+, 2% below, seller pays).
+// Never writes, never fetches an exchange rate: an admin supplies the RBI reference rate for the invoice date.
+// Foreign invoices without a matching rate return manual_review. A written per-deal fee schedule overrides this.
+router.post("/admin/deals/:dealId/default-commission-preview", requireRole("admin"), async (req, res) => {
+  try {
+    const dealId = z.string().uuid().parse(req.params["dealId"]);
+    const input = defaultCommissionPreviewSchema.parse(req.body);
+    const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1);
+    if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
+    const preview = buildDefaultCommissionPreview(deal, input);
+    if ("error" in preview) { res.status(409).json({ error: preview.error }); return; }
+    res.json({ dealId, ...preview });
+  } catch (error) {
+    if (error instanceof CommissionCalculationError) { res.status(409).json({ error: error.message }); return; }
+    if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }
+    res.status(500).json({ error: "default_commission_preview_failed" });
+  }
+});
+
 router.post("/admin/commissions", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const input = createCommissionSchema.parse(req.body);
@@ -1260,14 +1289,16 @@ router.post("/admin/commissions", requireRole("admin"), async (req: Authenticate
         return;
       }
       const method = input.commissionType ?? "fixed_amount";
+      const recordCurrency = (input.currency ?? deal.currency).toUpperCase();
       if (method !== "fixed_amount" && input.confirmAgreedTerms !== true) {
         res.status(400).json({ error: "commission_agreement_confirmation_required" }); return;
       }
       if (method !== "fixed_amount" && input.currency && input.currency.toUpperCase() !== deal.currency.toUpperCase()) {
         res.status(409).json({ error: "calculated_commission_uses_deal_currency" }); return;
       }
-      const amount = calculateCommissionAmount({ method, quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: input.commissionRate, amount: input.amount });
-      if (method !== "fixed_amount" && input.amount !== undefined && calculateCommissionAmount({ method: "fixed_amount", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, amount: input.amount }) !== amount) {
+      const amount = calculateCommissionAmount({ method, quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: input.commissionRate, amount: input.amount, currency: recordCurrency });
+      if (!commissionAmountFitsStorage(amount)) { res.status(409).json({ error: "commission_precision_exceeds_storage", currency: recordCurrency, note: "The commissions table stores 2 decimals. This currency amount needs a database migration that has not been approved or applied." }); return; }
+      if (method !== "fixed_amount" && input.amount !== undefined && calculateCommissionAmount({ method: "fixed_amount", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, amount: input.amount, currency: recordCurrency }) !== amount) {
         res.status(409).json({ error: "commission_amount_does_not_match_rule" }); return;
       }
       if (beneficiary.role === "agent") {
