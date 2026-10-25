@@ -9,6 +9,7 @@ import { policies, renderPolicy } from "../src/privacy/policies.ts";
 const input = {
   full_name: "Test Trader",
   email: "test@example.com",
+  company_name: "Test Trading Co",
   password: "SafePassword123!",
   role: "buyer",
   accepted_terms: true,
@@ -122,7 +123,18 @@ test("privacy commands cannot be triggered by unrelated negotiation messages", (
 test("buyers and sellers need a company email on web registration; agents may use personal email", () => {
   for (const role of ["buyer", "seller"]) {
     assert.equal(registrationSchema.safeParse({ ...input, role, email: "someone@gmail.com" }).success, false, role);
-    assert.equal(registrationSchema.safeParse({ ...input, role, email: "someone@acme-trading.com" }).success, true, role);
+    assert.equal(registrationSchema.safeParse({ ...input, role, company_name: "Acme Trading", email: "someone@acme-trading.com" }).success, true, role);
   }
   assert.equal(registrationSchema.safeParse({ ...input, role: "agent", email: "someone@gmail.com" }).success, true);
+});
+
+test("company name is required for buyers and sellers, optional for agents", () => {
+  const { company_name: _omit, ...noCompany } = input;
+  const ok = { ...noCompany, email: "someone@acme-trading.com" };
+  for (const role of ["buyer", "seller"]) {
+    assert.equal(registrationSchema.safeParse({ ...ok, role }).success, false, role);
+    assert.equal(registrationSchema.safeParse({ ...ok, role, company_name: "A" }).success, false, role);
+    assert.equal(registrationSchema.safeParse({ ...ok, role, company_name: "Acme Trading" }).success, true, role);
+  }
+  assert.equal(registrationSchema.safeParse({ ...ok, role: "agent" }).success, true);
 });

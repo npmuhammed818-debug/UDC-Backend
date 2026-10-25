@@ -16,12 +16,17 @@ export const registrationSchema = z.object({
     .trim()
     .email()
     .transform((value) => value.toLowerCase()),
+  company_name: z.string().trim().min(2).max(200).optional(),
   phone: z.never().optional(),
   password: passwordSchema,
   role: z.enum(["buyer", "seller", "agent"]),
   referral_token: z.string().min(1).max(120).optional(),
   accepted_terms: z.literal(true),
   adult_business_user: z.literal(true),
+}).refine((v) => v.role === "agent" || !!v.company_name, {
+  // Owner (WhatsApp 2:45 PM; "No" to agents at 8:07 PM): company name for buyers and sellers, not agents.
+  message: "Company name is required for buyers and sellers.",
+  path: ["company_name"],
 }).refine((v) => v.role === "agent" || businessEmail(v.email), {
   // Owner rule (WhatsApp 2:47 PM): company email for buyers and sellers, not for agents.
   message: "Use your company email. Personal email is available for agents.",

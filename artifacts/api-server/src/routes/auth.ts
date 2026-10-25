@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import {
   auditLogsTable,
+  companiesTable,
   referralsTable,
   notificationPreferencesTable,
   usersTable,
@@ -100,6 +101,13 @@ router.post("/auth/register", async (req, res) => {
           status: "pending",
         })
         .returning({ id: usersTable.id });
+      if (input.role !== "agent" && input.company_name) {
+        await tx.insert(companiesTable).values({
+          ownerUserId: created.id,
+          companyName: input.company_name,
+          verificationStatus: "pending",
+        });
+      }
       await tx
         .insert(auditLogsTable)
         .values({
