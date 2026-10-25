@@ -1105,7 +1105,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, acknowledgementReply(String(row!.id).slice(0, 8).toUpperCase(), dueAt));
           continue;
         } catch { /* fall through: a failed log must not silently drop the complaint */
-          await deliverWhatsAppReply(message.from, "I couldn't record your complaint just now. Please email npmuhammed818@gmail.com or try again shortly.").catch(() => undefined);
+          await deliverWhatsAppReply(message.from, "I couldn't record your complaint just now. Please email udc@updowncircle.site or try again shortly.").catch(() => undefined);
           continue;
         }
       }
