@@ -241,3 +241,17 @@ export async function downloadWhatsAppMedia(mediaId: string) {
     fileSize: typeof metadata.file_size === "number" ? metadata.file_size : bytes.byteLength,
   };
 }
+
+/** Emoji reaction on an inbound message (Cloud API `reaction` type). Best effort. */
+export async function sendWhatsAppReaction(to: string, inboundMessageId: string, emoji: string) {
+  const config = getConfig();
+  if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  const response = await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "reaction", reaction: { message_id: inboundMessageId, emoji } }),
+  });
+  await response.body?.cancel();
+  return response.ok ? { delivered: true as const } : { delivered: false as const, reason: "provider_rejected" as const };
+}
