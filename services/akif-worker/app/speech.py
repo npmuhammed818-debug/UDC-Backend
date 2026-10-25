@@ -1,8 +1,9 @@
 """Draft text-to-speech for AKIF voice-note replies. Off unless AKIF_VOICE_REPLIES=on.
 
-Free-tier Gemini content may be used by Google to improve products and read by human
-reviewers, so only short, generic, non-personal text is ever spoken. One model, no fallback
-to any other provider (no paid provider is ever called).
+Provider-agnostic: AKIF_TTS_PROVIDER selects "elevenlabs" (default, needs ELEVENLABS_API_KEY;
+a missing key means voice is disabled) or "gemini" (free tier, explicit data opt-in). Whichever
+provider runs, only the exact fixed sentences in speakable_replies.json are ever sent to it, so
+no user, deal or account text can reach a speech provider. No automatic switch between providers.
 """
 import base64
 import json
@@ -35,7 +36,16 @@ def speech_text_allowed(text: str) -> bool:
     return isinstance(text, str) and text in ALLOWED_TEXTS
 
 
+ELEVENLABS_MODELS = {"eleven_flash_v2_5", "eleven_multilingual_v2", "eleven_flash_v2"}
+_ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/"
+
+
+def _provider() -> str:
+    return os.getenv("AKIF_TTS_PROVIDER", "elevenlabs").strip().lower() or "elevenlabs"
+
+
 def _config() -> tuple[str, str, str]:
+    """Gemini settings (key, model, voice). Voice replies must be switched on first."""
     if os.getenv("AKIF_VOICE_REPLIES") != "on":
         raise HTTPException(status_code=503, detail="voice_replies_disabled")
     key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -49,6 +59,21 @@ def _config() -> tuple[str, str, str]:
     return key, model, os.getenv("AKIF_TTS_VOICE", "Kore").strip() or "Kore"
 
 
+def _elevenlabs_config() -> tuple[str, str, str]:
+    if os.getenv("AKIF_VOICE_REPLIES") != "on":
+        raise HTTPException(status_code=503, detail="voice_replies_disabled")
+    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    if not key:
+        raise HTTPException(status_code=503, detail="elevenlabs_not_configured")
+    voice = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
+    if not voice or not voice.isalnum():
+        raise HTTPException(status_code=503, detail="elevenlabs_voice_not_set")
+    model = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
+    if model not in ELEVENLABS_MODELS:
+        raise HTTPException(status_code=503, detail="tts_model_not_allowed")
+    return key, model, voice
+
+
 def _daily_cap_ok() -> bool:
     cap = int(os.getenv("AKIF_TTS_DAILY_CAP", "50") or "50")
     now = time.time()
@@ -60,11 +85,18 @@ def _daily_cap_ok() -> bool:
 
 
 def speech_status() -> dict:
+    provider = _provider()
+    base = {"provider": provider, "automatic_provider_fallback": False}
     try:
-        _, model, voice = _config()
-        return {"configured": True, "model": model, "voice": voice, "automatic_provider_fallback": False}
+        if provider == "elevenlabs":
+            _, model, _voice = _elevenlabs_config()
+            return {**base, "configured": True, "model": model}
+        if provider == "gemini":
+            _, model, voice = _config()
+            return {**base, "configured": True, "model": model, "voice": voice}
+        return {**base, "configured": False, "reason": "tts_provider_unknown"}
     except HTTPException as exc:
-        return {"configured": False, "reason": exc.detail, "automatic_provider_fallback": False}
+        return {**base, "configured": False, "reason": exc.detail}
 
 
 def wav_to_ogg_opus(wav: bytes) -> bytes:
@@ -77,9 +109,37 @@ def wav_to_ogg_opus(wav: bytes) -> bytes:
     return done.stdout
 
 
+def _synthesize_elevenlabs(text: str) -> bytes:
+    key, model, voice = _elevenlabs_config()
+    if not _daily_cap_ok():
+        raise HTTPException(status_code=429, detail="tts_daily_cap_reached")
+    req = urllib.request.Request(
+        f"{_ELEVENLABS_URL}{voice}?output_format=mp3_44100_64",
+        data=json.dumps({"text": text.strip(), "model_id": model}).encode(), method="POST",
+        headers={"xi-api-key": key, "content-type": "application/json", "accept": "audio/mpeg"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # no retries, no other provider
+            audio = resp.read()
+        if not audio:
+            raise ValueError("no_audio")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
+    return wav_to_ogg_opus(audio)  # ffmpeg detects the input format (mp3 here)
+
+
 def synthesize(text: str) -> bytes:
+    # The exact-text allowlist runs first, before any provider is chosen or contacted.
     if not speech_text_allowed(text):
         raise HTTPException(status_code=422, detail="text_not_allowed_for_speech")
+    provider = _provider()
+    if provider == "elevenlabs":
+        return _synthesize_elevenlabs(text)
+    if provider != "gemini":
+        raise HTTPException(status_code=503, detail="tts_provider_unknown")
+    return _synthesize_gemini(text)
+
+
+def _synthesize_gemini(text: str) -> bytes:
     key, model, voice = _config()
     if not _daily_cap_ok():
         raise HTTPException(status_code=429, detail="tts_daily_cap_reached")

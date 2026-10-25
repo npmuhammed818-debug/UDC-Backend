@@ -9,7 +9,7 @@ from app import chat, llm_gateway
 def test_chat_preserves_udc_system_rules_and_deadline(monkeypatch):
     monkeypatch.setattr(chat, "status", lambda: {"configured": True, "model": "groq/test"})
     calls = []
-    def complete(messages, timeout_seconds):
+    def complete(messages, timeout_seconds, sensitivity="private"):
         calls.append((messages, timeout_seconds))
         return '{"replyToSender":"What quantity do you need?"}'
     monkeypatch.setattr(chat, "complete", complete)
@@ -66,7 +66,8 @@ def test_chat_failure_diagnostics_exclude_provider_messages_and_user_text(monkey
 
 def test_probe_sends_only_fixed_text_and_hides_provider_errors(monkeypatch):
     monkeypatch.setattr(llm_gateway, "status", lambda: {"configured": True, "model": "test"})
-    def fail(messages, timeout_seconds):
+    def fail(messages, timeout_seconds, sensitivity):
+        assert sensitivity == "generic"
         assert messages == [{"role": "user", "content": "Reply only with AKIF_READY."}]
         raise RuntimeError("SECRET_MUST_NOT_LEAK")
     monkeypatch.setattr(llm_gateway, "complete", fail)

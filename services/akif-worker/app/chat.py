@@ -15,6 +15,8 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=30)
     timeout_seconds: float = Field(default=13, ge=1, le=20)
+    # "generic" only when the caller guarantees no deal, account or user data is in the messages.
+    sensitivity: Literal["private", "generic"] = "private"
 
     @model_validator(mode="after")
     def bound_context(self):
@@ -29,7 +31,7 @@ def chat_completion(request: ChatRequest) -> dict:
         raise HTTPException(status_code=503, detail="akif_llm_not_configured")
     try:
         content = complete([message.model_dump() for message in request.messages],
-                           timeout_seconds=request.timeout_seconds)
+                           timeout_seconds=request.timeout_seconds, sensitivity=request.sensitivity)
     except Exception as exc:
         # Do not return provider error messages; they can contain request data or secrets.
         provider_status = getattr(exc, "status_code", None)
