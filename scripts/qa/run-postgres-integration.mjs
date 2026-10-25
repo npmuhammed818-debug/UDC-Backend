@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const container = process.env.UDC_QA_POSTGRES_CONTAINER_ID ?? '';
@@ -11,6 +12,8 @@ assert.match(container, /^[a-f0-9]{64}$/, 'identify the isolated PostgreSQL serv
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
   ['PATH', 'HOME', 'TMPDIR', 'DOCKER_HOST', 'DOCKER_CONFIG'].includes(k)));
 const cases = [
+  ['lifecycle', 'UDC_LIFECYCLE_QA_DATABASE_URL', 'full-mvp-lifecycle'],
+  ['onboarding', 'UDC_QA_DATABASE_URL', 'whatsapp-onboarding-ux'],
   ['delivery', 'UDC_DELIVERY_QA_DATABASE_URL', 'shipment-delivery'],
   ['registration', 'UDC_QA_DATABASE_URL', 'whatsapp-buyer'],
   ['retry', 'UDC_QA_DATABASE_URL', 'whatsapp-webhook-retry'],
@@ -23,7 +26,12 @@ const cases = [
   ['commroutes', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-routes'],
   ['commission', 'UDC_COMMISSION_QA_DATABASE_URL', 'commission-migration'],
 ];
-mkdirSync(root + '.acceptance-results', { recursive: true });
+const directory=path.resolve(root,process.argv.find(a=>a.startsWith('--output-dir='))?.slice(13)??'.acceptance-results');
+assert.ok(directory===path.join(root,'.acceptance-results')||directory.startsWith(path.join(root,'.acceptance-results')+path.sep),'QA output must remain in ignored acceptance-results');
+mkdirSync(directory,{recursive:true});
+const selected=process.argv.find(a=>a.startsWith('--case='))?.slice(7);
+assert.ok(!selected||cases.some(c=>c[2]===selected),'unknown integration case must not silently run zero tests');
+const results=[];
 function command(cmd, args, extra = {}) {
   const result = spawnSync(cmd, args, { cwd: root, env: { ...env, ...extra },
     encoding: 'utf8', timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
@@ -44,7 +52,6 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
   }
 }
 for (const [prefix, variable, file] of cases) {
-  const selected = process.argv.find(a => a.startsWith('--case='))?.slice(7);
   if (selected && selected !== file) continue;
   if (process.argv.includes('--extended') && ['registration', 'email_auth'].includes(prefix)) continue;
   const name = `udc_qa_${prefix}_${randomBytes(6).toString('hex')}`;
@@ -59,15 +66,18 @@ for (const [prefix, variable, file] of cases) {
       SUPABASE_DATABASE_URL: url, SUPABASE_DIRECT_URL: url,
     });
     const output = command(process.execPath, [`artifacts/api-server/test/integration/${file}-postgres.mjs`], { [variable]: url });
-    writeFileSync(root + `.acceptance-results/${file}-postgres.log`, output);
+    writeFileSync(path.join(directory,`${file}-postgres.log`), output);
+    results.push({id:file,status:'PASS',log:`${file}-postgres.log`});
     console.log(`PASSED: ${file}`);
   } catch (error) {
     failed = true;
-    writeFileSync(root + `.acceptance-results/${file}-postgres.log`, String(error));
+    results.push({id:file,status:'FAIL',log:`${file}-postgres.log`});
+    writeFileSync(path.join(directory,`${file}-postgres.log`), String(error));
     console.error(`FAILED: ${file}; see .acceptance-results/${file}-postgres.log`);
   } finally {
     if (created) command('docker', ['exec', container, 'dropdb', '-U', 'udc_dev', name]);
   }
 }
 for (const role of addedRoles) command('docker', ['exec', container, 'psql', '-U', 'udc_dev', '-d', 'postgres', '-c', `DROP ROLE ${role}`]);
+writeFileSync(path.join(directory,'postgres-results.json'),JSON.stringify({generatedAt:new Date().toISOString(),results},null,2)+'\n');
 if (failed) process.exitCode = 1;

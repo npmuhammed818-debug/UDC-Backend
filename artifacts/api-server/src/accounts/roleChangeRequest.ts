@@ -33,7 +33,7 @@ export async function requestRoleChange(phone:string,target:TradeRole,
     await tx.execute(sql`
       INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,metadata)
       VALUES(${user.id},'whatsapp_role_change_requested','user',${user.id},
-        jsonb_build_object('fromRole',${user.role},'toRole',${target},
+        jsonb_build_object('fromRole',${user.role}::text,'toRole',${target}::text,
           'requiresManualAuthorization',true))
     `);
     return {status:"pending" as const};
