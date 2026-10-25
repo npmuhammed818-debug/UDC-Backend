@@ -17,6 +17,7 @@ import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
 import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
+import { react } from "../whatsapp/reactions";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
@@ -470,6 +471,7 @@ async function handleWhatsAppDealDocument(
     }
   }
 
+  react("ack", from, inboundProviderMessageId);
   const media = await downloadWhatsAppMedia(document.id);
   if (media.bytes.byteLength > 25 * 1024 * 1024) {
     return { reply: "That file is over the 25 MB limit. Send a smaller copy and I’ll take it from there." };
@@ -505,6 +507,7 @@ async function handleWhatsAppDealDocument(
     mimeType: media.mimeType,
   })
     .then(async (result) => {
+      react("complete", from, inboundProviderMessageId);
       const warning = result.status === "needs_review"
         ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
         : "";
@@ -1112,6 +1115,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         }
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
+          react("ack", message.from, message.id);
           const media = await downloadWhatsAppMedia(message.audio.id);
           voiceStage = 'transcription';
           const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
