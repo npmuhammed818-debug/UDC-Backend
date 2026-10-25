@@ -1,4 +1,5 @@
-export type WhatsAppPrivacyState = "none" | "notice_sent" | "accepted";
+import { isExplicitAgree } from "./consentNotice.ts";
+export type WhatsAppPrivacyState = "none" | "notice_sent" | "accepted" | "withdrawn";
 export function privacyCommand(text?: string) {
   const normalized = (text || "").trim().toUpperCase();
   if (["STOP", "UNSUBSCRIBE"].includes(normalized)) return "stop";
@@ -14,7 +15,7 @@ export function decideWhatsAppConsent(
   const accepted =
     input.state === "accepted" && input.version === currentPolicyVersion;
   if (accepted) return "continue" as const;
-  const confirmed = input.text?.trim().toUpperCase() === "AGREE";
+  const confirmed = isExplicitAgree(input.text);
   return input.state === "notice_sent" &&
     input.version === currentPolicyVersion &&
     confirmed

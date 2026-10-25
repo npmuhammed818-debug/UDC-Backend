@@ -277,7 +277,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     }
     for (const phone of ['111111111', '222222222']) {
       await send(phone, 'I need copper 50mt', undefined);
-      assert.match(s.sent.at(-1).body, /Reply AGREE/);
+      assert.match(s.sent.at(-1).body, /Reply "I agree"/);
       assert.equal(s.records.length, 0, 'no trade record before consent');
       assert.equal(s.prompts.length, 0, 'no AI processing before consent');
       await send(phone, 'AGREE', undefined);

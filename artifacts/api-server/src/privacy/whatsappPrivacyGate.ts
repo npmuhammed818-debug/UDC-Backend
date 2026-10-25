@@ -15,17 +15,19 @@ import {
   type WhatsAppPrivacyState,
 } from "./whatsappConsent";
 import { POLICY_VERSION, SUPPORT_EMAIL } from "./policies";
-const policyBase = "https://udc-backend.onrender.com";
-const consentNotice = `Before we start, UDC is for business representatives aged 18 or older. We process your messages and submitted trade documents with Meta and our configured service/AI providers for the trade services you request.\\nPrivacy: ${policyBase}/privacy\\nTerms and fees: ${policyBase}/terms\\nReply AGREE only if you are 18+, authorized to represent your business, accept the terms and acknowledge this processing. Otherwise, do not submit personal information or documents. Optional marketing is not included. For help or data requests: ${SUPPORT_EMAIL}`;
+import { buildConsentNotice, consentVersion, isWithdrawConsent, noticeHash, PRIVACY_URL, TERMS_URL, WITHDRAWN_REPLY } from "./consentNotice";
+const CONSENT_VERSION = consentVersion(POLICY_VERSION);
+const consentNotice = buildConsentNotice(SUPPORT_EMAIL);
+const noticeMeta = { noticeHash: noticeHash(consentNotice), noticeText: consentNotice };
 export async function whatsappPrivacyGate(
   phone: string,
   text?: string,
 ): Promise<string | { kind: "consent_accepted" } | null> {
   const command = privacyCommand(text);
   if (command === "privacy")
-    return `Privacy: ${policyBase}/privacy\nTerms: ${policyBase}/terms\nData requests: ${policyBase}/data-deletion`;
+    return `Privacy: ${PRIVACY_URL}\nTerms: ${TERMS_URL}\nData requests: ${SUPPORT_EMAIL}`;
   if (command === "deletion")
-    return `To request deletion, email ${SUPPORT_EMAIL} from your account email or identify the WhatsApp number you used with UDC. Do not send passwords or bank details. UDC will verify and review the records and explain any required retention. Instructions: ${policyBase}/data-deletion`;
+    return `To request deletion, email ${SUPPORT_EMAIL} from your account email or identify the WhatsApp number you used with UDC. Do not send passwords or bank details. UDC will verify and review the records and explain any required retention. Instructions: ${PRIVACY_URL}`;
   if (command === "stop") {
     const [user] = await db
       .select({ id: usersTable.id })
@@ -52,7 +54,7 @@ export async function whatsappPrivacyGate(
             updatedAt: new Date(),
           },
         });
-    return `Optional notifications are off for your UDC account, if present. To withdraw consent or request deletion, contact ${SUPPORT_EMAIL}.`;
+    return `Optional notifications are off for your UDC account, if present. To withdraw consent, send "withdraw consent". To request deletion, send "delete my data".`;
   }
   // Pseudonymous lookup avoids putting phone numbers or message bodies into consent logs.
   const fingerprint = createHmac("sha256", process.env.WHATSAPP_APP_SECRET!)
@@ -113,7 +115,7 @@ export async function whatsappPrivacyGate(
             createdAt: sql`clock_timestamp()`,
             action: "whatsapp_privacy_notice_presented",
             entityType: "whatsapp_consent",
-            metadata: { fingerprint, policyVersion: POLICY_VERSION, status: "notice_sent" },
+            metadata: { fingerprint, policyVersion: CONSENT_VERSION, ...noticeMeta, status: "notice_sent" },
           });
           return consentNotice;
         }
@@ -136,8 +138,21 @@ export async function whatsappPrivacyGate(
         state: (current?.metadata?.status as WhatsAppPrivacyState) || "none",
         version: current?.metadata?.policyVersion as string | undefined,
       },
-      POLICY_VERSION,
+      CONSENT_VERSION,
     );
+    if (isWithdrawConsent(text) && current?.metadata?.status === "accepted") {
+      await tx.insert(auditLogsTable).values({
+        createdAt: sql`clock_timestamp()`,
+        action: "whatsapp_consent_withdrawn",
+        entityType: "whatsapp_consent",
+        entityId: account?.id ?? null,
+        metadata: { fingerprint, policyVersion: CONSENT_VERSION, status: "withdrawn", replyText: (text || "").trim().slice(0, 40) },
+      });
+      if (account)
+        await tx.insert(notificationPreferencesTable).values({ userId: account.id, optionalInApp: false, optionalWhatsApp: false, reminders: false, announcements: false })
+          .onConflictDoUpdate({ target: notificationPreferencesTable.userId, set: { optionalInApp: false, optionalWhatsApp: false, reminders: false, announcements: false, updatedAt: new Date() } });
+      return WITHDRAWN_REPLY;
+    }
     if (decision === "continue") return null;
     if (decision === "accept") {
       await tx
@@ -148,7 +163,9 @@ export async function whatsappPrivacyGate(
           entityType: "whatsapp_consent",
           metadata: {
             fingerprint,
-            policyVersion: POLICY_VERSION,
+            policyVersion: CONSENT_VERSION,
+            ...noticeMeta,
+            replyText: (text || "").trim().slice(0, 40),
             status: "accepted",
             termsAccepted: true,
             adultBusinessUser: true,
@@ -158,7 +175,7 @@ export async function whatsappPrivacyGate(
     }
     if (
       current?.metadata?.status !== "notice_sent" ||
-      current.metadata.policyVersion !== POLICY_VERSION
+      current.metadata.policyVersion !== CONSENT_VERSION
     ) {
       await tx
         .insert(auditLogsTable)
@@ -168,7 +185,8 @@ export async function whatsappPrivacyGate(
           entityType: "whatsapp_consent",
           metadata: {
             fingerprint,
-            policyVersion: POLICY_VERSION,
+            policyVersion: CONSENT_VERSION,
+            ...noticeMeta,
             status: "notice_sent",
           },
         });
