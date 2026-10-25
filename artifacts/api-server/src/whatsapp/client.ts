@@ -3,11 +3,13 @@ type WhatsAppConfig = {
   phoneNumberId: string;
 };
 
-function getConfig(): WhatsAppConfig | null {
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+export function getWhatsAppConfig(env:NodeJS.ProcessEnv=process.env): WhatsAppConfig | null {
+  const accessToken = env.WHATSAPP_ACCESS_TOKEN?.trim();
+  const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
   return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : null;
 }
+
+const getConfig=getWhatsAppConfig;
 
 // Keep provider error messages, tokens, phone numbers and response bodies out of logs.
 async function providerError(response: Response) {

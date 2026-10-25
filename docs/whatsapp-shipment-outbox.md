@@ -1,33 +1,120 @@
-# UDC shipment WhatsApp outbox — draft QA, NOT deployed
+# Shipment and deal notifications — staging candidate, not deployed
 
-The WhatsApp shipment alert outbox is **durable but dormant**. It queues a single send intent for each in-app notification. No production runner automatically sends it, and no live Meta sender is wired to this module.
+Based on draft PR #180 (`48c521a`). Sending is **disabled by default**. No real
+messages, hosted changes, deployment or billing were authorized or performed.
 
-## What is queued
-- Shipment created/status/milestone/delay/exception updates and cargo progress: the admin paths now record in-app notifications plus outbox records in the same transaction. The former direct WhatsApp sending path is bypassed for shipment alerts so old and new paths cannot both send.
-- Overdue ETA reminders and stale location reports: #133's deterministic daily scan creates the in-app notification, matching outbound intent and audit record in one transaction. It cannot create repeat intents for the same notification.
+## Delivery and privacy
 
-The outbox persists **notification ID, deal ID, recipient user ID, status, counts, provider acceptance message ID, safe failure category and timestamps**. It does **not** persist phone numbers, WhatsApp tokens, private documents, location records, or signed download links.
+Shipment milestones, shipment/cargo status, ETA-only edits, ETA follow-ups,
+document reviews and relevant deal/inspection/customs/payment-record updates
+produce in-app notifications and one outbox intent per notification. The old
+direct-send path is bypassed for these event classes. Milestone and cargo
+ETA/status notifications share the source transaction: a queue failure rolls
+back the source update, allowing safe retry with the same idempotency key.
 
-## Safety semantics
+The runner polls every 30 seconds, at most five jobs per batch. Concurrent
+replicas use SKIP LOCKED and unique lease tokens. Before sending, the dispatcher
+checks verified role, current phone, current-policy consent, preferences and
+current deal membership. Removed agents, unverified/suspended users, outsiders
+and opted-out recipients cannot receive queued messages. A new phone requires
+fresh consent; old-number window evidence is not reused.
 
-- **Pending**: notification exists but no outbound send was attempted.
-- **Leased**: one worker holds a 90-second lease while checking eligibility and attempting submission.
-- **Retry**: only known *pre-send* failures can retry, with 1-, 5- and 30-minute backoff and no more than three total attempts.
-- **Accepted**: the provider acknowledged acceptance and returned a provider message ID. This does **not** mean the recipient received or read it. Delivery status webhook mapping and receipts still need to be built.
-- **Uncertain**: Meta could have received the message; if the worker crashes after a possible send, an HTTP timeout occurs, or Meta acceptance returns no message ID, the intent is held for human/provider reconciliation. **No automatic resend.**
-- **Blocked**: policy permission is missing, provider rejected the request or retry limit reached.
-- **Cancelled**: account deactivated or number unavailable, opted out of optional WhatsApp reminders, or recipient no longer belongs to the deal.
+Text comes from a fixed allowlist, never from the stored in-app body, review
+note, document name/URL, bank details or trade terms. Assigned agents receive
+only generic shipment updates; document and financial alerts are denied to them.
+Accepted provider IDs are bound to the intended deal/user in message contexts.
+ETAs and alerts never approve inspection, company verification or payment.
+The DLC directly to seller / destination-SGS controls remain unchanged.
 
-The dispatcher requires *all* of: `enabled:true`, injected test/approved transport and a separately injected `policyAuthorized()` function. That function must verify a signed Meta inbound conversation within the allowed window **or a previously approved WhatsApp template for proactive delivery**. The module has **no live authorization adapter** today. Fail closed; do not flip an environment flag to bypass it.
+## Meta policy
 
-Before a send, it loads the account's **current** phone and status, matching notification, current deal membership or active agent assignment, WhatsApp notification preferences, and mandatory messaging policy authorization.
+Inside a signed customer-service window, with a five-minute expiry margin,
+send fixed event-specific text. Missing, expired or old-number evidence requires
+a template. Each template send first reads the configured WABA's catalog.
+Name/language must match exactly, status APPROVED, category UTILITY, and the sole
+component must be a BODY with exactly this text (no variables, headers or buttons):
 
-Operators can review sanitized status, attempt counts and safe failure categories from `GET /admin/notifications/whatsapp-shipment-outbox?status=uncertain` (admin-only). This endpoint does not reveal phone numbers or message content, and cannot force a resend.
+> There is an update on your UDC deal. Open My deals in WhatsApp to review the details you are authorized to see.
 
-## Migration and acceptance
+UDC does not create or approve templates. If Meta rejects that wording, review
+replacement wording/code separately. Calls use the existing Meta v21 HTTPS
+integration, deadlines, redirect refusal and bounded responses. Credentials and
+provider response bodies are never logged.
 
-Apply `lib/db/migrations/20261024_whatsapp_shipment_outbox.sql` **only to staging** after the cargo and ETA migrations, following a reviewed backup and rollback plan. RLS is on, client roles have no direct grants, and `service_role` has SELECT, INSERT and UPDATE only. PostgreSQL rejects inconsistent leases and duplicate notification keys.
+## Retry, receipt and operator behavior
 
-Isolated QA tests verify unique queuing, failure rollback, shipment direct-send suppression, policy denial, STOP opt-out, bounded safe preflight retries, unknown-provider outcome quarantine, expired leases, and provider acceptance semantics.
+- Known pre-send failures and confirmed Meta 429 rejection use one-minute then
+  five-minute backoff, at most three total attempts.
+- Accepted means Meta returned an ID, not delivery/read. Signed receipts use
+  the existing durable journal and monotonic progression. Exact HMAC, configured
+  sender number and intended recipient must match. Early receipts reconcile
+  after acceptance commits; failed receipts never automatically trigger resends.
+- Timeouts, 5xx, malformed acknowledgements and expired leases are uncertain:
+  never automatically resend. Meta may have accepted the request. No invented
+  Meta idempotency API or exactly-once-delivery guarantee is claimed.
+- Outcomes and lease expiry are atomically audited using safe metadata. A DB
+  failure after submission requires investigation, not blind replay.
 
-**Outstanding before launch:** validate real Meta template/window permissions, persist signed recent inbound evidence, wire a guarded worker only after owner approval, attach provider delivery/read statuses, monitor unknown attempts for operator review, staging end-to-end, and approved migration/deployment. No production notification delivery is claimed.
+Read-only mobile admin page: `/admin/shipment-notifications`. It shows submission
+and delivery states, attempts and issues, with no sending/activation controls.
+All admin API paths below use `/api` prefix:
+
+| Method/path | Behavior |
+| --- | --- |
+| GET `/admin/notifications/whatsapp-shipment-outbox` | Latest 100 entries and optional submission-status filter; no phone/content/token; no-store |
+| POST `/admin/notifications/whatsapp-shipment-outbox/dispatch` | Bounded scan; request cannot override disabled flag |
+| POST `/admin/notifications/whatsapp-shipment-outbox/:id/retry` | Audited release of blocked unsent jobs below three attempts; cannot reset counts or release accepted/uncertain jobs |
+| POST `/admin/notifications/whatsapp-shipment-receipts/reconcile` | Existing signed journal only; no sends |
+
+Investigate uncertain/failed jobs with approved provider-side evidence. Do not
+edit attempts/status or replay source events to force delivery. Disabling the
+send flag stops subsequent scans; an already submitted request cannot be recalled.
+
+## Staging activation — separate approval required
+
+1. Review the exact draft and green hosted CI. Use an isolated staging database
+   with fictional records, explicit consent/preferences and only approved test
+   numbers. Inspect the pending queue before enabling it.
+2. Apply existing outbox, receipt and customer-window migrations in documented
+   dependency order, plus tracking/cargo/ETA schemas. No new migration is added
+   here. Verify actual application-role access to outbox, receipts, notifications,
+   audit logs and message contexts. Preserve client RLS restrictions and follow
+   existing backup/restore and verified-TLS gates.
+3. Securely configure existing `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`,
+   `WHATSAPP_BUSINESS_ACCOUNT_ID`, `WHATSAPP_APP_SECRET` for the staging number.
+   Confirm its webhook subscription, exact HMAC and delivery callbacks.
+4. Obtain actual Meta approval for the exact UTILITY template. Configure its
+   `UDC_SHIPMENT_WHATSAPP_TEMPLATE_NAME` and
+   `UDC_SHIPMENT_WHATSAPP_TEMPLATE_LANGUAGE` exactly.
+5. After approval, set `UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED=true` and validate
+   inbound evidence. Only then enable `UDC_SHIPMENT_WHATSAPP_SEND_ENABLED=true`
+   for approved staging sends. Keep false/unset elsewhere. ETA scanning remains
+   separately gated by `UDC_ETA_FOLLOWUPS_ENABLED`.
+6. Test actual delivery/read/failure, expiry/template sending, STOP/withdrawal,
+   phone recovery, revoked roles and outages with designated recipients. Review
+   pricing/limits before authorizing billable activity. Production is a separate
+   approval; email activation is unrelated and unchanged.
+
+## Executed evidence
+
+- Five new unit tests cover disabled transport, role/content allowlisting, exact
+  template checks, fixed endpoint, rejection, rate limits, oversized responses
+  and ambiguous provider outcomes.
+- Eleven real PostgreSQL scenarios exercise actual admin milestone/ETA routes,
+  source/queue rollback, concurrent dispatch, privacy/phone/consent gates, template
+  policy, retry limits, signed/early callbacks, sender/recipient binding, lease
+  quarantine, contexts and admin visibility. Only Meta is simulated.
+- Full release verification passed 322 backend tests, typechecks and builds.
+  Eight acceptance groups and three outbox/receipt/ETA JavaScript suites passed.
+  All eleven PostgreSQL suite programs passed, including existing registration,
+  recovery, permissions, vault, trade and commission regressions.
+- Mobile Chromium simulation passed status rendering/refresh, disabled indicator,
+  no activation controls, buyer guard and zero page errors. API responses were
+  simulated locally; backend permissions separately passed with PostgreSQL.
+  Dependency audit: zero known advisories.
+
+Reproduce with the pinned disposable PostgreSQL service:
+`UDC_QA_POSTGRES_CONTAINER_ID=<local-service-id> node scripts/qa/run-postgres-integration.mjs --case=shipment-delivery`.
+The fixture rejects hosted URLs and intercepts Meta calls. It runs in the
+extended PostgreSQL CI job. This is not live Meta acceptance, template approval,
+hosted role validation or full business UAT.

@@ -16,6 +16,8 @@ import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commi
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { enqueueShipmentWhatsApp } from "../notifications/shipmentOutbox";
+import {notificationText} from "../notifications/deliveryContent";
+import {dispatchShipmentNotifications} from "../notifications/shipmentDispatcher";
 import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
@@ -481,14 +483,17 @@ const financialInstrumentStatusSchema = z.object({
 
 const hasVerifiedCounterparties = verifiedCounterparties;
 
+type NotificationTransaction=Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 async function notifyDealCounterparties(
   dealId: string,
   type: string,
   title: string,
   body: string,
   link: string,
+  executor:typeof db|NotificationTransaction=db,
 ) {
-  const [deal] = await db
+  const [deal] = await executor
     .select({
       buyerUserId: dealsTable.buyerUserId,
       sellerUserId: dealsTable.sellerUserId,
@@ -500,9 +505,9 @@ async function notifyDealCounterparties(
   if (!deal) return;
 
   // Shipment alerts must not use both the old direct-send path and the
-  // transactional outbox. The queue has NO active production dispatcher.
-  if(type.startsWith("shipment_")||type==="cargo_unit_status_updated"){
-    await db.transaction(async tx=>{
+  // transactional outbox. Its dispatcher remains explicitly disabled by default.
+  if(notificationText(type,"buyer")){
+    const queue=async(tx:NotificationTransaction)=>{
       const notices=await tx.insert(notificationsTable).values([
         {userId:deal.buyerUserId,type,title,body,link},
         {userId:deal.sellerUserId,type,title,body,link},
@@ -511,7 +516,8 @@ async function notifyDealCounterparties(
         await enqueueShipmentWhatsApp(tx,{
           notificationId:notice.id,dealId,recipientUserId:notice.userId,
         });
-    });
+    };
+    if(executor===db)await db.transaction(queue);else await queue(executor as NotificationTransaction);
     return;
   }
 
@@ -557,7 +563,32 @@ router.post("/admin/notifications/whatsapp-shipment-receipts/reconcile",
     catch{res.status(503).json({error:"shipment_receipt_reconciliation_unavailable"});}
   });
 
+router.post("/admin/notifications/whatsapp-shipment-outbox/dispatch",requireRole("admin"),async(_req,res)=>{
+  try{res.json(await dispatchShipmentNotifications());}
+  catch{res.status(503).json({error:"notification_dispatch_unavailable"});}
+});
+
+// Only safe, unsent blocked jobs with remaining attempts can be released.
+// Accepted/uncertain/failed-receipt jobs are never manually resent here.
+router.post("/admin/notifications/whatsapp-shipment-outbox/:id/retry",requireRole("admin"),async(req,res)=>{
+  try{
+    const id=z.string().uuid().parse(req.params["id"]);
+    const result=await db.execute(sql`
+      WITH released AS (
+        UPDATE public.whatsapp_shipment_outbox SET status='retry',next_attempt_at=now(),updated_at=now()
+        WHERE id=${id} AND status='blocked' AND attempts<3 AND provider_message_id IS NULL
+        RETURNING id
+      ) INSERT INTO public.audit_logs(actor_user_id,action,entity_type,entity_id,metadata)
+        SELECT ${req.authUser!.id},'whatsapp_notification_retry_requested','whatsapp_outbox',id,'{}'::jsonb FROM released
+        RETURNING entity_id
+    `);
+    if(!result.rows.length){res.status(409).json({error:"notification_not_safe_to_retry"});return;}
+    res.json({queued:true});
+  }catch(error){res.status(error instanceof z.ZodError?400:503).json({error:"notification_retry_unavailable"});}
+});
+
 router.get("/admin/notifications/whatsapp-shipment-outbox",requireRole("admin"),async(req,res)=>{
+  res.set("Cache-Control","no-store");
   try{
     const status=z.enum(["pending","leased","retry","accepted","uncertain","cancelled","failed","blocked"])
       .optional().parse(req.query.status);
@@ -577,7 +608,7 @@ router.get("/admin/notifications/whatsapp-shipment-outbox",requireRole("admin"),
     }).from(whatsappShipmentOutboxTable)
       .where(status?eq(whatsappShipmentOutboxTable.status,status):undefined)
       .orderBy(desc(whatsappShipmentOutboxTable.updatedAt)).limit(100);
-    res.json({entries:rows,providerAcceptanceDoesNotEqualDelivered:true});
+    res.json({entries:rows,providerAcceptanceDoesNotEqualDelivered:true,dispatchEnabled:process.env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"});
   }catch(error){
     if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
     res.status(500).json({error:"outbox_list_failed"});
@@ -1512,12 +1543,12 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       metadata: { previousStatus: existing.status, newStatus: document.status, reviewNote: input.reviewNote ?? null },
     });
     if (document.status === "rejected" && existing.status !== "rejected") {
-      await db.insert(notificationsTable).values({
-        userId: document.uploadedBy,
-        type: "document_reviewed",
-        title: "Document needs correction",
-        body: `Your ${document.documentType} was rejected. Reason: ${input.reviewNote}`,
-        link: "/documents",
+      await db.transaction(async tx=>{
+        const [notice]=await tx.insert(notificationsTable).values({
+          userId:document.uploadedBy,type:"document_reviewed",title:"Document needs correction",
+          body:`Your ${document.documentType} was rejected. Reason: ${input.reviewNote}`,link:"/documents",
+        }).returning({id:notificationsTable.id});
+        await enqueueShipmentWhatsApp(tx,{notificationId:notice.id,dealId:document.dealId,recipientUserId:document.uploadedBy});
       });
     }
     if (document.status === "approved" && existing.status !== document.status) {
@@ -1957,8 +1988,8 @@ router.patch("/admin/shipments/:shipmentId", requireRole("admin"), async (req, r
 
 // Agents receive only milestone existence and a deal-navigation prompt. Never
 // include carrier IDs, shipment locations, financial terms or counterparty details.
-async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|"shipment_delay"){
-  const agents=await db.select({userId:usersTable.id,phone:usersTable.phone})
+async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|"shipment_delay",executor:typeof db|NotificationTransaction=db){
+  const agents=await executor.select({userId:usersTable.id,phone:usersTable.phone})
     .from(dealParticipantsTable).innerJoin(usersTable,eq(dealParticipantsTable.userId,usersTable.id))
     .where(and(eq(dealParticipantsTable.dealId,dealId),
       eq(dealParticipantsTable.participantRole,"agent"),eq(dealParticipantsTable.status,"active"),
@@ -1967,7 +1998,7 @@ async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|
   const body=kind==="shipment_delay"
     ?"A shipment delay or exception was recorded for an assigned UDC deal. Open My deals → Track shipment."
     :"A shipment milestone was recorded for an assigned UDC deal. Open My deals → Track shipment.";
-  await db.transaction(async tx=>{
+  const queue=async(tx:NotificationTransaction)=>{
     const notices=await tx.insert(notificationsTable).values(agents.map(a=>({
       userId:a.userId,type:kind,title:"Assigned deal shipment update",body,
       link:`/deals/${dealId}/tracking`,
@@ -1976,7 +2007,8 @@ async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|
       await enqueueShipmentWhatsApp(tx,{
         notificationId:notice.id,dealId,recipientUserId:notice.userId,
       });
-  });
+  };
+  if(executor===db)await db.transaction(queue);else await queue(executor as NotificationTransaction);
 }
 
 router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
@@ -2012,10 +2044,7 @@ router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req
         entityType:"deal",entityId:shipment.dealId,
         metadata:{shipmentId:shipment.id,eventId:inserted.id,kind:inserted.kind,source:inserted.source},
       });
-      return {event:inserted,created:true,conflict:false};
-    });
-    if(result.conflict){res.status(409).json({error:"idempotency_key_conflict"});return;}
-    if(result.created){
+
       const urgent=input.kind==="delay"||input.kind==="exception";
       // Never include personal/counterparty details or unverified carrier claims in alerts.
       await notifyDealCounterparties(shipment.dealId,
@@ -2023,10 +2052,13 @@ router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req
         urgent?"Shipment delay or exception recorded":"Shipment milestone recorded",
         urgent?"UDC recorded a shipment delay or exception. Open Track shipment for the recorded details.":
           "UDC recorded a shipment update. Open Track shipment in your deal to see its progress.",
-        `/deals/${shipment.dealId}/tracking`);
-    }
-    if(result.created)await notifyAssignedDealAgents(shipment.dealId,
-      input.kind==="delay"||input.kind==="exception"?"shipment_delay":"shipment_milestone");
+        `/deals/${shipment.dealId}/tracking`,tx);
+      await notifyAssignedDealAgents(shipment.dealId,
+      input.kind==="delay"||input.kind==="exception"?"shipment_delay":"shipment_milestone",tx);
+
+      return {event:inserted,created:true,conflict:false};
+    });
+    if(result.conflict){res.status(409).json({error:"idempotency_key_conflict"});return;}
     res.status(result.created?201:200).json({event:result.event});
   }catch(error){
     if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
@@ -2106,7 +2138,7 @@ router.patch("/admin/cargo-units/:unitId",requireRole("admin"),async(req:Authent
         entityType:"deal",entityId:unit.dealId,
         metadata:{shipmentId:unit.shipmentId,unitId:unit.id,previousStatus:previous.status,newStatus:unit.status},
       });
-      const changed=previous.status!==unit.status;
+      const changed=previous.status!==unit.status || new Date(previous.estimatedArrival??0).getTime()!==new Date(unit.estimatedArrival??0).getTime();
       if(changed){
         await tx.insert(shipmentTrackingEventsTable).values({
           shipmentId:unit.shipmentId,dealId:unit.dealId,kind:"status_update",
@@ -2115,15 +2147,15 @@ router.patch("/admin/cargo-units/:unitId",requireRole("admin"),async(req:Authent
           source:"udc_manual",occurredAt:new Date(),recordedByUserId:req.authUser!.id,
         });
       }
+    if(changed){
+      await notifyDealCounterparties(unit.dealId,"cargo_unit_status_updated",
+        "Cargo progress updated","UDC recorded new cargo-unit progress. Open Track shipment for the details.",
+        `/deals/${unit.dealId}/tracking`,tx);
+      await notifyAssignedDealAgents(unit.dealId,"shipment_milestone",tx);
+    }
       return {unit,changed};
     });
     if(!result){res.status(404).json({error:"cargo_unit_not_found"});return;}
-    if(result.changed){
-      await notifyDealCounterparties(result.unit.dealId,"cargo_unit_status_updated",
-        "Cargo progress updated","UDC recorded new cargo-unit progress. Open Track shipment for the details.",
-        `/deals/${result.unit.dealId}/tracking`);
-      await notifyAssignedDealAgents(result.unit.dealId,"shipment_milestone");
-    }
     res.json({unit:result.unit});
   }catch(error){
     res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?"validation_error":"cargo_unit_update_failed"});

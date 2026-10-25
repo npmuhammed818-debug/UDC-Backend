@@ -179,11 +179,14 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
         else process.env.WHATSAPP_PHONE_NUMBER_ID=priorPhoneId;
       }
     });
-    await t.test("delivery receipts require Meta HMAC and never reach trade or AI",async()=>{
+    await t.test("delivery receipts require Meta HMAC and never reach trade or AI",async(t)=>{
       reset();seedDeal();
+      const priorPhoneId=process.env.WHATSAPP_PHONE_NUMBER_ID;
+      process.env.WHATSAPP_PHONE_NUMBER_ID="qa-receipt-sender";
+      t.after(()=>{if(priorPhoneId===undefined)delete process.env.WHATSAPP_PHONE_NUMBER_ID;else process.env.WHATSAPP_PHONE_NUMBER_ID=priorPhoneId;});
       const status={id:"wamid.synthetic.abc",status:"delivered",timestamp:"1792800000",recipient_id:"10000000001"};
-      async function receipt(signed=true){
-        const body=JSON.stringify({entry:[{changes:[{value:{statuses:[status]}}]}]});
+      async function receipt(signed=true,sender="qa-receipt-sender"){
+        const body=JSON.stringify({entry:[{changes:[{value:{metadata:{phone_number_id:sender},statuses:[status]}}]}]});
         return fetch(base+"/webhooks/whatsapp",{method:"POST",headers:{
           "content-type":"application/json",
           "x-hub-signature-256":signed?"sha256="+createHmac("sha256","fixture-secret").update(body).digest("hex"):"sha256=invalid",
@@ -191,6 +194,8 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       }
       assert.equal((await receipt(false)).status,401);
       assert.equal(state.receipts.length,0);
+      assert.equal((await receipt(true,"another-sender")).status,200);
+      assert.equal(state.receipts.length,0,"another number cannot update receipt state");
       assert.equal((await receipt()).status,200);
       assert.equal(state.receipts.length,1);
       assert.deepEqual(state.sent,[]);assert.deepEqual(state.intake,[]);

@@ -16,7 +16,7 @@ test("outbox leases and uncertain-provider outcomes never produce unsafe retries
         attempts:0,nextAttemptAt:new Date("2026-10-24T00:00:00Z"),claimToken:null,leaseUntil:null};
       jobs.push(j);return {rows:[{id:j.id}]};
     }
-    if(sql.startsWith("update public.whatsapp_shipment_outbox")&&sql.includes("where status='leased' and lease_until")){
+    if(sql.startsWith("with expired as")){
       const now=v[0];for(const j of jobs.filter(j=>j.status==="leased"&&j.leaseUntil<=now)){
         Object.assign(j,{status:"uncertain",claimToken:null,leaseUntil:null,reason:"provider_outcome_unknown"});
       }return {rows:[]};
@@ -36,9 +36,9 @@ test("outbox leases and uncertain-provider outcomes never produce unsafe retries
         ||!user.phone||!pref?.optionalWhatsApp||!pref?.reminders
         ||!(deal.buyer===user.id||deal.seller===user.id||
           (user.role==="agent"&&members.has(j.dealId+":"+user.id))))return {rows:[]};
-      return {rows:[{user_id:user.id,phone:user.phone,body:n.body}]};
+      return {rows:[{user_id:user.id,phone:user.phone,body:n.body,type:"shipment_milestone",role:user.role}]};
     }
-    if(sql.startsWith("update public.whatsapp_shipment_outbox set status=")){
+    if(sql.startsWith("with updated as (update public.whatsapp_shipment_outbox set status=")){
       const [status,notBefore,messageId,acceptedAt,updatedAt,reason,id,token,now]=v;
       const j=jobs.find(j=>j.id===id&&j.status==="leased"&&j.claimToken===token&&j.leaseUntil>now);
       if(!j)return {rows:[]};
