@@ -187,14 +187,16 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
       const raw=JSON.stringify(agent.data);
       for(const secret of ["SECRET TRACK","PRIVATE CARRIER","PRIVATE PORT","PRIVATE EVIDENCE","PRIVATE REF","OTHER LOCATION","PRIVATE CONTAINER","SECRET VESSEL","SECRET VOYAGE","SECRET BILL","PRIVATE HARBOR","UNRELATED AIR WAYBILL"])assert.ok(!raw.includes(secret));
     });
-    await t.test("agent removal revokes both deal and global document access", async () => {
-      assert.equal((await request("agent", `/deals/${dealId}`)).status, 200);
-      assert.equal((await request("agent", "/documents")).data.documents.length, 1);
+    await t.test("agents are denied raw deal and global document routes, and removal also revokes redacted tracking", async () => {
+      // P0 #155: agents never read raw deal records or the global document list, active or not.
+      assert.equal((await request("agent", `/deals/${dealId}`)).status, 403);
+      assert.equal((await request("agent", "/documents")).status, 403);
+      assert.equal((await request("agent", `/deals/${dealId}/documents`)).status, 403);
+      assert.equal((await request("agent", `/deals/${dealId}/tracking`)).status, 200);
       records.dealParticipantsTable[0].status = "inactive";
-      assert.equal((await request("agent", `/deals/${dealId}`)).status, 404);
-      assert.equal((await request("agent", `/deals/${dealId}/documents`)).status, 404);
-      assert.equal((await request('agent',`/deals/${dealId}/tracking`)).status,404);
-      assert.deepEqual((await request("agent", "/documents")).data.documents, []);
+      assert.equal((await request("agent", `/deals/${dealId}`)).status, 403);
+      assert.equal((await request("agent", `/deals/${dealId}/tracking`)).status, 404);
+      assert.equal((await request("agent", "/documents")).status, 403);
       assert.deepEqual(signed, []);
     });
   } finally {
