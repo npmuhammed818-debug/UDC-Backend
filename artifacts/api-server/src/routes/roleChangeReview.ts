@@ -19,8 +19,9 @@ router.get("/admin/role-change-requests",requireRole("admin"),async(_req,res)=>{
   }catch{res.status(503).json({error:"role_change_review_unavailable"});}
 });
 const review=z.object({
-  decision:z.enum(["reviewed","rejected"]),
+  decision:z.enum(["reviewed","rejected","activate"]),
   note:z.string().trim().max(500).optional(),
+  verificationConfirmed:z.literal(true).optional(),
 }).strict();
 router.post("/admin/role-change-requests/:requestId/review",
   requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
@@ -32,15 +33,33 @@ router.post("/admin/role-change-requests/:requestId/review",
         SELECT r.id,r.user_id,r.from_role,r.to_role,r.status,u.role,u.status AS user_status
         FROM public.user_role_change_requests r
         JOIN public.users u ON u.id=r.user_id
-        WHERE r.id=${id} FOR UPDATE OF r
+        WHERE r.id=${id} FOR UPDATE OF r,u
       `);
       const item=rows.rows[0] as {id:string;user_id:string;from_role:string;to_role:string;
         status:string;role:string;user_status:string}|undefined;
       if(!item)return "not_found" as const;
       if(item.status!=="pending")return "already_reviewed" as const;
-      if(item.role!==item.from_role||!["verified","under_review"].includes(item.user_status))
+      if(item.role!==item.from_role||item.user_status!=="verified")
         return "account_changed" as const;
-      // Deliberately NOT an approval/role update: switching canonical
+      if(input.decision==="activate"){
+        if(input.verificationConfirmed!==true||!input.note||input.note.length<12)
+          return "verification_required" as const;
+        // Fail closed: do not reassign any existing trade obligation or referral.
+        // Historical ownership and commission attribution must not be rewritten.
+        const obligations=await tx.execute(sql`
+          SELECT
+            EXISTS(SELECT 1 FROM public.deals WHERE buyer_user_id=${item.user_id} OR seller_user_id=${item.user_id}) AS has_deals,
+            EXISTS(SELECT 1 FROM public.referrals WHERE agent_user_id=${item.user_id} OR referred_user_id=${item.user_id}) AS has_referrals,
+            EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${item.user_id}) AS has_requests,
+            EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${item.user_id}) AS has_listings
+        `);
+        const flags=obligations.rows[0] as Record<string,boolean>|undefined;
+        if(!flags||Object.values(flags).some(Boolean))return "existing_obligations" as const;
+        // Update identity and revoke every browser session in the same transaction.
+        // WhatsApp conversation state must also be invalidated before enabling this path.
+        return "conversation_invalidation_pending" as const;
+      }
+      // Reviewed does not confer approval or access. Require a verified\n      // account and lock both request and identity to avoid stale review.\n      // Deliberately NOT an approval/role update: switching canonical
       // users.role could grant unrelated deal/referral access or erase role
       // history. A later vetted multi-role schema is required.
       await tx.execute(sql`
@@ -66,9 +85,9 @@ router.post("/admin/role-change-requests/:requestId/review",
       return "recorded" as const;
     },{isolationLevel:"serializable"});
     if(result==="not_found"){res.status(404).json({error:"request_not_found"});return;}
-    if(result!=="recorded"){res.status(409).json({error:result});return;}
+    if(result!=="recorded"&&result!=="activated"){res.status(409).json({error:result});return;}
     res.set("Cache-Control","no-store").json({
-      reviewed:true,roleChanged:false,requiresManualTransition:true,
+      reviewed:true,roleChanged:result==="activated",requiresManualTransition:result!=="activated",
     });
   }catch(e){
     if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}

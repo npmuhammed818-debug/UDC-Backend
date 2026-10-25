@@ -40,7 +40,7 @@ try {
   });
   const app = await import(directory + "/app.mjs");
   pool = app.pool;
-  for(const migration of ['20261023_email_authentication.sql','20261025_vault_upload_links.sql','20261024_user_role_change_review.sql'])
+  for(const migration of ['20261023_email_authentication.sql','20261025_vault_upload_links.sql','20261024_user_role_change_review.sql','20261026_role_activation_status.sql'])
     await pool.query(await readFile(new URL('../../../../lib/db/migrations/'+migration,import.meta.url),'utf8'));
   server = app.default.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));
@@ -252,10 +252,30 @@ try {
   assert.equal((await app.requestRoleChange(rolePhone,'agent')).status,'already_pending');
   const roleRequest=(await pool.query("select id from user_role_change_requests where user_id=$1 and status='pending'",[buyer.id])).rows[0].id;
   assert.equal((await call('POST',`/admin/role-change-requests/${roleRequest}/review`,{decision:'reviewed'},buyer.cookie)).status,403);
+  const blockedActivation=await call('POST',`/admin/role-change-requests/${roleRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Manual KYC verified for seller'},admin.cookie);
+  assert.equal(blockedActivation.status,409,'existing deals/referrals block role activation');
+  assert.equal(blockedActivation.body.error,'existing_obligations');
+  assert.equal((await pool.query('select role from users where id=$1',[buyer.id])).rows[0].role,'buyer');
+  assert.equal((await pool.query('select status from user_role_change_requests where id=$1',[roleRequest])).rows[0].status,'pending');
   const review=await call('POST',`/admin/role-change-requests/${roleRequest}/review`,{decision:'reviewed'},admin.cookie);
   assert.equal(review.status,200);assert.equal(review.body.roleChanged,false);
   assert.equal((await pool.query('select role from users where id=$1',[buyer.id])).rows[0].role,'buyer');
   pass('role-change request is duplicate-safe and audited; admin review never grants a second role or rewrites deal ownership');
+  const switchCandidate=await mk('buyer');
+  const switchPhone='10000009997';
+  await pool.query('update users set phone=$2 where id=$1',[switchCandidate.id,switchPhone]);
+  assert.equal((await app.requestRoleChange(switchPhone,'seller')).status,'pending');
+  const freshRequest=(await pool.query("select id from user_role_change_requests where user_id=$1 and status='pending'",[switchCandidate.id])).rows[0].id;
+  assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},switchCandidate.cookie)).status,403);
+  assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate'},admin.cookie)).status,409);
+  const activated=await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},admin.cookie);
+  assert.equal(activated.status,200,JSON.stringify(activated.body));assert.equal(activated.body.roleChanged,true);
+  assert.equal((await pool.query('select role from users where id=$1',[switchCandidate.id])).rows[0].role,'seller');
+  assert.equal((await call('GET','/auth/me',undefined,switchCandidate.cookie)).status,401,'old role session revoked');
+  assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Duplicate should fail closed'},admin.cookie)).status,409);
+  const relogin=await call('POST','/auth/login',{email:switchCandidate.email,password});assert.equal(relogin.status,200);
+  assert.equal((await call('POST','/buyer-requests',{product_id:product,quantity:1,unit:'MT'},relogin.cookie)).status,403,'former buyer cannot create buyer request');
+  pass('role activation requires admin and evidence, revokes prior sessions, blocks replay and removes former role permissions');
   const transition=(status,extra={},cookie=admin.cookie)=>call('PATCH',`/admin/deals/${dealId}/status`,{status,...extra},cookie);
   assert.equal((await transition('payment',{confirmDestinationSgs:true},buyer.cookie)).status,403);
   assert.equal((await transition('payment',{confirmDestinationSgs:true})).status,409);
