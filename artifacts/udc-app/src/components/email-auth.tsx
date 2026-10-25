@@ -119,7 +119,7 @@ export function EmailVerificationPanel() {
               inputMode="numeric"
               autoComplete="one-time-code"
               pattern="[0-9]{6}"
-              maxLength={8}
+              maxLength={6}
               value={code}
               onChange={(e) => setCode(e.target.value)}
             />
@@ -221,7 +221,7 @@ export function PasswordRecovery() {
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       pattern="[0-9]{6}"
-                      maxLength={8}
+                      maxLength={6}
                       value={code}
                       onChange={(e) => setCode(e.target.value)}
                     />
