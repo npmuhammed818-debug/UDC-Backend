@@ -22,6 +22,7 @@ import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievan
 import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { react } from "../whatsapp/reactions";
+import { trySpeakReply } from "../whatsapp/voiceSend";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
@@ -1144,7 +1145,14 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
           voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true);
-          if (guidance !== null) { if (guidance) await deliverWhatsAppReply(message.from, guidance); continue; }
+          if (guidance !== null) {
+            if (guidance) {
+              // Draft voice reply: generic text only, user spoke first, flag on. Any failure falls back to text.
+              const spoken = await trySpeakReply(message.from, guidance);
+              if (!spoken) await deliverWhatsAppReply(message.from, guidance);
+            }
+            continue;
+          }
           voiceStage = 'trade_context';
           const [speaker] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status })
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);

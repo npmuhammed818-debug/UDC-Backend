@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager, suppress
 import secrets
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel, Field as _Field
+from app.speech import speech_status, synthesize
 
 from .media import ImageRequest, transcribe_image, transcribe_audio, gemini_probe, MAX_AUDIO_BYTES, vision_status
 from .chat import ChatRequest, chat_completion
@@ -284,3 +287,17 @@ def image_transcription(request: ImageRequest) -> dict:
 async def audio_transcription(file: UploadFile = File(...)) -> dict:
     data = await file.read(MAX_AUDIO_BYTES + 1)
     return await asyncio.to_thread(transcribe_audio, data, file.filename or "voice", file.content_type or "")
+
+
+class SpeechRequest(BaseModel):
+    text: str = _Field(min_length=1, max_length=400)
+
+
+@app.get("/speech/status", dependencies=[Depends(require_internal_token)])
+def speech_status_route() -> dict:
+    return speech_status()
+
+
+@app.post("/speech/synthesize", dependencies=[Depends(require_internal_token)])
+def speech_synthesize(request: SpeechRequest) -> Response:
+    return Response(content=synthesize(request.text), media_type="audio/ogg")
