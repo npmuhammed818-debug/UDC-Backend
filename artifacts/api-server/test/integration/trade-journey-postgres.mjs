@@ -28,6 +28,7 @@ try {
       contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import marketplace from './src/routes/marketplace';import deals from './src/routes/deals';import documents from './src/routes/documents';import referrals from './src/routes/referrals';import admin from './src/routes/admin';import commissions from './src/routes/commissions';import notifications from './src/routes/notifications';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(marketplace);app.use(deals);app.use(documents);app.use(referrals);app.use(admin);app.use(commissions);app.use(notifications);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
+    plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
@@ -141,6 +142,31 @@ try {
   assert.equal((await call("GET", "/commissions", undefined, buyer.cookie)).body.commissions.length, 0, "the buyer sees no commissions");
   assert.equal((await call("GET", "/commissions", undefined, seller.cookie)).body.commissions.length, 0, "the seller sees no commissions");
   pass("only an admin records a commission; the agent sees their own, buyer and seller see none");
+  // 7 trade documents
+  const pdf = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from("synthetic".repeat(20))]);
+  const up = async (cookie, type, bytes = pdf, ct = "application/pdf") => {
+    const r = await fetch(`${origin}/deals/${dealId}/documents/upload?documentType=${type}`, { method: "POST", headers: { "Content-Type": ct, ...(cookie ? { cookie } : {}) }, body: bytes });
+    return { status: r.status, body: await r.json().catch(() => ({})) };
+  };
+  const inv = await up(buyer.cookie, "invoice");
+  assert.equal(inv.status, 201, JSON.stringify(inv.body)); assert.equal(inv.body.document.status, "pending");
+  assert.equal((await up(buyer.cookie, "invoice", Buffer.from("MZ not a pdf at all"), "application/pdf")).status, 400, "only real PDFs");
+  assert.equal((await up(buyer.cookie, "selfie")).status, 400, "unknown document type refused");
+  assert.equal((await up(stranger.cookie, "invoice")).status, 404, "unrelated buyer cannot upload to this deal");
+  assert.equal((await up(agent.cookie, "invoice")).status, 403, "agents cannot upload deal documents");
+  assert.equal((await call("GET", `/deals/${dealId}/documents`, undefined, seller.cookie)).body.documents.length, 0, "a pending file is private to its uploader");
+  const mineDocs = await call("GET", `/deals/${dealId}/documents`, undefined, buyer.cookie);
+  assert.equal(mineDocs.body.documents.length, 1); assert.ok(mineDocs.body.documents[0].fileUrl.startsWith("https://signed."));
+  assert.equal((await call("PATCH", `/admin/documents/${inv.body.document.id}/status`, { status: "approved" }, buyer.cookie)).status, 403);
+  assert.equal((await call("PATCH", `/admin/documents/${inv.body.document.id}/status`, { status: "rejected" }, admin.cookie)).status, 400, "a rejection needs a reason");
+  assert.equal((await call("PATCH", `/admin/documents/${inv.body.document.id}/status`, { status: "approved" }, admin.cookie)).status, 200);
+  assert.equal((await call("GET", `/deals/${dealId}/documents`, undefined, seller.cookie)).body.documents.length, 1, "approved file becomes visible to the counterparty");
+  const bad = await up(seller.cookie, "packing_list");
+  assert.equal((await call("PATCH", `/admin/documents/${bad.body.document.id}/status`, { status: "rejected", reviewNote: "Illegible scan" }, admin.cookie)).status, 200);
+  const rej = (await call("GET", `/deals/${dealId}/documents`, undefined, seller.cookie)).body.documents.find((d) => d.id === bad.body.document.id);
+  assert.equal(rej.fileUrl, null, "rejected files are not downloadable");
+  assert.equal((await pool.query("select count(*)::int n from notifications where user_id=$1 and type='document_reviewed'", [seller.id])).rows[0].n >= 1, true, "uploader told why");
+  pass("trade documents: PDF-only upload, private until approved, admin review with mandatory rejection reason, rejected files not downloadable, uploader notified");
   console.log(`PASSED: ${checks} real PostgreSQL trade-journey scenarios (synthetic data, no network).`);
 } finally {
   globalThis.fetch = beforeFetch;
