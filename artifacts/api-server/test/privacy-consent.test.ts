@@ -67,7 +67,7 @@ test("policy pages have semantic navigation and escaped titles", () => {
     assert.match(html, /<html lang="en">/);
     assert.match(html, /<main>/);
     assert.match(html, /aria-label="Policies"/);
-    assert.match(html, /mailto:npmuhammed818@gmail.com/);
+    assert.match(html, /mailto:udc@updowncircle.site/);
     assert.doesNotMatch(html, /<script|fonts.googleapis|guaranteed safe/i);
   }
   assert.match(renderPolicy("<script>", ""), /&lt;script&gt;/);
