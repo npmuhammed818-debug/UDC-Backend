@@ -110,7 +110,7 @@ try {
   }
   const count = async (sql, parameters) => Number((await pool.query(sql, parameters)).rows[0].count);
   await post('Hello');
-  assert.match(sent.at(-1).text.body, /Reply AGREE/);
+  assert.match(sent.at(-1).text.body, /Reply "I agree"/);
   assert.equal(await count('select count(*) from users where phone=$1', [phone]), 0);
   await post('AGREE');
   assert.equal(sent.at(-1).interactive.action.buttons.length, 3);
