@@ -1,3 +1,4 @@
+import { minorUnitDigits } from "./currencyPrecision.ts";
 export class CommissionCalculationError extends Error {}
 
 export type CommissionMethod = 'percentage' | 'fixed_per_mt' | 'fixed_amount';
@@ -13,11 +14,19 @@ function decimal(value: string | number) {
 export function calculateCommissionAmount(input: {
   method: CommissionMethod; quantity: string; unit: string; agreedPrice: string;
   rate?: string | number; amount?: string | number;
+  /** ISO currency. When given, the result uses that currency's minor units; manual amounts are never rounded. Omitted = legacy 2 digits. */
+  currency?: string;
 }) {
+  const digits = input.currency === undefined ? 2 : minorUnitDigits(input.currency);
+  if (digits === null) throw new CommissionCalculationError('unsupported_commission_currency');
   let numerator: bigint, denominator: bigint;
   if (input.method === 'fixed_amount') {
     if (input.amount === undefined) throw new CommissionCalculationError('commission_amount_required');
     const amount = decimal(input.amount); numerator = amount.numerator; denominator = amount.denominator;
+    if (input.currency !== undefined) {
+      const fraction = String(input.amount).split('.')[1]?.replace(/0+$/, '').length ?? 0;
+      if (fraction > digits) throw new CommissionCalculationError('commission_amount_precision_exceeds_currency');
+    }
   } else {
     if (input.rate === undefined) throw new CommissionCalculationError('commission_rate_required');
     const rate = decimal(input.rate), quantity = decimal(input.quantity);
@@ -34,7 +43,8 @@ export function calculateCommissionAmount(input: {
       throw new CommissionCalculationError('commission_requires_mt_quantity');
     }
   }
-  const cents = (numerator * 100n + denominator / 2n) / denominator;
+  const scale = 10n ** BigInt(digits);
+  const cents = (numerator * scale + denominator / 2n) / denominator;
   if (cents <= 0n || cents > 999999999999999999n) throw new CommissionCalculationError('commission_amount_out_of_range');
-  return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
+  return digits === 0 ? `${cents}` : `${cents / scale}.${String(cents % scale).padStart(digits, '0')}`;
 }

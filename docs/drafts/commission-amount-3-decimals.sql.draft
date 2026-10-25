@@ -1,0 +1,12 @@
+-- DRAFT ONLY. NOT APPLIED. Needs the owner's explicit approval before any run.
+-- Why: commissions.amount and commissions.commission_amount are numeric(18,2). Currencies with 3 minor
+-- units (OMR, BHD, KWD, JOD, TND, LYD, IQD) cannot be stored exactly when the third digit is non-zero.
+-- Until this is approved and applied, POST /admin/commissions returns 409 commission_precision_exceeds_storage
+-- for such amounts instead of rounding them.
+-- Widening scale is value-preserving for existing rows (2dp values gain a trailing zero). Review lock impact
+-- on the live table before running; run in a maintenance window.
+BEGIN;
+ALTER TABLE commissions ALTER COLUMN amount TYPE numeric(18, 3);
+ALTER TABLE commissions ALTER COLUMN commission_amount TYPE numeric(18, 3);
+-- Companion change in lib/db/src/schema/commissions.ts: scale 2 -> 3 for both columns.
+COMMIT;

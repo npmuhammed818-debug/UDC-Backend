@@ -3,7 +3,8 @@ import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { acceptedMatchTerms, requestTermsReview, AgreementError } from '../marketplace/termAgreement';
 import { udcPaymentTerms } from '../marketplace/paymentPolicy';
-import { buildDefaultCommissionPreview, TWO_DECIMAL_CURRENCIES } from "../referrals/defaultCommissionRule";
+import { buildDefaultCommissionPreview } from "../referrals/defaultCommissionRule";
+import { commissionAmountFitsStorage } from "../referrals/currencyPrecision";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
 import { Router, type IRouter } from "express";
 import { randomUUID } from "node:crypto";
@@ -1288,17 +1289,16 @@ router.post("/admin/commissions", requireRole("admin"), async (req: Authenticate
         return;
       }
       const method = input.commissionType ?? "fixed_amount";
-      if (!TWO_DECIMAL_CURRENCIES.has((input.currency ?? deal.currency).toUpperCase())) {
-        res.status(409).json({ error: "currency_precision_unconfirmed" }); return;
-      }
+      const recordCurrency = (input.currency ?? deal.currency).toUpperCase();
       if (method !== "fixed_amount" && input.confirmAgreedTerms !== true) {
         res.status(400).json({ error: "commission_agreement_confirmation_required" }); return;
       }
       if (method !== "fixed_amount" && input.currency && input.currency.toUpperCase() !== deal.currency.toUpperCase()) {
         res.status(409).json({ error: "calculated_commission_uses_deal_currency" }); return;
       }
-      const amount = calculateCommissionAmount({ method, quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: input.commissionRate, amount: input.amount });
-      if (method !== "fixed_amount" && input.amount !== undefined && calculateCommissionAmount({ method: "fixed_amount", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, amount: input.amount }) !== amount) {
+      const amount = calculateCommissionAmount({ method, quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: input.commissionRate, amount: input.amount, currency: recordCurrency });
+      if (!commissionAmountFitsStorage(amount)) { res.status(409).json({ error: "commission_precision_exceeds_storage", currency: recordCurrency, note: "The commissions table stores 2 decimals. This currency amount needs a database migration that has not been approved or applied." }); return; }
+      if (method !== "fixed_amount" && input.amount !== undefined && calculateCommissionAmount({ method: "fixed_amount", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, amount: input.amount, currency: recordCurrency }) !== amount) {
         res.status(409).json({ error: "commission_amount_does_not_match_rule" }); return;
       }
       if (beneficiary.role === "agent") {
