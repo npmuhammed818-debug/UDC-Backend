@@ -8,8 +8,10 @@ import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../wha
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { claimInboundMessage, completeInboundMessages } from "../whatsapp/inboundDedup";
-import { Router, type IRouter, type Request } from "express";
+import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
+import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
+import { trackReplyFailures } from "../whatsapp/client";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
@@ -997,7 +999,8 @@ router.get("/webhooks/whatsapp", (req, res) => {
   res.type("text/plain").send(challenge);
 });
 
-router.post("/webhooks/whatsapp", async (req, res) => {
+router.post("/webhooks/whatsapp", async (req, res) => { await trackReplyFailures((failed) => handleWhatsAppWebhook(req, res, failed)); });
+async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies: Set<string>) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.header("x-hub-signature-256");
   const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
@@ -1018,6 +1021,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     : [];
 
   const claimedInbound: unknown[] = [];
+  const senderOf = new Map<unknown, string>();
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
@@ -1037,9 +1041,14 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     for (const message of value?.messages ?? []) {
       if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
+      if (message.from) senderOf.set(message.id, message.from);
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
         try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
         continue;
+      }
+      if (message.from) {
+        const cap = checkInboundCap(message.from);
+        if (cap !== "ok") { if (cap === "notice") await deliverWhatsAppReply(message.from, INBOUND_CAP_NOTICE); continue; }
       }
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
@@ -1608,8 +1617,18 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     }
   }
 
+  // A reply that Meta throttled (429 / rate-limit code) even after retries must not leave the claim completed:
+  // release it and answer non-2xx so Meta redelivers the message.
+  const lost = claimedInbound.filter((id) => { const from = senderOf.get(id); return from !== undefined && failedReplies.has(from); });
+  if (lost.length) {
+    await releaseInboundMessages(lost);
+    await completeInboundMessages(claimedInbound.filter((id) => !lost.includes(id)));
+    req.log.warn({ flow: "whatsapp_reply", reason: "rate_limited_reply_released", count: lost.length }, "WhatsApp reply could not be delivered; asking Meta to redeliver");
+    res.sendStatus(503);
+    return;
+  }
   await completeInboundMessages(claimedInbound);
   res.sendStatus(200);
-});
+}
 
 export default router;

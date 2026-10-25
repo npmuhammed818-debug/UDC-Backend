@@ -1,3 +1,68 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
+// ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
+// Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
+// WHATSAPP_OUTBOUND_PER_SECOND. Meta's own per-number throughput is higher, so this stays well under it.
+const bucket = { tokens: -1, last: 0 };
+export function resetOutboundPacingForTest() { bucket.tokens = -1; bucket.last = 0; }
+async function takeOutboundToken(sleep: (ms: number) => Promise<void>) {
+  const rate = Math.max(1, Number(process.env.WHATSAPP_OUTBOUND_PER_SECOND) || 20);
+  const now = Date.now();
+  if (bucket.tokens < 0) { bucket.tokens = rate; bucket.last = now; }
+  bucket.tokens = Math.min(rate, bucket.tokens + ((now - bucket.last) / 1000) * rate);
+  bucket.last = now;
+  if (bucket.tokens >= 1) { bucket.tokens -= 1; return; }
+  const wait = Math.ceil(((1 - bucket.tokens) / rate) * 1000);
+  bucket.tokens = 0; bucket.last = now + wait;
+  await sleep(wait);
+}
+
+// Meta throttling and pair-rate limits. Retrying these is safe: the message was not accepted.
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80007, 130429, 131048, 131056]);
+export const WINDOW_CLOSED_CODE = 131047; // re-engagement: outside the 24 hour customer service window
+const MAX_ATTEMPTS = 4;
+let sleepImpl: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+export function setSleepForTest(fn: ((ms: number) => Promise<void>) | null) { sleepImpl = fn ?? ((ms) => new Promise((r) => setTimeout(r, ms))); }
+
+export class WhatsAppSendError extends Error {
+  httpStatus: number;
+  code?: number;
+  retryable: boolean;
+  constructor(message: string, httpStatus: number, code?: number, retryable = false) { super(message); this.httpStatus = httpStatus; this.code = code; this.retryable = retryable; }
+}
+export const isWindowClosedError = (e: unknown) => e instanceof WhatsAppSendError && e.code === WINDOW_CLOSED_CODE;
+
+// Per-request record of recipients whose reply could not be delivered after retries, so the webhook can
+// release its dedup claim and let Meta redeliver instead of silently dropping the reply.
+const failures = new AsyncLocalStorage<Set<string>>();
+export function trackReplyFailures<T>(fn: (failed: Set<string>) => Promise<T>): Promise<T> {
+  const set = new Set<string>();
+  return failures.run(set, () => fn(set));
+}
+function noteFailure(to: string, error: unknown) {
+  if (error instanceof WhatsAppSendError && error.retryable) failures.getStore()?.add(to);
+}
+
+async function metaPost(to: string, url: string, init: RequestInit, label: string): Promise<Response> {
+  let last: WhatsAppSendError | undefined;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    await takeOutboundToken(sleepImpl);
+    let response: Response;
+    try { response = await fetch(url, { ...init, signal: AbortSignal.timeout(10_000) }); }
+    catch { last = new WhatsAppSendError(`${label}_unreachable_or_timeout`, 0, undefined, true); break; }
+    if (response.ok) return response;
+    const error = await providerError(response);
+    const limited = error.httpStatus === 429 || error.httpStatus === 503 || (error.code !== undefined && RATE_LIMIT_CODES.has(error.code));
+    last = new WhatsAppSendError(`${label} http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code, limited);
+    if (!limited || attempt === MAX_ATTEMPTS) break;
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const backoff = Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250);
+    await sleepImpl(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : backoff);
+  }
+  noteFailure(to, last);
+  throw last!;
+}
+
 type WhatsAppConfig = {
   accessToken: string;
   phoneNumberId: string;
@@ -70,11 +135,11 @@ export async function sendWhatsAppText(to: string, body: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await fetch(
+  const response = await metaPost(
+    to,
     `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
     {
       method: "POST",
-      signal: AbortSignal.timeout(10_000),
       headers: {
         authorization: `Bearer ${config.accessToken}`,
         "content-type": "application/json",
@@ -86,12 +151,8 @@ export async function sendWhatsAppText(to: string, body: string) {
         text: { body },
       }),
     },
+    "whatsapp_delivery_failed",
   );
-
-  if (!response.ok) {
-    const error = await providerError(response);
-    throw new Error(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
-  }
 
   const payload = await response.json().catch(() => null) as {
     messages?: Array<{ id?: unknown }>;
@@ -115,8 +176,8 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
   const config=getConfig();
   if(!config)return {delivered:false as const,reason:'not_configured' as const};
-  const response=await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
-  if(!response.ok){const error=await providerError(response);throw new Error(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`);}
+  const response=await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})},'whatsapp_interactive_failed');
+
   const result=await response.json().catch(()=>null) as {messages?:Array<{id?:string}>}|null;
   return {delivered:true as const,...(result?.messages?.[0]?.id?{messageId:result.messages[0].id}:{})};
 }
@@ -136,11 +197,11 @@ export async function sendWhatsAppDocument(
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await fetch(
+  const response = await metaPost(
+    to,
     `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
     {
       method: "POST",
-      signal: AbortSignal.timeout(10_000),
       headers: {
         authorization: `Bearer ${config.accessToken}`,
         "content-type": "application/json",
@@ -156,12 +217,8 @@ export async function sendWhatsAppDocument(
         },
       }),
     },
+    "whatsapp_document_delivery_failed",
   );
-
-  if (!response.ok) {
-    const error = await providerError(response);
-    throw new Error(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
-  }
 
   const payload = await response.json().catch(() => null) as {
     messages?: Array<{ id?: unknown }>;

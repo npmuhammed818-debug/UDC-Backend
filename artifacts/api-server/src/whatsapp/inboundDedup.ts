@@ -51,3 +51,13 @@ export async function completeInboundMessages(ids: unknown[]) {
   try { await db.update(whatsappInboundDedupTable).set({ completedAt: new Date() }).where(inArray(whatsappInboundDedupTable.idHash, hashes)); }
   catch { /* table missing or database unavailable: the stale-claim rule still protects retries */ }
 }
+
+// Release claims whose reply could not be delivered, so a Meta redelivery is processed again instead of being
+// treated as done. Only unfinished claims are deleted.
+export async function releaseInboundMessages(ids: unknown[]) {
+  const hashes = ids.filter((x): x is string => typeof x === "string" && x.length >= 6 && x.length <= 200).map(fingerprintProviderMessage);
+  for (const h of hashes) memory.delete(h);
+  if (!hashes.length) return;
+  try { await db.delete(whatsappInboundDedupTable).where(and(inArray(whatsappInboundDedupTable.idHash, hashes), isNull(whatsappInboundDedupTable.completedAt))); }
+  catch { /* table missing: in-memory release above already applied */ }
+}
