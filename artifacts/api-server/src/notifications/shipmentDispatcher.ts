@@ -1,9 +1,6 @@
-import { createHmac } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { db } from '@workspace/db';
-import { POLICY_VERSION } from '../privacy/policies';
-import { consentVersion } from '../privacy/consentNotice';
-import { authorizeCustomerWindow } from '../whatsapp/customerServiceWindow';
+import { authorizeCustomerWindow, hasCurrentWhatsAppConsent } from '../whatsapp/customerServiceWindow';
 import { sendWhatsAppNotification } from '../whatsapp/notificationTransport';
 import { reconcileStoredShipmentReceipts } from '../whatsapp/shipmentDeliveryReceipts';
 import { runShipmentWhatsAppOutbox } from './shipmentOutbox';
@@ -18,16 +15,7 @@ export async function dispatchShipmentNotifications(options: {
   const secret = env.WHATSAPP_APP_SECRET ?? '';
   if (env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED !== 'true' || !secret)
     return runShipmentWhatsAppOutbox({ enabled: false });
-  async function consent(phone: string) {
-    const fingerprint = createHmac('sha256', secret).update(phone).digest('hex');
-    const result = await executor.execute(sql`
-      SELECT metadata FROM public.audit_logs
-      WHERE entity_type='whatsapp_consent' AND metadata->>'fingerprint'=${fingerprint}
-      ORDER BY created_at DESC,id DESC LIMIT 1
-    `);
-    const meta = result.rows[0]?.metadata as Record<string, unknown> | undefined;
-    return meta?.status === 'accepted' && meta.policyVersion === consentVersion(POLICY_VERSION);
-  }
+  const consent=(phone:string)=>hasCurrentWhatsAppConsent(phone,{executor,secret});
   const result = await runShipmentWhatsAppOutbox({
     executor, enabled: true, now, batchSize: 5,
     policyAuthorized: consent,

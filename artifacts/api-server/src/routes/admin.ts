@@ -535,7 +535,7 @@ async function notifyDealCounterparties(
     if (!counterparty.phone) return;
     try {
       const delivery = await sendWhatsAppText(counterparty.phone, body);
-      if (delivery.messageId) {
+      if (delivery.delivered && delivery.messageId) {
         await db.insert(whatsappMessageContextsTable)
           .values({
             providerMessageId: delivery.messageId,

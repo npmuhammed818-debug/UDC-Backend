@@ -41,7 +41,7 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  state.reply='UDC means Uniform Document Code.';
  const facts=await answerGuidance('phone-public','What is UDC?','public-1');assert.match(facts,/UpDownCircle/);assert.doesNotMatch(facts,/Uniform/);
  assert.match(await answerGuidance('phone-public','Who is the founder?','public-2'),/Muhammed NP/);
- assert.match(await answerGuidance('phone-public','Give me our company website','public-3'),/https:\/\/updowncircle.pages.dev\//);
+ assert.match(await answerGuidance('phone-public','Give me our company website','public-3'),/https:\/\/updowncircle.site\//);
  assert.match(await answerGuidance('phone-public','Full form of akif','public-4'),/Advanced Knowledge and Intelligent Framework/);
  assert.match(await answerGuidance('phone-public','What documents do I need for verification?','public-5'),/company registration or trade-license PDF/);
  assert.match(await answerGuidance('phone-public','What is DLC?','public-6'),/Banks examine documents, not the actual goods/);

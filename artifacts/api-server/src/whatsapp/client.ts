@@ -1,3 +1,4 @@
+import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
 type WhatsAppConfig = {
   accessToken: string;
   phoneNumberId: string;
@@ -10,6 +11,11 @@ export function getWhatsAppConfig(env:NodeJS.ProcessEnv=process.env): WhatsAppCo
 }
 
 const getConfig=getWhatsAppConfig;
+const unknownSubmission=()=>({delivered:false as const,reason:'provider_outcome_unknown' as const});
+async function maybeSubmitted(request:Promise<Response>):Promise<Response|null>{
+  try{const response=await request;if(response.status>=500){await response.body?.cancel();return null;}return response;}
+  catch{return null;}
+}
 
 // Keep provider error messages, tokens, phone numbers and response bodies out of logs.
 async function providerError(response: Response) {
@@ -72,7 +78,7 @@ export async function sendWhatsAppText(to: string, body: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await fetch(
+  const response = await maybeSubmitted(fetch(
     `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
     {
       method: "POST",
@@ -88,22 +94,15 @@ export async function sendWhatsAppText(to: string, body: string) {
         text: { body },
       }),
     },
-  );
+  ));
 
+  if(!response)return unknownSubmission();
   if (!response.ok) {
     const error = await providerError(response);
     throw new Error(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
   }
 
-  const payload = await response.json().catch(() => null) as {
-    messages?: Array<{ id?: unknown }>;
-  } | null;
-  const rawMessageId = payload?.messages?.[0]?.id;
-  const messageId = typeof rawMessageId === "string" ? rawMessageId : undefined;
-
-  return messageId
-    ? { delivered: true as const, messageId }
-    : { delivered: true as const };
+  return readMessageAcknowledgement(response);
 }
 
 export type WhatsAppInteractive =
@@ -117,10 +116,10 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
   const config=getConfig();
   if(!config)return {delivered:false as const,reason:'not_configured' as const};
-  const response=await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
+  const response=await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})}));
+  if(!response)return unknownSubmission();
   if(!response.ok){const error=await providerError(response);throw new Error(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`);}
-  const result=await response.json().catch(()=>null) as {messages?:Array<{id?:string}>}|null;
-  return {delivered:true as const,...(result?.messages?.[0]?.id?{messageId:result.messages[0].id}:{})};
+  return readMessageAcknowledgement(response);
 }
 
 // Retain the helper for existing callers, but do not append a menu button to
@@ -138,7 +137,7 @@ export async function sendWhatsAppDocument(
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await fetch(
+  const response = await maybeSubmitted(fetch(
     `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
     {
       method: "POST",
@@ -158,22 +157,15 @@ export async function sendWhatsAppDocument(
         },
       }),
     },
-  );
+  ));
 
+  if(!response)return unknownSubmission();
   if (!response.ok) {
     const error = await providerError(response);
     throw new Error(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
   }
 
-  const payload = await response.json().catch(() => null) as {
-    messages?: Array<{ id?: unknown }>;
-  } | null;
-  const rawMessageId = payload?.messages?.[0]?.id;
-  const messageId = typeof rawMessageId === "string" ? rawMessageId : undefined;
-
-  return messageId
-    ? { delivered: true as const, messageId }
-    : { delivered: true as const };
+  return readMessageAcknowledgement(response);
 }
 
 export async function downloadWhatsAppMedia(mediaId: string) {
@@ -248,14 +240,15 @@ export async function downloadWhatsAppMedia(mediaId: string) {
 export async function sendWhatsAppReaction(to: string, inboundMessageId: string, emoji: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
-  const response = await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+  const response = await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
     method: "POST",
     signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "reaction", reaction: { message_id: inboundMessageId, emoji } }),
-  });
-  await response.body?.cancel();
-  return response.ok ? { delivered: true as const } : { delivered: false as const, reason: "provider_rejected" as const };
+  }));
+  if(!response)return unknownSubmission();
+  if(!response.ok){await response.body?.cancel();return {delivered:false as const,reason:'provider_rejected' as const};}
+  return readMessageAcknowledgement(response);
 }
 
 /** Uploads OGG/Opus bytes and sends them as a WhatsApp voice message. */
@@ -273,11 +266,12 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   if (!up.ok) { await up.body?.cancel(); return { delivered: false as const, reason: "upload_failed" as const }; }
   const mediaId = ((await up.json().catch(() => null)) as { id?: unknown } | null)?.id;
   if (typeof mediaId !== "string") return { delivered: false as const, reason: "upload_failed" as const };
-  const sent = await fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+  const sent = await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
     method: "POST", signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId } }),
-  });
-  await sent.body?.cancel();
-  return sent.ok ? { delivered: true as const } : { delivered: false as const, reason: "send_failed" as const };
+  }));
+  if(!sent)return unknownSubmission();
+  if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}
+  return readMessageAcknowledgement(sent);
 }

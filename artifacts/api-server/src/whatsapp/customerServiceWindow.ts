@@ -1,11 +1,26 @@
 import {createHmac,timingSafeEqual} from "node:crypto";
 import {sql} from "drizzle-orm";
 import {db} from "@workspace/db";
+import {POLICY_VERSION} from '../privacy/policies';
+import {consentVersion} from '../privacy/consentNotice';
 
 type Executor=Pick<typeof db,"execute">;
 const WINDOW_MS=24*60*60_000;
 const SEND_SAFETY_MS=5*60_000;
 const CLOCK_SKEW_MS=2*60_000;
+
+export async function hasCurrentWhatsAppConsent(phone:string,options:{executor?:Executor;secret?:string}={}){
+  const secret=options.secret??process.env.WHATSAPP_APP_SECRET??'';
+  if(!secret)return false;
+  const hash=createHmac('sha256',secret).update(phone).digest('hex');
+  const result=await (options.executor??db).execute(sql`
+    SELECT metadata FROM public.audit_logs
+    WHERE entity_type='whatsapp_consent' AND metadata->>'fingerprint'=${hash}
+    ORDER BY created_at DESC,id DESC LIMIT 1
+  `);
+  const meta=result.rows[0]?.metadata as Record<string,unknown>|undefined;
+  return meta?.status==='accepted'&&meta.policyVersion===consentVersion(POLICY_VERSION);
+}
 
 // Never store a phone number, customer message, or raw provider message ID.
 // This domain separation also avoids accidental collisions with receipt hashes.

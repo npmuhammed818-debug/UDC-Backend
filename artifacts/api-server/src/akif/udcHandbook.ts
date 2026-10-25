@@ -1,6 +1,6 @@
 // Owner-approved public facts. Never populate this from model output or chat history.
 export const handbookVersion = '2026-10-21-trade-identity-v1';
-export const publicWebsite = 'https://updowncircle.pages.dev/';
+export const publicWebsite = 'https://updowncircle.site/';
 export const companyAnswer = `UDC means UpDownCircle, a WhatsApp-first B2B trade platform founded by Muhammed NP. I’m Akif, its trade assistant. I help buyers, sellers and agents with trade questions and UDC workflows. Our public website is ${publicWebsite}`;
 export const verificationAnswer = 'For buyer or seller registration, provide your name, business email, registered company name and registration country; include the registration number if available. Use Menu → Upload documents and I will send you a private, single-use upload link for your company registration or trade-license PDF. Please do not attach confidential documents in this chat. UDC reviews it manually. Passport, national ID, photo and bank statement are not standard requirements in this MVP.';
 export const agentVerificationAnswer = 'Agents register with their full name and personal or business email, followed by manual UDC review. Company documents, passport, national ID, photo and bank statement are not standard agent registration requirements in this MVP.';

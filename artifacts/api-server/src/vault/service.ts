@@ -6,7 +6,7 @@ import {
 } from "@workspace/db";
 import { uploadDocumentBytes } from "../supabase/storage";
 import {
-  type VaultDocumentType, checkUploadLink, hashLinkToken, issueUploadLinkToken,
+  type VaultDocumentType, checkUploadLink, hashLinkToken, issueUploadLinkToken, vaultPublicOrigin,
   publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath,
 } from "./uploadLink";
 
@@ -31,7 +31,7 @@ export type CreateLinkResult =
 export async function createVaultUploadLink(user: { id: string; role: string }, documentType: VaultDocumentType): Promise<CreateLinkResult> {
   if (NO_VAULT_ROLES.has(user.role)) return { ok: false, error: "role_not_allowed" };
   const base = process.env["VAULT_PUBLIC_BASE_URL"];
-  if (!base || !/^https:\/\//.test(base)) return { ok: false, error: "vault_base_url_not_configured" };
+  if (!base || !vaultPublicOrigin(base)) return { ok: false, error: "vault_base_url_not_configured" };
   const company = await companyOf(user.id);
   if (!company) return { ok: false, error: "company_required" };
   const active = await db.select({ id: vaultUploadLinksTable.id }).from(vaultUploadLinksTable).where(and(

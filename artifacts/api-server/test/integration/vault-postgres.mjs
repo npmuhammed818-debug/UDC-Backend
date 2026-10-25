@@ -26,7 +26,7 @@ globalThis.fetch = async (input, init) => {
 try {
   await build({
     stdin: {
-      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import vault from './src/routes/vault';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(vault);export default app;`,
+      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import vault from './src/routes/vault';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(vault);app.use('/api',vault);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function uploadDocumentBytes(path, bytes, type){ if(globalThis.__failStorage) throw new Error('down'); (globalThis.__stored ??= []).push({path,type,size:bytes.length}); return 'memory://'+path; }" })); } }],
@@ -68,10 +68,17 @@ try {
 
   delete process.env.VAULT_PUBLIC_BASE_URL;
   assert.equal((await call("POST", "/vault/upload-links", { documentType: "company_registration" }, owner.cookie)).status, 503, "no public base URL, no link");
-  process.env.VAULT_PUBLIC_BASE_URL = "https://vault.example.invalid/vault/upload";
+  process.env.VAULT_PUBLIC_BASE_URL = "https://vault.example.invalid";
   assert.equal((await call("POST", "/vault/upload-links", { documentType: "company_registration" })).status, 401);
   assert.equal((await call("POST", "/vault/upload-links", { documentType: "company_registration" }, agent.cookie)).status, 403, "agents have no vault");
   assert.equal((await call("POST", "/vault/upload-links", { documentType: "selfie_with_aadhaar" }, owner.cookie)).status, 400, "unknown type refused");
+  for(const bad of ['https://user:password@vault.example.invalid','https://vault.example.invalid/path','https://vault.example.invalid/?query=private','https://vault.example.invalid/#fragment']){
+    const before=Number((await pool.query('select count(*) from vault_upload_links')).rows[0].count);
+    process.env.VAULT_PUBLIC_BASE_URL=bad;
+    assert.equal((await call('POST','/vault/upload-links',{documentType:'company_registration'},owner.cookie)).status,503);
+    assert.equal(Number((await pool.query('select count(*) from vault_upload_links')).rows[0].count),before,'bad config cannot persist a bearer token');
+  }
+  process.env.VAULT_PUBLIC_BASE_URL='https://vault.example.invalid';
   pass("link issue: needs a configured https base, login, a non-agent role and a known document type");
 
   const issued = await call("POST", "/vault/upload-links", { documentType: "company_registration" }, owner.cookie);
@@ -79,7 +86,7 @@ try {
   const token = tokenOf(issued.body.url);
   const stored = (await pool.query("select token_hash from vault_upload_links where user_id=$1", [owner.id])).rows;
   assert.ok(!JSON.stringify(stored).includes(token), "raw token is never stored");
-  const page = await fetch(`${origin}/vault/upload/${token}`);
+  const page = await fetch(origin+new URL(issued.body.url).pathname);
   assert.equal(page.status, 200); assert.match(page.headers.get("cache-control"), /no-store/);
   assert.equal((await fetch(`${origin}/vault/upload/${"x".repeat(43)}`)).status, 410);
   pass("upload page opens only for a real token, no-store headers, token stored hashed only");

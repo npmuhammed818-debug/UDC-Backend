@@ -47,6 +47,7 @@ const docker = (...args) => {
 };
 
 run('codegen', 'pnpm', ['--filter', '@workspace/api-spec', 'run', 'codegen']);
+run('legal-text-preserved', 'git', ['diff', '--exit-code', '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
 run('generated-contracts', 'git', ['diff', '--exit-code', '--', 'lib/api-zod/src/generated', 'lib/api-client-react/src/generated']);
 run('release', 'pnpm', ['run', 'release:verify'], {}, true);
 run('feature-groups', 'pnpm', ['run', 'acceptance'], {}, true);
@@ -107,14 +108,14 @@ const requirements = [
   ['Commission permissions, currency precision and agreed calculations', ['pg:commission-routes', 'pg:commission-migration', 'pg:full-mvp-lifecycle'], 'Real SQL; optional three-decimal rollout remains separate'],
   ['Role-change request/review without privilege escalation', ['pg:full-mvp-lifecycle'], 'Real SQL regression; reviewed does not activate a new role'],
   ['Cancellation, interrupted registration, cancel/edit/restart', ['pg:full-mvp-lifecycle', 'pg:whatsapp-onboarding-ux'], 'Separate admin cancellation boundary and signed interrupted conversations'],
-  ['Vault access, token expiry/single-use and deletion requests', ['pg:vault', 'pg:full-mvp-lifecycle'], 'Real SQL/API; storage object operations simulated'],
+  ['Vault access, token expiry/single-use and deletion requests', ['pg:vault', 'pg:full-mvp-lifecycle'], 'Real SQL/API, expiry/reuse/outsider denials, malformed upload-origin denial; storage operations simulated'],
   ['Marketplace verification and tenant/agent isolation', ['pg:p0-gates', 'pg:full-mvp-lifecycle'], 'Unverified/outsider/agent negative controls'],
   ['Webhook HMAC, durable replay/crash/concurrency protection', ['pg:whatsapp-webhook-retry', 'pg:shipment-delivery', 'release'], 'Signed synthetic HTTP and exact SQL migration'],
-  ['Shipment milestones, cargo ETA, notifications, templates and receipts', ['pg:shipment-delivery', 'javascript'], 'Actual admin→outbox→simulated Meta→signed callback; sending flags not enabled outside fixture process'],
+  ['Shipment milestones, cargo ETA, notifications, templates and receipts', ['pg:shipment-delivery', 'javascript'], 'Actual admin→outbox→simulated Meta→signed callback; malformed 2xx quarantined without resend/false confirmation; concurrent legacy replays gated; flags enabled only in fixture'],
   ['Buyer pools: acceptance/decline, capacity and expiry', ['pg:buyer-pools'], 'Real SQL and routes; financial instruments unchanged'],
   ['AKIF authorized SQL context, private history and action boundaries', ['pg:full-mvp-lifecycle', 'release'], 'Captured simulated model request; vault URLs/private counterparty history absent; no approvals executed'],
   ['AKIF worker, model outages, media/voice and guidance safety', ['python', 'release', 'pg:whatsapp-onboarding-ux'], 'Isolated model/media fixtures and deterministic outage fallback; not natural-language quality proof'],
-  ['Logging, privacy consent, grievance/incident and admin regressions', ['release', 'feature-groups'], 'Existing isolated safety/authorization tests; not legal certification'],
+  ['Logging, privacy consent, grievance/incident and admin regressions', ['release', 'feature-groups', 'legal-text-preserved'], 'Safety/authorization and canonical website/support regressions; approved legal source files unchanged; not legal certification'],
   ['Generated API contracts, builds and dependency advisories', ['codegen', 'generated-contracts', 'release', 'dependency-audit'], 'Audit and current code checks; no guarantee against unknown vulnerabilities'],
   ['Exact migration compatibility, restricted grants/RLS and lock rollback', ['email-migrations', 'shipment-migrations', 'pg:whatsapp-webhook-retry'], 'Disposable PostgreSQL roles only; not hosted project permissions'],
   ['Selected new-table database backup/restore including vault and dedup', ['restore'], 'Real pinned pg_dump/pg_restore for 14 selected tables; excludes hosted Storage and full Supabase project restore'],
@@ -132,11 +133,11 @@ const capabilities = requirements.map(([capability, needed, scope]) => ({ capabi
 const passed = stages.every(s => s.status === 'PASS') && pg.length > 0 && pg.every(s => s.status === 'PASS');
 const report = { generatedAt: new Date().toISOString(), revision, sourceDigest: digest,
   localChecksPassed: passed, fullMvpAccepted: false, stagingActivationApproved: false,
-  parallelSources: { base: '83fddc6cd8fba5f7fa6f2edc36a27aba9cdd2bb2', pr181: 'd71c1573bd0f96e19ba6bcbdbb914ec08283f5ca', pr182: '767f0fad88ba0fec3204d79f1a88f5fb4b406481', onboarding: '1578783b60c38c5e4b107f923e686e1dd8107606' },
+  parallelSources: { acceptanceBase: '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', base: '83fddc6cd8fba5f7fa6f2edc36a27aba9cdd2bb2', pr181: 'd71c1573bd0f96e19ba6bcbdbb914ec08283f5ca', pr182: '767f0fad88ba0fec3204d79f1a88f5fb4b406481', onboarding: '1578783b60c38c5e4b107f923e686e1dd8107606' },
   stages, postgres: pg, capabilities };
 writeFileSync(path.join(directory, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 writeFileSync(path.join(directory, 'report.md'), '# Full MVP acceptance evidence\n\nLocal checks: **' + (passed ? 'PASS' : 'FAIL') + '**. Full MVP acceptance and staging activation: **not approved**.\n\n' +
   `Commit at run: \`${revision}\`; source digest: \`${digest}\`. Fresh artifacts are in this report directory.\n\n` +
-  '| Capability | Automated result | Real provider/human acceptance | Scope / limits |\n| --- | --- | --- | --- |\n' + capabilities.map(c => `| ${c.capability} | ${c.automated} | ${c.realProvider} | ${c.scope} |`).join('\n') + '\n');
+  '| Capability | Automated result | Real provider/human acceptance | Required evidence stages | Scope / limits |\n| --- | --- | --- | --- | --- |\n' + capabilities.map(c => `| ${c.capability} | ${c.automated} | ${c.realProvider} | ${c.evidence.join(', ') || 'External/human gate'} | ${c.scope} |`).join('\n') + '\n');
 console.log('Report: ' + path.relative(root, path.join(directory, 'report.md')));
 if (!passed) process.exitCode = 1;

@@ -91,3 +91,8 @@ test("accepted deal uploads carry the sensitive-file warning", async () => {
   const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   assert.ok(src.includes("I’ll keep it here for review.\\n\\n${SENSITIVE_UPLOAD_WARNING}"));
 });
+
+test("vault public base rejects credential-bearing, non-origin and insecure destinations",()=>{
+  for(const base of ["http://vault.example.invalid","https://u:p@vault.example.invalid","https://vault.example.invalid/path","https://vault.example.invalid/?x=1","https://vault.example.invalid/#fragment","https://"])
+    assert.throws(()=>uploadPageUrl(base,"synthetic-token"),/invalid_vault_public_origin/);
+});

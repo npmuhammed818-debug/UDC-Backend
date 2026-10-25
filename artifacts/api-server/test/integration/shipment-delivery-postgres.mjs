@@ -17,6 +17,7 @@ Object.assign(process.env, { NODE_ENV: 'test', SESSION_SECRET: secret, SUPABASE_
   UDC_SHIPMENT_WHATSAPP_TEMPLATE_LANGUAGE: 'en' });
 await mkdir(new URL('../../tmp/', import.meta.url), { recursive: true });
 const directory = await mkdtemp(fileURLToPath(new URL('../../tmp/qa-delivery-', import.meta.url)));
+let ackPayload={};
 let pool, server, origin, mode = 'ok', approved = true, calls = [], serial = 0, checks = 0;
 const phones = new Set();
 const originalFetch = globalThis.fetch;
@@ -31,6 +32,7 @@ globalThis.fetch = async (input, init) => {
   assert.ok(phones.has(payload.to), 'fictional recipients only');
   assert.ok(!JSON.stringify(payload).match(/BANK-SECRET|PASSPORT-SECRET|private\.invalid|99999/), 'never forward private in-app content');
   calls.push(payload);
+  if (mode === 'ack') return Response.json(ackPayload);
   if (mode === 'timeout') throw Error('synthetic timeout');
   if (mode === 'rate') return Response.json({ error: { code: 130429 } }, { status: 429 });
   if (mode === 'error') return Response.json({ error: { code: 1 } }, { status: 503 });
@@ -47,7 +49,7 @@ try {
     import {loadAuth} from './src/auth/middleware';
     export {pool,db} from '@workspace/db'; export {createSession} from './src/auth/sessions';
     export {dispatchShipmentNotifications} from './src/notifications/shipmentDispatcher';
-    export {enqueueShipmentWhatsApp} from './src/notifications/shipmentOutbox';
+    export {enqueueShipmentWhatsApp} from './src/notifications/shipmentOutbox';export {replayVerificationWhatsAppNotifications,replayDealStatusWhatsAppNotification,replayDealSummaryWhatsAppNotification} from './src/whatsapp/replayVerificationNotifications';
     export {recordSignedCustomerInbound} from './src/whatsapp/customerServiceWindow';
     export {recordSignedShipmentStatuses} from './src/whatsapp/shipmentDeliveryReceipts';
     export {GENERIC_NOTIFICATION_TEMPLATE_BODY} from './src/notifications/deliveryContent';
@@ -161,6 +163,19 @@ try {
   const neverAgain = calls.length; mode = 'ok'; await dispatch(); assert.equal(calls.length, neverAgain);
   assert.equal((await call(`/admin/notifications/whatsapp-shipment-outbox/${(await state(id)).id}/retry`, {}, admin.token)).status, 409);
   pass('confirmed rate limits back off and stop at three attempts; timeout stays uncertain and cannot be manually resent');
+  const malformed=[{}, {success:true}, {messages:[{id:''}]}, {messages:[{id:'   '}]}, {messages:[{id:12}]},
+    {messages:[{id:'wamid.one'},{id:'wamid.two'}]}, {error:{code:1},messages:[{id:'wamid.contradictory'}]}];
+  for(const payload of malformed){
+    ackPayload=payload;mode='ack';const notice=await queue(buyer);const before=calls.length;
+    const outcome=await dispatch();assert.equal(outcome.accepted,0);assert.equal(outcome.uncertain,1);
+    const quarantined=await state(notice);assert.equal(quarantined.status,'uncertain');assert.equal(quarantined.provider_message_id,null);
+    assert.equal(quarantined.delivery_status,'unconfirmed');assert.equal(calls.length-before,1);
+    await mod.recordSignedShipmentStatuses([{id:'wamid.cannot_match_missing_id',status:'delivered',recipient_id:buyer.phone,timestamp:String(Math.floor(Date.now()/1000))}]);
+    assert.equal((await state(notice)).delivery_status,'unconfirmed');
+    mode='ok';const once=calls.length;await dispatch();assert.equal(calls.length,once,'unknown 2xx is not resent');
+    assert.equal((await call(`/admin/notifications/whatsapp-shipment-outbox/${quarantined.id}/retry`,{},admin.token)).status,409);
+  }
+  pass('missing/malformed/contradictory 2xx acknowledgements have no provider ID, context or delivery confirmation; receipts and admin retry cannot release them');
   mode = 'early'; id = await queue(buyer); await dispatch(); const sent = await state(id);
   assert.equal(sent.delivery_status, 'delivered'); mode = 'ok';
   assert.equal((await pool.query('SELECT recipient_user_id,deal_id FROM whatsapp_message_contexts WHERE provider_message_id=$1',[sent.provider_message_id])).rows[0].recipient_user_id,buyer.id);
@@ -180,6 +195,25 @@ try {
   assert.equal((await state(id)).delivery_status, 'read');
   assert.equal((await fetch(origin + '/webhooks/whatsapp', { method: 'POST', headers: { 'content-type': 'application/json', 'x-hub-signature-256': 'sha256=wrong' }, body: raw })).status, 401);
   pass('early receipts reconcile after acceptance; real signed callback updates delivered→read; invalid HMAC denied');
+  process.env.WHATSAPP_VERIFICATION_REPLAY_USER_IDS=buyer.id;
+  process.env.WHATSAPP_DEAL_STATUS_REPLAY_ID=deal;process.env.WHATSAPP_DEAL_SUMMARY_REPLAY_ID=deal;
+  const beforeLegacy=calls.length;
+  // Expired-window seller is excluded even when an operator supplied replay IDs.
+  mode='ack';ackPayload={};
+  const runs=await Promise.all([mod.replayVerificationWhatsAppNotifications(),mod.replayVerificationWhatsAppNotifications()]);
+  assert.equal(runs.reduce((n,r)=>n+r.sent,0),0);assert.equal(runs.reduce((n,r)=>n+(r.uncertain??0),0),1);
+  for(const replay of [mod.replayDealStatusWhatsAppNotification,mod.replayDealSummaryWhatsAppNotification]){
+    const pair=await Promise.all([replay(),replay()]);assert.equal(pair.reduce((n,r)=>n+r.sent,0),0);
+  }
+  assert.equal(calls.length-beforeLegacy,3,'one attempt for buyer per replay family; seller window expired');
+  assert.equal(Number((await pool.query("select count(*) from notifications where type in ('verification_whatsapp_sent',$1,$2)",['deal_status_whatsapp_sent_'+deal+'_initiated','deal_summary_whatsapp_sent_'+deal])).rows[0].count),0,'no false sent markers');
+  const cold=await import(directory+'/app.mjs?cold-replay');
+  try{
+    await cold.replayVerificationWhatsAppNotifications();await cold.replayDealStatusWhatsAppNotification();await cold.replayDealSummaryWhatsAppNotification();
+  }finally{await cold.pool.end();}
+  assert.equal(calls.length-beforeLegacy,3,'durable pre-send markers survive module restart and block ambiguous replay');
+  delete process.env.WHATSAPP_VERIFICATION_REPLAY_USER_IDS;delete process.env.WHATSAPP_DEAL_STATUS_REPLAY_ID;delete process.env.WHATSAPP_DEAL_SUMMARY_REPLAY_ID;mode='ok';
+  pass('all legacy replay families persist claims before Meta, enforce consent/window/membership and cannot call missing-ID responses sent or replay them across workers/restart');
   id=await queue(buyer);
   await pool.query("UPDATE whatsapp_shipment_outbox SET status='leased',claim_token=$2,lease_until=now()-interval '1 second',attempts=1 WHERE notification_id=$1",[id,randomUUID()]);
   const beforeCrash=calls.length;await dispatch();assert.equal((await state(id)).status,'uncertain');assert.equal(calls.length,beforeCrash);

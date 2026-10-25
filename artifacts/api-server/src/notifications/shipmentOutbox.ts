@@ -1,6 +1,7 @@
 import {randomUUID} from "node:crypto";
 import {sql} from "drizzle-orm";
 import {db} from "@workspace/db";
+import {parseMessageAcknowledgement} from "../whatsapp/messageAcknowledgement";
 import {notificationText} from "./deliveryContent";
 import type {NotificationTransportResult} from "../whatsapp/notificationTransport";
 type Client=Pick<typeof db,"execute">;
@@ -122,7 +123,8 @@ export async function runShipmentWhatsAppOutbox(options:{
     if(!allowed){await finish("blocked","policy_unverified");continue;}
     try{
       const result=await options.send(user.phone,body,{userId:user.user_id,dealId:job.deal_id,jobId:job.id});
-      if(result.delivered&&result.messageId)await finish("accepted",undefined,result.messageId);
+      const ack=result.delivered?parseMessageAcknowledgement({messages:[{id:result.messageId}]}):null;
+      if(ack?.delivered)await finish("accepted",undefined,ack.messageId);
       else if(!result.delivered && (result.reason==="not_configured"||result.reason==="preflight_unavailable"||result.reason==="provider_rate_limited"))
         await finish("retry",result.reason==="not_configured"?"configuration_missing":"retryable_preflight_error");
       else if(!result.delivered && result.reason==="provider_rejected")
