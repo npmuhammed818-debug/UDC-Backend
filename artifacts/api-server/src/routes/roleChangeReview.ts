@@ -85,9 +85,9 @@ router.post("/admin/role-change-requests/:requestId/review",
       return "recorded" as const;
     },{isolationLevel:"serializable"});
     if(result==="not_found"){res.status(404).json({error:"request_not_found"});return;}
-    if(result!=="recorded"){res.status(409).json({error:result});return;}
+    if(result!=="recorded"&&result!=="activated"){res.status(409).json({error:result});return;}
     res.set("Cache-Control","no-store").json({
-      reviewed:true,roleChanged:false,requiresManualTransition:true,
+      reviewed:true,roleChanged:result==="activated",requiresManualTransition:result!=="activated",
     });
   }catch(e){
     if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
