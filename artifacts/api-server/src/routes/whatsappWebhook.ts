@@ -43,6 +43,15 @@ import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
 import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraft } from "../deals/whatsappDraft";
 
 const router: IRouter = Router();
+const handledProviderMessages = new Map<string, number>();
+export function alreadyHandledProviderMessage(id: unknown, now = Date.now()): boolean {
+  if (typeof id !== "string" || id.length < 6 || id.length > 200) return false;
+  for (const [key, at] of handledProviderMessages) { if (now - at > 15 * 60_000) handledProviderMessages.delete(key); else break; }
+  if (handledProviderMessages.has(id)) return true;
+  if (handledProviderMessages.size >= 5000) handledProviderMessages.delete(handledProviderMessages.keys().next().value as string);
+  handledProviderMessages.set(id, now);
+  return false;
+}
 
 function isEqual(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
@@ -1032,6 +1041,9 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       }
     }
     for (const message of value?.messages ?? []) {
+      // Meta re-sends a delivery it thinks failed. Answer each provider message id once per process
+      // (15 minutes). In-memory only: a durable cross-instance guard needs a table, which needs owner approval.
+      if (alreadyHandledProviderMessage(message.id)) continue;
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
         try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
         continue;
