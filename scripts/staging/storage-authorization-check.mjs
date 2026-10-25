@@ -56,13 +56,14 @@ try {
   assert.ok(!aup.ok, "anon upload must fail");
   pass("anonymous: public URL, direct read, authenticated route, listing and upload are all denied");
 
-  // an authenticated end user (no policies) must also be denied: create two synthetic users
+  // OPT-IN (writes two temporary synthetic auth users, deleted afterwards): a signed-in end user with no policies must also be denied
+  if (process.env.CREATE_SYNTHETIC_AUTH_USERS === "yes") {
   const users = [];
   for (const c of ["a", "b"]) {
     const email = `udc-test-${c}-${randomUUID().slice(0, 6)}@example.com`, password = `Tt-${randomUUID()}`;
     const cr = await fetch(`${base}/auth/v1/admin/users`, { method: "POST", headers: jh(svc), body: JSON.stringify({ email, password, email_confirm: true }) });
     assert.ok(cr.ok, `synthetic user create ${cr.status}`);
-    const id = (await cr.json()).id;
+    const id = (await cr.json()).id; (globalThis.__users ??= []).push(id);
     const tk = await (await fetch(`${base}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: anon, "content-type": "application/json" }, body: JSON.stringify({ email, password }) })).json();
     assert.ok(tk.access_token, "synthetic user signs in"); users.push({ id, token: tk.access_token });
   }
@@ -74,6 +75,7 @@ try {
     assert.ok(!own.ok, "no storage policies exist, so even a signed-in user cannot read directly: access is only via API-issued signed URLs");
   }
   pass("signed-in users (two synthetic companies) cannot read any object directly, including the other company's; access exists only via API-issued signed URLs");
+  } else console.log("SKIPPED: signed-in user checks (set CREATE_SYNTHETIC_AUTH_USERS=yes to create and delete two temporary auth users)");
 
   // authorized path: signed URL works, short-lived, tamper-proof
   const sg = await fetch(`${S}/object/sign/${bucket}/${pathA}`, { method: "POST", headers: jh(svc), body: JSON.stringify({ expiresIn: 5 }) });
@@ -92,6 +94,7 @@ try {
 } finally {
   // cleanup: remove synthetic objects and bucket
   try {
+    for (const u of globalThis.__users ?? []) await fetch(`${base}/auth/v1/admin/users/${u}`, { method: "DELETE", headers: jh(svc) });
     await fetch(`${S}/object/${bucket}`, { method: "DELETE", headers: jh(svc), body: JSON.stringify({ prefixes: [pathA, pathB] }) });
     await fetch(`${S}/bucket/${bucket}`, { method: "DELETE", headers: jh(svc) });
   } catch {}
