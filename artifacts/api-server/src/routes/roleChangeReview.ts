@@ -32,15 +32,15 @@ router.post("/admin/role-change-requests/:requestId/review",
         SELECT r.id,r.user_id,r.from_role,r.to_role,r.status,u.role,u.status AS user_status
         FROM public.user_role_change_requests r
         JOIN public.users u ON u.id=r.user_id
-        WHERE r.id=${id} FOR UPDATE OF r
+        WHERE r.id=${id} FOR UPDATE OF r,u
       `);
       const item=rows.rows[0] as {id:string;user_id:string;from_role:string;to_role:string;
         status:string;role:string;user_status:string}|undefined;
       if(!item)return "not_found" as const;
       if(item.status!=="pending")return "already_reviewed" as const;
-      if(item.role!==item.from_role||!["verified","under_review"].includes(item.user_status))
+      if(item.role!==item.from_role||item.user_status!=="verified")
         return "account_changed" as const;
-      // Deliberately NOT an approval/role update: switching canonical
+      // Reviewed does not confer approval or access. Require a verified\n      // account and lock both request and identity to avoid stale review.\n      // Deliberately NOT an approval/role update: switching canonical
       // users.role could grant unrelated deal/referral access or erase role
       // history. A later vetted multi-role schema is required.
       await tx.execute(sql`
