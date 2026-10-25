@@ -29,6 +29,8 @@ Status: nothing here has been run against any database. The SQL lives in `docs/d
 `commission-3-decimals-rollback.sql.draft`. Set the flag back to 2 and redeploy first, then run it. It refuses if any row has a non-zero third decimal (that would lose data); those rows need an owner decision. If the forward script fails it is a single transaction and leaves the table unchanged.
 
 ## Tests
-- Run in this change (no database): `currency-commission.test.ts` and `default-commission-rule.test.ts` cover currency precision, manual amounts, calculated amounts, legacy no-currency callers, the storage guard and the flag.
-- Written, NOT executed: `artifacts/api-server/test/integration/commission-migration-postgres.mjs` applies the drafts to an isolated synthetic loopback database (name must match `udc_qa_commission_*`) and checks existing rows are preserved, 3dp values store exactly after widening, the rollback refuses with 3dp rows and works without them. No Postgres server was available where this was authored.
-- Not covered: the HTTP routes against an app with a database; production data.
+Executed on a local throwaway PostgreSQL 16.2 (loopback, synthetic data, never a real database), Oct 25 evening:
+- `commission-migration-postgres.mjs`: 5 checks pass (existing rows preserved exactly; OMR/BHD store exactly after widening; forward refuses a second run; rollback refuses with 3dp data and restores when none).
+- `commission-routes-postgres.mjs`: 7 checks pass against the real routes and SQL (manual USD/EUR/INR/AED/SAR/QAR/JPY exact; excess precision and unknown currency rejected, nothing written; calculated percentage; 3dp refused before migration; after the draft migration plus the flag OMR 1500.125 stored exactly and earlier rows unchanged; JPY/USD rules unchanged; default-commission preview).
+- Unit tests (no DB): `currency-commission.test.ts`, `default-commission-rule.test.ts`.
+Not covered: the real Supabase database, production data, Supabase-managed objects outside the repo, PostgreSQL version differences (local was 16.2; the CI image is pinned separately), lock behaviour under production load.
