@@ -53,6 +53,9 @@ test("intake validation normalizes exact numeric strings and rejects unsafe coer
     assert.equal(parseIntakeConversation(JSON.stringify({ ...valid, fields: { quantity: "PRIVATE_TRADE_VALUE" } })), null);
     assert.equal(parseIntakeConversation("PRIVATE_BAD_JSON"), null);
     assert.equal(parseIntakeConversation(JSON.stringify({ ...valid, reply: "storage://private/key" })), null);
+    for (const reply of ["Great, a seller has accepted your request.", "Payment has been received.", "I matched you with a verified seller."])
+      assert.equal(parseIntakeConversation(JSON.stringify({ ...valid, reply })), null, "unverified claim must be rejected: " + reply);
+    assert.match(JSON.stringify(logs), /unverified_claim/);
     assert.match(JSON.stringify(logs), /invalid_schema/); assert.match(JSON.stringify(logs), /invalid_json/);
     assert.doesNotMatch(JSON.stringify(logs), /PRIVATE|storage:\/\//);
   } finally { console.warn = originalWarn; await unlink(output); }
