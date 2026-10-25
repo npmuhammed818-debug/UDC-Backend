@@ -16,7 +16,7 @@ import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
 import { agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
 import { getVaultLinkIssuer } from '../vault/issuer';
-import { vaultRedirectReply } from '../vault/uploadLink';
+import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
@@ -206,7 +206,11 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     if(user.role!==role){await sendWhatsAppText(phone,`Your account is registered as ${user.role}. Send Menu to see your available features.`);return true;}
     await sendForm(phone,role);return true;
   }
-  if(action==='verification'){const [company]=await db.select({status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}. UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
+  if(action==='verification'){const [company]=await db.select({id:companiesTable.id,status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+    // Outcome states only: AKIF never reads or describes the document contents.
+    const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
+    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Ask for Menu, then Documents, to get a secure upload link.';
+    await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     if(!company){await sendWhatsAppTextWithMenu(phone,'Open My profile and add your company details first.');return true;}
