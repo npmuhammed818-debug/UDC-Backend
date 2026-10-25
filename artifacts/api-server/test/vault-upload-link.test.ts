@@ -82,3 +82,12 @@ test("webhook never downloads or stores confidential files and offers the vault 
   const download = src.indexOf("await downloadWhatsAppMedia(document.id)");
   assert.ok(gate > 0 && download > 0 && gate < download, "confidential check must run before any media download");
 });
+
+test("accepted deal uploads carry the sensitive-file warning", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { SENSITIVE_UPLOAD_WARNING } = await import("../src/vault/uploadLink.ts");
+  assert.match(SENSITIVE_UPLOAD_WARNING, /don't send sensitive/);
+  assert.match(SENSITIVE_UPLOAD_WARNING, /Menu, then Documents/);
+  const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("I’ll keep it here for review.\\n\\n${SENSITIVE_UPLOAD_WARNING}"));
+});
