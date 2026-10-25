@@ -1,3 +1,4 @@
+import { calculateCommissionAmount, CommissionCalculationError } from "./commissionAmount.ts";
 // UDC default seller commission rule (owner decision, WhatsApp Oct 25: RBI reference rate on the
 // invoice date converts a foreign invoice to INR only to choose the percentage). Published Terms 9.1:
 // 1% of invoice value at INR 25 lakh or above, 2% below; seller pays. This module only SELECTS the
@@ -62,4 +63,26 @@ export function agentPoolFromReceived(receivedCommission: string, currency: stri
   if (cents <= 0n) throw new Error("invalid_received_commission");
   const half = (cents + 1n) / 2n;
   return `${half / 100n}.${String(half % 100n).padStart(2, "0")}`;
+}
+
+export type PreviewDeal = { quantity: string; unit: string; agreedPrice: string; currency: string };
+export type PreviewInput = { invoiceDate: string; rbiReferenceRateInrPerUnit?: string; rbiReferenceRateDate?: string; actualInvoiceValue?: string };
+
+/** Pure builder behind POST /admin/deals/:dealId/default-commission-preview. Reads nothing, writes nothing. */
+export function buildDefaultCommissionPreview(deal: PreviewDeal, input: PreviewInput): Record<string, unknown> {
+  const currency = deal.currency.toUpperCase();
+  const estimated = input.actualInvoiceValue === undefined;
+  const valueBasis = estimated ? "estimate_quantity_x_agreed_price" : "admin_supplied_actual_invoice_value";
+  let invoiceValue: string;
+  try {
+    invoiceValue = input.actualInvoiceValue ?? calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: "100" });
+  } catch (error) {
+    if (error instanceof CommissionCalculationError) return { error: "deal_value_unavailable" };
+    throw error;
+  }
+  const outcome = selectDefaultSellerRate({ invoiceValue, invoiceCurrency: currency, invoiceDate: input.invoiceDate, rbiReferenceRateInrPerUnit: input.rbiReferenceRateInrPerUnit, rbiReferenceRateDate: input.rbiReferenceRateDate });
+  if (outcome.status === "manual_review") return { status: "manual_review", reason: outcome.reason, valueBasis, note: "No rate selected. Supply the RBI reference rate dated the invoice date, or record a written fee schedule." };
+  if (!TWO_DECIMAL_CURRENCIES.has(currency)) return { status: "rate_only", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, commissionAmount: null, reason: "currency_precision_unconfirmed", valueBasis, note: "Rate selected but no money amount computed: minor-unit rounding for this currency is not confirmed. Compute manually." };
+  const amount = calculateCommissionAmount({ method: "percentage", quantity: "1", unit: "invoice", agreedPrice: invoiceValue, rate: outcome.ratePercent });
+  return { status: "rate", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, invoiceValueInr: outcome.invoiceValueInr, commissionAmount: amount, commissionCurrency: currency, valueBasis, requiresInvoiceConfirmation: estimated, roundingNote: "Amount uses the existing commission math (2 decimals, half up).", note: (estimated ? "ESTIMATE from quantity x agreed price; freight, fees, discounts or a different price basis are not reflected. Supply actualInvoiceValue before relying on the rate. " : "") + "Preview only. Nothing recorded. Record via POST /admin/commissions with the percentage method after review." };
 }
