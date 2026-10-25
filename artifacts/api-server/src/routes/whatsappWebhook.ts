@@ -25,7 +25,7 @@ import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
-import { looksLikeConfidentialDocumentTopic, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
+import { looksLikeConfidentialDocumentTopic, SENSITIVE_UPLOAD_WARNING, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
 import { wantsHumanHelp, HUMAN_HANDOFF_REPLY } from "../akif/conversationPolicy";
 import { getVaultLinkIssuer } from "../vault/issuer";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
@@ -532,7 +532,7 @@ async function handleWhatsAppDealDocument(
   });
 
   return {
-    reply: `Got the ${documentType}. I’ll keep it here for review.`,
+    reply: `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
     dealId,
     recipientUserId: sender.id,
   };

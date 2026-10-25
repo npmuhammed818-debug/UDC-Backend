@@ -98,3 +98,8 @@ const CONFIDENTIAL_WORDS = /\b(passport|national id|aadhaar|aadhar|emirates id|i
 export function looksLikeConfidentialDocumentTopic(text: string | null | undefined) {
   return typeof text === "string" && CONFIDENTIAL_WORDS.test(text);
 }
+
+// Owner decision: ordinary deal files and unlabelled images are still accepted in a deal
+// thread, but every such upload gets this warning so sensitive files go through the vault.
+export const SENSITIVE_UPLOAD_WARNING =
+  "Please don't send sensitive documents or images (passports, IDs, bank statements, company records) directly on WhatsApp. For those, send Menu, then Documents, to get a secure private upload link.";
