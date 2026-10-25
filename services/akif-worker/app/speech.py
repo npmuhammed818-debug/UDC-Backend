@@ -7,7 +7,6 @@ to any other provider (no paid provider is ever called).
 import base64
 import json
 import os
-import re
 import subprocess
 import time
 import urllib.request
@@ -15,18 +14,25 @@ import urllib.request
 from fastapi import HTTPException
 
 ALLOWED_MODELS = {"gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"}
-MAX_CHARS = 350
 _calls: list[float] = []
 
 
+def _load_allowlist() -> frozenset[str]:
+    path = os.path.join(os.path.dirname(__file__), "speakable_replies.json")
+    with open(path, encoding="utf-8") as handle:
+        return frozenset(json.load(handle))
+
+
+ALLOWED_TEXTS = _load_allowlist()
+
+
 def speech_text_allowed(text: str) -> bool:
-    """Generic text only: short, no digits (prices, quantities, dates, ids), no links, emails or currency."""
-    t = (text or "").strip()
-    if not t or len(t) > MAX_CHARS:
-        return False
-    if re.search(r"\d|https?:|www\.|@|[$€£₹#]", t, re.I):
-        return False
-    return True
+    """Default-deny: only the exact fixed sentences in speakable_replies.json may be spoken.
+
+    The API keeps the same list (artifacts/api-server src/akif/voiceReply.ts) and a test
+    asserts both are identical. Free-form or user-derived text is never sent to the provider.
+    """
+    return isinstance(text, str) and text in ALLOWED_TEXTS
 
 
 def _config() -> tuple[str, str, str]:

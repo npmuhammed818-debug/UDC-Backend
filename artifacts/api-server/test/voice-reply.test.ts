@@ -23,3 +23,9 @@ test("webhook speaks only the guidance reply path and always falls back to text"
   assert.equal((w.match(/trySpeakReply\(/g) || []).length, 1);
   assert.ok(w.includes("if (!spoken) await deliverWhatsAppReply(message.from, guidance)"));
 });
+
+test("API allowlist and worker allowlist are identical (cross-language parity)", async () => {
+  const { SPEAKABLE_STATIC_REPLIES } = await import("../src/akif/voiceReply.ts");
+  const worker = JSON.parse(await readFile(new URL("../../../services/akif-worker/app/speakable_replies.json", import.meta.url), "utf8")) as string[];
+  assert.deepEqual([...SPEAKABLE_STATIC_REPLIES].sort(), [...worker].sort());
+});
