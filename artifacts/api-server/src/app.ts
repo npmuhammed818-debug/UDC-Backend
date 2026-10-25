@@ -8,6 +8,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { loadAuth } from "./auth/middleware";
+import { safeRequestLogPath } from "./lib/requestLog";
 
 import { policies, renderPolicy } from "./privacy/policies";
 
@@ -21,7 +22,7 @@ app.use(
         return {
           id: req.id,
           method: req.method,
-          url: req.url?.split("?")[0],
+          url: safeRequestLogPath(req.url),
         };
       },
       res(res) {
