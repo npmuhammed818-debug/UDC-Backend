@@ -26,6 +26,7 @@ import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 import { looksLikeConfidentialDocumentTopic, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
+import { wantsHumanHelp, HUMAN_HANDOFF_REPLY } from "../akif/conversationPolicy";
 import { getVaultLinkIssuer } from "../vault/issuer";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
@@ -1075,6 +1076,16 @@ router.post("/webhooks/whatsapp", async (req, res) => {
       if(message.from && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
+      }
+      // A person asking for a human is never answered by the model: record it and say so honestly.
+      if (message.from && message.text?.body && wantsHumanHelp(message.text.body)) {
+        try {
+          const [asker] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
+          await db.insert(auditLogsTable).values({ actorUserId: asker?.id ?? null, action: "akif_human_handoff_requested",
+            entityType: "user", entityId: asker?.id ?? null, metadata: { channel: "whatsapp", providerMessageId: message.id ?? null } });
+          await deliverWhatsAppReply(message.from, HUMAN_HANDOFF_REPLY);
+          continue;
+        } catch { /* fall through to normal handling rather than dropping the message */ }
       }
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
       if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
