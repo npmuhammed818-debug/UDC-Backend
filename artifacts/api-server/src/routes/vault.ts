@@ -4,6 +4,9 @@ import { requireAuth } from "../auth/middleware";
 import { VAULT_DOCUMENT_TYPES, VAULT_MAX_UPLOAD_BYTES } from "../vault/uploadLink";
 import { acceptUpload, createVaultUploadLink, listOwnDocumentStatuses, lookupLink, requestDocumentDeletion } from "../vault/service";
 import { uploadPageHtml } from "../vault/uploadPage";
+import { setVaultLinkIssuer } from "../vault/issuer";
+
+setVaultLinkIssuer(createVaultUploadLink);
 
 const router: IRouter = Router();
 const noStore = (res: import("express").Response) => {

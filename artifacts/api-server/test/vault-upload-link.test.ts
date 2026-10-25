@@ -74,3 +74,11 @@ test("upload page escapes content and closed state reveals nothing", () => {
   const closed = uploadPageHtml({ state: "closed" });
   assert.ok(/expired or was already used/.test(closed) && !/<input/.test(closed));
 });
+
+test("webhook never downloads or stores confidential files and offers the vault instead", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  const gate = src.indexOf("looksLikeConfidentialDocumentTopic(confidentialText)");
+  const download = src.indexOf("await downloadWhatsAppMedia(document.id)");
+  assert.ok(gate > 0 && download > 0 && gate < download, "confidential check must run before any media download");
+});
