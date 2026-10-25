@@ -10,7 +10,7 @@ import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
 import { missingPaymentEvidence, paymentMilestoneStages } from "../deals/paymentMilestone";
-import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, whatsappShipmentOutboxTable } from "@workspace/db";
+import { notificationPreferencesTable, auditLogsTable, buyerRequestsTable, commissionsTable, companiesTable, companyVerificationDocumentsTable, dealsTable, dealParticipantsTable, documentAccessTable, documentsTable, inspectionsTable, dealFinancialsTable, matchesTable, shipmentsTable, messagesTable, notificationsTable, productsTable, referralsTable, sellerListingsTable, usersTable, whatsappMessageContextsTable, dealConversationEventsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, whatsappShipmentOutboxTable, vaultAccessLogTable } from "@workspace/db";
 import { type AuthenticatedRequest, requireRole } from "../auth/middleware";
 import { sendWhatsAppText } from "../whatsapp/client";
 import { enqueueShipmentWhatsApp } from "../notifications/shipmentOutbox";
@@ -178,7 +178,7 @@ router.get("/admin/companies/pending-verification", requireRole("admin"), async 
   }
 });
 
-router.get("/admin/company-verification-documents", requireRole("admin"), async (_req, res) => {
+router.get("/admin/company-verification-documents", requireRole("admin"), async (_req: AuthenticatedRequest, res) => {
   try {
     const rows = await db.select({
       id: companyVerificationDocumentsTable.id,
@@ -197,10 +197,11 @@ router.get("/admin/company-verification-documents", requireRole("admin"), async 
       .innerJoin(companiesTable, eq(companyVerificationDocumentsTable.companyId, companiesTable.id))
       .innerJoin(usersTable, eq(companiesTable.ownerUserId, usersTable.id))
       .orderBy(desc(companyVerificationDocumentsTable.createdAt));
+    const adminActorId = _req.authUser?.id ?? null;
     res.json({ documents: await Promise.all(rows.map(async (item) => {
       const [screening]=await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,item.id),eq(auditLogsTable.action,'company_document_screened'))).orderBy(desc(auditLogsTable.createdAt)).limit(1);
       const ownedPath = managedCompanyDocumentPath(item.fileUrl,item.companyId);
-      return { ...item, screening:(screening?.metadata as any)?.profileFingerprint===companyProfileFingerprint(item)?screening!.metadata:null, fileUrl: ownedPath ? await createSignedDownloadUrl(ownedPath) : null };
+      return { ...item, screening:(screening?.metadata as any)?.profileFingerprint===companyProfileFingerprint(item)?screening!.metadata:null, fileUrl: ownedPath ? (await db.insert(vaultAccessLogTable).values({ actorUserId: adminActorId, actorRole: "admin_reviewer", action: "review_link_signed", documentId: item.id }), await createSignedDownloadUrl(ownedPath)) : null };
     })) });
   } catch { res.status(500).json({ error: "company_verification_documents_fetch_failed" }); }
 });

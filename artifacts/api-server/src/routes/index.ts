@@ -27,6 +27,7 @@ import whatsappWebhookRouter from "./whatsappWebhook";
 import whatsappTemplateReadinessRouter from "./whatsappTemplateReadiness";
 import roleChangeReviewRouter from "./roleChangeReview";
 import stagingReadinessRouter from "./stagingReadiness";
+import vaultRouter from "./vault";
 
 const router: IRouter = Router();
 
@@ -58,5 +59,6 @@ router.use(whatsappWebhookRouter);
 router.use(whatsappTemplateReadinessRouter);
 router.use(roleChangeReviewRouter);
 router.use(stagingReadinessRouter);
+router.use(vaultRouter);
 
 export default router;

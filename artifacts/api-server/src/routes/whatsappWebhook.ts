@@ -25,6 +25,8 @@ import { processDocumentIntelligence } from "../akif/documentIntelligence";
 import { requestedDealDocumentDeliveryTarget } from "../akif/dealDocumentRouting";
 import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "../supabase/storage";
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
+import { looksLikeConfidentialDocumentTopic, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
+import { getVaultLinkIssuer } from "../vault/issuer";
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { triageSellerOffer } from "../akif/sellerOfferTriage";
@@ -278,6 +280,19 @@ async function setActiveDealContext(userId: string, dealId: string) {
     });
 }
 
+function confidentialDocumentKind(text: string): VaultDocumentType {
+  const v = text.toLowerCase();
+  const pick = (type: VaultDocumentType) => (VAULT_DOCUMENT_TYPES as readonly string[]).includes(type) ? type : "other";
+  if (/passport/.test(v)) return pick("passport");
+  if (/national id|aadhaar|aadhar|emirates id|id card/.test(v)) return pick("national_id");
+  if (/bank/.test(v) || /account statement/.test(v)) return pick("bank_statement");
+  if (/licen[cs]e/.test(v)) return pick("business_license");
+  if (/tax/.test(v)) return pick("tax_certificate");
+  if (/registration|incorporation/.test(v)) return pick("company_registration");
+  if (/agreement|spa signed/.test(v)) return pick("commercial_agreement");
+  return "other";
+}
+
 function inferDocumentType(filename?: string, caption?: string) {
   const value = `${filename ?? ""} ${caption ?? ""}`.toLowerCase();
   if (/\bloi\b|letter of intent/.test(value)) return "LOI";
@@ -416,6 +431,21 @@ async function handleWhatsAppDealDocument(
 
   if (!sender || sender.status !== "verified") {
     return { reply: "I got the file, but this number isn’t verified for UDC documents yet." };
+  }
+
+  // Confidential identity, bank and company records never enter via WhatsApp:
+  // do not download, store or process the file; send a private upload link instead.
+  const confidentialText = `${document.filename ?? ""} ${document.caption ?? ""}`;
+  if (looksLikeConfidentialDocumentTopic(confidentialText)) {
+    const kind = confidentialDocumentKind(confidentialText);
+    let reply = vaultRedirectReply();
+    try {
+      const [account] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, sender.id)).limit(1);
+      const issue = getVaultLinkIssuer();
+      const link = issue ? await issue({ id: sender.id, role: account?.role ?? "" }, kind) : null;
+      if (link?.ok) reply = vaultRedirectReply({ url: link.url, expiresAt: link.expiresAt });
+    } catch { /* fall back to the text-only reply; never block on the vault */ }
+    return { reply };
   }
 
   const dealId = await resolveActiveDealForUser(sender.id, replyToProviderMessageId);

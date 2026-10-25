@@ -15,6 +15,8 @@ import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
 import { agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
+import { getVaultLinkIssuer } from '../vault/issuer';
+import { vaultRedirectReply } from '../vault/uploadLink';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
@@ -148,19 +150,13 @@ async function companyDocument(phone:string,message:ChatMessage){
   const metadata=request.metadata as {companyId:string};
   const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.id,metadata.companyId),eq(companiesTable.ownerUserId,user.id))).limit(1);
   if(!company){await sendWhatsAppTextWithMenu(phone,'That company request is no longer available. Open My profile first.');return true;}
-  const media=await downloadWhatsAppMedia(message.document.id);
-  const bytes=Buffer.from(media.bytes);
-  if(bytes.length>5*1024*1024||bytes.subarray(0,5).toString()!=='%PDF-'){await sendWhatsAppTextWithMenu(phone,'Send a PDF under 5 MB as a reply to the document request.');return true;}
-  await db.transaction(async tx=>{
-    const fingerprint=message.id||message.document!.id!;
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_doc:'+fingerprint}))`);
-    const [seen]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'company_verification_document_uploaded'),eq(auditLogsTable.actorUserId,user.id),sql`${auditLogsTable.metadata}->>'providerMessageId' = ${fingerprint}`)).limit(1);
-    if(seen)return;
-    const fileUrl=await uploadDocumentBytes(`companies/${company.id}/${randomUUID()}.pdf`,bytes,'application/pdf');
-    const [document]=await tx.insert(companyVerificationDocumentsTable).values({companyId:company.id,uploadedBy:user.id,documentType:'registration',fileUrl,status:'pending'}).returning({id:companyVerificationDocumentsTable.id});
-    await tx.insert(auditLogsTable).values({actorUserId:user.id,action:'company_verification_document_uploaded',entityType:'company_verification_document',entityId:document.id,metadata:{companyId:company.id,channel:'whatsapp',providerMessageId:fingerprint}});
-  });
-  await sendWhatsAppTextWithMenu(phone,'Your company PDF is stored privately for UDC review. Uploading it does not verify your company.');return true;
+  // Company verification records are confidential: never download, store or process them from WhatsApp.
+  await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration'));return true;
+}
+
+async function vaultReplyFor(user:{id:string;role:string},type:'company_registration'){
+  try{const issue=getVaultLinkIssuer();const link=issue?await issue(user,type):null;if(link?.ok)return vaultRedirectReply({url:link.url,expiresAt:link.expiresAt});}catch{}
+  return vaultRedirectReply();
 }
 
 export async function handleChatUi(phone:string,message:ChatMessage,directOnly=false){
@@ -214,8 +210,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     if(!company){await sendWhatsAppTextWithMenu(phone,'Open My profile and add your company details first.');return true;}
-    const sent=await sendWhatsAppTextWithMenu(phone,'Reply to THIS message with your company registration PDF (under 5 MB). It will be private and pending UDC review. For a deal document, reply to that deal’s message instead.');
-    if(sent.delivered&&sent.messageId)await db.insert(auditLogsTable).values({actorUserId:user.id,action:'whatsapp_company_document_requested',entityType:'company',entityId:company.id,metadata:{companyId:company.id,messageId:sent.messageId}});return true;
+    await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration')+'\nFor a trade document inside a deal, reply to that deal’s message instead.');return true;
   }
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
