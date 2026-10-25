@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { businessEmail } from "../whatsapp/registrationEmail.ts";
 export const passwordSchema = z
   .string()
   .min(12, "Password must be at least 12 characters.")
@@ -21,4 +22,8 @@ export const registrationSchema = z.object({
   referral_token: z.string().min(1).max(120).optional(),
   accepted_terms: z.literal(true),
   adult_business_user: z.literal(true),
+}).refine((v) => v.role === "agent" || businessEmail(v.email), {
+  // Owner rule (WhatsApp 2:47 PM): company email for buyers and sellers, not for agents.
+  message: "Use your company email. Personal email is available for agents.",
+  path: ["email"],
 });

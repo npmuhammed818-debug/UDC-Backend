@@ -119,3 +119,10 @@ test("privacy commands cannot be triggered by unrelated negotiation messages", (
   assert.equal(privacyCommand("Privacy"), "privacy");
   assert.equal(privacyCommand("stop the shipment"), null);
 });
+test("buyers and sellers need a company email on web registration; agents may use personal email", () => {
+  for (const role of ["buyer", "seller"]) {
+    assert.equal(registrationSchema.safeParse({ ...input, role, email: "someone@gmail.com" }).success, false, role);
+    assert.equal(registrationSchema.safeParse({ ...input, role, email: "someone@acme-trading.com" }).success, true, role);
+  }
+  assert.equal(registrationSchema.safeParse({ ...input, role: "agent", email: "someone@gmail.com" }).success, true);
+});
