@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod/v4";
 import { buyerRequestsTable, db, productsTable, sellerListingsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../auth/middleware";
+import { requireVerifiedAccount } from "../auth/verificationGate";
 import { udcPaymentTerms } from "../marketplace/paymentPolicy";
 
 const router: IRouter = Router();
@@ -83,7 +84,7 @@ router.get("/seller-listings", requireAuth, async (req, res) => {
   } catch (error) { failed(res, error, "listings_fetch_failed"); }
 });
 
-router.post("/seller-listings", requireRole("seller"), async (req, res) => {
+router.post("/seller-listings", requireRole("seller"), requireVerifiedAccount, async (req, res) => {
   try {
     const input = listingInput.parse(req.body);
     const [product] = await db.select({ id: productsTable.id }).from(productsTable)
@@ -114,7 +115,7 @@ router.get("/buyer-requests", requireAuth, async (req, res) => {
   } catch (error) { failed(res, error, "requirements_fetch_failed"); }
 });
 
-router.post("/buyer-requests", requireRole("buyer"), async (req, res) => {
+router.post("/buyer-requests", requireRole("buyer"), requireVerifiedAccount, async (req, res) => {
   try {
     const input = requirementInput.parse(req.body);
     const [product] = await db.select({ id: productsTable.id }).from(productsTable)
