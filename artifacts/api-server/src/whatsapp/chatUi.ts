@@ -20,6 +20,7 @@ import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, m
 import { getVaultLinkIssuer } from '../vault/issuer';
 import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
+import {PoolAllocationError,poolReplyText,respondToPoolInvite} from '../marketplace/poolInvites';
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
 const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile','change_role'] as const;
@@ -177,6 +178,15 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   const termId=message.interactive?.button_reply?.id;
   const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
   if(termAction){await respondToTerms(phone,termAction[2],termAction[1]==='accept');return true;}
+  const poolAction=typeof termId==='string'?/^udc:pool:(accept|decline):([a-f0-9-]{36})$/.exec(termId):null;
+  if(poolAction){
+    const decision=poolAction[1]==='accept'?'accepted' as const:'declined' as const;
+    const [buyer]=await db.select({id:usersTable.id,role:usersTable.role}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+    if(!buyer||buyer.role!=='buyer'){await sendWhatsAppText(phone,'That invite is not available for this number.');return true;}
+    try{const result=await respondToPoolInvite(buyer.id,poolAction[2],decision);await sendWhatsAppText(phone,poolReplyText(result,decision));}
+    catch(error){await sendWhatsAppText(phone,error instanceof PoolAllocationError&&error.message.startsWith('invite_already_')?'You have already answered this invite.':'That invite is not available.');}
+    return true;
+  }
   if(await companyDocument(phone,message))return true;
   const action=chatAction(message);
   if(!action || ['submit','restart','cancel'].includes(action)){

@@ -10,25 +10,9 @@ import {
   usersTable,
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../auth/middleware";
+import { PoolAllocationError, inviteExpiresAt, isInviteExpired, respondToPoolInvite, sendPoolInviteMessage } from "../marketplace/poolInvites";
 
 const router: IRouter = Router();
-
-// Invite expiry is a config value. Default 10 days, set by the owner (WhatsApp Oct 25 evening).
-export function poolInviteExpiryDays(env: NodeJS.ProcessEnv = process.env): number {
-  const n = Number(env["UDC_POOL_INVITE_EXPIRY_DAYS"]);
-  return Number.isFinite(n) && n > 0 && n <= 90 ? n : 10;
-}
-export function inviteExpiresAt(createdAt: Date, days = poolInviteExpiryDays()): Date {
-  return new Date(createdAt.getTime() + days * 86_400_000);
-}
-export function isInviteExpired(createdAt: Date, now = new Date(), days = poolInviteExpiryDays()): boolean {
-  return now.getTime() >= inviteExpiresAt(createdAt, days).getTime();
-}
-
-class PoolAllocationError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
-
 
 const createPoolSchema = z.object({
   targetQuantity: z.coerce.number().positive(),
@@ -112,8 +96,9 @@ router.post("/admin/buyer-pools/:poolId/allocations", requireRole("admin"), asyn
       await tx.insert(auditLogsTable).values({ actorUserId: req.authUser!.id,
         action: "buyer_pool_allocation_created", entityType: "buyer_pool", entityId: poolId,
         metadata: { buyerUserId: input.buyerUserId, quantity: input.quantity } });
-      return record;
+      return record && { ...record, unit: pool.unit };
     });
+    if (allocation) void sendPoolInviteMessage(input.buyerUserId, allocation.id, { quantity: String(input.quantity), unit: allocation.unit });
     res.status(201).json({ allocation });
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_buyer_pool_allocation" }); return; }
@@ -125,40 +110,9 @@ router.post("/admin/buyer-pools/:poolId/allocations", requireRole("admin"), asyn
 async function respondToInvite(req: any, res: any, decision: "accepted" | "declined") {
   try {
     const allocationId = z.string().uuid().parse(req.params["allocationId"]);
-    const out = await db.transaction(async (tx) => {
-      const [alloc] = await tx.select().from(buyerPoolAllocationsTable)
-        .where(eq(buyerPoolAllocationsTable.id, allocationId)).limit(1).for("update");
-      // Another buyer's invite looks the same as a missing one.
-      if (!alloc || alloc.buyerUserId !== req.authUser!.id) throw new PoolAllocationError(404, "invite_not_found");
-      const [pool] = await tx.select().from(buyerPoolsTable).where(eq(buyerPoolsTable.id, alloc.poolId)).limit(1).for("update");
-      if (!pool) throw new PoolAllocationError(404, "invite_not_found");
-      if (alloc.status !== "invited") throw new PoolAllocationError(409, `invite_already_${alloc.status}`);
-      if (isInviteExpired(alloc.createdAt)) {
-        await tx.update(buyerPoolAllocationsTable).set({ status: "expired" }).where(eq(buyerPoolAllocationsTable.id, alloc.id));
-        await tx.insert(auditLogsTable).values({ actorUserId: req.authUser!.id, action: "buyer_pool_invite_expired",
-          entityType: "buyer_pool", entityId: pool.id, metadata: { allocationId } });
-        return { expired: true as const };
-      }
-      if (pool.status !== "forming") throw new PoolAllocationError(409, "buyer_pool_not_forming");
-      await tx.update(buyerPoolAllocationsTable).set({ status: decision }).where(eq(buyerPoolAllocationsTable.id, alloc.id));
-      // Fully accepted = every live invite accepted and the accepted quantity exactly fills the target.
-      const [roll] = await tx.select({
-        open: sql<number>`count(*) filter (where ${buyerPoolAllocationsTable.status} = 'invited')::int`,
-        accepted: sql<string>`coalesce(sum(${buyerPoolAllocationsTable.quantity}) filter (where ${buyerPoolAllocationsTable.status} = 'accepted'), 0)::text`,
-        fills: sql<boolean>`coalesce(sum(${buyerPoolAllocationsTable.quantity}) filter (where ${buyerPoolAllocationsTable.status} = 'accepted'), 0) = ${pool.targetQuantity}::numeric`,
-      }).from(buyerPoolAllocationsTable).where(eq(buyerPoolAllocationsTable.poolId, pool.id));
-      const fullyAccepted = decision === "accepted" && roll!.open === 0 && roll!.fills === true;
-      if (fullyAccepted) {
-        // Only the buyers' yes is recorded. No bank instrument or payment state changes here.
-        await tx.update(buyerPoolsTable).set({ status: "fully_accepted" }).where(eq(buyerPoolsTable.id, pool.id));
-      }
-      await tx.insert(auditLogsTable).values({ actorUserId: req.authUser!.id,
-        action: decision === "accepted" ? "buyer_pool_invite_accepted" : "buyer_pool_invite_declined",
-        entityType: "buyer_pool", entityId: pool.id, metadata: { allocationId, fullyAccepted } });
-      return { expired: false as const, fullyAccepted, poolStatus: fullyAccepted ? "fully_accepted" : pool.status };
-    });
+    const out = await respondToPoolInvite(req.authUser!.id, allocationId, decision);
     if (out.expired) { res.status(409).json({ error: "invite_expired" }); return; }
-    res.json({ status: decision, ...out });
+    res.json({ status: decision, fullyAccepted: out.fullyAccepted, poolStatus: out.poolStatus });
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_invite_id" }); return; }
     if (error instanceof PoolAllocationError) { res.status(error.status).json({ error: error.message }); return; }
