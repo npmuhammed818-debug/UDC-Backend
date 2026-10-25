@@ -29,7 +29,8 @@ test("missing, invalid or wrongly dated inputs go to manual review, never a gues
   assert.deepEqual(selectDefaultSellerRate({ ...usd, invoiceDate: "20-10-2026" }), { status: "manual_review", reason: "invalid_invoice_date" });
 });
 test("agent pool is half of the commission actually received, rounded once half up to cents", () => {
-  assert.equal(agentPoolFromReceived("1000.00"), "500.00");
-  assert.equal(agentPoolFromReceived("0.03"), "0.02");
-  assert.throws(() => agentPoolFromReceived("0"));
+  assert.equal(agentPoolFromReceived("1000.00", "USD"), "500.00");
+  assert.equal(agentPoolFromReceived("0.03", "INR"), "0.02");
+  assert.throws(() => agentPoolFromReceived("0", "USD"));
+  assert.throws(() => agentPoolFromReceived("1000", "JPY"), /manual_review_currency_precision/);
 });

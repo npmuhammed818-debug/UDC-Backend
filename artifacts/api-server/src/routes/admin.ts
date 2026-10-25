@@ -1253,6 +1253,8 @@ const defaultCommissionPreviewSchema = z.object({
   invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   rbiReferenceRateInrPerUnit: z.string().regex(/^\d+(?:\.\d{1,8})?$/).optional(),
   rbiReferenceRateDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // Actual invoice value (deal currency) from the real invoice. Without it the preview is only an estimate.
+  actualInvoiceValue: z.string().regex(/^\d+(?:\.\d{1,6})?$/).optional(),
 });
 
 // Read-only preview of the published default seller rule (1% at INR 25 lakh+, 2% below, seller pays).
@@ -1266,11 +1268,12 @@ router.post("/admin/deals/:dealId/default-commission-preview", requireRole("admi
     if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
     const quantity = Number(deal.quantity), price = Number(deal.agreedPrice);
     if (!Number.isFinite(quantity) || !Number.isFinite(price)) { res.status(409).json({ error: "deal_value_unavailable" }); return; }
-    const invoiceValue = calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: "100" });
+    const estimated = input.actualInvoiceValue === undefined;
+    const invoiceValue = input.actualInvoiceValue ?? calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: "100" });
     const outcome = selectDefaultSellerRate({ invoiceValue, invoiceCurrency: deal.currency.toUpperCase(), invoiceDate: input.invoiceDate, rbiReferenceRateInrPerUnit: input.rbiReferenceRateInrPerUnit, rbiReferenceRateDate: input.rbiReferenceRateDate });
-    if (outcome.status === "manual_review") { res.json({ dealId, status: "manual_review", reason: outcome.reason, note: "No rate selected. Supply the RBI reference rate dated the invoice date, or record a written fee schedule." }); return; }
+    if (outcome.status === "manual_review") { res.json({ dealId, status: "manual_review", reason: outcome.reason, valueBasis: estimated ? "estimate_quantity_x_agreed_price" : "admin_supplied_actual_invoice_value", note: "No rate selected. Supply the RBI reference rate dated the invoice date, or record a written fee schedule." }); return; }
     const amount = calculateCommissionAmount({ method: "percentage", quantity: deal.quantity, unit: deal.unit, agreedPrice: deal.agreedPrice, rate: outcome.ratePercent });
-    res.json({ dealId, status: "rate", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, invoiceValueInr: outcome.invoiceValueInr, commissionAmount: amount, commissionCurrency: deal.currency.toUpperCase(), note: "Preview only. Nothing recorded. Record via POST /admin/commissions with the percentage method after review." });
+    res.json({ dealId, status: "rate", ratePercent: outcome.ratePercent, payer: "seller", basis: outcome.basis, invoiceValueInr: outcome.invoiceValueInr, commissionAmount: amount, commissionCurrency: deal.currency.toUpperCase(), valueBasis: estimated ? "estimate_quantity_x_agreed_price" : "admin_supplied_actual_invoice_value", requiresInvoiceConfirmation: estimated, roundingNote: "Amount uses the existing commission math (2 decimals, half up); not confirmed for every currency.", note: (estimated ? "ESTIMATE from quantity x agreed price; freight, fees, discounts or a different price basis are not reflected. Supply actualInvoiceValue before relying on the rate. " : "") + "Preview only. Nothing recorded. Record via POST /admin/commissions with the percentage method after review." });
   } catch (error) {
     if (error instanceof CommissionCalculationError) { res.status(409).json({ error: error.message }); return; }
     if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }

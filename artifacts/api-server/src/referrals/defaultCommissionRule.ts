@@ -45,8 +45,13 @@ export function selectDefaultSellerRate(input: DefaultRuleInput): DefaultRuleRes
   return { status: "rate", ratePercent: atOrAbove ? "1" : "2", invoiceValueInr, basis };
 }
 
+// ISO 4217 currencies with exactly 2 minor-unit digits. Cent rounding is only applied for these;
+// any other currency (0, 3 or 4 digits, unknown) needs manual review rather than a silent rounding policy.
+export const TWO_DECIMAL_CURRENCIES = new Set(["INR", "USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD", "CHF"]);
+
 /** Agents collectively receive half of the commission UDC actually received (Agreement 3.2). Rounded once, half up, to cents like the rest of commission math. */
-export function agentPoolFromReceived(receivedCommission: string): string {
+export function agentPoolFromReceived(receivedCommission: string, currency: string): string {
+  if (!TWO_DECIMAL_CURRENCIES.has(currency)) throw new Error("manual_review_currency_precision");
   const v = dec(receivedCommission);
   if (!v || v.n <= 0n) throw new Error("invalid_received_commission");
   const cents = (v.n * 100n + v.d / 2n) / v.d; // received, in cents
