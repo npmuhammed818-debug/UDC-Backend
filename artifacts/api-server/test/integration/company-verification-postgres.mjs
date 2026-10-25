@@ -61,7 +61,7 @@ try {
   assert.equal((await call("POST", "/auth/register", { ...base, full_name: "QA Buyer", email: `p-${id()}@gmail.com`, role: "buyer", company_name: "QA Trading" })).status, 400);
   assert.equal((await call("POST", "/auth/register", { ...base, full_name: "QA Buyer", email: buyerEmail, role: "buyer" })).status, 400);
   const buyer = await call("POST", "/auth/register", { ...base, full_name: "QA Buyer", email: buyerEmail, role: "buyer", company_name: "QA Trading" });
-  assert.equal(buyer.status, 201);
+  assert.equal(buyer.status, 201, JSON.stringify(buyer.body));
   const buyerId = buyer.body.user.id;
   const company = (await pool.query("select id,company_name,verification_status from companies where owner_user_id=$1", [buyerId])).rows;
   assert.equal(company.length, 1);
