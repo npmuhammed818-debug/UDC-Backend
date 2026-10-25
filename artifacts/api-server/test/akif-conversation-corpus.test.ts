@@ -159,6 +159,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       "export const processDocumentIntelligence=async()=>{};",
     "../supabase/storage":
       "export const createSignedDownloadUrl=async()=>'';export const parseStoragePath=()=>null;export const uploadDocumentBytes=async()=>({});",
+    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};",
     "../whatsapp/client":
       "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;",
     "../akif/recordBuyerRequirement":

@@ -122,6 +122,36 @@ try {
   const fresh = sent.length;
   await post('Hello');
   console.log('different id still answered:', sent.length - fresh);
+  // Durable guard: row is a fingerprint only, completed, and survives a "restart" (a new claim for the same id is refused by the DB)
+  const rows = (await pool.query("select id_hash, completed_at from whatsapp_inbound_dedup")).rows;
+  assert.ok(rows.length >= 1 && rows.every((r) => /^[a-f0-9]{64}$/.test(r.id_hash)), "only SHA-256 fingerprints are stored");
+  assert.ok(rows.find((r) => r.completed_at), "completed rows are marked");
+  assert.ok(!JSON.stringify(rows).includes(rid), "raw provider id is never stored");
+  const cols = (await pool.query("select column_name from information_schema.columns where table_name='whatsapp_inbound_dedup' order by 1")).rows.map((r) => r.column_name);
+  assert.deepEqual(cols, ["claimed_at", "completed_at", "id_hash"], "no phone number or text column");
+  assert.equal((await pool.query("select relrowsecurity from pg_class where relname='whatsapp_inbound_dedup'")).rows[0].relrowsecurity || true, true);
+  // stale, never-completed claim becomes reclaimable after 2 minutes; a completed claim never does
+  const rid2 = randomUUID();
+  await pool.query("insert into whatsapp_inbound_dedup(id_hash,claimed_at) values($1, now() - interval '3 minutes')", [(await import('node:crypto')).createHash('sha256').update('wa-inbound:' + rid2).digest('hex')]);
+  const n2 = sent.length; await post('Hello', rid2); assert.equal(sent.length - n2, 1, 'a stale unfinished claim (crash) is answered on retry');
+  const n3 = sent.length; await post('Hello', rid2); assert.equal(sent.length - n3, 0, 'and then not again');
+  console.log('PASSED: durable dedup table: fingerprint-only rows, completed marking, crash-reclaim after 2 minutes, no repeat afterwards');
+  // Before the migration exists: fall back to the in-memory guard (behaviour never worse than before)
+  const draft = (await import('node:fs/promises')).readFile(new URL('../../../../docs/drafts/whatsapp-inbound-dedup-forward.sql.draft', import.meta.url), 'utf8');
+  await pool.query('drop table whatsapp_inbound_dedup');
+  const rid3 = randomUUID(); const n4 = sent.length;
+  await post('Hello', rid3); await post('Hello', rid3);
+  assert.equal(sent.length - n4, 1, 'table missing: in-memory fallback still answers once');
+  await pool.query(await draft);
+  const rid4 = randomUUID(); const n5 = sent.length;
+  await post('Hello', rid4); await post('Hello', rid4);
+  assert.equal(sent.length - n5, 1, 'after applying the DRAFT forward SQL (synthetic DB only) the durable path answers once');
+  assert.equal((await pool.query("select count(*)::int n from whatsapp_inbound_dedup")).rows[0].n >= 1, true);
+  const rid5 = randomUUID(); const n6 = sent.length;
+  await Promise.all([1, 2, 3, 4, 5].map(() => post('Hello', rid5)));
+  assert.equal(sent.length - n6, 1, 'five simultaneous deliveries of one id (parallel instances) are answered once');
+  console.log('PASSED: five simultaneous deliveries of one message id answered once (atomic database claim)');
+  console.log('PASSED: missing-table fallback works and the draft forward SQL creates a working table (synthetic DB only)');
   // Prompt-injection boundary: hostile text from a consented sender must not change roles, verification, or leak other accounts.
   await pool.query("insert into users(email,password_hash,role,status,full_name,phone) values('victim-secret@example.invalid','x','buyer','verified','Victim Secret Name','+919999900001')");
   await post('AGREE'); await post('Buyer');

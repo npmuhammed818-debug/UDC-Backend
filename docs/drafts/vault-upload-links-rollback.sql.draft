@@ -1,0 +1,7 @@
+-- DRAFT rollback for lib/db/migrations/20261025_vault_upload_links.sql. Drops only the three vault tables it created.
+-- Application effect: vault upload links, access log and deletion requests stop working; the base documents table is untouched.
+BEGIN;
+DROP TABLE IF EXISTS public.vault_deletion_requests;
+DROP TABLE IF EXISTS public.vault_access_log;
+DROP TABLE IF EXISTS public.vault_upload_links;
+COMMIT;

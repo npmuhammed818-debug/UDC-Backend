@@ -167,6 +167,26 @@ try {
   assert.equal(rej.fileUrl, null, "rejected files are not downloadable");
   assert.equal((await pool.query("select count(*)::int n from notifications where user_id=$1 and type='document_reviewed'", [seller.id])).rows[0].n >= 1, true, "uploader told why");
   pass("trade documents: PDF-only upload, private until approved, admin review with mandatory rejection reason, rejected files not downloadable, uploader notified");
+  // 8 document generators (LOI, ICPO, FCO, SPA, NCNDA): drafts for review only
+  const kinds = ["ncnda", "spa", "loi", "icpo", "fco"];
+  const out = {};
+  for (const k of kinds) {
+    assert.equal((await call("POST", `/deals/${dealId}/${k}-draft`, {}, buyer.cookie)).status, 400, `${k}: needs explicit terms confirmation`);
+    assert.equal((await call("POST", `/deals/${dealId}/${k}-draft`, { confirmTerms: true }, stranger.cookie)).status, 404, `${k}: unrelated user`);
+    assert.equal((await call("POST", `/deals/${dealId}/${k}-draft`, { confirmTerms: true }, agent.cookie)).status, 403, `${k}: agent`);
+    assert.equal((await call("POST", `/deals/${dealId}/${k}-draft`, { confirmTerms: true })).status, 401, `${k}: anonymous`);
+    const owner = k === "fco" ? seller : buyer, other = k === "fco" ? buyer : seller;
+    if (k === "loi" || k === "icpo" || k === "fco") assert.equal((await call("POST", `/deals/${dealId}/${k}-draft`, { confirmTerms: true }, other.cookie)).status, 404, `${k}: the other party cannot generate it (LOI/ICPO are buyer documents, FCO is a seller document)`);
+    const r = await call("POST", `/deals/${dealId}/${k}-draft`, { confirmTerms: true }, owner.cookie);
+    out[k] = [r.status, r.body.status, JSON.stringify(r.body.draft ?? "").length];
+  }
+  console.log("DRAFT-STATUS", JSON.stringify(out));
+  for (const k of kinds) assert.equal(out[k][0], 200, `${k} draft generated for the issuing party: ${JSON.stringify(out[k])}`);
+  assert.ok(kinds.every((k) => out[k][1] === "draft_for_review"), "every generator is draft-for-review");
+  const spa = JSON.stringify((await call("POST", `/deals/${dealId}/spa-draft`, { confirmTerms: true }, seller.cookie)).body);
+  assert.ok(spa.includes("505") && spa.includes("QA Sugar"), "SPA carries the recorded price and product");
+  assert.equal((await pool.query("select count(*)::int n from audit_logs where action like '%_draft_generated'")).rows[0].n >= 5, true, "each generation is audited");
+  pass("LOI, ICPO, FCO, SPA, NCNDA: draft-for-review only, explicit terms confirmation, LOI/ICPO buyer-only, FCO seller-only, SPA/NCNDA both parties (404 stranger, 403 agent, 401 anon), recorded terms used, audited");
   console.log(`PASSED: ${checks} real PostgreSQL trade-journey scenarios (synthetic data, no network).`);
 } finally {
   globalThis.fetch = beforeFetch;
