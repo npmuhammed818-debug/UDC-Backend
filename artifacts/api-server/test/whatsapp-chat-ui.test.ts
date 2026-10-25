@@ -218,6 +218,16 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       await m.handleChatUi(phone,{...ui('submit'),id:'guided-confirm'});assert.equal(rows.buyerRequestsTable.length,before+1);
       assert.equal(rows.buyerRequestsTable.at(-1).targetPrice,'5900');assert.equal(rows.buyerRequestsTable.at(-1).status,'pending_admin_review');
     });
+    await t.test('a question, pause or resume mid-form is never stored as the pending answer',async()=>{
+      const answer=(body:string)=>m.handleChatUi(phone,{id:randomUUID(),text:{body}});
+      await m.handleChatUi(phone,ui('requirement'));delete rows.whatsappChatSessionsTable[0].data.__paragraph;
+      const before=JSON.stringify(rows.whatsappChatSessionsTable[0]);
+      assert.equal(await answer('What is CIF?'),false);assert.equal(JSON.stringify(rows.whatsappChatSessionsTable[0]),before);
+      assert.equal(await answer('wait'),true);assert.match(last(),/saved for about 30 minutes/);assert.equal(JSON.stringify(rows.whatsappChatSessionsTable[0]),before);
+      assert.equal(await answer('continue'),true);assert.match(last(),/product/i);assert.equal(JSON.stringify(rows.whatsappChatSessionsTable[0]),before);
+      await answer('Sugar');assert.equal(rows.whatsappChatSessionsTable[0].step,1);
+      await m.handleChatUi(phone,ui('cancel'));assert.equal(rows.whatsappChatSessionsTable.length,0);
+    });
     await t.test('guided drafts support editing, cancellation, expiry and safe retry after audit failure',async()=>{
       const answer=(body:string)=>m.handleChatUi(phone,{id:randomUUID(),text:{body}});
       await m.handleChatUi(phone,ui('requirement'));delete rows.whatsappChatSessionsTable[0].data.__paragraph;await answer('Sugar');await m.handleChatUi(phone,ui('restart'));assert.equal(rows.whatsappChatSessionsTable[0].step,0);assert.deepEqual(rows.whatsappChatSessionsTable[0].data,{__paragraph:'1'});
