@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 // Shown before any personal data is collected (DPDP Rule 3 style itemised notice).
 // Bump the suffix whenever the wording changes: every user is then asked again.
-export const CONSENT_VERSION_SUFFIX = "consent-v2";
+export const CONSENT_VERSION_SUFFIX = "consent-v3";
 export const SITE_BASE = "https://updowncircle.site";
 export const TERMS_URL = `${SITE_BASE}/#/terms`;
 export const PRIVACY_URL = `${SITE_BASE}/#/privacy`;
@@ -13,7 +13,11 @@ export function consentVersion(policyVersion: string) {
 
 export function buildConsentNotice(supportEmail: string) {
   return [
-    "Welcome to UDC (UpDownCircle). UDC is for businesses only, for people aged 18+ who are authorised to act for their business. It is not for personal or consumer purchases.",
+    "Welcome to UpDownCircle (UDC).",
+    "",
+    "International trade, made simpler.",
+    "",
+    "UDC is for businesses only, for people aged 18+ who are authorised to act for their business. It is not for personal or consumer purchases.",
     "",
     "What we collect, and why:",
     "- Your name, WhatsApp number and business details: to set up and verify your business account.",
@@ -29,6 +33,23 @@ export function buildConsentNotice(supportEmail: string) {
     'You can withdraw consent at any time by sending "withdraw consent". To complain, send "complaint".',
     `Help or data requests: ${supportEmail}`,
   ].join("\n");
+}
+
+/** Short nudge for a user who already saw the full notice and has not agreed yet. Never counts as consent. */
+export function buildConsentReminder(supportEmail: string) {
+  return [
+    'To continue, reply "I agree" if you are 18+, authorised to act for your business, and accept the Terms and Privacy notice.',
+    "",
+    `Terms: ${TERMS_URL}`,
+    `Privacy: ${PRIVACY_URL}`,
+    "",
+    `Send "show notice" to read the full notice again. Questions: ${supportEmail}`,
+  ].join("\n");
+}
+
+export function isShowNoticeRequest(text?: string) {
+  const n = (text || "").trim().replace(/[.!?\s]+$/g, "").replace(/\s+/g, " ").toUpperCase();
+  return ["SHOW NOTICE", "NOTICE", "SHOW THE NOTICE", "FULL NOTICE", "READ NOTICE"].includes(n);
 }
 
 export function noticeHash(notice: string) {

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, codex/udc-staging-candidate-20261025]
+    branches: [main, codex/udc-staging-candidate-20261025, codex/shipment-delivery-system]
 
 permissions:
   contents: read

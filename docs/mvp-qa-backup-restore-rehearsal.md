@@ -7,7 +7,7 @@ This is a **disposable-database exercise**, not a backup, migration, export, or 
 - Creates two randomly named, disposable databases with strictly synthetic records. All CREATE, UPDATE, DELETE, pg_dump and pg_restore commands target only those child DBs.
 - Uses `docker exec` to run `pg_dump -Fc` and `pg_restore` from the exact PostgreSQL service container image, avoiding a client/server version mismatch. The binary archive stays in CI process memory; it is **not uploaded** as an artifact. The log includes only an abbreviated integrity digest and aggregate outcome, never fixture email/phone, keys or archive bytes.
 - The script applies the exact additive migrations in dependency order, seeds one fictional identity, recovery challenge, shipment/cargo/ETA, Meta outbox + receipt, signed inbound-window evidence and role-review request.
-- It verifies all ten new tables contain exactly the saved records, RLS remains enabled, client roles have no direct CRUD grants, privileged outbox permissions remain non-destructive, and the outbox unique key still prevents duplicates.
+- It verifies all fourteen selected new tables contain exactly the saved records, RLS remains enabled, client roles have no direct CRUD grants, privileged outbox permissions remain non-destructive, and the outbox unique key still prevents duplicates.
 - After taking a custom-format backup, deliberately mutates **only the source QA database** and restores the saved pre-mutation image into a different QA database. Asserts the original verified email, WhatsApp number, shipment status, Meta send/receipt state and entire per-table data checksum are restored.
 - Both temporary DBs and test-only PostgreSQL roles are cleaned up. Restore failure, client-privilege exposure, missing RLS, identity change or incorrect record snapshot must fail GitHub CI.
 
@@ -17,3 +17,5 @@ This is a **disposable-database exercise**, not a backup, migration, export, or 
 - Does **not** authorize applying new migrations, merging MVP drafts, changing Render/Supabase, sending OTPs or WhatsApp messages or touching live customer records.
 
 Related release checklist: `docs/mvp-integrated-staging-gates-20261024.md`.
+
+The full-MVP follow-up adds exact vault upload/access/deletion and durable inbound dedup migrations and fictional records to the rehearsal (14 selected tables total). Supporting company/document tables remain minimal fixture prerequisites. This still excludes private Storage bytes and is not proof of a complete hosted project restore.

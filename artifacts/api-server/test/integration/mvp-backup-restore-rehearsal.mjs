@@ -30,12 +30,15 @@ const migrationFiles=[
   "20261024_whatsapp_shipment_receipts.sql",
   "20261024_whatsapp_customer_windows.sql",
   "20261024_user_role_change_review.sql",
+  "20261025_vault_upload_links.sql",
+  "20261025_whatsapp_inbound_dedup.sql",
 ];
 const fixtureTables=[
   "email_auth_challenges","email_auth_limits","whatsapp_phone_link_challenges",
   "shipment_tracking_events","shipment_cargo_units","shipment_eta_followups",
   "whatsapp_shipment_outbox","whatsapp_shipment_receipts",
   "whatsapp_customer_windows","user_role_change_requests",
+  "vault_upload_links","vault_access_log","vault_deletion_requests","whatsapp_inbound_dedup",
 ];
 const suffix=randomBytes(8).toString("hex");
 const beforeName="udc_qa_restore_source_"+suffix;
@@ -101,6 +104,8 @@ try{
   source=makeChild(beforeName);target=makeChild(restoredName);
   await source.query(`
     CREATE TABLE public.users(id uuid PRIMARY KEY,email text UNIQUE,phone text UNIQUE);
+    CREATE TABLE public.companies(id uuid PRIMARY KEY);
+    CREATE TABLE public.company_verification_documents(id uuid PRIMARY KEY);
     CREATE TABLE public.deals(id uuid PRIMARY KEY);
     CREATE TABLE public.shipments(id uuid PRIMARY KEY,deal_id uuid REFERENCES public.deals(id));
     CREATE TABLE public.notifications(id uuid PRIMARY KEY,user_id uuid REFERENCES public.users(id),
@@ -159,6 +164,13 @@ try{
   await source.query(`INSERT INTO user_role_change_requests
     (id,user_id,from_role,to_role)
     VALUES($1,$2,'buyer','agent')`,[roleReview,user]);
+  const company=randomUUID(),document=randomUUID();
+  await source.query('INSERT INTO companies(id) VALUES($1)',[company]);
+  await source.query('INSERT INTO company_verification_documents(id) VALUES($1)',[document]);
+  await source.query("INSERT INTO vault_upload_links(token_hash,user_id,company_id,document_type,expires_at) VALUES($1,$2,$3,'company_registration',now()+interval '15 minutes')",['d'.repeat(64),user,company]);
+  await source.query("INSERT INTO vault_access_log(actor_user_id,actor_role,action,document_id) VALUES($1,'buyer','status_viewed',$2)",[user,document]);
+  await source.query('INSERT INTO vault_deletion_requests(document_id,requested_by) VALUES($1,$2)',[document,user]);
+  await source.query('INSERT INTO whatsapp_inbound_dedup(id_hash,completed_at) VALUES($1,now())',['e'.repeat(64)]);
   const snapshot={};
   for(const table of fixtureTables){
     snapshot[table]=await signature(source,table);
