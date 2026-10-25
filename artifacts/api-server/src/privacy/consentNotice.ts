@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 // Shown before any personal data is collected (DPDP Rule 3 style itemised notice).
 // Bump the suffix whenever the wording changes: every user is then asked again.
-export const CONSENT_VERSION_SUFFIX = "consent-v2";
+export const CONSENT_VERSION_SUFFIX = "consent-v3";
 export const SITE_BASE = "https://updowncircle.site";
 export const TERMS_URL = `${SITE_BASE}/#/terms`;
 export const PRIVACY_URL = `${SITE_BASE}/#/privacy`;
@@ -13,7 +13,11 @@ export function consentVersion(policyVersion: string) {
 
 export function buildConsentNotice(supportEmail: string) {
   return [
-    "Welcome to UDC (UpDownCircle). UDC is for businesses only, for people aged 18+ who are authorised to act for their business. It is not for personal or consumer purchases.",
+    "Welcome to UpDownCircle (UDC).",
+    "",
+    "International trade, made simpler.",
+    "",
+    "UDC is for businesses only, for people aged 18+ who are authorised to act for their business. It is not for personal or consumer purchases.",
     "",
     "What we collect, and why:",
     "- Your name, WhatsApp number and business details: to set up and verify your business account.",
