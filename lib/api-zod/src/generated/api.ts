@@ -100,7 +100,7 @@ export const RequestEmailVerificationResponse = zod.object({
 })
 
 
-export const confirmEmailVerificationBodyCodeRegExp = new RegExp('^[0-9]{8}$');
+export const confirmEmailVerificationBodyCodeRegExp = new RegExp('^[0-9]{6}$');
 
 
 export const ConfirmEmailVerificationBody = zod.object({
@@ -130,7 +130,7 @@ export const RequestPasswordRecoveryResponse = zod.object({
 
 export const confirmPasswordRecoveryBodyEmailMax = 254;
 
-export const confirmPasswordRecoveryBodyCodeRegExp = new RegExp('^[0-9]{8}$');
+export const confirmPasswordRecoveryBodyCodeRegExp = new RegExp('^[0-9]{6}$');
 export const confirmPasswordRecoveryBodyPasswordMin = 12;
 export const confirmPasswordRecoveryBodyPasswordMax = 128;
 
