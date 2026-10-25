@@ -12,6 +12,7 @@ test("simultaneous buyer allocations cannot overfill a pool", async () => {
   for (const name of ["buyerPoolsTable","buyerPoolAllocationsTable","auditLogsTable","dealsTable","usersTable"])
     tables[name] = { id: name+".id", poolId:name+".poolId", quantity:name+".quantity", role:name+".role", status:name+".status" };
   let allocated = 0;
+  const allocReads = new Map<object, number>();
   let locks = 0;
   let tail = Promise.resolve();
   const state: any = { ...tables };
@@ -30,7 +31,7 @@ test("simultaneous buyer allocations cannot overfill a pool", async () => {
           },
           then(resolve: any,reject:any) {
             const result=table===tables.usersTable ? [{id:"buyer"}]
-              : table===tables.buyerPoolAllocationsTable ? [{exceeded:allocated+6>10}]
+              : table===tables.buyerPoolAllocationsTable ? (allocReads.set(tx, (allocReads.get(tx) ?? 0) + 1), allocReads.get(tx) === 1 ? [{exceeded:allocated+6>10}] : [])
               : [{id:"pool",status:"forming",targetQuantity:"10"}];
             return Promise.resolve(result).then(resolve,reject);
           },
