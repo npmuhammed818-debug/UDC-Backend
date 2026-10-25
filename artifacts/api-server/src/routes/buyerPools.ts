@@ -98,8 +98,8 @@ router.post("/admin/buyer-pools/:poolId/allocations", requireRole("admin"), asyn
         metadata: { buyerUserId: input.buyerUserId, quantity: input.quantity } });
       return record && { ...record, unit: pool.unit };
     });
-    if (allocation) void sendPoolInviteMessage(input.buyerUserId, allocation.id, { quantity: String(input.quantity), unit: allocation.unit });
-    res.status(201).json({ allocation });
+    const notification = allocation ? await sendPoolInviteMessage(input.buyerUserId, allocation.id, { quantity: String(input.quantity), unit: allocation.unit }) : undefined;
+    res.status(201).json({ allocation, notification });
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_buyer_pool_allocation" }); return; }
     if (error instanceof PoolAllocationError) { res.status(error.status).json({ error: error.message }); return; }

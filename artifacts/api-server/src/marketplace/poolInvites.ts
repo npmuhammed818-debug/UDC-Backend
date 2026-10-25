@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { auditLogsTable, buyerPoolAllocationsTable, buyerPoolsTable, db, usersTable } from "@workspace/db";
-import { sendWhatsAppInteractive } from "../whatsapp/client";
+import { isWindowClosedError, sendWhatsAppInteractive } from "../whatsapp/client";
+import { authorizeCustomerWindow } from "../whatsapp/customerServiceWindow";
 
 export class PoolAllocationError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -58,16 +59,30 @@ export async function respondToPoolInvite(userId: string, allocationId: string, 
 
 // Buyer-facing invite with Accept/Decline buttons. Best effort: the invite already exists in the database,
 // so a send failure (or WhatsApp not configured) never blocks or rolls back the admin action.
-export async function sendPoolInviteMessage(buyerUserId: string, allocationId: string, summary: { quantity: string; unit: string; days?: number }) {
+export type PoolInviteNotification = "sent" | "not_delivered_window_closed" | "not_delivered";
+
+// The invite already exists in the database, so a failed send never rolls back the admin action. It does record
+// "notification not delivered" in the audit log (visible to the admin) and returns the reason. A proactive
+// message is only allowed inside the 24 hour customer service window: checked from signed inbound evidence when
+// UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED=true, and otherwise from Meta's own re-engagement refusal (code 131047).
+export async function sendPoolInviteMessage(buyerUserId: string, allocationId: string, summary: { quantity: string; unit: string; days?: number }): Promise<PoolInviteNotification> {
+  const fail = async (reason: Exclude<PoolInviteNotification, "sent">) => {
+    try {
+      await db.insert(auditLogsTable).values({ actorUserId: null, action: "buyer_pool_invite_notification_not_delivered",
+        entityType: "buyer_pool_allocation", entityId: allocationId, metadata: { reason, buyerUserId } });
+    } catch { /* the invite stands even if this note cannot be written */ }
+    return reason;
+  };
   try {
     const [buyer] = await db.select({ phone: usersTable.phone }).from(usersTable).where(eq(usersTable.id, buyerUserId)).limit(1);
-    if (!buyer?.phone) return false;
+    if (!buyer?.phone) return await fail("not_delivered");
+    if (process.env.UDC_WHATSAPP_WINDOW_EVIDENCE_ENABLED === "true" && !(await authorizeCustomerWindow(buyer.phone, buyerUserId, ""))) return await fail("not_delivered_window_closed");
     const days = summary.days ?? poolInviteExpiryDays();
-    await sendWhatsAppInteractive(buyer.phone, { type: "button",
+    const sent = await sendWhatsAppInteractive(buyer.phone, { type: "button",
       body: { text: `UDC invites you to join a buyer pool for ${summary.quantity} ${summary.unit}. The pool goes ahead only if every buyer accepts. Declining is free. This invite closes in ${days} days.` },
       action: { buttons: [["accept", "Accept"], ["decline", "Decline"]].map(([a, title]) => ({ type: "reply" as const, reply: { id: `udc:pool:${a}:${allocationId}`, title } })) } });
-    return true;
-  } catch { return false; }
+    return sent.delivered ? "sent" : await fail("not_delivered");
+  } catch (error) { return await fail(isWindowClosedError(error) ? "not_delivered_window_closed" : "not_delivered"); }
 }
 
 export function poolReplyText(result: { expired: boolean; fullyAccepted?: boolean }, decision: "accepted" | "declined") {

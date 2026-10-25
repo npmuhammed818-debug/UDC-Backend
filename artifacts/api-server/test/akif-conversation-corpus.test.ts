@@ -1,3 +1,4 @@
+process.env.WHATSAPP_INBOUND_PER_MINUTE = "100000"; // these fixtures reuse one phone; the cap has its own test
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { build } from "esbuild";
@@ -159,9 +160,9 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       "export const processDocumentIntelligence=async()=>{};",
     "../supabase/storage":
       "export const createSignedDownloadUrl=async()=>'';export const parseStoragePath=()=>null;export const uploadDocumentBytes=async()=>({});",
-    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};",
+    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
     "../whatsapp/client":
-      "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;",
+      "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;export const trackReplyFailures=(fn)=>fn(new Set());",
     "../akif/recordBuyerRequirement":
       "export const recordPendingBuyerRequirement=async(v)=>{globalThis.__udcChatTest.records.push(v);return {id:'requirement-1',status:'pending_admin_review'}};",
     "../whatsapp/guidance": "export const isGuidanceQuestion=()=>false;export const answerGuidance=async()=>null;",
