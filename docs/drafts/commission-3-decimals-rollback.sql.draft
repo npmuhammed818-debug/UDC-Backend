@@ -1,0 +1,20 @@
+-- DRAFT ONLY. NOT APPLIED. Rollback for commission-3-decimals-forward.sql.draft.
+-- Narrowing scale is lossy only if a third-decimal digit has been stored. This script REFUSES to run in that
+-- case; those rows (OMR/KWD/BHD amounts with a non-zero 3rd digit) must be handled by the owner first.
+-- Before running: set UDC_COMMISSION_STORAGE_DIGITS back to 2 (or unset it) and redeploy so no new 3dp rows arrive.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
+DO $$
+DECLARE bad int;
+BEGIN
+  SELECT count(*) INTO bad FROM public.commissions
+   WHERE (amount * 1000)::numeric % 10 <> 0 OR (commission_amount IS NOT NULL AND (commission_amount * 1000)::numeric % 10 <> 0);
+  IF bad > 0 THEN
+    RAISE EXCEPTION 'cannot narrow: % commission row(s) hold a non-zero third decimal digit', bad;
+  END IF;
+END $$;
+ALTER TABLE public.commissions ALTER COLUMN amount TYPE numeric(18, 2);
+ALTER TABLE public.commissions ALTER COLUMN commission_amount TYPE numeric(18, 2);
+COMMIT;
+-- Also revert scale 3 -> 2 in lib/db/src/schema/commissions.ts.

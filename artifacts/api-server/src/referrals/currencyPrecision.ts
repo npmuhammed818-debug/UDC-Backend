@@ -16,11 +16,17 @@ export function minorUnitDigits(currency: string): number | null {
   return digits === undefined ? null : digits;
 }
 
-/** The commissions table stores amounts as numeric(18,2). Currencies needing more digits need an approved migration. */
-export const COMMISSION_STORAGE_DIGITS = 2;
+/**
+ * Storage scale of commissions.amount / commission_amount. The table is numeric(18,2) today, so the default is 2.
+ * ONLY after the owner-approved migration (docs/drafts/commission-3-decimals-forward.sql.draft) has been applied
+ * may UDC_COMMISSION_STORAGE_DIGITS=3 be set; until then 3-decimal amounts are refused rather than rounded.
+ */
+export function commissionStorageDigits(env: Record<string, string | undefined> = process.env): 2 | 3 {
+  return env["UDC_COMMISSION_STORAGE_DIGITS"] === "3" ? 3 : 2;
+}
 
-/** True when the amount string can be stored in numeric(18,2) without changing its value. */
-export function commissionAmountFitsStorage(amount: string): boolean {
+/** True when the amount string can be stored in the commissions columns without changing its value. */
+export function commissionAmountFitsStorage(amount: string, storageDigits: number = commissionStorageDigits()): boolean {
   const fraction = amount.split(".")[1] ?? "";
-  return fraction.slice(COMMISSION_STORAGE_DIGITS).replace(/0/g, "") === "";
+  return fraction.slice(storageDigits).replace(/0/g, "") === "";
 }

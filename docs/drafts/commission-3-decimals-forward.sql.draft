@@ -1,0 +1,37 @@
+-- DRAFT ONLY. NOT APPLIED. Lives outside lib/db/migrations on purpose. Needs the owner's separate explicit approval.
+-- Widen commissions.amount and commissions.commission_amount from numeric(18,2) to numeric(18,3) so OMR/KWD/BHD
+-- (3 minor units) are stored exactly. Widening scale never changes an existing value (123.45 -> 123.450).
+-- Run only against a database that has been backed up. See docs/commission-3-decimal-migration-plan.md.
+BEGIN;
+SET LOCAL lock_timeout = '5s';        -- fail fast instead of queueing behind long transactions
+SET LOCAL statement_timeout = '60s';
+
+-- Preflight: record state, refuse to run if the shape is not what this migration expects.
+DO $$
+DECLARE a int; b int;
+BEGIN
+  SELECT numeric_scale INTO a FROM information_schema.columns WHERE table_schema='public' AND table_name='commissions' AND column_name='amount';
+  SELECT numeric_scale INTO b FROM information_schema.columns WHERE table_schema='public' AND table_name='commissions' AND column_name='commission_amount';
+  IF a IS DISTINCT FROM 2 OR b IS DISTINCT FROM 2 THEN
+    RAISE EXCEPTION 'expected numeric scale 2 on commissions.amount and commission_amount, found % and %', a, b;
+  END IF;
+END $$;
+CREATE TEMP TABLE commissions_precheck ON COMMIT DROP AS
+  SELECT count(*) AS n, coalesce(sum(amount),0) AS amount_sum, coalesce(sum(commission_amount),0) AS commission_amount_sum FROM public.commissions;
+
+ALTER TABLE public.commissions ALTER COLUMN amount TYPE numeric(18, 3);
+ALTER TABLE public.commissions ALTER COLUMN commission_amount TYPE numeric(18, 3);
+
+-- Postflight: row count and sums must be unchanged, scale must now be 3.
+DO $$
+DECLARE p record; q record;
+BEGIN
+  SELECT * INTO p FROM commissions_precheck;
+  SELECT count(*) AS n, coalesce(sum(amount),0) AS amount_sum, coalesce(sum(commission_amount),0) AS commission_amount_sum INTO q FROM public.commissions;
+  IF p.n <> q.n OR p.amount_sum <> q.amount_sum OR p.commission_amount_sum <> q.commission_amount_sum THEN
+    RAISE EXCEPTION 'commissions changed during widening: before %/%/% after %/%/%', p.n, p.amount_sum, p.commission_amount_sum, q.n, q.amount_sum, q.commission_amount_sum;
+  END IF;
+END $$;
+COMMIT;
+-- Companion code change (ships separately, only after this runs): set UDC_COMMISSION_STORAGE_DIGITS=3 and
+-- change scale 2 -> 3 for both columns in lib/db/src/schema/commissions.ts.

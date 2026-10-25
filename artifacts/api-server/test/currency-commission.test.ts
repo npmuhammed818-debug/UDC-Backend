@@ -40,3 +40,13 @@ test("storage guard: the 2-decimal column can hold JPY and 2-decimal amounts, an
   for (const ok of ["123", "123.45", "123.450", "123.400"]) assert.equal(commissionAmountFitsStorage(ok), true, ok);
   for (const bad of ["123.451", "0.001", "1500.125"]) assert.equal(commissionAmountFitsStorage(bad), false, bad);
 });
+test("storage digits default to 2 and only switch to 3 through the explicit post-migration flag", async () => {
+  const { commissionStorageDigits } = await import("../src/referrals/currencyPrecision.ts");
+  assert.equal(commissionStorageDigits({}), 2);
+  assert.equal(commissionStorageDigits({ UDC_COMMISSION_STORAGE_DIGITS: "3" }), 3);
+  for (const v of ["", "2", "4", "true", "03"]) assert.equal(commissionStorageDigits({ UDC_COMMISSION_STORAGE_DIGITS: v }), 2, v);
+  assert.equal(commissionAmountFitsStorage("1500.125", 2), false);
+  assert.equal(commissionAmountFitsStorage("1500.125", 3), true);
+  assert.equal(commissionAmountFitsStorage("1500.1255", 3), false);
+  assert.equal(commissionAmountFitsStorage("250000", 3), true);
+});
