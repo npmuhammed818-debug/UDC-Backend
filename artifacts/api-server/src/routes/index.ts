@@ -1,4 +1,5 @@
 import adminRouter from "./admin";
+import adminIncidentsRouter from "./adminIncidents";
 import adminGrievancesRouter from "./adminGrievances";
 import akifIntelligenceRouter from "./akifIntelligence";
 import akifOperationsRouter from "./akifOperations";
@@ -49,6 +50,7 @@ router.use(dealRouter);
 router.use(buyerPoolsRouter);
 router.use(companyRouter);
 router.use(adminRouter);
+router.use(adminIncidentsRouter);
 router.use(adminGrievancesRouter);
 router.use(akifIntelligenceRouter);
 router.use(akifOperationsRouter);
