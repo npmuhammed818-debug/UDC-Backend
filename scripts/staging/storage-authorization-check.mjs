@@ -1,66 +1,99 @@
 #!/usr/bin/env node
-// WRITTEN, NOT RUN. For an isolated STAGING Supabase project with SYNTHETIC accounts only.
-// Never point this at production or real customer data. It needs the owner's explicit approval to run.
-//
-// Required env (values are never printed):
-//   STAGING_API_BASE        e.g. https://udc-staging.example/api       (must NOT be the production host)
-//   STAGING_SUPABASE_URL    https://<staging-ref>.supabase.co
-//   STAGING_SUPABASE_ANON_KEY
-//   COMPANY_A_COOKIE / COMPANY_B_COOKIE   session cookies of two synthetic verified buyers in DIFFERENT companies
-//   STAGING_PROD_HOST_BLOCKLIST (optional, comma list of hosts that must never be used)
-// Test PDF is generated here; nothing real is uploaded.
+// Real Supabase Storage authorization check. Run ONLY against the isolated free-tier TEST project, synthetic data only.
+// Never use production credentials. Secrets come from the environment and are never printed.
+//   SUPABASE_TEST_URL   https://<test-ref>.supabase.co
+//   SUPABASE_TEST_ANON_KEY
+//   SUPABASE_TEST_SERVICE_ROLE_KEY
+// It mirrors how the API server uses Storage (service role signs URLs; end users never touch Storage directly):
+// private bucket, upload via signed upload URL, download via short-lived signed URL, no anonymous or
+// authenticated-user access, tampered or expired URLs fail, cross-company paths stay separate.
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 
 const need = (k) => { const v = process.env[k]; if (!v) throw new Error(`missing ${k}`); return v; };
-const api = need("STAGING_API_BASE").replace(/\/$/, "");
-const sb = need("STAGING_SUPABASE_URL").replace(/\/$/, "");
-const anon = need("STAGING_SUPABASE_ANON_KEY");
-const A = need("COMPANY_A_COOKIE"), B = need("COMPANY_B_COOKIE");
-for (const h of (process.env.STAGING_PROD_HOST_BLOCKLIST ?? "").split(",").filter(Boolean))
-  assert.ok(!api.includes(h) && !sb.includes(h), "refusing to run against a blocklisted (production) host");
-const bucket = "udc-documents";
-const pdf = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from("synthetic staging probe ".repeat(10))]);
-const call = (path, opts = {}, cookie) => fetch(api + path, { ...opts, headers: { ...(cookie ? { cookie } : {}), ...(opts.headers ?? {}) } });
-let n = 0; const pass = (m) => console.log(`PASSED ${++n}: ${m}`);
+const base = need("SUPABASE_TEST_URL").replace(/\/$/, "");
+const anon = need("SUPABASE_TEST_ANON_KEY");
+const svc = need("SUPABASE_TEST_SERVICE_ROLE_KEY");
+for (const h of (process.env.SUPABASE_PROD_HOST_BLOCKLIST ?? "").split(",").filter(Boolean)) assert.ok(!base.includes(h), "blocklisted host");
+const bucket = `udc-test-${randomUUID().slice(0, 8)}`;
+const S = `${base}/storage/v1`;
+const jh = (key) => ({ apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json" });
+const pdf = (tag) => Buffer.from(`%PDF-1.4\n% synthetic test document ${tag}\n`);
+const results = []; const pass = (m) => { results.push(m); console.log(`PASSED ${results.length}: ${m}`); };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const companyA = randomUUID(), companyB = randomUUID();
+const pathA = `companies/${companyA}/doc-a.pdf`, pathB = `companies/${companyB}/doc-b.pdf`;
 
-// 1. Company A creates a vault upload link and uploads a document.
-const link = await (await call("/vault/upload-links", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ documentType: "other" }) }, A)).json();
-assert.ok(link.url, "link issued");
-const up = await fetch(link.url, { method: "POST", headers: { "content-type": "application/pdf" }, body: pdf });
-assert.equal(up.status, 201); pass("A uploads through a single-use link; stored as pending");
-assert.equal((await fetch(link.url, { method: "POST", headers: { "content-type": "application/pdf" }, body: pdf })).status, 410); pass("link cannot be reused");
+try {
+  // setup: private bucket (service role)
+  let r = await fetch(`${S}/bucket`, { method: "POST", headers: jh(svc), body: JSON.stringify({ id: bucket, name: bucket, public: false, file_size_limit: 1048576, allowed_mime_types: ["application/pdf"] }) });
+  assert.ok(r.ok, `bucket create ${r.status}`);
+  const meta = await (await fetch(`${S}/bucket/${bucket}`, { headers: jh(svc) })).json();
+  assert.equal(meta.public, false); pass("bucket is private");
 
-// 2. The bucket is private: anonymous reads and listings fail.
-const probe = `companies/00000000-0000-0000-0000-000000000000/vault-probe.pdf`;
-for (const url of [`${sb}/storage/v1/object/public/${bucket}/${probe}`, `${sb}/storage/v1/object/${bucket}/${probe}`]) {
-  const r = await fetch(url, { headers: { apikey: anon, authorization: `Bearer ${anon}` } });
-  assert.ok([400, 401, 403, 404].includes(r.status), `anonymous object read must fail, got ${r.status}`);
+  // upload through signed upload URLs, as the vault link flow does
+  for (const [p, tag] of [[pathA, "A"], [pathB, "B"]]) {
+    const sign = await fetch(`${S}/object/upload/sign/${bucket}/${p}`, { method: "POST", headers: jh(svc), body: "{}" });
+    assert.ok(sign.ok, `upload sign ${sign.status}`);
+    const url = `${S}${(await sign.json()).url}`;
+    const up = await fetch(url, { method: "PUT", headers: { "content-type": "application/pdf" }, body: pdf(tag) });
+    assert.ok(up.ok, `upload ${up.status}`);
+  }
+  pass("two companies each upload a synthetic PDF through a signed upload URL");
+
+  // non-PDF is refused by the bucket policy
+  const bad = await fetch(`${S}/object/${bucket}/companies/${companyA}/x.txt`, { method: "POST", headers: { ...jh(svc), "content-type": "text/plain" }, body: "hello" });
+  assert.ok(!bad.ok, "non-PDF must be rejected"); pass("non-PDF upload rejected by bucket mime policy");
+
+  // anonymous access: public URL, direct object, authenticated route, listing, upload
+  for (const [label, url] of [["public URL", `${S}/object/public/${bucket}/${pathA}`], ["direct object", `${S}/object/${bucket}/${pathA}`], ["authenticated route", `${S}/object/authenticated/${bucket}/${pathA}`]]) {
+    const x = await fetch(url, { headers: { apikey: anon, authorization: `Bearer ${anon}` } });
+    assert.ok(!x.ok, `${label} must fail for anon (got ${x.status})`);
+  }
+  const lst = await fetch(`${S}/object/list/${bucket}`, { method: "POST", headers: jh(anon), body: JSON.stringify({ prefix: `companies/${companyA}`, limit: 10 }) });
+  if (lst.ok) assert.deepEqual(await lst.json(), []);
+  const aup = await fetch(`${S}/object/${bucket}/companies/${companyA}/evil.pdf`, { method: "POST", headers: { apikey: anon, authorization: `Bearer ${anon}`, "content-type": "application/pdf" }, body: pdf("evil") });
+  assert.ok(!aup.ok, "anon upload must fail");
+  pass("anonymous: public URL, direct read, authenticated route, listing and upload are all denied");
+
+  // an authenticated end user (no policies) must also be denied: create two synthetic users
+  const users = [];
+  for (const c of ["a", "b"]) {
+    const email = `udc-test-${c}-${randomUUID().slice(0, 6)}@example.com`, password = `Tt-${randomUUID()}`;
+    const cr = await fetch(`${base}/auth/v1/admin/users`, { method: "POST", headers: jh(svc), body: JSON.stringify({ email, password, email_confirm: true }) });
+    assert.ok(cr.ok, `synthetic user create ${cr.status}`);
+    const id = (await cr.json()).id;
+    const tk = await (await fetch(`${base}/auth/v1/token?grant_type=password`, { method: "POST", headers: { apikey: anon, "content-type": "application/json" }, body: JSON.stringify({ email, password }) })).json();
+    assert.ok(tk.access_token, "synthetic user signs in"); users.push({ id, token: tk.access_token });
+  }
+  for (const [i, u] of users.entries()) {
+    const target = i === 0 ? pathB : pathA; // each user tries the OTHER company's file
+    const x = await fetch(`${S}/object/authenticated/${bucket}/${target}`, { headers: { apikey: anon, authorization: `Bearer ${u.token}` } });
+    assert.ok(!x.ok, `signed-in user ${i} read of the other company's file must fail (got ${x.status})`);
+    const own = await fetch(`${S}/object/authenticated/${bucket}/${i === 0 ? pathA : pathB}`, { headers: { apikey: anon, authorization: `Bearer ${u.token}` } });
+    assert.ok(!own.ok, "no storage policies exist, so even a signed-in user cannot read directly: access is only via API-issued signed URLs");
+  }
+  pass("signed-in users (two synthetic companies) cannot read any object directly, including the other company's; access exists only via API-issued signed URLs");
+
+  // authorized path: signed URL works, short-lived, tamper-proof
+  const sg = await fetch(`${S}/object/sign/${bucket}/${pathA}`, { method: "POST", headers: jh(svc), body: JSON.stringify({ expiresIn: 5 }) });
+  assert.ok(sg.ok); const signed = `${S}${(await sg.json()).signedURL}`;
+  const okr = await fetch(signed); assert.equal(okr.status, 200);
+  assert.ok((await okr.text()).includes("synthetic test document A")); pass("signed URL downloads the correct document within its lifetime");
+  const sb = await (await fetch(`${S}/object/sign/${bucket}/${pathB}`, { method: "POST", headers: jh(svc), body: JSON.stringify({ expiresIn: 60 }) })).json();
+  const swapped = signed.replace(pathA, pathB);
+  assert.notEqual((await fetch(swapped)).status, 200, "A's token must not unlock B's path"); pass("cross-company: company A's signed token does not unlock company B's file");
+  assert.equal((await fetch(`${S}${sb.signedURL}`)).status, 200);
+  const tampered = signed.replace(/token=[^&]+/, "token=eyJhbGciOiJIUzI1NiJ9.e30.invalid");
+  assert.notEqual((await fetch(tampered)).status, 200); pass("tampered token rejected");
+  await sleep(7000);
+  const late = await fetch(signed); assert.notEqual(late.status, 200, `expired URL must fail (got ${late.status})`);
+  pass("signed URL stops working after its 5 second lifetime (production uses a longer, configured lifetime)");
+} finally {
+  // cleanup: remove synthetic objects and bucket
+  try {
+    await fetch(`${S}/object/${bucket}`, { method: "DELETE", headers: jh(svc), body: JSON.stringify({ prefixes: [pathA, pathB] }) });
+    await fetch(`${S}/bucket/${bucket}`, { method: "DELETE", headers: jh(svc) });
+  } catch {}
 }
-const list = await fetch(`${sb}/storage/v1/object/list/${bucket}`, { method: "POST", headers: { apikey: anon, authorization: `Bearer ${anon}`, "content-type": "application/json" }, body: JSON.stringify({ prefix: "", limit: 5 }) });
-if (list.ok) assert.deepEqual(await list.json(), [], "anonymous listing must return nothing");
-pass("bucket is private: anonymous public/direct reads fail and listing is empty");
-
-// 3. Owner view shows status only; no file location.
-const mine = await (await call("/vault/documents", {}, A)).json();
-assert.ok(mine.documents.length >= 1 && !JSON.stringify(mine).includes("storage://") && !JSON.stringify(mine).includes("/storage/v1/"));
-pass("owner document list exposes status only, never a storage path or URL");
-
-// 4. Company B cannot see or delete A's document.
-const docId = mine.documents[0].id;
-assert.equal((await call(`/vault/documents/${docId}/deletion-request`, { method: "POST" }, B)).status, 404);
-assert.equal((await (await call("/vault/documents", {}, B)).json()).documents.some((d) => d.id === docId), false);
-pass("company B cannot list or request deletion of company A's document");
-
-// 5. Signed URLs (deal documents): valid for the participant, short-lived, not usable for another path.
-if (process.env.DEAL_ID_WITH_APPROVED_DOC) {
-  const d = process.env.DEAL_ID_WITH_APPROVED_DOC;
-  const docs = await (await call(`/deals/${d}/documents`, {}, A)).json();
-  const signed = docs.documents.find((x) => x.fileUrl)?.fileUrl;
-  assert.ok(signed, "participant receives a signed URL");
-  assert.equal((await fetch(signed)).status, 200);
-  const tampered = signed.replace(/deals\/[^/]+\//, "deals/00000000-0000-0000-0000-000000000000/");
-  assert.notEqual((await fetch(tampered)).status, 200);
-  assert.equal((await call(`/deals/${d}/documents`, {}, B)).status === 200 && (await (await call(`/deals/${d}/documents`, {}, B)).json()).documents?.length > 0, false, "non-participant gets no documents");
-  pass("signed URL works for the participant, a tampered path fails, a non-participant gets nothing");
-}
-console.log(`DONE: ${n} storage authorization checks (staging, synthetic data). Record the signed-URL expiry separately: wait past 300 seconds and confirm the URL then fails.`);
+console.log(`DONE: ${results.length} storage authorization checks passed on the isolated test project (synthetic data).`);
