@@ -1,40 +1,47 @@
 {
- "label": "B seller: register with company details, offer, quantity and price correction",
+ "label": "B seller, labelled fields",
  "steps": [
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
    "text": "Hello"
   },
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
    "text": "I agree"
   },
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
    "text": "Seller"
   },
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
-   "text": "Omar Said, omar@said-exports.example.invalid, Said Exports LLC, Oman"
+   "text": "full name: Omar Said; email: omar@said-exports.example.invalid; company name: Said Exports LLC; country: Oman"
   },
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
-   "text": "I can supply 300 MT copper cathode, FOB Sohar, $5,900/MT"
+   "interactive": {
+    "type": "button_reply",
+    "button_reply": {
+     "id": "udc:submit",
+     "title": "Submit for review"
+    }
+   },
+   "label": "button Submit for review"
   },
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
-   "text": "Correction: price is $5,950/MT"
+   "text": "product: copper cathode; quantity: 300 MT; price: 5900; currency: USD; origin: Oman; incoterm: FOB"
   },
   {
-   "from": "15555550112",
+   "from": "15555550132",
    "name": "Sim Seller",
-   "text": "What did I submit?"
+   "text": "price: 5950"
   }
  ]
 }

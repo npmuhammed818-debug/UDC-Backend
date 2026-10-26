@@ -1,18 +1,13 @@
 {
- "label": "D returning user: same number returns while verification is pending",
+ "label": "D returning, same number as buyer",
  "steps": [
   {
-   "from": "15555550111",
+   "from": "15555550131",
    "name": "Sim Buyer",
    "text": "Hi again"
   },
   {
-   "from": "15555550111",
-   "name": "Sim Buyer",
-   "text": "What is my status?"
-  },
-  {
-   "from": "15555550111",
+   "from": "15555550131",
    "name": "Sim Buyer",
    "text": "I want to register again"
   }
