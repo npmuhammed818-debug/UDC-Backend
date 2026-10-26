@@ -488,6 +488,19 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ text: { body: "tell me about LOI" } });
       assert.equal(state.guidanceCalls.length, 1);
     });
+    await t.test("own company details are shown in the prompt; only LOI and ICPO hide the other side", async () => {
+      reset(); seedDeal();
+      rows.companiesTable = [{ ownerUserId: "buyer", companyName: "Acme Metals Ltd", address: "1 Test Road", registrationNumber: "REG-1" }];
+      await message({ text: { body: "create LOI" } });
+      assert.match(state.sent.at(-1).body, /Acme Metals Ltd[.;] 1 Test Road[.;] REG-1/);
+      assert.match(state.sent.at(-1).body, /hidden until the NCNDA stage/);
+      await message({ text: { body: "create SPA" } });
+      assert.match(state.sent.at(-1).body, /Acme Metals Ltd/);
+      assert.match(state.sent.at(-1).body, /other side stays a placeholder/);
+      assert.doesNotMatch(state.sent.at(-1).body, /hidden until the NCNDA/);
+      await message({ text: { body: "create NCNDA" } });
+      assert.doesNotMatch(state.sent.at(-1).body, /Acme Metals/);
+    });
     await t.test("seller cannot generate buyer documents and meetings reach admin review history", async () => {
       reset(); seedDeal();
       await message({ from: "10000000002", text: { body: "deal UDC-A: prepare LOI draft" } });

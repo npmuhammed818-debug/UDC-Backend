@@ -579,6 +579,9 @@ async function handleWhatsAppDealDocument(
   };
 }
 
+// Only the early non-binding drafts hide the other side. SPA and FCO need the real names to be signed.
+const PRE_NCNDA_DRAFTS = new Set(["LOI", "ICPO"]);
+
 async function isReplyToSavedDealMessage(from: string, contextId?: string) {
   if (!contextId) return false;
   const [row] = await db
@@ -791,11 +794,11 @@ async function handleDealWhatsAppMessage(
       .select({ name: companiesTable.companyName, address: companiesTable.address, reg: companiesTable.registrationNumber })
       .from(companiesTable).where(eq(companiesTable.ownerUserId, sender.id)).limit(1);
     if (ownCompany && draftRequest.type !== "NCNDA") {
-      if (requesterIsBuyer) Object.assign(terms, { buyerName: ownCompany.name, buyerAddress: ownCompany.address, buyerRegistrationNo: ownCompany.reg, hideSeller: true });
-      else Object.assign(terms, { sellerName: ownCompany.name, sellerAddress: ownCompany.address, sellerRegistrationNo: ownCompany.reg, hideBuyer: true });
+      if (requesterIsBuyer) Object.assign(terms, { buyerName: ownCompany.name, buyerAddress: ownCompany.address, buyerRegistrationNo: ownCompany.reg, hideSeller: PRE_NCNDA_DRAFTS.has(draftRequest.type) });
+      else Object.assign(terms, { sellerName: ownCompany.name, sellerAddress: ownCompany.address, sellerRegistrationNo: ownCompany.reg, hideBuyer: PRE_NCNDA_DRAFTS.has(draftRequest.type) });
     }
     const ownDetailsLine = ownCompany && draftRequest.type !== "NCNDA"
-      ? `\n\nYour details from your UDC profile will be filled in: ${ownCompany.name}; ${ownCompany.address || "[address missing]"}; ${ownCompany.reg || "[registration no. missing]"}. The other side stays hidden until the NCNDA stage. Replying with the exact words below confirms these details.`
+      ? `\n\nYour details from your UDC profile will be filled in: ${ownCompany.name}; ${ownCompany.address || "[address missing]"}; ${ownCompany.reg || "[registration no. missing]"}. ${PRE_NCNDA_DRAFTS.has(draftRequest.type) ? " The other side stays hidden until the NCNDA stage." : " The other side stays a placeholder."} Replying with the exact words below confirms these details.`
       : "";
     const confirmationKind = whatsappDraftConfirmation(draftRequest.type, terms);
     if (!draftRequest.confirmed || replyContextKind !== confirmationKind) {
