@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { buildConsentNotice, consentVersion, isExplicitAgree, isWithdrawConsent, noticeHash, TERMS_URL } from "../src/privacy/consentNotice.ts";
+import { buildConsentNotice, consentVersion, isExplicitAgree, isWithdrawConsent, noticeHash, TERMS_URL, WITHDRAWN_REPLY } from "../src/privacy/consentNotice.ts";
 import { decideWhatsAppConsent } from "../src/privacy/whatsappConsent.ts";
 
 const V = consentVersion("2026-10-21");
@@ -28,4 +28,8 @@ test("consent decisions: agree only after notice for the current version; withdr
 test("gate logs shown wording hash, reply and withdrawal", async () => {
   const g = await readFile(new URL("../src/privacy/whatsappPrivacyGate.ts", import.meta.url), "utf8");
   for (const s of ["noticeHash", "noticeText", "replyText", "whatsapp_consent_withdrawn", "status: \"withdrawn\""]) assert.ok(g.includes(s), s);
+});
+test("withdrawal reply states what really happens and does not claim processing stops", () => {
+  for (const s of ["Optional notifications and reminders from UDC are now off", "kept until you ask for deletion", '"delete my data"']) assert.ok(WITHDRAWN_REPLY.includes(s), s);
+  assert.ok(!/stop processing/i.test(WITHDRAWN_REPLY));
 });
