@@ -230,6 +230,25 @@ export async function sendWhatsAppDocument(
   return readMessageAcknowledgement(response);
 }
 
+/** Send an image by HTTPS link (JPEG/PNG). Same pacing, sink and unknown-outcome rules as documents. */
+export async function sendWhatsAppImage(to: string, link: string, caption?: string) {
+  const config = getConfig();
+  if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  if (!/^https:\/\//i.test(link)) throw new Error("whatsapp_image_link_must_be_https");
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "image", image: { link, ...(caption ? { caption: caption.slice(0, 1000) } : {}) } }),
+    });
+  if(!response)return unknownSubmission();
+  if (!response.ok) {
+    const error = await providerError(response);
+    throw new WhatsAppSendError(`whatsapp_image_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
+  }
+  return readMessageAcknowledgement(response);
+}
+
 export async function downloadWhatsAppMedia(mediaId: string) {
   const config = getConfig();
   if (!config) throw new Error("whatsapp_not_configured");
