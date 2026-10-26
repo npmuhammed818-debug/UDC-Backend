@@ -53,10 +53,14 @@ function termsRows(i: SpaDraftInput): Array<[string, string]> {
     ["Inspection", i.inspectionTerms ? clean(i.inspectionTerms, "") : "Independent inspection at destination, inspector to be agreed"],
   ];
 }
+function partyRow(role: "Buyer" | "Seller", name: string | null | undefined, address: string | null | undefined, reg: string | null | undefined, hidden: boolean | undefined): [string, string] {
+  if (hidden) return [role, `[${role.toUpperCase()} - disclosed after NCNDA]`];
+  return [role, clean(name, `[${role.toUpperCase()} LEGAL NAME]`) + "\n" + clean(address, "[REGISTERED ADDRESS]") + " | " + clean(reg, "[REGISTRATION NO.]")];
+}
 function parties(i: SpaDraftInput): Block {
   return { k: "kv", rows: [
-    ["Buyer", clean(i.buyerName, "[BUYER LEGAL NAME]") + "\n[REGISTERED ADDRESS] | [REGISTRATION NO.]"],
-    ["Seller", clean(i.sellerName, "[SELLER LEGAL NAME]") + "\n[REGISTERED ADDRESS] | [REGISTRATION NO.]"],
+    partyRow("Buyer", i.buyerName, i.buyerAddress, i.buyerRegistrationNo, i.hideBuyer),
+    partyRow("Seller", i.sellerName, i.sellerAddress, i.sellerRegistrationNo, i.hideSeller),
     ["Introducing agent", "UDC - introduces the parties only; not the buyer or seller [LAWYER TO CONFIRM ROLE]"],
   ] };
 }
@@ -70,6 +74,14 @@ const refOf = (i: SpaDraftInput, t: DraftType) => `${clean(i.dealNumber, "DEAL")
 const SIGN_B = "[AUTHORIZED SIGNATORY]";
 
 export function buildDraftModel(type: DraftType, i: SpaDraftInput): DraftModel {
+  const model = buildBaseModel(type, i);
+  if (i.governingLaw !== "India") return model;
+  // India option: only the open governing-law slot changes, and it stays marked for the lawyer.
+  const slot = /\[(?:TO BE AGREED WITH|AGREE WITH) COUNSEL\]/g;
+  return { ...model, blocks: model.blocks.map(b => b.k === "cl" ? { ...b, t: b.t.replace(slot, "India. [LAWYER TO CONFIRM]") } : b) };
+}
+
+function buildBaseModel(type: DraftType, i: SpaDraftInput): DraftModel {
   const ref = refOf(i, type);
   if (type === "LOI") return { type, ref, title: "Letter of Intent", subtitle: "Buyer to Seller  |  Non-binding", blocks: [head(i), { k: "h", t: "Parties" }, parties(i), { k: "h", t: "Proposed transaction" }, { k: "kv", rows: termsRows(i) },
     ...clauses([
