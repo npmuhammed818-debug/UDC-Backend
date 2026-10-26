@@ -4,6 +4,8 @@ import { createIcpoDraft } from "./icpoDraft.ts";
 import { createFcoDraft } from "./fcoDraft.ts";
 import { createSpaDraft, type SpaDraftInput } from "./spaDraft.ts";
 import { createNcndaDraft } from "./ncndaDraft.ts";
+import { buildDraftModel } from "./draftModel.ts";
+import { renderDraftPdf } from "./draftPdf.ts";
 
 const generators = { LOI: createLoiDraft, ICPO: createIcpoDraft, FCO: createFcoDraft, SPA: createSpaDraft, NCNDA: createNcndaDraft };
 export type WhatsAppDraftType = keyof typeof generators;
@@ -30,4 +32,8 @@ export function whatsappDraftConfirmation(type: WhatsAppDraftType, terms: SpaDra
 
 export function generateWhatsAppDraft(type: WhatsAppDraftType, terms: SpaDraftInput) {
   return generators[type](terms);
+}
+
+export async function generateWhatsAppDraftPdf(type: WhatsAppDraftType, terms: SpaDraftInput) {
+  return renderDraftPdf(buildDraftModel(type, terms));
 }

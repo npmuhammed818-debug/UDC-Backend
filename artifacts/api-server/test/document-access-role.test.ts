@@ -30,10 +30,10 @@ test('every accessRole literal written to document_access is allowed by the real
 
 test('WhatsApp draft preparation answers with a safe retry message instead of throwing', () => {
   const source = readFileSync(join(import.meta.dirname, '../src/routes/whatsappWebhook.ts'), 'utf8');
-  const start = source.indexOf('const draft = generateWhatsAppDraft(');
+  const start = source.indexOf('const draft = await generateWhatsAppDraftPdf(');
   const end = source.indexOf('Prepared the ${draftRequest.type} draft for your review.');
   assert.ok(start > 0 && end > start);
   const before = source.slice(Math.max(0, start - 40), start);
   assert.match(before, /try \{\s*$/);
-  assert.match(source.slice(end, end + 700), /catch \(error\)[\s\S]*I could not prepare that draft right now[\s\S]*Nothing was saved/);
+  assert.match(source.slice(end, end + 1200), /catch \(error\)[\s\S]*I could not prepare that draft right now[\s\S]*Nothing was saved/);
 });
