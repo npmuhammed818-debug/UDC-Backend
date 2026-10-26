@@ -26,7 +26,8 @@ import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievan
 import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { react } from "../whatsapp/reactions";
-import { trySpeakReply } from "../whatsapp/voiceSend";
+import { trySpeakReply, voiceNoticeFor } from "../whatsapp/voiceSend";
+import { parseVoiceCommand, setTextOnly, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
 import { reserveTranscription } from "../akif/voiceLimits.ts";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
@@ -1133,6 +1134,16 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         } catch { /* fall through to normal handling rather than dropping the message */ }
       }
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
+      if (message.from && typeof message.text?.body === "string") {
+        const voiceCommand = parseVoiceCommand(message.text.body);
+        if (voiceCommand) {
+          const saved = await setTextOnly(message.from, voiceCommand === "text_only");
+          await deliverWhatsAppReply(message.from, saved
+            ? (voiceCommand === "text_only" ? TEXT_ONLY_CONFIRMATION : VOICE_ON_CONFIRMATION)
+            : "I couldn’t save that voice setting just now. Please try again shortly.");
+          continue;
+        }
+      }
       if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
         try {
           // UDC/AKIF can occur in a person's or company's name. Consume a
@@ -1171,7 +1182,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             if (guidance) {
               // Draft voice reply: generic text only, user spoke first, flag on. Any failure falls back to text.
               const spoken = await trySpeakReply(message.from, guidance);
-              if (spoken===false) await deliverWhatsAppReply(message.from, guidance);
+              if (spoken===false) { const notice = await voiceNoticeFor(message.from, guidance); await deliverWhatsAppReply(message.from, notice ? `${guidance}\n\n${notice}` : guidance); }
             }
             continue;
           }

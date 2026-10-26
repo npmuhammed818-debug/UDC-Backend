@@ -74,7 +74,8 @@ test('ambiguous voice submission suppresses automatic text fallback without clai
   const output = await build({ stdin: { contents: "export {trySpeakReply} from './src/whatsapp/voiceSend';", resolveDir: fileURLToPath(new URL('../', import.meta.url)) },
     bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'synthetic-tts', setup(b) {
       b.onResolve({ filter: /intelligence\/workerClient$/ }, () => ({ path: 'worker', namespace: 'synthetic' }));
-      b.onLoad({ filter: /.*/, namespace: 'synthetic' }, () => ({ contents: 'export const synthesizeAkifSpeech=async()=>new Uint8Array([1,2,3]);' }));
+      b.onResolve({ filter: /voicePreference$/ }, () => ({ path: 'prefs', namespace: 'synthetic' }));
+      b.onLoad({ filter: /.*/, namespace: 'synthetic' }, a => ({ contents: a.path === 'prefs' ? "export const getVoiceState=async()=>'voice';export const recordNotice=async()=>true;export const VOICE_NOTICE='n';" : 'export const synthesizeAkifSpeech=async()=>new Uint8Array([1,2,3]);' }));
     } }] });
   await writeFile(directory + '/voice.mjs', output.outputFiles[0].text);
   let posts = 0;

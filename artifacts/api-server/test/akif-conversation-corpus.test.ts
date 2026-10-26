@@ -160,6 +160,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       "export const processDocumentIntelligence=async()=>{};",
     "../supabase/storage":
       "export const createSignedDownloadUrl=async()=>'';export const parseStoragePath=()=>null;export const uploadDocumentBytes=async()=>({});",
+    "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>'voice';export const recordNotice=async()=>true;export const VOICE_NOTICE='Fixture voice notice';",
     "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
     "../whatsapp/client":
       "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;export const trackReplyFailures=(fn)=>fn(new Set());",
@@ -190,7 +191,9 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
         name: "fixtures",
         setup(b) {
           b.onResolve({ filter: /.*/ }, (a) =>
-            a.path in stubs
+            a.path === "./voicePreference" && a.importer.endsWith("/whatsapp/voiceSend.ts")
+              ? { path: "../whatsapp/voicePreference", namespace: "fixture" }
+              : a.path in stubs
               ? { path: a.path, namespace: "fixture" }
               : undefined,
           );

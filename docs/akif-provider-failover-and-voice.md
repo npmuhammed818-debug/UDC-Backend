@@ -21,3 +21,8 @@ Flow: WhatsApp voice note -> download -> worker STT (ElevenLabs Scribe, model `E
 - Only the final reply text goes to ElevenLabs TTS; only the audio goes to STT. The transcript is not sent to ElevenLabs TTS. Audio, transcripts, reply text and keys are never logged.
 - Deal actions by voice (negotiation relay, approvals, intake) stay confirm-in-text: a voice transcript is recorded as unconfirmed and AKIF asks for text confirmation.
 - Env needed on Render staging (not set by me): ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, AKIF_VOICE_REPLIES=on, AKIF_WORKER_MEDIA_ENABLED=true. Gemini stays off.
+
+### Voice notice and "text only" (migration lib/db/migrations/20261026_whatsapp_voice_preferences.sql, NOT applied anywhere)
+- Table whatsapp_voice_preferences (SHA-256 of phone, notice_sent_at, text_only). Rollback draft: docs/drafts/whatsapp-voice-preferences-rollback.sql.draft.
+- First time a voice reply would be spoken, the user gets the text reply plus a short notice (wording needs owner approval); voice starts from the next voice note. "text only" stops voice; "voice on" restores it. Exact phrases only, so normal sentences are never read as commands.
+- Fails closed: if the table is missing or errors, replies are text only and nothing is spoken.

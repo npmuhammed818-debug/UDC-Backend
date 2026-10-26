@@ -21,7 +21,7 @@ test("off by default; needs a voice note from the user", () => {
 test("webhook speaks only the guidance path and falls back only for known failure", async () => {
   const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   assert.equal((w.match(/trySpeakReply\(/g) || []).length, 1);
-  assert.ok(w.includes("if (spoken===false) await deliverWhatsAppReply(message.from, guidance)"));
+  assert.ok(w.includes("if (spoken===false) { const notice = await voiceNoticeFor(message.from, guidance);"));
 });
 
 test("API allowlist and worker allowlist are identical (cross-language parity)", async () => {
@@ -66,4 +66,13 @@ test("voice path never logs audio or transcripts and keys stay out of the API", 
     assert.ok(!/console\.|logger\.|\.log\(/.test(src.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")), f);
     assert.ok(!/ELEVENLABS_API_KEY/.test(src), f);
   }
+});
+
+import { parseVoiceCommand, VOICE_NOTICE, TEXT_ONLY_CONFIRMATION } from "../src/akif/voiceConsent.ts";
+test("'text only' and 'voice on' commands are exact, notice stays plain and mentions the opt-out", () => {
+  for (const t of ["text only", "Text only.", "stop voice", "No voice replies", "TEXT ONLY please", "\"text only\""]) assert.equal(parseVoiceCommand(t), "text_only", t);
+  for (const t of ["voice on", "Turn on voice replies"]) assert.equal(parseVoiceCommand(t), "voice_on", t);
+  for (const t of ["what does text only mean for FOB", "I want the text only version of the contract", "voice note about rice", "", undefined]) assert.equal(parseVoiceCommand(t as string), null, String(t));
+  assert.ok(VOICE_NOTICE.includes("ElevenLabs") && VOICE_NOTICE.includes("text only") && VOICE_NOTICE.length < 320);
+  assert.ok(TEXT_ONLY_CONFIRMATION.includes("text only"));
 });
