@@ -24,7 +24,7 @@ function guidanceServiceFallback(trusted: string | null, language: string) {
       ? `${trusted}\n\nMy ${language} reply service is temporarily unavailable, so I’m answering in English for now.`
       : trusted;
   }
-  return 'My detailed trade-answer service is temporarily unavailable. I can still answer UDC’s saved company facts and basic trade questions in English. Please try again shortly for a fuller answer.';
+  return 'My detailed trade-answer service is busy right now. I can still answer UDC’s saved company facts and basic trade questions in English. Please try again in about a minute for a fuller answer.';
 }
 export async function answerGuidance(phone: string, text: string, messageId?: string, voice = false, onlyWithHistory = false, languageHint?: string): Promise<string | null> {
   // A one-word Incoterm is commonly an answer to an active offer/intake prompt.
@@ -61,7 +61,7 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
       reply = guidanceServiceFallback(trusted, language);
     }
   }
-  const data = { __kind: 'akif_guidance', handbookVersion, language: storedLanguage, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
+  const data = { __kind: 'akif_guidance', handbookVersion, language: storedLanguage, history: JSON.stringify([...history, {role:'user',content:text.slice(0,600)}, {role:'assistant',content:reply.slice(0,600)}].slice(-16)) };
   // Existing DB constraint permits only form purposes. The distinct HMAC namespace
   // and data marker isolate tutoring state; this does not create a buyer or trade.
   const values = { id: randomUUID(), phoneHash, purpose:'buyer', step:0, data, lastMessageId:messageId ?? null, expiresAt:new Date(Date.now()+24*60*60_000), updatedAt:new Date() };

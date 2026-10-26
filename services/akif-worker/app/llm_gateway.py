@@ -19,6 +19,27 @@ MAX_ATTEMPTS_PER_PROVIDER = 2
 RETRY_BACKOFF_SECONDS = 0.4
 
 
+MAX_RATE_LIMIT_WAIT_SECONDS = 4.0
+
+
+def _retry_wait(exc: Exception, remaining: float) -> float:
+    """Pause before the one retry. On a 429 wait for the provider's retry-after (capped), else the short default."""
+    wait = RETRY_BACKOFF_SECONDS
+    if getattr(exc, "status_code", None) == 429:
+        headers = getattr(getattr(exc, "response", None), "headers", None)
+        try:
+            value = headers.get("retry-after") if headers is not None else None
+            if value is not None:
+                wait = max(wait, float(value))
+        except (TypeError, ValueError, AttributeError):
+            wait = max(wait, 1.5)
+        else:
+            if value is None:
+                wait = max(wait, 1.5)
+    # Never wait past the shared deadline, and keep at least 1 s for the retry call itself.
+    return max(0.0, min(wait, MAX_RATE_LIMIT_WAIT_SECONDS, remaining - 1))
+
+
 def _models() -> list[str]:
     """Primary model first, then the optional backup. Only these are ever called."""
     out: list[str] = []
@@ -107,7 +128,7 @@ def _call_provider(completion, model: str, messages: list[dict[str, str]], deadl
         except Exception as exc:  # error, timeout or 429: retry once, then the caller fails over
             last = exc
             if attempt + 1 < MAX_ATTEMPTS_PER_PROVIDER:
-                _sleep(RETRY_BACKOFF_SECONDS)
+                _sleep(_retry_wait(exc, deadline - time.monotonic()))
     raise last or TimeoutError("llm_deadline_exhausted")
 
 

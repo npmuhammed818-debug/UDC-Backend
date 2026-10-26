@@ -57,7 +57,7 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.match(offlineDlc,/bank’s undertaking to pay/);
  assert.match(offlineDlc,/answering in English for now/);
  const offlineGeneral=await answerGuidance('phone-offline','Explain export insurance?','offline-general');
- assert.match(offlineGeneral,/detailed trade-answer service is temporarily unavailable/);
+ assert.match(offlineGeneral,/detailed trade-answer service is busy right now/);
  assert.doesNotMatch(offlineGeneral,/couldn’t prepare that answer just now/);
  }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
 });
