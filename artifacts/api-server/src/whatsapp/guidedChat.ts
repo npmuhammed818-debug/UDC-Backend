@@ -1,4 +1,5 @@
 import { extractLabelledParagraph, extractParagraph } from './paragraphIntake';
+import { looksLikeFullName, NAME_REJECTION } from './nameCheck';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
@@ -61,7 +62,7 @@ function validate(question:Question,text:string,purpose:FlowPurpose){
     if(!/^[A-Za-z]{3}$/.test(text))throw new Error('Send the three-letter currency code, for example USD, AED or EUR.');return text.toUpperCase();
   }
   if(question.kind==='incoterm'){const term=text.toUpperCase();if(!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))throw new Error('Choose EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP.');return term;}
-  if(question.name==='full_name'&&text.length<2)throw new Error('Please send your full name.');return text;
+  if(question.name==='full_name'&&!looksLikeFullName(text))throw new Error(text.trim().length<2?'Please send your full name.':NAME_REJECTION);return text;
 }
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
   const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
