@@ -68,4 +68,4 @@ export function isWithdrawConsent(text?: string) {
 }
 
 export const WITHDRAWN_REPLY =
-  'Your consent is withdrawn. Optional notifications and reminders from UDC are now off. Your account and the details you already gave are kept until you ask for deletion. To ask for deletion, send "delete my data". To start again, send "hi" and agree to the notice.';
+  'Your consent is withdrawn. I will not process your messages, documents or voice notes until you agree to the notice again. Optional notifications and reminders are off. Your account and the details you already gave are kept until you ask for deletion. To ask for deletion, send "delete my data". To start again, send "hi" and agree to the notice.';
