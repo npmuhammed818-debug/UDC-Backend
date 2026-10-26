@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
-import { requestedDealPause, pausedNoticeToOther, closedNoticeToOther, dealPausePrompt } from "../src/deals/dealPause.ts";
+import { requestedDealPause, pausedNoticeToOther, closedNoticeToOther, dealPausePrompt } from "../src/deals/dealPauseText.ts";
 
 test("only explicit pause/close commands match; confirm needs the exact words", () => {
   assert.deepEqual(requestedDealPause("pause deal"), { kind: "pause", confirmed: false });
