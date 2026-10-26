@@ -142,6 +142,8 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       const notes:string[]=[];
       for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details; the reason for a typed answer comes from directAnswer. */}}}
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
+      // Free text we could not read (for example the AI model is unavailable): say so and show the labelled form, instead of silently repeating the question.
+      if(!notes.length&&purpose.startsWith('profile_')&&raw&&/[,@]|.{30,}/.test(raw)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
       const complete=questions.every(q=>q.optional||data[q.name]);
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
