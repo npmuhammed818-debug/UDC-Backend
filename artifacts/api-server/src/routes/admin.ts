@@ -1124,8 +1124,10 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       await notifyDealCounterparties(
         deal.id,
         "deal_status_updated",
-        "Deal status updated",
-        `We’re at ${deal.status} now.`,
+        deal.status === "on_hold" ? "Deal paused" : deal.status === "cancelled" ? "Deal closed" : "Deal status updated",
+        deal.status === "on_hold" ? `Deal ${deal.dealNumber} is paused. No action is needed from you right now. UDC will message you if it restarts.`
+          : deal.status === "cancelled" ? `Deal ${deal.dealNumber} has been closed. Thank you for your time. You can post a new requirement or offer any time.`
+          : `We’re at ${deal.status} now.`,
         `/deals/${deal.id}`,
       );
     }
