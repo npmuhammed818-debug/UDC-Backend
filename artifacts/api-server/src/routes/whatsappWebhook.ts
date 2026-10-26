@@ -1012,6 +1012,15 @@ router.get(
   },
 );
 
+// Real Meta messages always carry a string id (needed to answer each message once) and a string text
+// body. Anything else is dropped: no id means a retry would be answered again, and a non-string body
+// used to crash the handler with a 500, which makes Meta retry.
+function dropMalformedInboundMessages(value: { messages?: unknown } | undefined): void {
+  if (!value || !Array.isArray(value.messages)) { if (value && value.messages != null) value.messages = []; return; }
+  value.messages = value.messages.filter((m: any) => m && typeof m === "object" && typeof m.id === "string" && m.id &&
+    (m.text === undefined || (m.text && typeof m.text.body === "string")));
+}
+
 router.get("/webhooks/whatsapp", (req, res) => {
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -1067,6 +1076,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         res.sendStatus(503);return;
       }
     }
+    dropMalformedInboundMessages(value);
     for (const message of value?.messages ?? []) {
       if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
