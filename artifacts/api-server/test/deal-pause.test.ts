@@ -24,3 +24,7 @@ test("route wiring: confirm context, other side only, admin notice is no longer 
   const ad = await readFile(new URL("../src/routes/admin.ts", import.meta.url), "utf8");
   assert.ok(ad.includes("is paused. No action is needed from you right now"));
 });
+test("buyer intake with the AI down continues in the guided form instead of dead-ending", async () => {
+  const wh = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  assert.ok(wh.includes("so I will take your details step by step instead") && wh.includes("ai-fallback"));
+});

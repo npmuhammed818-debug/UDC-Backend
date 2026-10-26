@@ -1593,7 +1593,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         memory: hasSavedDraft && !sellerStartsAnotherProduct ? savedIntake!.draft : null,
       });
       if (!intakeDecision) {
-        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. The assistant may be busy, so please try again in about a minute.");
+        // The model is slow or rate limited. Do not dead-end: the guided form needs no AI, so continue there.
+        const fallbackAction = isSellerOffer(message.text.body) || savedIntake?.role === "seller" ? "offer" : "requirement";
+        await deliverWhatsAppReply(message.from, "My assistant is busy right now, so I will take your details step by step instead.");
+        try { if (await handleChatUi(message.from, { id: message.id ? `${message.id}:ai-fallback` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${fallbackAction}` } } } as ChatMessage)) continue; } catch { /* fall through to the plain retry note */ }
+        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again in about a minute.");
         continue;
       }
       const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
