@@ -313,7 +313,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         const buyer=rows.usersTable.find((u:any)=>u.phone===buyerPhone);
         assert.ok(buyer);assert.equal(buyer.status,'pending');
         await m.handleChatUi(buyerPhone,ui('requirement'));
-        for(const body of ['Copper cathode','100','Jebel Ali','CIF']){
+        for(const body of ['Copper cathode','100','Jebel Ali','CIF','Skip']){
           await m.handleChatUi(buyerPhone,{id:randomUUID(),text:{body}});
         }
         assert.equal(rows.buyerRequestsTable.length,beforeRequests);
