@@ -71,11 +71,11 @@ def test_primary_answers_without_touching_backup(monkeypatch):
     assert calls == ["gemini/flash"]
 
 
-def test_429_retries_once_then_fails_over_to_groq(monkeypatch):
+def test_429_fails_over_to_backup_immediately_without_retrying_primary(monkeypatch):
     _env(monkeypatch)
     calls = _fake(monkeypatch, lambda m, n: _Err(429) if m.startswith("gemini") else "groq answer")
     assert llm_gateway.complete([]) == "groq answer"
-    assert calls == ["gemini/flash", "gemini/flash", "groq/backup"]  # bounded: 2 tries then backup
+    assert calls == ["gemini/flash", "groq/backup"]  # a backup exists, so no wait and no retry on 429
 
 
 def test_transient_error_recovers_on_retry_without_failover(monkeypatch):
@@ -154,3 +154,11 @@ def test_429_waits_for_retry_after_but_never_past_the_deadline():
     Resp.headers = {}
     assert llm_gateway._retry_wait(Limited(), 13) == 1.5
     assert llm_gateway._retry_wait(RuntimeError("x"), 13) == llm_gateway.RETRY_BACKOFF_SECONDS
+
+
+def test_429_on_both_models_still_ends_after_one_retry_on_the_last(monkeypatch):
+    _env(monkeypatch)
+    calls = _fake(monkeypatch, lambda m, n: _Err(429))
+    with pytest.raises(_Err):
+        llm_gateway.complete([])
+    assert calls == ["gemini/flash", "groq/backup", "groq/backup"]
