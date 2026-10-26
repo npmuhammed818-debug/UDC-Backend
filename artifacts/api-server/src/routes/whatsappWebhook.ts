@@ -578,6 +578,17 @@ async function handleWhatsAppDealDocument(
   };
 }
 
+async function isReplyToSavedDealMessage(from: string, contextId?: string) {
+  if (!contextId) return false;
+  const [row] = await db
+    .select({ id: whatsappMessageContextsTable.id })
+    .from(whatsappMessageContextsTable)
+    .innerJoin(usersTable, eq(usersTable.id, whatsappMessageContextsTable.recipientUserId))
+    .where(and(eq(whatsappMessageContextsTable.providerMessageId, contextId), eq(usersTable.phone, from)))
+    .limit(1);
+  return Boolean(row);
+}
+
 async function handleDealWhatsAppMessage(
   from: string,
   text: string,
@@ -1201,7 +1212,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           continue;
         }
       }
-      if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
+      if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
         try {
           // UDC/AKIF can occur in a person's or company's name. Consume a
           // clear answer to the active form before keyword-based tutoring;
@@ -1391,11 +1402,17 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         continue;
       }
 
+      // Draft commands and replies to a saved bot message are deal actions. They must not
+      // depend on the AI model choosing to hand them back, or a recent chat can swallow them.
+      const dealActionDirect = Boolean(message.from) && (
+        requestedWhatsAppDraft(message.text.body) !== null
+        || await isReplyToSavedDealMessage(message.from, message.context?.id)
+      );
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
         // Short follow-ups such as “and FOB” remain in the tutoring conversation.
         // Explicit trade commands still return to the authorized deal workflow.
         try {
-          const reply = await answerGuidance(message.from, message.text.body, message.id, false, true);
+          const reply = dealActionDirect ? null : await answerGuidance(message.from, message.text.body, message.id, false, true);
           if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
