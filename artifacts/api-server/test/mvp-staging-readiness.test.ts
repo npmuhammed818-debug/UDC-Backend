@@ -43,6 +43,7 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
    assert.equal(checks.find(x=>x.id==="whatsapp_credentials").state,"configured");
    assert.equal(checks.find(x=>x.id==="email_send_gate").state,"review_required");
    assert.equal(checks.find(x=>x.id==="shipment_send_gate").state,"disabled");
+   assert.equal(lib.evaluateMvpEnvironment({...env,UDC_SHIPMENT_WHATSAPP_SEND_ENABLED:"true"}).find(x=>x.id==="shipment_send_gate").state,"review_required");
    assert.ok(!JSON.stringify(checks).includes("PRIVATE_"));
    let report=await lib.buildMvpStagingReadiness({env});
    assert.equal(report.schema.allPresentWithRls,true);
