@@ -206,7 +206,9 @@ export function isAkifWorkerConversationEnabled() {
   return process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" && isAkifWorkerConfigured();
 }
 
-export async function runAkifWorkerChat(message: string, system?: string, timeoutMs = 15_000) {
+// Conversation text is private by default (deal, company, price, contact data). Only a caller that
+// guarantees no such data may pass "generic"; the worker then may use Gemini without the data gate.
+export async function runAkifWorkerChat(message: string, system?: string, timeoutMs = 15_000, sensitivity: "private" | "generic" = "private") {
   // Leave transport overhead within the caller's deadline; no retries at either layer.
   const budget = Math.max(1, Math.min(25_000, timeoutMs));
   const raw = await requestWorker<{
@@ -216,6 +218,7 @@ export async function runAkifWorkerChat(message: string, system?: string, timeou
     body: {
       messages: [...(system ? [{ role: "system", content: system }] : []), { role: "user", content: message }],
       timeout_seconds: Math.max(1, Math.min(20, (budget - 1_000) / 1_000)),
+      sensitivity: sensitivity === "generic" ? "generic" : "private",
     },
   });
   const content = raw.choices?.[0]?.message?.content;

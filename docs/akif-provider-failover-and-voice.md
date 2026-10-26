@@ -4,7 +4,7 @@
 - `AKIF_LLM_MODEL` = primary (e.g. a `gemini/...` Flash model). `AKIF_LLM_BACKUP_MODEL` = backup (e.g. `groq/...`). Keys: `GEMINI_API_KEY`, `GROQ_API_KEY`. Only these two models are ever called.
 - On error, timeout or 429 the primary is tried twice (short pause), then the backup twice. One shared deadline (max 20 s), so failover never extends the wait.
 - Data gate: `AKIF_GEMINI_DATA_PROCESSING_ACCEPTED=true` is required before **private** content (deal, account or user data) goes to Gemini. With it off, private content goes only to the backup; if the backup is down the request fails. It never falls through to Gemini. Generic content (`sensitivity="generic"`: learning topics, product classification, startup probe) may use Gemini without the opt-in.
-- `/chat/completions` accepts `sensitivity` ("private" default, "generic"). The API does not set "generic" yet, so all conversation chat is treated as private.
+- `/chat/completions` accepts `sensitivity` ("private" default, "generic"). The API now sends it explicitly: all conversation chat is "private"; only a caller that guarantees no deal, account or user data may pass "generic".
 - `/health` llm_gateway status now reports `automatic_provider_fallback`, `backup_model` and provider counts for private and generic content.
 
 ## Voice (services/akif-worker/app/speech.py)
