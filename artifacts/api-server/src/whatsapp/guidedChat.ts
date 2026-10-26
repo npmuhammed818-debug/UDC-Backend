@@ -8,6 +8,7 @@ import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail } from './registrationEmail';
 import { classifyTurn } from '../akif/conversationPolicy';
+import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 
 type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
@@ -181,7 +182,8 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       // Only the transaction's success marker proves it is safe to clear a draft.
       const [saved]=await db.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'whatsapp_chat_form_saved'),sql`${auditLogsTable.metadata}->>'nonce' = ${result.id}`)).limit(1);
       if(saved)await db.delete(sessions).where(and(eq(sessions.id,result.id),eq(sessions.phoneHash,fingerprint),eq(sessions.data,result.data)));
-      await sendWhatsAppTextWithMenu(phone,saved?reply:`${reply}\nYour details are still here. Reply Edit to change them or Cancel.`);return true;
+      await sendWhatsAppTextWithMenu(phone,saved?reply:`${reply}\nYour details are still here. Reply Edit to change them or Cancel.`);if(saved)react('complete',phone,message.id); // one ✅ on the submit tap once the form is saved
+      return true;
     }
   }
 }

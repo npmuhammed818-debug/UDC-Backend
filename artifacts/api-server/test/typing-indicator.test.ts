@@ -42,3 +42,13 @@ test("a failing or rejected call never throws", async () => {
     await withFetch(() => { assert.doesNotThrow(() => markReadAndTyping("1", "wamid.ABC123")); }, async () => new Response("{}", { status: 500 }));
   } finally { restore(); }
 });
+test("a delivered deal document reacts with one complete beat", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  assert.ok(src.includes('if (documentDelivered) react("complete", message.from, message.id)'));
+});
+test("a saved guided form reacts with one complete beat", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/whatsapp/guidedChat.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("if(saved)react('complete',phone,message.id)"));
+});
