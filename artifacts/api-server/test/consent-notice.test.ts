@@ -29,7 +29,6 @@ test("gate logs shown wording hash, reply and withdrawal", async () => {
   const g = await readFile(new URL("../src/privacy/whatsappPrivacyGate.ts", import.meta.url), "utf8");
   for (const s of ["noticeHash", "noticeText", "replyText", "whatsapp_consent_withdrawn", "status: \"withdrawn\""]) assert.ok(g.includes(s), s);
 });
-test("withdrawal reply states what really happens and does not claim processing stops", () => {
-  for (const s of ["Optional notifications and reminders from UDC are now off", "kept until you ask for deletion", '"delete my data"']) assert.ok(WITHDRAWN_REPLY.includes(s), s);
-  assert.ok(!/stop processing/i.test(WITHDRAWN_REPLY));
+test("withdrawal reply says processing stops, notifications off, data kept until deletion request", () => {
+  for (const s of ["I will not process your messages, documents or voice notes until you agree to the notice again", "Optional notifications and reminders are off", "kept until you ask for deletion", '"delete my data"', 'send "hi" and agree']) assert.ok(WITHDRAWN_REPLY.includes(s), s);
 });
