@@ -1,0 +1,45 @@
+{
+ "label": "A buyer: consent decline, agree, register, requirement, correction, duplicate",
+ "steps": [
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "Hi"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "No, I do not agree"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "I agree"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "Buyer"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "Asha Verma, asha@verma-imports.example.invalid, Verma Imports Pvt Ltd, India"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "I need 500 MT Copper Millberry monthly, CIF Jebel Ali, maximum $6,000/MT"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "Sorry, make it 400 MT"
+  },
+  {
+   "from": "15555550111",
+   "name": "Sim Buyer",
+   "text": "Show my requirement"
+  }
+ ]
+}

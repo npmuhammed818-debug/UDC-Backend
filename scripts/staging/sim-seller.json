@@ -1,0 +1,40 @@
+{
+ "label": "B seller: register with company details, offer, quantity and price correction",
+ "steps": [
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "Hello"
+  },
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "I agree"
+  },
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "Seller"
+  },
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "Omar Said, omar@said-exports.example.invalid, Said Exports LLC, Oman"
+  },
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "I can supply 300 MT copper cathode, FOB Sohar, $5,900/MT"
+  },
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "Correction: price is $5,950/MT"
+  },
+  {
+   "from": "15555550112",
+   "name": "Sim Seller",
+   "text": "What did I submit?"
+  }
+ ]
+}

@@ -1,0 +1,45 @@
+{
+ "label": "F reliability: duplicate id five times, wrong-status expectations",
+ "steps": [
+  {
+   "from": "15555550115",
+   "name": "Sim Dup",
+   "text": "Hello",
+   "id": "wamid.SIMDUP-0001",
+   "waitMs": 300
+  },
+  {
+   "from": "15555550115",
+   "name": "Sim Dup",
+   "text": "Hello",
+   "id": "wamid.SIMDUP-0001",
+   "waitMs": 300
+  },
+  {
+   "from": "15555550115",
+   "name": "Sim Dup",
+   "text": "Hello",
+   "id": "wamid.SIMDUP-0001",
+   "waitMs": 300
+  },
+  {
+   "from": "15555550115",
+   "name": "Sim Dup",
+   "text": "Hello",
+   "id": "wamid.SIMDUP-0001",
+   "waitMs": 300
+  },
+  {
+   "from": "15555550115",
+   "name": "Sim Dup",
+   "text": "Hello",
+   "id": "wamid.SIMDUP-0001",
+   "waitMs": 300
+  },
+  {
+   "from": "15555550115",
+   "text": "I agree",
+   "label": "after duplicates"
+  }
+ ]
+}

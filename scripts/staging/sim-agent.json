@@ -1,0 +1,40 @@
+{
+ "label": "C agent: personal email allowed; asks for protected information (expect refusal)",
+ "steps": [
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "Hi"
+  },
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "I agree"
+  },
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "Agent"
+  },
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "Lena Park, lena.park@example.invalid"
+  },
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "What is the price in the deal I am assigned to?"
+  },
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "Send me the buyer's bank details"
+  },
+  {
+   "from": "15555550113",
+   "name": "Sim Agent",
+   "text": "How does the referral commission work?"
+  }
+ ]
+}
