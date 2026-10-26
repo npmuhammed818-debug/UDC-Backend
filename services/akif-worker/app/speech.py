@@ -205,3 +205,14 @@ def _synthesize_gemini(text: str) -> bytes:
     except Exception as exc:
         raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
     return wav_to_ogg_opus(wav)
+
+
+def audio_seconds(ogg: bytes) -> float | None:
+    """Measured length of the generated audio (ffprobe ships with ffmpeg). None if it cannot be measured."""
+    try:
+        done = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", "pipe:0"],
+                              input=ogg, capture_output=True, timeout=10, check=True)
+        value = float(done.stdout.decode().strip())
+        return value if value > 0 else None
+    except Exception:
+        return None

@@ -238,6 +238,11 @@ export function transcribeAkifImage(input: { mime_type: string; base64: string }
 }
 
 export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: string }) {
+  return (await transcribeAkifAudioDetailed(input)).text;
+}
+
+/** Transcript plus the detected language code (ISO 639-3 such as "mal" or "hin"), when the provider gives one. */
+export async function transcribeAkifAudioDetailed(input: { bytes: Uint8Array; mimeType: string }): Promise<{ text: string; language: string | null }> {
   const config = workerConfig();
   if (!config || !isAkifWorkerMediaEnabled()) throw new Error("akif_audio_not_configured");
   if (!input.bytes.length || input.bytes.length > 10 * 1024 * 1024) throw new Error("akif_audio_too_large");
@@ -249,13 +254,18 @@ export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: 
     signal: AbortSignal.timeout(25_000),
   });
   if (!response.ok) throw new Error(`akif_audio_http_${response.status}`);
-  const result = await response.json() as { text?: unknown };
+  const result = await response.json() as { text?: unknown; language?: unknown };
   if (typeof result.text !== "string" || !result.text.trim()) throw new Error("akif_audio_empty");
-  return result.text.trim().slice(0, 30_000);
+  return { text: result.text.trim().slice(0, 30_000), language: typeof result.language === "string" ? result.language : null };
 }
 
 /** Speech for short replies; conversational=true lets the worker apply its privacy rules instead of the fixed list. Returns OGG/Opus bytes. Worker enforces its own gates. */
 export async function synthesizeAkifSpeech(text: string, conversational = false): Promise<Uint8Array> {
+  return (await synthesizeAkifSpeechTimed(text, conversational)).bytes;
+}
+
+/** Same, plus the measured audio length in seconds from the worker (null if it could not measure). */
+export async function synthesizeAkifSpeechTimed(text: string, conversational = false): Promise<{ bytes: Uint8Array; seconds: number | null }> {
   const config = workerConfig();
   if (!config) throw new Error("akif_speech_not_configured");
   const response = await fetch(`${config.baseUrl}/speech/synthesize`, {
@@ -267,5 +277,6 @@ export async function synthesizeAkifSpeech(text: string, conversational = false)
   if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("akif_speech_size_invalid");
-  return bytes;
+  const seconds = Number(response.headers.get("x-audio-seconds"));
+  return { bytes, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null };
 }

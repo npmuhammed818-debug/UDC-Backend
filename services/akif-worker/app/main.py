@@ -7,7 +7,7 @@ import secrets
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field as _Field
-from app.speech import speech_status, synthesize
+from app.speech import audio_seconds, speech_status, synthesize
 
 from .media import ImageRequest, transcribe_image, transcribe_audio, gemini_probe, MAX_AUDIO_BYTES, vision_status
 from .chat import ChatRequest, chat_completion
@@ -301,4 +301,6 @@ def speech_status_route() -> dict:
 
 @app.post("/speech/synthesize", dependencies=[Depends(require_internal_token)])
 def speech_synthesize(request: SpeechRequest) -> Response:
-    return Response(content=synthesize(request.text, request.conversational), media_type="audio/ogg")
+    audio = synthesize(request.text, request.conversational)
+    seconds = audio_seconds(audio)
+    return Response(content=audio, media_type="audio/ogg", headers={"x-audio-seconds": f"{seconds:.1f}"} if seconds else {})

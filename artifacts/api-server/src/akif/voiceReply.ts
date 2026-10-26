@@ -39,12 +39,33 @@ export function conversationalVoiceEnabled(env: Record<string, string | undefine
   return voiceRepliesEnabled(env) && env["AKIF_VOICE_CONVERSATIONAL"] !== "off";
 }
 
+export type ReplyClass = "warm" | "mixed" | "critical";
+
+const CRITICAL_TERMS = /[$\u20ac\u00a3\u20b9]|\b(?:usd|inr|eur|aed|price|per\s+(?:mt|ton|tonne|kg|unit)|invoice|contract|payment|terms?|incoterm|address|quantity|moq|dlc|deadline|delivery date)\b/i;
+
+/**
+ * Human-style choice: warm or explanatory replies may be spoken; exact details stay text. Unsure means text.
+ *  warm: no digits. mixed: some digits but nothing that looks like a price, term or address (still speakable).
+ *  critical: blocked content (links, codes, bank/ID words, approval prompts), too long, a list, or numbers with money or term words.
+ */
+export function classifyReply(text: string | null | undefined): ReplyClass {
+  try {
+    if (speechTextAllowed(text)) return "warm";
+    if (!conversationalSpeechAllowed(text)) return "critical";
+    const t = (text as string).trim();
+    const hasDigit = /\d/.test(t);
+    if (hasDigit && CRITICAL_TERMS.test(t)) return "critical";
+    if (/\n\s*(?:[-*\u2022]|\d+[.)])\s/.test(t) || t.split("\n").filter(line => line.trim()).length > 3) return "critical";
+    return hasDigit ? "mixed" : "warm";
+  } catch { return "critical"; }
+}
+
 export type SpeechKind = "static" | "conversational" | "none";
 
 export function speechKind(reply: string | null | undefined, env: Record<string, string | undefined> = process.env): SpeechKind {
   if (!voiceRepliesEnabled(env)) return "none";
   if (speechTextAllowed(reply)) return "static";
-  return conversationalVoiceEnabled(env) && conversationalSpeechAllowed(reply) ? "conversational" : "none";
+  return conversationalVoiceEnabled(env) && classifyReply(reply) !== "critical" ? "conversational" : "none";
 }
 
 /** Audio only when the user spoke to us, the feature is on, and the text is fixed or passes the privacy rules. */

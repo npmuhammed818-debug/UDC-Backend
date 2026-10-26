@@ -192,3 +192,15 @@ def test_conversational_rules_match_api_rules():
     for pattern in [p.pattern for p in speech._BLOCKED]:
         assert pattern in ts, pattern
     assert "MAX_SPOKEN_CHARS = 600" in ts and speech.MAX_CONVERSATIONAL_CHARS == 600
+
+
+def test_audio_seconds_measured_or_none(monkeypatch):
+    class Done:
+        stdout = b"31.4\n"
+    monkeypatch.setattr(speech.subprocess, "run", lambda *a, **k: Done())
+    assert speech.audio_seconds(b"ogg") == 31.4
+    Done.stdout = b"N/A"
+    assert speech.audio_seconds(b"ogg") is None
+    def boom(*a, **k): raise FileNotFoundError()
+    monkeypatch.setattr(speech.subprocess, "run", boom)
+    assert speech.audio_seconds(b"ogg") is None

@@ -18,7 +18,7 @@ import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealPar
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
-import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
+import { isAkifWorkerMediaEnabled, transcribeAkifAudioDetailed } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
@@ -26,8 +26,11 @@ import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievan
 import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { react } from "../whatsapp/reactions";
-import { trySpeakReply, voiceNoticeFor } from "../whatsapp/voiceSend";
-import { parseVoiceCommand, setTextOnly, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
+import { speakReply } from "../whatsapp/voiceSend";
+import { parseVoiceCommand, setTextOnly, getVoiceState, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
+import { VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMATION, EXPLICIT_VOICE_TEXT_ONLY, parseVoiceRequest, isOfferYes } from "../akif/voiceConsent.ts";
+import { armExplicitVoice, consumeExplicitVoice, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../akif/voiceSession.ts";
+import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { reserveTranscription } from "../akif/voiceLimits.ts";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
@@ -70,6 +73,27 @@ function cleanHumanWhatsAppText(body: string) {
     .replace(/([!?.,])\1{1,}/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "malayalam", tam: "tamil", hin: "hindi", ara: "arabic" };
+
+/**
+ * Reply the way a person would: voice only when the user used voice (or asked for it) and the reply is warm or
+ * explanatory. Exact details, links, codes and anything unsure go as text. A spoken reply is never also sent as
+ * text. If the voice cannot be sent, the same reply goes as text. After a long voice reply (over the threshold)
+ * a short text offer follows; the text itself is only sent after a yes.
+ */
+async function deliverAnswer(to: string, reply: string, wantsVoice: boolean) {
+  if (!wantsVoice) return deliverWhatsAppReply(to, reply);
+  const spoken = await speakReply(to, reply);
+  if (spoken.status === false) return deliverWhatsAppReply(to, reply);
+  if (spoken.status === "uncertain") return { delivered: false as const, reason: "provider_outcome_unknown" as const };
+  if (spoken.noticeDue) await deliverWhatsAppReply(to, VOICE_NOTICE);
+  if (spoken.seconds !== null && spoken.seconds > textOfferSeconds()) {
+    setVoiceOffer(to, reply);
+    await deliverWhatsAppReply(to, VOICE_TEXT_OFFER);
+  }
+  return { delivered: true as const };
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string, _withMenu = false) {
@@ -1135,6 +1159,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
       if (message.from && typeof message.text?.body === "string") {
+        const pendingOffer = takeVoiceOffer(message.from);
+        if (pendingOffer && isOfferYes(message.text.body)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
+        if (voiceRepliesEnabled() && parseVoiceRequest(message.text.body)) {
+          const wantsVoice = (await getVoiceState(message.from)) !== "text_only";
+          if (wantsVoice) armExplicitVoice(message.from);
+          await deliverWhatsAppReply(message.from, wantsVoice ? EXPLICIT_VOICE_CONFIRMATION : EXPLICIT_VOICE_TEXT_ONLY);
+          continue;
+        }
         const voiceCommand = parseVoiceCommand(message.text.body);
         if (voiceCommand) {
           const saved = await setTextOnly(message.from, voiceCommand === "text_only");
@@ -1151,7 +1183,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // actual learning questions still bypass intake without a model call.
           if (await handleChatUi(message.from, message, true)) continue;
           const reply = await answerGuidance(message.from, message.text.body, message.id);
-          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
@@ -1175,15 +1207,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           react("ack", message.from, message.id);
           const media = await downloadWhatsAppMedia(message.audio.id);
           voiceStage = 'transcription';
-          const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
+          const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
+          const transcript = heard.text;
+          const pendingOffer = takeVoiceOffer(message.from);
+          if (pendingOffer && isOfferYes(transcript)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
           voiceStage = 'answer';
-          const guidance = await answerGuidance(message.from, transcript, message.id, true);
+          const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
-            if (guidance) {
-              // Draft voice reply: generic text only, user spoke first, flag on. Any failure falls back to text.
-              const spoken = await trySpeakReply(message.from, guidance);
-              if (spoken===false) { const notice = await voiceNoticeFor(message.from, guidance); await deliverWhatsAppReply(message.from, notice ? `${guidance}\n\n${notice}` : guidance); }
-            }
+            if (guidance) await deliverAnswer(message.from, guidance, true);
             continue;
           }
           voiceStage = 'trade_context';
@@ -1340,7 +1371,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Explicit trade commands still return to the authorized deal workflow.
         try {
           const reply = await answerGuidance(message.from, message.text.body, message.id, false, true);
-          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;

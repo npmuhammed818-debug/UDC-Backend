@@ -18,10 +18,12 @@ test("off by default; needs a voice note from the user", () => {
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply: "Open https://udc.example/vault/x", enabled: true }), false);
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply, enabled: true }), true);
 });
-test("webhook speaks only the guidance path and falls back only for known failure", async () => {
+test("webhook speaks through one helper and falls back to text only for a known failure", async () => {
   const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
-  assert.equal((w.match(/trySpeakReply\(/g) || []).length, 1);
-  assert.ok(w.includes("if (spoken===false) { const notice = await voiceNoticeFor(message.from, guidance);"));
+  assert.equal((w.match(/speakReply\(/g) || []).length, 1);
+  assert.ok(w.includes("if (spoken.status === false) return deliverWhatsAppReply(to, reply);"));
+  assert.ok(w.includes('if (spoken.status === "uncertain")'));
+  assert.ok(w.includes("deliverAnswer(message.from, guidance, true)"));
 });
 
 test("API allowlist and worker allowlist are identical (cross-language parity)", async () => {
@@ -75,4 +77,36 @@ test("'text only' and 'voice on' commands are exact, notice stays plain and ment
   for (const t of ["what does text only mean for FOB", "I want the text only version of the contract", "voice note about rice", "", undefined]) assert.equal(parseVoiceCommand(t as string), null, String(t));
   assert.ok(VOICE_NOTICE.includes("ElevenLabs") && VOICE_NOTICE.includes("text only") && VOICE_NOTICE.length < 320);
   assert.ok(TEXT_ONLY_CONFIRMATION.includes("text only"));
+});
+
+import { classifyReply } from "../src/akif/voiceReply.ts";
+import { VOICE_TEXT_OFFER, parseVoiceRequest, isOfferYes } from "../src/akif/voiceConsent.ts";
+import { armExplicitVoice, consumeExplicitVoice, resetVoiceSessionForTests, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../src/akif/voiceSession.ts";
+
+test("three reply classes: warm and mixed may be spoken, critical and unsure stay text", () => {
+  assert.equal(classifyReply("Happy to help. FOB means the seller loads the goods on the ship."), "warm");
+  assert.equal(classifyReply("Good news, your request is with the UDC team and I'll update you tomorrow."), "warm");
+  assert.equal(classifyReply("The shipment left on day 3 and should arrive soon."), "mixed");
+  for (const t of ["The price is 450 USD per metric ton.", "Payment terms are 30 days after delivery.", "Your invoice total is 12,500.", "Open https://udc.example/x", "Your OTP is 123456", "Bank account details are in the contract.", "Reply YES to approve", "- rice\n- wheat\n- sugar\n- tea", "", undefined]) assert.equal(classifyReply(t as string), "critical", String(t));
+  assert.equal(classifyReply("x".repeat(700)), "critical");
+});
+
+test("explicit voice request, offer yes and once-only offers", () => {
+  for (const t of ["send voice", "Reply in voice please", "voice please", "Send me a voice note!"]) assert.ok(parseVoiceRequest(t), t);
+  for (const t of ["what is a voice note", "I sent a voice note earlier", "voice", ""]) assert.ok(!parseVoiceRequest(t), t);
+  for (const t of ["yes", "Yes please", "sure", "ok"]) assert.ok(isOfferYes(t), t);
+  for (const t of ["yes the price is 40", "no", "maybe later"]) assert.ok(!isOfferYes(t), t);
+  assert.equal(VOICE_TEXT_OFFER, "Want this in text? Reply yes.");
+  resetVoiceSessionForTests();
+  const t0 = 1_000_000;
+  setVoiceOffer("+911", "full details", t0);
+  assert.equal(takeVoiceOffer("+911", t0 + 60_000), "full details");
+  assert.equal(takeVoiceOffer("+911", t0 + 61_000), null); // any next message clears it
+  setVoiceOffer("+911", "late", t0);
+  assert.equal(takeVoiceOffer("+911", t0 + 11 * 60_000), null); // expires after 10 minutes
+  armExplicitVoice("+912", t0);
+  assert.equal(consumeExplicitVoice("+912", t0 + 1000), true);
+  assert.equal(consumeExplicitVoice("+912", t0 + 2000), false);
+  assert.equal(textOfferSeconds({}), 30);
+  assert.equal(textOfferSeconds({ AKIF_VOICE_TEXT_OFFER_SECONDS: "20" }), 20);
 });

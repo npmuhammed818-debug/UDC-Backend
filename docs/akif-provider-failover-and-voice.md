@@ -26,3 +26,13 @@ Flow: WhatsApp voice note -> download -> worker STT (ElevenLabs Scribe, model `E
 - Table whatsapp_voice_preferences (SHA-256 of phone, notice_sent_at, text_only). Rollback draft: docs/drafts/whatsapp-voice-preferences-rollback.sql.draft.
 - First time a voice reply would be spoken, the user gets the text reply plus a short notice (wording needs owner approval); voice starts from the next voice note. "text only" stops voice; "voice on" restores it. Exact phrases only, so normal sentences are never read as commands.
 - Fails closed: if the table is missing or errors, replies are text only and nothing is spoken.
+
+
+## Voice behaviour v2 (owner-approved 26 Oct 2:13 PM IST: mirror the user, three reply classes, text offer after long voice)
+- Voice note in gives a voice reply when the reply is warm or explanatory. Text in gives text out. "send voice" / "voice please" (exact phrases) makes the next reply voice. "text only" always wins. Default is text when unsure.
+- Reply classes (voiceReply.ts classifyReply): warm (no digits), mixed (digits but no price/term/address words), critical (links, emails, 7+ digit numbers, code/bank/ID/vault words, approval prompts, lists, over 600 chars, or digits with money/term words). Warm and mixed may be spoken. Critical goes as text and is never sent to ElevenLabs.
+- A spoken reply is never also sent as text. If voice fails the same reply goes as text. If the send result is unclear, nothing more is sent.
+- If the measured audio is longer than AKIF_VOICE_TEXT_OFFER_SECONDS (default 30), a text "Want this in text? Reply yes." follows. The text is sent only after a yes (pending 10 minutes, in memory, cleared by any other message).
+- One-time notice (text, with the first voice reply): "Voice replies use ElevenLabs. Send "text only" to switch them off."
+- Language: ElevenLabs Scribe's detected language (English, Malayalam, Tamil, Hindi, Arabic) is passed to the guidance engine as a hint for that reply only; it is not saved as a preference. Not tested live.
+- The worker measures the audio with ffprobe and returns it in the x-audio-seconds header. If it cannot measure, no offer is sent.

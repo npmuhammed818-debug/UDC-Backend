@@ -26,7 +26,7 @@ function guidanceServiceFallback(trusted: string | null, language: string) {
   }
   return 'My detailed trade-answer service is temporarily unavailable. I can still answer UDC’s saved company facts and basic trade questions in English. Please try again shortly for a fuller answer.';
 }
-export async function answerGuidance(phone: string, text: string, messageId?: string, voice = false, onlyWithHistory = false): Promise<string | null> {
+export async function answerGuidance(phone: string, text: string, messageId?: string, voice = false, onlyWithHistory = false, languageHint?: string): Promise<string | null> {
   // A one-word Incoterm is commonly an answer to an active offer/intake prompt.
   // Let trade intake handle it instead of turning it into an unsolicited lesson.
   if (/^(?:EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)$/i.test(text.trim())) return null;
@@ -37,8 +37,10 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
   if (messageId && fresh?.lastMessageId === messageId) return '';
   let history: {role:string;content:string}[] = [];
   try { history = JSON.parse(fresh?.data.handbookVersion === handbookVersion ? fresh.data.history ?? '[]' : '[]'); } catch { /* Empty history remains usable. */ }
-  const language = /(?:speak|talk|reply|answer|in)\s+(?:in\s+)?(malayalam|english|tamil|hindi|arabic)/i.exec(text)?.[1]?.toLowerCase()
-    ?? fresh?.data.language ?? '';
+  const explicitLanguage = /(?:speak|talk|reply|answer|in)\s+(?:in\s+)?(malayalam|english|tamil|hindi|arabic)/i.exec(text)?.[1]?.toLowerCase();
+  // A detected voice language only steers this reply; it is not saved as the user's preference.
+  const language = explicitLanguage ?? languageHint ?? fresh?.data.language ?? '';
+  const storedLanguage = explicitLanguage ?? fresh?.data.language ?? '';
   const [account] = await db.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
   const trusted = trustedGuidanceAnswer(text, account?.role);
   const useEnglish = !language || language === 'english';
@@ -59,7 +61,7 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
       reply = guidanceServiceFallback(trusted, language);
     }
   }
-  const data = { __kind: 'akif_guidance', handbookVersion, language, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
+  const data = { __kind: 'akif_guidance', handbookVersion, language: storedLanguage, history: JSON.stringify([...history, {role:'user',content:text.slice(0,4000)}, {role:'assistant',content:reply}].slice(-16)) };
   // Existing DB constraint permits only form purposes. The distinct HMAC namespace
   // and data marker isolate tutoring state; this does not create a buyer or trade.
   const values = { id: randomUUID(), phoneHash, purpose:'buyer', step:0, data, lastMessageId:messageId ?? null, expiresAt:new Date(Date.now()+24*60*60_000), updatedAt:new Date() };

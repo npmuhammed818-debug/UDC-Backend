@@ -76,11 +76,11 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
     "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
-    "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudio=async()=> '100 MT copper';",
+    "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
-    "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>'voice';export const recordNotice=async()=>true;export const VOICE_NOTICE='Fixture voice notice';",
+    "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
     "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
-    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const trackReplyFailures=(fn)=>fn(new Set());",
+    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const trackReplyFailures=(fn)=>fn(new Set());export const sendWhatsAppVoiceNote=async(to)=>{s.voice=(s.voice||[]);s.voice.push(to);return s.voiceFail?{delivered:false,reason:'upload_failed'}:{delivered:true};};",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
     "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
     "../akif/documentIntelligence": "export const processDocumentIntelligence=async()=>({status:'needs_review'});",
@@ -95,6 +95,8 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     plugins: [{ name: "fixtures", setup(b) {
       b.onResolve({ filter: /.*/ }, args => {
         if (args.path === "@workspace/db") return { path: "db", namespace: "fixture" };
+        if (args.importer.endsWith("/whatsapp/voiceSend.ts") && args.path === "../akif/intelligence/workerClient") return { path: args.path, namespace: "fixture" };
+        if (args.importer.endsWith("/whatsapp/voiceSend.ts") && args.path === "./client") return { path: "../whatsapp/client", namespace: "fixture" };
         if (args.path === "./voicePreference" && args.importer.endsWith("/whatsapp/voiceSend.ts")) return { path: "../whatsapp/voicePreference", namespace: "fixture" };
         if (args.path === "drizzle-orm") return { path: "orm", namespace: "fixture" };
         if (args.importer.endsWith("/routes/whatsappWebhook.ts") && fixtures[args.path]) return { path: args.path, namespace: "fixture" };
@@ -148,6 +150,33 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.doesNotMatch(state.sent.at(-1).body,/couldn.t read|PRIVATE/);state.guidanceFailure=false;
       state.privacyReply='Reply AGREE';state.guidanceCalls=[];
       await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
+    });
+    await t.test("voice behaviour: voice in gives voice out, no text copy, long voice gets a text offer, critical stays text",async()=>{
+      reset();state.voice=[];state.voiceState='voice';state.voiceFail=false;state.voiceSeconds=5;state.noticeRecorded=0;
+      const previous=process.env.AKIF_VOICE_REPLIES;process.env.AKIF_VOICE_REPLIES="on";
+      try{
+        const sentBefore=()=>state.sent.length;
+        state.guidanceReply='Happy to help. FOB means the seller loads the goods on the ship.';
+        let n=sentBefore();await message({audio:{id:'voice-warm'}});
+        assert.equal(state.voice.length,1);assert.equal(state.sent.length,n,"a spoken reply is never also sent as text");
+        state.voiceSeconds=45;n=sentBefore();await message({audio:{id:'voice-long'}});
+        assert.equal(state.voice.length,2);assert.equal(state.sent.length,n+1);assert.equal(state.sent.at(-1).body,"Want this in text? Reply yes.");
+        await message({text:{body:"Yes"}});assert.equal(state.sent.at(-1).body,state.guidanceReply,"text only after a yes");
+        n=sentBefore();await message({text:{body:"Yes"}});assert.notEqual(state.sent.at(-1)?.body,"Want this in text? Reply yes.");
+        state.voiceSeconds=5;state.guidanceReply='The price is 450 USD per metric ton.';
+        n=sentBefore();const spokenBefore=state.voice.length;await message({audio:{id:'voice-critical'}});
+        assert.equal(state.voice.length,spokenBefore);assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.equal(state.sent.length,n+1);
+        state.guidanceReply='Happy to help with that.';state.voiceFail=true;
+        n=sentBefore();await message({audio:{id:'voice-failure'}});assert.equal(state.sent.at(-1).body,state.guidanceReply,"text fallback when voice cannot be sent");
+        state.voiceFail=false;state.voiceState='text_only';n=sentBefore();const v=state.voice.length;await message({audio:{id:'voice-textonly'}});
+        assert.equal(state.voice.length,v);assert.equal(state.sent.at(-1).body,state.guidanceReply);
+        state.voiceState='voice';state.guidanceReply='Sure, here is the short answer.';
+        await message({text:{body:"What is dlc?"}});assert.equal(state.voice.length,v,"text in gives text out");
+        await message({text:{body:"voice please"}});assert.match(state.sent.at(-1).body,/answer your next question in voice/);
+        await message({text:{body:"What is dlc?"}});assert.equal(state.voice.length,v+1,"explicit request gives one voice reply");
+        state.voiceState='needs_notice';await message({audio:{id:'voice-first'}});
+        assert.equal(state.noticeRecorded,1);assert.equal(state.sent.at(-1).body,"Voice replies use ElevenLabs. Send \"text only\" to switch them off.");
+      }finally{if(previous===undefined)delete process.env.AKIF_VOICE_REPLIES;else process.env.AKIF_VOICE_REPLIES=previous;state.voiceState=undefined;}
     });
     await t.test("24h window evidence accepts only signed, consented, verified inbound messages",async()=>{
       reset();seedDeal();
