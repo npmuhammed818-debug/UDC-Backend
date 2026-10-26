@@ -42,6 +42,7 @@ Object.assign(process.env, {
   NVIDIA_API_KEY: 'synthetic-no-network-token',
   NVIDIA_BASE_URL: 'https://fallback.example.invalid/v1',
   AKIF_WHATSAPP_REPLY_SINK: 'store',
+  UDC_WHATSAPP_TYPING: 'on',
 });
 await mkdir(new URL('../../tmp/', import.meta.url), { recursive: true });
 const directory = await mkdtemp(fileURLToPath(new URL('../../tmp/qa-', import.meta.url)));
@@ -109,6 +110,7 @@ try {
   const ok = await read(U); assert.equal(ok.status, 200);
   const { replies } = await ok.json();
   assert.ok(replies.length >= 1 && replies.every(r => r.to === U), 'the welcome reply is stored for the simulated user');
+  assert.ok(replies.some(r => r.kind === 'read_typing'), 'one read+typing entry is recorded for the inbound message (sink on, nothing sent)');
   assert.match(replies.map(r => r.text).join('\n'), /agree/i, 'stored text is readable');
   console.log('PASSED: sink stores the reply and nothing reaches Meta:', JSON.stringify(replies[0].text.slice(0, 60)));
   assert.equal((await read(U, null)).status, 404, 'unsigned read refused');

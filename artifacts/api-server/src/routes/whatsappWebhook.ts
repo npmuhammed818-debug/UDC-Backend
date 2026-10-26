@@ -11,7 +11,7 @@ import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
-import { trackReplyFailures } from "../whatsapp/client";
+import { trackReplyFailures, markReadAndTyping } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
@@ -1089,7 +1089,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
     for (const message of value?.messages ?? []) {
       if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
-      if (message.from) senderOf.set(message.id, message.from);
+      if (message.from) { senderOf.set(message.id, message.from); markReadAndTyping(message.from, message.id); }
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
         try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
         continue;

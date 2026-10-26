@@ -193,6 +193,21 @@ try {
     const mid = sent.length; await signed(payload({ id: randomUUID(), from: P, type: 'text', text: { body: 'I agree' } })); await wait(500);
     assert.ok(sent.length > mid, 'agree after decline is answered');
   });
+  await check('unreadable one-paragraph registration (model down) -> explains the labelled format, no silent repeat', async () => {
+    const P = phone + '30'; testPhones.add(P); const before = sent.length;
+    for (const body of ['hi', 'I agree', 'Buyer']) { await signed(payload({ id: randomUUID(), from: P, type: 'text', text: { body } })); await wait(1500); }
+    await signed(payload({ id: randomUUID(), from: P, type: 'text', text: { body: 'Asha Verma, asha@verma-imports.example.invalid, Verma Imports Pvt Ltd, India' } })); await wait(2500);
+    const replies = sent.slice(before).filter(b => b.to === P).map(textOf);
+    assert.ok(replies.some(r => /full name:/i.test(r)), 'a reply shows the labelled example');
+    assert.match(replies.at(-1) ?? '', /full name/i, 'and the flow still asks for the name');
+  });
+  await check('"Show my requirement" is not accepted as a full name', async () => {
+    const P = phone + '31'; testPhones.add(P); const before = sent.length;
+    for (const body of ['hi', 'I agree', 'Buyer', 'Show my requirement']) { await signed(payload({ id: randomUUID(), from: P, type: 'text', text: { body } })); await wait(1500); }
+    const last = sent.slice(before).filter(b => b.to === P).map(textOf).at(-1) ?? '';
+    assert.doesNotMatch(last, /company email/i, 'must still be asking for the name');
+    assert.match(last, /name/i);
+  });
   console.log(`SUMMARY: ${results.filter(r => r[1] === 'PASS').length}/${results.length} edge scenarios passed`);
 } finally {
   globalThis.fetch = fetchBefore;

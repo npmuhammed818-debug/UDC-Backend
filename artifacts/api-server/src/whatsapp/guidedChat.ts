@@ -1,4 +1,5 @@
 import { extractLabelledParagraph, extractParagraph } from './paragraphIntake';
+import { looksLikeFullName, NAME_REJECTION } from './nameCheck';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
@@ -61,7 +62,7 @@ function validate(question:Question,text:string,purpose:FlowPurpose){
     if(!/^[A-Za-z]{3}$/.test(text))throw new Error('Send the three-letter currency code, for example USD, AED or EUR.');return text.toUpperCase();
   }
   if(question.kind==='incoterm'){const term=text.toUpperCase();if(!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))throw new Error('Choose EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP.');return term;}
-  if(question.name==='full_name'&&text.length<2)throw new Error('Please send your full name.');return text;
+  if(question.name==='full_name'&&!looksLikeFullName(text))throw new Error(text.trim().length<2?'Please send your full name.':NAME_REJECTION);return text;
 }
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
   const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
@@ -141,6 +142,8 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       const notes:string[]=[];
       for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details; the reason for a typed answer comes from directAnswer. */}}}
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
+      // Free text we could not read (for example the AI model is unavailable): say so and show the labelled form, instead of silently repeating the question.
+      if(!notes.length&&purpose.startsWith('profile_')&&raw&&/[,@]|.{30,}/.test(raw)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
       const complete=questions.every(q=>q.optional||data[q.name]);
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));

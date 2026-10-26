@@ -338,3 +338,20 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}
   return readMessageAcknowledgement(sent);
 }
+
+/**
+ * Marks an inbound message as read (blue ticks) and shows "typing..." until we reply (WhatsApp drops it after 25 s).
+ * Off unless UDC_WHATSAPP_TYPING=on. Fire-and-forget: short timeout, no retry, never throws, never logs.
+ * With the staging reply sink on, nothing is sent to Meta; a "read_typing" entry is stored instead.
+ */
+export function markReadAndTyping(to: string, inboundMessageId: string | null | undefined): void {
+  if (process.env["UDC_WHATSAPP_TYPING"] !== "on" || typeof inboundMessageId !== "string" || !inboundMessageId) return;
+  if (replySinkEnabled()) { recordSunkReply(to, { type: "read_typing" }); return; }
+  const config = getConfig();
+  if (!config) return;
+  void fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST", signal: AbortSignal.timeout(3_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: inboundMessageId, typing_indicator: { type: "text" } }),
+  }).then(r => r.body?.cancel(), () => undefined).catch(() => undefined);
+}
