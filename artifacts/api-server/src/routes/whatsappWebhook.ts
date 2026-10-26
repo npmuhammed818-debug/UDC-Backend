@@ -50,6 +50,7 @@ import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
+import { requestedDealPause, dealPauseContextKind, dealPausePrompt, applyDealPause, pausedConfirmationToSender, closedConfirmationToSender } from "../deals/dealPause";
 import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
 import type { SpaDraftInput } from "../deals/spaDraft";
 
@@ -776,6 +777,16 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
+  const pauseRequest = requestedDealPause(messageBody);
+  if (pauseRequest) {
+    const ctxKind = dealPauseContextKind(pauseRequest.kind);
+    if (!pauseRequest.confirmed || replyContextKind !== ctxKind)
+      return { reply: dealPausePrompt(pauseRequest.kind, deal.dealNumber), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: ctxKind };
+    const result = await applyDealPause({ dealId: deal.id, dealNumber: deal.dealNumber, senderId: sender.id, receiverId: receiverUserId, kind: pauseRequest.kind });
+    if (!result.applied) return { reply: "This deal is already paused, closed or finished, so nothing changed.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    return { reply: (pauseRequest.kind === "pause" ? pausedConfirmationToSender : closedConfirmationToSender)(deal.dealNumber, result.told), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+  }
+
   const draftRequest = requestedWhatsAppDraft(messageBody);
   if (draftRequest) {
     if (!mayPrepareWhatsAppDraft(draftRequest.type, sender.id === deal.buyerUserId)) {
@@ -1423,6 +1434,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // depend on the AI model choosing to hand them back, or a recent chat can swallow them.
       const dealActionDirect = Boolean(message.from) && (
         requestedWhatsAppDraft(message.text.body) !== null
+        || requestedDealPause(message.text.body) !== null
         || await isReplyToSavedDealMessage(message.from, message.context?.id)
       );
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
