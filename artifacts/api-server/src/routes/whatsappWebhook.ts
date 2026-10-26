@@ -27,6 +27,7 @@ import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { react } from "../whatsapp/reactions";
 import { trySpeakReply } from "../whatsapp/voiceSend";
+import { reserveTranscription } from "../akif/voiceLimits.ts";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
@@ -1152,6 +1153,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
+          continue;
+        }
+        if (!reserveTranscription(message.from)) {
+          await deliverWhatsAppReply(message.from, "You’ve reached today’s voice note limit. Please type your message and I’ll keep helping.");
           continue;
         }
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';

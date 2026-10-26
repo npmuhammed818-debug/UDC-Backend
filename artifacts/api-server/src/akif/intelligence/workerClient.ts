@@ -254,14 +254,14 @@ export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: 
   return result.text.trim().slice(0, 30_000);
 }
 
-/** Draft: speech for short generic replies. Returns OGG/Opus bytes. Worker enforces its own gates. */
-export async function synthesizeAkifSpeech(text: string): Promise<Uint8Array> {
+/** Speech for short replies; conversational=true lets the worker apply its privacy rules instead of the fixed list. Returns OGG/Opus bytes. Worker enforces its own gates. */
+export async function synthesizeAkifSpeech(text: string, conversational = false): Promise<Uint8Array> {
   const config = workerConfig();
   if (!config) throw new Error("akif_speech_not_configured");
   const response = await fetch(`${config.baseUrl}/speech/synthesize`, {
     method: "POST",
     headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, conversational }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);

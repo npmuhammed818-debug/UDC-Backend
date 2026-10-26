@@ -133,3 +133,62 @@ def test_elevenlabs_daily_cap_and_unknown_provider(monkeypatch):
         speech.synthesize(text)
     assert e.value.status_code == 503
     speech._calls.clear()
+
+
+SAFE = "Sure. For rice, FOB means the seller loads the cargo on the ship, and you take over from there."
+
+
+def test_conversational_text_speaks_only_with_flag_and_rules(monkeypatch):
+    _eleven_env(monkeypatch)
+    seen = []
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _Resp(b"mp3"))[1])
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg")
+    monkeypatch.setenv("AKIF_TTS_DAILY_CAP", "50")
+    speech._calls.clear(); speech._chars.clear()
+    with pytest.raises(HTTPException) as e:  # no conversational flag = still the fixed list
+        speech.synthesize(SAFE)
+    assert e.value.status_code == 422 and not seen
+    assert speech.synthesize(SAFE, conversational=True) == b"ogg" and len(seen) == 1
+    monkeypatch.setenv("AKIF_VOICE_CONVERSATIONAL", "off")  # kill switch for conversational speech
+    with pytest.raises(HTTPException):
+        speech.synthesize(SAFE, conversational=True)
+    assert len(seen) == 1
+
+
+def test_conversational_privacy_rules_block_sensitive_text(monkeypatch):
+    for bad in [
+        "Open https://udc.example/vault/abc to upload", "Mail me at buyer@acme.com", "Call +91 98765 43210",
+        "Your OTP is 482913", "Send to bank account 123", "Please confirm the deal in text", "Reply YES to approve",
+        "Here is your sign-in code", "x " * 301, "", "  ",
+    ]:
+        assert not speech.conversational_text_ok(bad), bad
+    for ok in [SAFE, "The price is 450 USD per metric ton, and the minimum order is 25 tons.", "नमस्ते, मैं आपकी मदद कर सकता हूँ।", "Gracias, puedo ayudarle con su pedido de arroz."]:
+        assert speech.conversational_text_ok(ok), ok
+
+
+def test_conversational_cost_caps(monkeypatch):
+    _eleven_env(monkeypatch)
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: _Resp(b"mp3"))
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg")
+    speech._calls.clear(); speech._chars.clear()
+    monkeypatch.setenv("AKIF_TTS_DAILY_CHARS", str(len(SAFE) * 2))
+    speech.synthesize(SAFE, conversational=True); speech.synthesize(SAFE, conversational=True)
+    with pytest.raises(HTTPException) as e:
+        speech.synthesize(SAFE, conversational=True)
+    assert e.value.status_code == 429
+    speech._calls.clear(); speech._chars.clear()
+    monkeypatch.setenv("AKIF_TTS_DAILY_CHARS", "99999"); monkeypatch.setenv("AKIF_TTS_DAILY_CAP", "1")
+    speech.synthesize(SAFE, conversational=True)
+    with pytest.raises(HTTPException) as e:
+        speech.synthesize(SAFE, conversational=True)
+    assert e.value.status_code == 429
+    speech._calls.clear(); speech._chars.clear()
+
+
+def test_conversational_rules_match_api_rules():
+    import re, pathlib
+    ts = pathlib.Path(__file__).resolve().parents[3].joinpath("artifacts/api-server/src/akif/voiceReply.ts").read_text()
+    ts = ts.replace("\\/", "/")
+    for pattern in [p.pattern for p in speech._BLOCKED]:
+        assert pattern in ts, pattern
+    assert "MAX_SPOKEN_CHARS = 600" in ts and speech.MAX_CONVERSATIONAL_CHARS == 600

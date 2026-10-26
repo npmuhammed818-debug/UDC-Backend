@@ -12,3 +12,12 @@
 - ElevenLabs: `ELEVENLABS_API_KEY` (missing = disabled), `ELEVENLABS_VOICE_ID` (required), `ELEVENLABS_MODEL_ID` (default `eleven_flash_v2_5`; allowed: `eleven_flash_v2_5`, `eleven_multilingual_v2`, `eleven_flash_v2`). Requests `mp3_44100_64`, converted to OGG/Opus with ffmpeg for WhatsApp.
 - The exact-text allowlist (speakable_replies.json) is checked before any provider is chosen; no free text, deal or user data is ever sent. Daily cap `AKIF_TTS_DAILY_CAP` (default 50) still applies.
 - Not tested against the real ElevenLabs API (no key); tests use fake HTTP. Voice and plan choice are the owner's; the key is added on the host, never in the repo.
+
+## Conversational voice with ElevenLabs (owner-approved 26 Oct, supersedes the fixed-sentence-only rule for replies)
+Flow: WhatsApp voice note -> download -> worker STT (ElevenLabs Scribe, model `ELEVENLABS_STT_MODEL_ID` default scribe_v1; falls back to Groq Whisper if ElevenLabs fails; `AKIF_STT_PROVIDER=groq` forces Groq) -> existing AKIF guidance engine on Groq -> reply spoken by ElevenLabs TTS if allowed, else text. Text in -> text out, unchanged.
+- Kill switches: `AKIF_VOICE_REPLIES` (master, default off), `AKIF_VOICE_CONVERSATIONAL=off` (back to fixed sentences only).
+- Spoken only if the reply is at most 600 chars and has no links, emails, 7+ digit numbers, codes/OTP/password words, bank or ID words (IBAN, IFSC, Aadhaar, passport), vault/upload-link words, or approval prompts. The same rules run in the API and again in the worker. Anything else is sent as text.
+- Caps: per user per day `AKIF_VOICE_STT_PER_USER_DAILY` (30), `AKIF_VOICE_TTS_PER_USER_DAILY` (20), `AKIF_VOICE_TTS_CHARS_PER_USER_DAILY` (6000); worker global `AKIF_TTS_DAILY_CAP` (50 calls) and `AKIF_TTS_DAILY_CHARS` (20000). Per-user counters are in memory and reset on restart.
+- Only the final reply text goes to ElevenLabs TTS; only the audio goes to STT. The transcript is not sent to ElevenLabs TTS. Audio, transcripts, reply text and keys are never logged.
+- Deal actions by voice (negotiation relay, approvals, intake) stay confirm-in-text: a voice transcript is recorded as unconfirmed and AKIF asks for text confirmation.
+- Env needed on Render staging (not set by me): ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, AKIF_VOICE_REPLIES=on, AKIF_WORKER_MEDIA_ENABLED=true. Gemini stays off.

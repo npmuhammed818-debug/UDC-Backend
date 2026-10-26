@@ -1,5 +1,9 @@
 """Draft text-to-speech for AKIF voice-note replies. Off unless AKIF_VOICE_REPLIES=on.
 
+Conversational replies (synthesize(..., conversational=True)) are allowed when they pass the privacy rules
+in conversational_text_ok (no links, emails, long numbers, codes, bank or ID words, approval prompts, max 600
+chars); AKIF_VOICE_CONVERSATIONAL=off returns to fixed sentences only. Daily caps: calls and characters.
+
 Provider-agnostic: AKIF_TTS_PROVIDER selects "elevenlabs" (default, needs ELEVENLABS_API_KEY;
 a missing key means voice is disabled) or "gemini" (free tier, explicit data opt-in). Whichever
 provider runs, only the exact fixed sentences in speakable_replies.json are ever sent to it, so
@@ -8,6 +12,7 @@ no user, deal or account text can reach a speech provider. No automatic switch b
 import base64
 import json
 import os
+import re
 import subprocess
 import time
 import urllib.request
@@ -74,13 +79,41 @@ def _elevenlabs_config() -> tuple[str, str, str]:
     return key, model, voice
 
 
-def _daily_cap_ok() -> bool:
+MAX_CONVERSATIONAL_CHARS = 600
+_BLOCKED = [re.compile(p, re.I) for p in (
+    r"https?://|www\.|\b[a-z0-9-]+\.(?:com|net|org|in|io|site|app|co)\b/?",
+    r"[^\s@]+@[^\s@]+\.[^\s@]+",
+    r"\b(?:otp|one[- ]time|passcode|password|passphrase|cvv|pin)\b",
+    r"\b(?:iban|swift|ifsc|bank account|account number|routing number|card number|aadhaar|aadhar|passport)\b",
+    r"\b(?:vault|sign[- ]?in code|verification code|upload link)\b",
+    r"\b(?:reply|type|send|say)\s+(?:yes|confirm|approve|accept)\b",
+    r"\b(?:please confirm|needs? your approval|approve (?:this|the)|awaiting your approval)\b",
+)]
+_chars: list[tuple[float, int]] = []
+
+
+def conversational_text_ok(text: str) -> bool:
+    """Second copy of the API privacy rules (voiceReply.ts); a test keeps them identical."""
+    if not isinstance(text, str):
+        return False
+    trimmed = text.strip()
+    if not trimmed or len(trimmed) > MAX_CONVERSATIONAL_CHARS:
+        return False
+    if re.search(r"\d{7,}", re.sub(r"[\s().-]", "", trimmed)):
+        return False
+    return not any(p.search(trimmed) for p in _BLOCKED)
+
+
+def _daily_cap_ok(chars: int = 0) -> bool:
     cap = int(os.getenv("AKIF_TTS_DAILY_CAP", "50") or "50")
+    char_cap = int(os.getenv("AKIF_TTS_DAILY_CHARS", "20000") or "20000")
     now = time.time()
     _calls[:] = [t for t in _calls if now - t < 86_400]
-    if len(_calls) >= cap:
+    _chars[:] = [(t, n) for t, n in _chars if now - t < 86_400]
+    if len(_calls) >= cap or sum(n for _, n in _chars) + chars > char_cap:
         return False
     _calls.append(now)
+    _chars.append((now, chars))
     return True
 
 
@@ -111,7 +144,7 @@ def wav_to_ogg_opus(wav: bytes) -> bytes:
 
 def _synthesize_elevenlabs(text: str) -> bytes:
     key, model, voice = _elevenlabs_config()
-    if not _daily_cap_ok():
+    if not _daily_cap_ok(len(text.strip())):
         raise HTTPException(status_code=429, detail="tts_daily_cap_reached")
     req = urllib.request.Request(
         f"{_ELEVENLABS_URL}{voice}?output_format=mp3_44100_64",
@@ -127,10 +160,12 @@ def _synthesize_elevenlabs(text: str) -> bytes:
     return wav_to_ogg_opus(audio)  # ffmpeg detects the input format (mp3 here)
 
 
-def synthesize(text: str) -> bytes:
-    # The exact-text allowlist runs first, before any provider is chosen or contacted.
+def synthesize(text: str, conversational: bool = False) -> bytes:
+    # Text checks run first, before any provider is chosen or contacted. Fixed sentences always pass.
+    # Conversational text needs AKIF_VOICE_CONVERSATIONAL not "off" and must pass the privacy rules.
     if not speech_text_allowed(text):
-        raise HTTPException(status_code=422, detail="text_not_allowed_for_speech")
+        if not (conversational and os.getenv("AKIF_VOICE_CONVERSATIONAL") != "off" and conversational_text_ok(text)):
+            raise HTTPException(status_code=422, detail="text_not_allowed_for_speech")
     provider = _provider()
     if provider == "elevenlabs":
         return _synthesize_elevenlabs(text)
@@ -141,7 +176,7 @@ def synthesize(text: str) -> bytes:
 
 def _synthesize_gemini(text: str) -> bytes:
     key, model, voice = _config()
-    if not _daily_cap_ok():
+    if not _daily_cap_ok(len(text.strip())):
         raise HTTPException(status_code=429, detail="tts_daily_cap_reached")
     body = {
         "model": model,

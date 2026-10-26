@@ -15,7 +15,7 @@ test("off by default; needs a voice note from the user", () => {
   const reply = AI_FALLBACK_REPLY;
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply, enabled: false }), false);
   assert.equal(shouldSpeakReply({ userSentVoice: false, reply, enabled: true }), false);
-  assert.equal(shouldSpeakReply({ userSentVoice: true, reply: "Hello Rashid from Acme", enabled: true }), false);
+  assert.equal(shouldSpeakReply({ userSentVoice: true, reply: "Open https://udc.example/vault/x", enabled: true }), false);
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply, enabled: true }), true);
 });
 test("webhook speaks only the guidance path and falls back only for known failure", async () => {
@@ -28,4 +28,42 @@ test("API allowlist and worker allowlist are identical (cross-language parity)",
   const { SPEAKABLE_STATIC_REPLIES } = await import("../src/akif/voiceReply.ts");
   const worker = JSON.parse(await readFile(new URL("../../../services/akif-worker/app/speakable_replies.json", import.meta.url), "utf8")) as string[];
   assert.deepEqual([...SPEAKABLE_STATIC_REPLIES].sort(), [...worker].sort());
+});
+
+import { conversationalSpeechAllowed, speechKind, MAX_SPOKEN_CHARS } from "../src/akif/voiceReply.ts";
+import { reserveSpeech, reserveTranscription, resetVoiceLimitsForTests } from "../src/akif/voiceLimits.ts";
+
+test("conversational replies in many languages may be spoken; sensitive ones stay text", () => {
+  for (const ok of ["Sure. FOB means the seller loads the goods on the ship.", "The price is 450 USD per metric ton, minimum 25 tons.", "नमस्ते, मैं आपकी मदद कर सकता हूँ।", "Gracias, con gusto le ayudo con el arroz."]) assert.ok(conversationalSpeechAllowed(ok), ok);
+  for (const bad of ["Open https://udc.example/vault/x", "Write to buyer@acme.com", "Call +91 98765 43210", "Your OTP is 482913", "Bank account number is on file", "Reply YES to approve the deal", "Please confirm in text", "x ".repeat(MAX_SPOKEN_CHARS), "", undefined]) assert.ok(!conversationalSpeechAllowed(bad as string), String(bad));
+});
+
+test("kill switches: master off, conversational off", () => {
+  const reply = "Sure. FOB means the seller loads the goods on the ship.";
+  assert.equal(speechKind(reply, {}), "none");
+  assert.equal(speechKind(reply, { AKIF_VOICE_REPLIES: "on" }), "conversational");
+  assert.equal(speechKind(reply, { AKIF_VOICE_REPLIES: "on", AKIF_VOICE_CONVERSATIONAL: "off" }), "none");
+  assert.equal(speechKind(AI_FALLBACK_REPLY, { AKIF_VOICE_REPLIES: "on", AKIF_VOICE_CONVERSATIONAL: "off" }), "static");
+  assert.equal(shouldSpeakReply({ userSentVoice: false, reply, env: { AKIF_VOICE_REPLIES: "on" } }), false);
+});
+
+test("per-user daily voice limits, reset next day, hashed keys", () => {
+  resetVoiceLimitsForTests();
+  const env = { AKIF_VOICE_TTS_PER_USER_DAILY: "2", AKIF_VOICE_TTS_CHARS_PER_USER_DAILY: "100", AKIF_VOICE_STT_PER_USER_DAILY: "1" };
+  const day1 = new Date("2026-10-26T05:00:00Z"), day2 = new Date("2026-10-27T05:00:00Z");
+  assert.ok(reserveSpeech("+911", 40, env, day1)); assert.ok(reserveSpeech("+911", 40, env, day1));
+  assert.ok(!reserveSpeech("+911", 10, env, day1));
+  assert.ok(reserveSpeech("+912", 90, env, day1));
+  assert.ok(!reserveSpeech("+912", 20, env, day1));
+  assert.ok(reserveSpeech("+911", 40, env, day2));
+  assert.ok(reserveTranscription("+911", env, day1)); assert.ok(!reserveTranscription("+911", env, day1));
+});
+
+test("voice path never logs audio or transcripts and keys stay out of the API", async () => {
+  const files = ["../src/whatsapp/voiceSend.ts", "../src/akif/voiceLimits.ts", "../src/akif/voiceReply.ts"];
+  for (const f of files) {
+    const src = await readFile(new URL(f, import.meta.url), "utf8");
+    assert.ok(!/console\.|logger\.|\.log\(/.test(src.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")), f);
+    assert.ok(!/ELEVENLABS_API_KEY/.test(src), f);
+  }
 });

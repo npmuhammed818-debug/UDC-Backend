@@ -290,7 +290,8 @@ async def audio_transcription(file: UploadFile = File(...)) -> dict:
 
 
 class SpeechRequest(BaseModel):
-    text: str = _Field(min_length=1, max_length=400)
+    text: str = _Field(min_length=1, max_length=600)
+    conversational: bool = False
 
 
 @app.get("/speech/status", dependencies=[Depends(require_internal_token)])
@@ -300,4 +301,4 @@ def speech_status_route() -> dict:
 
 @app.post("/speech/synthesize", dependencies=[Depends(require_internal_token)])
 def speech_synthesize(request: SpeechRequest) -> Response:
-    return Response(content=synthesize(request.text), media_type="audio/ogg")
+    return Response(content=synthesize(request.text, request.conversational), media_type="audio/ogg")
