@@ -1473,6 +1473,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It is a private UDC template, not legal advice. Complete the placeholders and have your lawyer review it before sharing or signing. UDC acts only as an introducing agent between buyer and seller." : ""}`
               : `I’ve got the ${dealMessage.documentToSender.documentType}, but it didn’t send. I’ll keep it here for now.`;
             const delivery = await deliverWhatsAppReply(message.from, replyBody);
+            if (documentDelivered) react("complete", message.from, message.id); // one ✅ on the user's request once the document went out
 
             if (documentDelivered && documentMessageId && dealMessage.dealId && dealMessage.recipientUserId) {
               await db.insert(whatsappMessageContextsTable)
