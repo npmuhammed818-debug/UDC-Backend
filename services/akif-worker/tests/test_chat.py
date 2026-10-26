@@ -75,3 +75,16 @@ def test_probe_sends_only_fixed_text_and_hides_provider_errors(monkeypatch):
     assert result["status"] == "failed"
     assert result["error_type"] == "RuntimeError"
     assert "SECRET" not in str(result)
+
+
+def test_chat_rate_limit_is_reported_as_429_not_502(monkeypatch):
+    monkeypatch.setattr(chat, "status", lambda: {"configured": True, "model": "groq/test"})
+    class Limited(Exception):
+        status_code = 429
+    def complete(messages, timeout_seconds, sensitivity="private"):
+        raise Limited("secret provider text")
+    monkeypatch.setattr(chat, "complete", complete)
+    with pytest.raises(HTTPException) as error:
+        chat.chat_completion(chat.ChatRequest(messages=[chat.ChatMessage(role="user", content="x")]))
+    assert error.value.status_code == 429
+    assert "secret" not in str(error.value.detail)

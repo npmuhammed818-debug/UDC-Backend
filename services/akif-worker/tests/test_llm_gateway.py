@@ -139,3 +139,18 @@ def test_status_reports_fallback_and_private_providers(monkeypatch):
     assert s["automatic_provider_fallback"] is True and s["configured"] is True
     assert s["private_content_providers"] == 1 and s["generic_content_providers"] == 2
     assert s["backup_model"] == "groq/backup"
+
+
+def test_429_waits_for_retry_after_but_never_past_the_deadline():
+    class Resp:
+        headers = {"retry-after": "2"}
+    class Limited(Exception):
+        status_code = 429
+        response = Resp()
+    assert llm_gateway._retry_wait(Limited(), 13) == 2.0
+    assert llm_gateway._retry_wait(Limited(), 2.5) == 1.5
+    Resp.headers = {"retry-after": "60"}
+    assert llm_gateway._retry_wait(Limited(), 13) == llm_gateway.MAX_RATE_LIMIT_WAIT_SECONDS
+    Resp.headers = {}
+    assert llm_gateway._retry_wait(Limited(), 13) == 1.5
+    assert llm_gateway._retry_wait(RuntimeError("x"), 13) == llm_gateway.RETRY_BACKOFF_SECONDS

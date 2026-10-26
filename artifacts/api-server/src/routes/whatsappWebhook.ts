@@ -1540,7 +1540,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         memory: hasSavedDraft && !sellerStartsAnotherProduct ? savedIntake!.draft : null,
       });
       if (!intakeDecision) {
-        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
+        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. The assistant may be busy, so please try again in about a minute.");
         continue;
       }
       const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
