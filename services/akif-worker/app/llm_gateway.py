@@ -112,7 +112,7 @@ def status() -> dict[str, Any]:
     }
 
 
-def _call_provider(completion, model: str, messages: list[dict[str, str]], deadline: float) -> str:
+def _call_provider(completion, model: str, messages: list[dict[str, str]], deadline: float, has_backup: bool = False) -> str:
     last: Exception | None = None
     for attempt in range(MAX_ATTEMPTS_PER_PROVIDER):
         remaining = deadline - time.monotonic()
@@ -127,6 +127,8 @@ def _call_provider(completion, model: str, messages: list[dict[str, str]], deadl
             return content
         except Exception as exc:  # error, timeout or 429: retry once, then the caller fails over
             last = exc
+            if has_backup and getattr(exc, "status_code", None) == 429:
+                break  # Rate limited and another model is available: fail over now instead of waiting.
             if attempt + 1 < MAX_ATTEMPTS_PER_PROVIDER:
                 _sleep(_retry_wait(exc, deadline - time.monotonic()))
     raise last or TimeoutError("llm_deadline_exhausted")
@@ -151,9 +153,9 @@ def complete(messages: list[dict[str, str]], timeout_seconds: float = 20, sensit
     # One overall deadline, shared by every provider tried, so failover never extends the wait.
     deadline = time.monotonic() + max(1, min(20, timeout_seconds))
     last: Exception | None = None
-    for model in usable:
+    for index, model in enumerate(usable):
         try:
-            return _call_provider(completion, model, messages, deadline)
+            return _call_provider(completion, model, messages, deadline, has_backup=index + 1 < len(usable))
         except Exception as exc:
             last = exc
             print("AKIF provider failed, trying next if any: " + json.dumps({
