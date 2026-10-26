@@ -5,6 +5,14 @@ export type SpaDraftInput = {
   date: string;
   buyerName?: string | null;
   sellerName?: string | null;
+  buyerAddress?: string | null;
+  buyerRegistrationNo?: string | null;
+  sellerAddress?: string | null;
+  sellerRegistrationNo?: string | null;
+  // Counterparty identity stays hidden until the NCNDA stage.
+  hideBuyer?: boolean;
+  hideSeller?: boolean;
+  governingLaw?: "India" | null;
   productName: string;
   quantity: string;
   unit: string;
