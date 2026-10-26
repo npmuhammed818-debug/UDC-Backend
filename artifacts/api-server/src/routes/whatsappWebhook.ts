@@ -533,7 +533,7 @@ async function handleWhatsAppDealDocument(
     throw new Error("document_record_not_created");
   }
 
-  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "owner" });
+  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "editor" });
 
   void processDocumentIntelligence({
     documentId: savedDocument.id,
@@ -778,19 +778,25 @@ async function handleDealWhatsAppMessage(
       return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
         deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: confirmationKind };
     }
-    const draft = generateWhatsAppDraft(draftRequest.type, terms);
-    const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.txt`;
-    const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft, "utf8"), "text/plain");
-    await db.transaction(async tx => {
-      const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
-        documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
-      await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "owner" });
-      await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
-        entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
-    });
-    return { reply: `Prepared the ${draftRequest.type} draft for your review.`, deliveredToCounterparty: false,
-      dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
-        storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.txt`, draft: true } };
+    try {
+      const draft = generateWhatsAppDraft(draftRequest.type, terms);
+      const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.txt`;
+      const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft, "utf8"), "text/plain");
+      await db.transaction(async tx => {
+        const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
+          documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
+        await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "editor" });
+        await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
+          entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
+      });
+      return { reply: `Prepared the ${draftRequest.type} draft for your review.`, deliveredToCounterparty: false,
+        dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
+          storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.txt`, draft: true } };
+    } catch (error) {
+      // Never answer a draft request with a 500: Meta would retry and the user would hear nothing.
+      console.error(JSON.stringify({ event: "whatsapp_draft_failed", dealId: deal.id, draftType: draftRequest.type, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
+      return { reply: "I could not prepare that draft right now. Nothing was saved. Please try again in a moment.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
   }
 
   const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
