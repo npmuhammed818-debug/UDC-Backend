@@ -18,6 +18,7 @@ const cases = [
   ['registration', 'UDC_QA_DATABASE_URL', 'whatsapp-buyer'],
   ['retry', 'UDC_QA_DATABASE_URL', 'whatsapp-webhook-retry'],
   ['edge', 'UDC_QA_DATABASE_URL', 'whatsapp-edge-scenarios'],
+  ['sweep', 'UDC_QA_DATABASE_URL', 'route-sweep'],
   ['email_auth', 'UDC_EMAIL_QA_DATABASE_URL', 'email-auth'],
   ['verification', 'UDC_VERIFICATION_QA_DATABASE_URL', 'company-verification'],
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'p0-gates'],
