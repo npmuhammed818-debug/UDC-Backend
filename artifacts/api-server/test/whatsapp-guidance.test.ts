@@ -37,6 +37,9 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  await answerGuidance('phone-two','Tell me more about export insurance','history-reset');assert.deepEqual(JSON.parse(state.calls.at(-1).message).history,[]);
  for(const unsafe of ['UDC means Uniform Document Code.','Upload a passport and bank statement.','DLC is guaranteed safe.','Our website is https://fake.example/','long '.repeat(120)])assert.equal(validateGuidanceReply(unsafe),false,unsafe);
  assert.equal(trustedGuidanceAnswer('Who founded Apple?'),null);
+ for(const q of ['How much commission do agents get?','When is my commission paid?','what is the referral fee?'])assert.match(trustedGuidanceAnswer(q,'agent')??'',/agent agreement.*UDC will confirm/,q);
+ for(const bad of ['Referral commissions are usually a percentage of the deal value.','Your commission is paid after the deal closes.','Agents earn 2% commission.'])assert.equal(validateGuidanceReply(bad),false,bad);
+ assert.equal(validateGuidanceReply('Commission terms are set in your agent agreement, and UDC will confirm them to you.'),true);
  assert.equal(trustedGuidanceAnswer('Deal UDC-123: accept offer'),null);
  state.reply='UDC means Uniform Document Code.';
  const facts=await answerGuidance('phone-public','What is UDC?','public-1');assert.match(facts,/UpDownCircle/);assert.doesNotMatch(facts,/Uniform/);
