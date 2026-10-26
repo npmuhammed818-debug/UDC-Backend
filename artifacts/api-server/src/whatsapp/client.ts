@@ -1,5 +1,6 @@
 import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
 import { AsyncLocalStorage } from "node:async_hooks";
+import { replySinkEnabled, recordSunkReply } from "./replySink.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
 // Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
@@ -44,6 +45,10 @@ export function trackReplyFailures<T>(fn: (failed: Set<string>) => Promise<T>): 
 // (timeout or 5xx: the message may have been accepted, so it is NEVER retried; callers quarantine it).
 // Returns the last non-ok response when Meta keeps throttling, so the caller raises its usual error.
 async function metaPost(to: string, url: string, init: RequestInit): Promise<Response | null> {
+  if (replySinkEnabled() && url.endsWith("/messages")) { // staging reply sink: store, never send
+    let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
+    return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
+  }
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     await takeOutboundToken(sleepImpl);
     const response = await maybeSubmitted(fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }));
@@ -69,6 +74,7 @@ type WhatsAppConfig = {
 export function getWhatsAppConfig(env:NodeJS.ProcessEnv=process.env): WhatsAppConfig | null {
   const accessToken = env.WHATSAPP_ACCESS_TOKEN?.trim();
   const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+  if (replySinkEnabled(env)) return { accessToken: accessToken || "sink", phoneNumberId: phoneNumberId || "sink" };
   return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : null;
 }
 
@@ -311,6 +317,7 @@ export async function sendWhatsAppReaction(to: string, inboundMessageId: string,
 export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  if (replySinkEnabled()) { const id = recordSunkReply(to, { type: "audio" }).id; return readMessageAcknowledgement(Response.json({ messages: [{ id }] })); }
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", "audio/ogg");

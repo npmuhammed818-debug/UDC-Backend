@@ -12,6 +12,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
 import { trackReplyFailures } from "../whatsapp/client";
+import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
@@ -1024,6 +1025,14 @@ router.get("/webhooks/whatsapp", (req, res) => {
   }
 
   res.type("text/plain").send(challenge);
+});
+
+// Staging reply sink readout (only when AKIF_WHATSAPP_REPLY_SINK=store). Needs x-udc-sink-signature.
+router.get("/webhooks/whatsapp-sink", (req, res) => {
+  if (!replySinkEnabled() || !sinkReadAuthorized(req.header("x-udc-sink-signature"))) { res.sendStatus(404); return; }
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  const since = Number(req.query.since) || 0;
+  res.json({ replies: readSunkReplies(to, since) });
 });
 
 router.post("/webhooks/whatsapp", async (req, res) => { await trackReplyFailures((failed) => handleWhatsAppWebhook(req, res, failed)); });
