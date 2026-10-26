@@ -48,7 +48,20 @@ app.listen(port, (err) => {
         model: gateway?.model ?? null, missingConfiguration: gateway?.missing_configuration ?? null,
         conversationEnabled: process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" },
         "AKIF worker connection check completed");
-    }).catch(() => logger.warn({ workerReachable: false }, "AKIF worker connection check failed"));
+    }).catch((error: unknown) => {
+      // Log only a bounded, sanitized failure category; never log headers, tokens, or response bodies.
+      const message = error instanceof Error ? error.message : "";
+      const failure = /HTTP (401|403|503)/.exec(message)?.[1]
+        ? `http_${/HTTP (401|403|503)/.exec(message)?.[1]}`
+        : /HTTP (\d{3})/.exec(message)?.[1]
+          ? "http_error"
+          : /abort|timeout/i.test(message)
+            ? "timeout"
+            : /fetch|network|connect|ENOTFOUND|ECONN/i.test(message)
+              ? "network_error"
+              : "other_error";
+      logger.warn({ workerReachable: false, failure }, "AKIF worker connection check failed");
+    });
   }
 
   void Promise.all([
