@@ -465,12 +465,12 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       const refreshed = rows.whatsappMessageContextsTable.filter(r => r.kind.startsWith("draft_confirmation:")).at(-1);
       await message({ context: { id: refreshed.providerMessageId }, text: { body: "CONFIRM DRAFT LOI" } });
       assert.equal(state.uploaded.length, 1);
-      assert.match(state.uploaded[0], /LOI\.txt$/);
+      assert.match(state.uploaded[0], /LOI\.pdf$/);
       assert.equal(rows.documentsTable[0].status, "pending");
       assert.equal(rows.documentAccessTable[0].userId, "buyer");
       assert.equal(rows.auditLogsTable[0].action, "loi_draft_generated");
       assert.ok(state.sent.every((s: any) => s.to === "10000000001"));
-      assert.match(state.sent.at(-1).body, /private draft for review/);
+      assert.match(state.sent.at(-1).body, /private UDC template, not legal advice/);
     });
     await t.test("seller cannot generate buyer documents and meetings reach admin review history", async () => {
       reset(); seedDeal();

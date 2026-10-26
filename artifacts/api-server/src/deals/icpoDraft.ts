@@ -1,3 +1,4 @@
+import { withUdcWarning } from "./draftWarning.ts";
 import type { SpaDraftInput } from "./spaDraft";
 
 function safe(value: string | null | undefined, fallback: string) {
@@ -5,7 +6,7 @@ function safe(value: string | null | undefined, fallback: string) {
 }
 
 export function createIcpoDraft(input: SpaDraftInput) {
-  return [
+  return withUdcWarning([
     "IRREVOCABLE CORPORATE PURCHASE ORDER - UNISSUED REVIEW COPY",
     `UDC reference: ${safe(input.dealNumber, "[DEAL REFERENCE]")}`,
     `Draft date: ${safe(input.date, "[DATE]")}`,
@@ -23,5 +24,5 @@ export function createIcpoDraft(input: SpaDraftInput) {
     "UNISSUED REVIEW COPY. This draft is not an issued ICPO or an irrevocable commitment. Only the buyer's authorized representative may finalize and issue a purchase order after reviewing all terms with legal and banking advisers.",
     "Authorized buyer representative: [NAME, TITLE AND SIGNATURE AFTER REVIEW]",
     "UDC prepared this review copy from recorded deal data. UDC has not verified missing terms, the parties or bank acceptance.",
-  ].join("\n");
+  ].join("\n"));
 }

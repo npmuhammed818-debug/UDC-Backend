@@ -50,7 +50,7 @@ import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
-import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraft } from "../deals/whatsappDraft";
+import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
 
 const router: IRouter = Router();
 
@@ -775,13 +775,13 @@ async function handleDealWhatsAppMessage(
       agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination };
     const confirmationKind = whatsappDraftConfirmation(draftRequest.type, terms);
     if (!draftRequest.confirmed || replyContextKind !== confirmationKind) {
-      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
+      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. `+"\n\nSend your own or use a UDC draft?\n1. Your own: send your "+draftRequest.type+" here as a file (put "+draftRequest.type+" in the file name or caption).\n2. UDC draft: reply to this message with CONFIRM DRAFT "+draftRequest.type+". Legal party details stay as placeholders.\n\nWarning: the UDC draft is a template only. It is not legal advice. Have your own lawyer review it before you use or sign it. UDC acts only as an introducing agent between buyer and seller.",
         deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: confirmationKind };
     }
     try {
-      const draft = generateWhatsAppDraft(draftRequest.type, terms);
-      const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.txt`;
-      const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft, "utf8"), "text/plain");
+      const draft = await generateWhatsAppDraftPdf(draftRequest.type, terms);
+      const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.pdf`;
+      const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft), "application/pdf");
       await db.transaction(async tx => {
         const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
           documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
@@ -789,9 +789,9 @@ async function handleDealWhatsAppMessage(
         await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
           entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
       });
-      return { reply: `Prepared the ${draftRequest.type} draft for your review.`, deliveredToCounterparty: false,
+      return { reply: `Prepared the ${draftRequest.type} draft for your review. It is a UDC template, not legal advice.`, deliveredToCounterparty: false,
         dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
-          storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.txt`, draft: true } };
+          storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.pdf`, draft: true } };
     } catch (error) {
       // Never answer a draft request with a 500: Meta would retry and the user would hear nothing.
       console.error(JSON.stringify({ event: "whatsapp_draft_failed", dealId: deal.id, draftType: draftRequest.type, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
@@ -1437,7 +1437,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             }
 
             const replyBody = documentDelivered
-              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It’s a private draft for review. Complete the placeholders before sharing or signing." : ""}`
+              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It is a private UDC template, not legal advice. Complete the placeholders and have your lawyer review it before sharing or signing. UDC acts only as an introducing agent between buyer and seller." : ""}`
               : `I’ve got the ${dealMessage.documentToSender.documentType}, but it didn’t send. I’ll keep it here for now.`;
             const delivery = await deliverWhatsAppReply(message.from, replyBody);
 
