@@ -20,6 +20,7 @@ export function guidedQuestions(purpose:FlowPurpose):Question[]{
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
+  if(data.__paragraph==='1'&&data.__awaiting==='target_price'){await sendWhatsAppTextWithMenu(phone,'What is your target price in USD per MT? Reply Skip to leave it blank.');return;}
   if(data.__paragraph==='1'){
     if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppTextWithMenu(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
     const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
@@ -76,6 +77,12 @@ async function review(phone:string,purpose:FlowPurpose,data:Record<string,string
 // Leave prose, corrections and questions to paragraph extraction; never guess
 // which of several facts the user intended to supply.
 function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>){
+  // The one optional price question asked after the required details: a plain number or Skip is a direct answer.
+  if(data.__awaiting==='target_price'){
+    if(/^skip$/i.test(text))return {target_price:'skip'} as Record<string,string>;
+    if(/^\d+(?:\.\d+)?$/.test(text)&&Number(text)>0)return {target_price:text} as Record<string,string>;
+    return null;
+  }
   const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
   if(!next)return null;
   let scalar=false;
@@ -144,7 +151,11 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
       // Free text we could not read (for example the AI model is unavailable): say so and show the labelled form, instead of silently repeating the question.
       if(!notes.length&&purpose.startsWith('profile_')&&raw&&(/@/.test(raw)||(raw.match(/,/g)??[]).length>=2)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
-      const complete=questions.every(q=>q.optional||data[q.name]);
+      const requiredDone=questions.every(q=>q.optional||data[q.name]);
+      // Target price is optional, so the paragraph flow never asked for it unless the AI extracted it. Ask once.
+      if(data.target_price!==undefined&&data.__awaiting==='target_price')delete data.__awaiting;
+      if(requiredDone&&purpose==='buyer'&&data.target_price===undefined&&data.__priceAsked!=='1'){data.__priceAsked='1';data.__awaiting='target_price';}
+      const complete=requiredDone&&data.__awaiting!=='target_price';
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
       return complete?{kind:'review' as const,purpose,data}:{kind:'question' as const,purpose,step,data,note:notes[0]};
