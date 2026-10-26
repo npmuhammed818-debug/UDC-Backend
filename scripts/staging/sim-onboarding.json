@@ -1,0 +1,5 @@
+{ "steps": [
+  { "label": "bad signature path is covered by unit tests; this sends valid signed hello", "from": "15555550101", "name": "Sim Buyer", "text": "Hi" },
+  { "label": "role choice", "from": "15555550101", "text": "Buyer" },
+  { "label": "privacy consent", "from": "15555550101", "text": "I agree" }
+] }
