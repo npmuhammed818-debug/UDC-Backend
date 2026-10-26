@@ -51,7 +51,7 @@ app.listen(port, (err) => {
     }).catch((error: unknown) => {
       // Log only a bounded, sanitized failure category; never log headers, tokens, or response bodies.
       const message = error instanceof Error ? error.message : "";
-      const httpStatus = /HTTP (\\d{3})/.exec(message)?.[1];
+      const httpStatus = /\bHTTP\s+(\d{3})\b/i.exec(message)?.[1];
       const failure = httpStatus
         ? `http_${httpStatus}`
         : /abort|timeout/i.test(message)
