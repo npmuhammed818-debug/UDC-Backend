@@ -51,15 +51,14 @@ app.listen(port, (err) => {
     }).catch((error: unknown) => {
       // Log only a bounded, sanitized failure category; never log headers, tokens, or response bodies.
       const message = error instanceof Error ? error.message : "";
-      const failure = /HTTP (401|403|503)/.exec(message)?.[1]
-        ? `http_${/HTTP (401|403|503)/.exec(message)?.[1]}`
-        : /HTTP (\d{3})/.exec(message)?.[1]
-          ? "http_error"
-          : /abort|timeout/i.test(message)
-            ? "timeout"
-            : /fetch|network|connect|ENOTFOUND|ECONN/i.test(message)
-              ? "network_error"
-              : "other_error";
+      const httpStatus = /HTTP (\\d{3})/.exec(message)?.[1];
+      const failure = httpStatus
+        ? `http_${httpStatus}`
+        : /abort|timeout/i.test(message)
+          ? "timeout"
+          : /fetch|network|connect|ENOTFOUND|ECONN/i.test(message)
+            ? "network_error"
+            : "other_error";
       logger.warn({ workerReachable: false, failure }, "AKIF worker connection check failed");
     });
   }
