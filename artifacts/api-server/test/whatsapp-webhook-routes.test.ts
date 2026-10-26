@@ -472,6 +472,22 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.ok(state.sent.every((s: any) => s.to === "10000000001"));
       assert.match(state.sent.at(-1).body, /private UDC template, not legal advice/);
     });
+    await t.test("draft commands and replies to saved messages skip the AI even when chat history exists", async () => {
+      reset(); seedDeal();
+      state.guidanceReply = "A Letter of Intent is a non-binding document.";
+      await message({ text: { body: "create LOI" } });
+      assert.deepEqual(state.guidanceCalls, []);
+      assert.match(state.sent.at(-1).body, /CONFIRM DRAFT LOI/);
+      const preview = rows.whatsappMessageContextsTable.find(r => r.kind.startsWith("draft_confirmation:"));
+      assert.ok(preview);
+      await message({ context: { id: preview.providerMessageId }, text: { body: "CONFIRM DRAFT LOI" } });
+      assert.deepEqual(state.guidanceCalls, []);
+      assert.equal(state.uploaded.length, 1);
+      assert.match(state.sent.at(-1).body, /private UDC template, not legal advice/);
+      // A plain question without a draft command or saved context still goes to the AI.
+      await message({ text: { body: "tell me about LOI" } });
+      assert.equal(state.guidanceCalls.length, 1);
+    });
     await t.test("seller cannot generate buyer documents and meetings reach admin review history", async () => {
       reset(); seedDeal();
       await message({ from: "10000000002", text: { body: "deal UDC-A: prepare LOI draft" } });
