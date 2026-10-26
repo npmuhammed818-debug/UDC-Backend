@@ -41,8 +41,10 @@ export function evaluateMvpEnvironment(env:NodeJS.ProcessEnv=process.env):Readin
        ?"ETA runner flag is enabled; operational acceptance still required."
        :"Overdue ETA runner is disabled."},
     {id:"shipment_send_gate",label:"Shipment WhatsApp outbound worker",
-      state:"disabled",
-      detail:"No production outbox dispatcher is wired or authorized; pending alerts cannot send automatically."},
+      state:env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"?"review_required":"disabled",
+      detail:env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"
+       ?"Shipment send flag is enabled and the dispatch runner starts at boot; confirm owner authorization, template approval and delivery tests."
+       :"Shipment WhatsApp sending is disabled; pending alerts do not send automatically."},
     {id:"human_acceptance",label:"Human staging acceptance",
       state:"review_required",
       detail:"Buyer, seller, agent, SGS/DLC, OTP, signed Meta and rollback testing require human evidence."},
