@@ -26,7 +26,7 @@ import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from 
 import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievance/grievance";
 import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
-import { react } from "../whatsapp/reactions";
+import { react, reactByMeaning } from "../whatsapp/reactions";
 import { speakReply } from "../whatsapp/voiceSend";
 import { parseVoiceCommand, setTextOnly, getVoiceState, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
 import { VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMATION, EXPLICIT_VOICE_TEXT_ONLY, parseVoiceRequest, isOfferYes } from "../akif/voiceConsent.ts";
@@ -1140,6 +1140,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             else if (privacyReply.kind === "consent_accepted") await sendChatHome(message.from);
             continue;
           }
+          if (typeof message.text?.body === "string") reactByMeaning(message.from, message.id, message.text.body); // only after consent; off unless both flags are on
           const [account] = await db.select({ status: usersTable.status }).from(usersTable)
             .where(eq(usersTable.phone, message.from)).limit(1);
           if (account?.status === "suspended" || account?.status === "rejected") {
