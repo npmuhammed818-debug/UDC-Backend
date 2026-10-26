@@ -59,7 +59,8 @@ app.listen(port, (err) => {
           : /fetch|network|connect|ENOTFOUND|ECONN/i.test(message)
             ? "network_error"
             : "other_error";
-      logger.warn({ workerReachable: false, failure }, "AKIF worker connection check failed");
+      const errorType = error instanceof Error && ["TypeError", "SyntaxError", "AbortError", "TimeoutError", "Error"].includes(error.name) ? error.name : "UnknownError";
+      logger.warn({ workerReachable: false, failure, errorType }, "AKIF worker connection check failed");
     });
   }
 
