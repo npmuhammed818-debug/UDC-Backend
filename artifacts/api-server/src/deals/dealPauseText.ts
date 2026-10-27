@@ -19,3 +19,12 @@ export const closedNoticeToOther = (dealNumber: string) => `Deal ${dealNumber} h
 export const pausedConfirmationToSender = (dealNumber: string, told: boolean) => `Done. Deal ${dealNumber} is paused. ${told ? "The other side was told." : "The other side will see it in the app."} UDC admin can restart it.`;
 export const closedConfirmationToSender = (dealNumber: string, told: boolean) => `Done. Deal ${dealNumber} is closed. ${told ? "The other side was told." : "The other side will see it in the app."}`;
 
+
+// A question about pausing is not a command. The chat must not promise to pause; it points to the command flow.
+export function askedAboutPausingDeal(text: string): boolean {
+  const n = text.trim();
+  if (requestedDealPause(n)) return false;
+  const question = /\?\s*$/.test(n) || /^(should|can|could|shall|may|how|do|does|is|what|will|would)\b/i.test(n);
+  return question && /\b(pause|pausing|paused|put\b.{0,20}\bon hold)\b/i.test(n) && /\bdeal\b/i.test(n);
+}
+export const dealPauseHowTo = 'I have not paused anything. To pause a deal, send "pause deal" and I will ask you to confirm first.';

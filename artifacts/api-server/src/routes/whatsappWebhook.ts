@@ -50,6 +50,7 @@ import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
+import { askedAboutPausingDeal, dealPauseHowTo } from "../deals/dealPauseText";
 import { requestedDealPause, dealPauseContextKind, dealPausePrompt, applyDealPause, pausedConfirmationToSender, closedConfirmationToSender } from "../deals/dealPause";
 import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
 import type { SpaDraftInput } from "../deals/spaDraft";
@@ -1441,6 +1442,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Short follow-ups such as “and FOB” remain in the tutoring conversation.
         // Explicit trade commands still return to the authorized deal workflow.
         try {
+          if (!dealActionDirect && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
           const reply = dealActionDirect ? null : await answerGuidance(message.from, message.text.body, message.id, false, true);
           if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
         } catch {
