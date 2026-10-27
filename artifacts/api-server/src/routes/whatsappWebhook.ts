@@ -1287,9 +1287,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
           const media = await downloadWhatsAppMedia(message.audio.id);
+          req.log.info({ flow: "voice_message", stage: "download", outcome: "success", audioBytes: media.bytes.length, mimeType: media.mimeType }, "UDC voice input downloaded");
           voiceStage = 'transcription';
           const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
           const transcript = heard.text;
+          req.log.info({ flow: "voice_message", stage: "transcription", outcome: "success", transcriptChars: transcript.length, languageDetected: Boolean(heard.language) }, "UDC voice input transcribed");
           // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
           // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.
           reactByMeaning(message.from, message.id, transcript);
@@ -1310,10 +1312,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               participantRole: speaker.role, intent: "voice_transcript_unconfirmed",
               originalText: transcript, relayText: null, relayed: false });
           }
+          req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "awaiting_text_confirmation" }, "UDC voice note needs text confirmation before trade action");
           await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
           continue;
-        } catch {
-          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed' }, 'UDC voice processing failed');
+        } catch (error) {
+          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed', errorType: error instanceof Error ? error.name : 'unknown' }, 'UDC voice processing failed');
           const reply = voiceStage === 'answer'
             ? "I read your voice note, but couldn’t prepare an answer just now. Please try your question again shortly."
             : voiceStage === 'trade_context'
