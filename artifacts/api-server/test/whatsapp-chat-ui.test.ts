@@ -151,7 +151,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       const beforeRevoked=buyer.status;buyer.status='under_review';
       await m.handleChatUi(phone,ui('track'));assert.match(last(),/pending UDC approval/);
       buyer.status=beforeRevoked;
-      const agent=rows.usersTable.find((u:any)=>u.role==='agent');await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/Verified agent approval/);agent.status='verified';
+      const agent=rows.usersTable.find((u:any)=>u.role==='agent');await m.handleChatUi(agent.phone,ui('commissions'));assert.match(last(),/Confirm your email first/);agent.status='verified';
       await m.handleChatUi(agent.phone,ui('menu'));
       const shortcuts=state.interactive.at(-1).body.action.buttons.map((b:any)=>b.reply.id);
       assert.deepEqual(shortcuts,['udc:invite','udc:referrals','udc:more']);

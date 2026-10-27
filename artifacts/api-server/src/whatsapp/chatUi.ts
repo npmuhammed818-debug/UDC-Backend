@@ -98,6 +98,10 @@ async function sendForm(phone:string,purpose:FlowPurpose){
 const optional=(value:unknown)=>typeof value==='string'&&value.trim()?value.trim():undefined;
 
 
+// Agents need no company or document approval: a confirmed email opens their menu.
+export function agentMenuOpen(u:{role:string;status:string;emailVerifiedAt?:Date|string|null}){
+  return u.role==='agent'&&!['suspended','rejected'].includes(u.status)&&(u.status==='verified'||Boolean(u.emailVerifiedAt));
+}
 export async function submitChatFlow(phone:string,raw:unknown){
   if(typeof raw!=='string'||raw.length>16000)return 'This form response is invalid. Open a new form from Menu.';
   let data:any;try{data=JSON.parse(raw);}catch{return 'This form response is invalid. Open a new form from Menu.';}
@@ -181,8 +185,8 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     const joinReply=(await handleJoinMessage(phone,joinText))??(await handleInviteDecline(phone,joinText));
     if(joinReply!==null){await sendWhatsAppText(phone,joinReply);return true;}
     if(typeof joinText==='string'&&/^\s*my invites\s*$/i.test(joinText)){
-      const [agent]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
-      if(agent?.role==='agent'&&agent.status==='verified'){await sendWhatsAppText(phone,await myInvitesReply(agent.id));return true;}
+      const [agent]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status,emailVerifiedAt:usersTable.emailVerifiedAt}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+      if(agent&&agentMenuOpen(agent)){await sendWhatsAppText(phone,await myInvitesReply(agent.id));return true;}
     }
   }
   if(await handleWhatsAppIntroduction(phone,message))return true;
@@ -252,7 +256,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
-    if(user.role!=='agent'||user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Verified agent approval is required before introductions, referral tracking and commission access.');return true;}
+    if(!agentMenuOpen(user)){await sendWhatsAppTextWithMenu(phone,user.role==='agent'?'Confirm your email first: send "Verify email" and I will email you a 6-digit code. Then your agent menu opens.':'These features are for agents.');return true;}
     if(action==='invite'){
        const joinLink=agentJoinLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER);
        if(joinLink){
