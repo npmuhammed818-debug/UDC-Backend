@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { buildConsentNotice, consentVersion, isExplicitAgree, isWithdrawConsent, noticeHash, TERMS_URL, WITHDRAWN_REPLY } from "../src/privacy/consentNotice.ts";
 import { decideWhatsAppConsent } from "../src/privacy/whatsappConsent.ts";
 
-const V = consentVersion("2026-10-21");
+const V = consentVersion("2026-10-27");
 test("notice is itemised, businesses-only, links Terms, states no Aadhaar and withdrawal", () => {
   const n = buildConsentNotice("help@example.com");
   for (const needle of ["businesses only", "What we collect, and why", "never collect Aadhaar", "Raw vault documents never go to the AI", TERMS_URL, '"I agree"', "withdraw consent", "complaint"]) assert.ok(n.includes(needle), needle);
@@ -21,7 +21,7 @@ test("consent decisions: agree only after notice for the current version; withdr
   assert.equal(decideWhatsAppConsent({ text: "I agree", state: "none" }, V), "notice");
   assert.equal(decideWhatsAppConsent({ text: "I agree", state: "notice_sent", version: V }, V), "accept");
   assert.equal(decideWhatsAppConsent({ text: "hello", state: "accepted", version: V }, V), "continue");
-  assert.equal(decideWhatsAppConsent({ text: "hello", state: "accepted", version: "2026-10-21" }, V), "notice");
+  assert.equal(decideWhatsAppConsent({ text: "hello", state: "accepted", version: "2026-10-27" }, V), "notice");
   assert.equal(decideWhatsAppConsent({ text: "hello", state: "withdrawn", version: V }, V), "notice");
   assert.equal(decideWhatsAppConsent({ text: "I agree", state: "withdrawn", version: V }, V), "notice");
 });

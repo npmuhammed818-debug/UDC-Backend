@@ -178,7 +178,7 @@ try {
       await signed(payload({ id: randomUUID(), from: P, type: 'text', text: { body } })); }
     await wait(800);
     const replies = sent.slice(before).filter(b => b.to === P).map(textOf).join('\n');
-    assert.ok(!/@[a-z0-9-]+\.(com|invalid|example)/i.test(replies.replace(/udc@updowncircle\.site/g, '')), 'no email address leaked');
+    assert.ok(!/@[a-z0-9-]+\.(com|invalid|example)/i.test(replies.replace(/service@updowncircle\.site/g, '')), 'no email address leaked');
     assert.ok(!/\b\d{10,}\b/.test(replies.replace(new RegExp(P, 'g'), '')), 'no phone number leaked');
     assert.ok(!/system prompt|api[_ ]key|sk-[a-z0-9]/i.test(replies.replace(/I can't share|cannot share|won't share/gi, '')) || true);
     assert.equal(await count('SELECT count(*) FROM users'), users0, 'no user record is created before consent and registration');
