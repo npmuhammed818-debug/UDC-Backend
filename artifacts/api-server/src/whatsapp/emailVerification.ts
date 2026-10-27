@@ -9,7 +9,14 @@ export async function handleEmailVerification(
   text: string,
 ): Promise<string | null> {
   const request = /^verify email$/i.test(text.trim());
-  const confirm = /^email code(?:\s+(.*))?$/i.exec(text.trim());
+  let confirm = /^email code(?:\s+(.*))?$/i.exec(text.trim());
+  // A bare 6-digit reply counts as the code only while a code is waiting for this phone.
+  if (!request && !confirm && /^\d{6}$/.test(text.trim())) {
+    const { rows: waiting } = await db.execute(
+      sql`select 1 from email_auth_challenges c join users u on u.id=c.user_id where u.phone=${phone} and c.purpose='verify_email' and c.consumed_at is null and c.expires_at>now() limit 1`,
+    );
+    if (waiting.length) confirm = ["", text.trim()] as unknown as RegExpExecArray;
+  }
   if (!request && !confirm) return null;
   try {
     await emailAuth.ipBudget(`whatsapp:${phone}`, request ? "send" : "check");
