@@ -465,6 +465,12 @@ async function resolveActiveDealForUser(userId: string, replyToProviderMessageId
   return deals.length === 1 ? deals[0]!.dealId : null;
 }
 
+export function noDealFileReply(role: string) {
+  return role === "agent"
+    ? "I got the file. Agents do not upload documents here, so I have not kept it."
+    : "I got the file, but you have no active deal yet. To send company papers, use Menu, then More options, then Documents for a secure upload link.";
+}
+
 async function handleWhatsAppDealDocument(
   from: string,
   document: { id: string; filename?: string; mime_type?: string; caption?: string },
@@ -472,7 +478,7 @@ async function handleWhatsAppDealDocument(
   replyToProviderMessageId?: string,
 ) {
   const [sender] = await db
-    .select({ id: usersTable.id, status: usersTable.status })
+    .select({ id: usersTable.id, status: usersTable.status, role: usersTable.role })
     .from(usersTable)
     .where(eq(usersTable.phone, from))
     .limit(1);
@@ -498,6 +504,9 @@ async function handleWhatsAppDealDocument(
 
   const dealId = await resolveActiveDealForUser(sender.id, replyToProviderMessageId);
   if (!dealId) {
+    const [anyDeal] = await db.select({ dealId: dealParticipantsTable.dealId }).from(dealParticipantsTable)
+      .where(eq(dealParticipantsTable.userId, sender.id)).limit(1);
+    if (!anyDeal) return { reply: noDealFileReply(sender.role) };
     return { reply: "I got the file, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
   }
 
@@ -1255,7 +1264,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // clear answer to the active form before keyword-based tutoring;
           // actual learning questions still bypass intake without a model call.
           if (await handleChatUi(message.from, message, true)) continue;
-          const reply = await answerGuidance(message.from, message.text.body, message.id);
+          const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
           if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
@@ -1617,6 +1626,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Model extraction cannot authorize another account role. Apply the
         // same boundary as native forms before writes or intake-memory changes.
         if (account && account.role !== intakeRole) {
+          // A follow-up with no trade details (for example "Can u do that for me?") is a chat question, not a submission.
+          const noDetails = !intakeDecision.fields || Object.keys(intakeDecision.fields).length === 0;
+          if (noDetails && !hasSavedDraft) {
+            const chatReply = await answerGuidance(message.from, message.text.body, message.id).catch(() => null);
+            if (chatReply) { await deliverWhatsAppReply(message.from, chatReply); continue; }
+            if (chatReply === "") continue;
+          }
           await deliverWhatsAppReply(message.from,
             `Your account is registered as ${account.role}. UDC must review role changes before you submit as a ${intakeRole}.`);
           continue;
