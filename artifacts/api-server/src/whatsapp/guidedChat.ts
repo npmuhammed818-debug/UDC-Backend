@@ -3,7 +3,7 @@ import { looksLikeFullName, NAME_REJECTION } from './nameCheck';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
-import { auditLogsTable, db, whatsappChatSessionsTable as sessions } from '@workspace/db';
+import { auditLogsTable, db, usersTable, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail } from './registrationEmail';
@@ -18,6 +18,8 @@ export function guidedQuestions(purpose:FlowPurpose):Question[]{
   if(purpose==='buyer')return [q('product','What product do you need?'),q('quantity','How many metric tonnes (MT) do you need?',{kind:'positive'}),q('specification','What grade or specification do you need?',{optional:true,max:2000}),q('destination','What is the destination port?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('target_price','What is your target price in USD per MT?',{kind:'positive',optional:true}),q('delivery_time','When do you need delivery?',{optional:true,max:500}),q('payment_terms','What payment terms do you prefer?',{optional:true,max:2000})];
   return [q('product','What product can you supply?'),q('quantity','What quantity can you supply?',{kind:'positive'}),q('unit','What unit is that quantity and price based on? (for example, MT, kg or pieces)',{max:24}),q('specification','What grade or specification can you supply?',{optional:true,max:2000}),q('price','What price are you offering?',{kind:'positive'}),q('currency','What currency is that price in? (for example, USD, AED or EUR)',{max:3}),q('origin','What is the origin country?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('availability','When is the product available for delivery?',{optional:true,max:500}),q('destination','What is the delivery port or named place? You can skip it if the buyer will choose the destination.',{optional:true,max:120}),q('payment_terms','What payment terms do you propose?',{optional:true,max:2000})];
 }
+export const EMAIL_TAKEN_NOTE='This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
+export const NO_DETAIL_NOTE='I did not find a detail to change in that. Send it like: Email name@company.com';
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
@@ -148,10 +150,18 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       if(!snapshot||snapshot.id!==session.id||snapshot.step!==session.step||JSON.stringify(snapshot.data)!==JSON.stringify(session.data))return {kind:'question' as const,purpose,step:session.step,data:session.data};
       const data:Record<string,string>={...session.data,__started:'1'};
       const notes:string[]=[];
-      for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details; the reason for a typed answer comes from directAnswer. */}}}
+      for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{
+        const value=validate(item,candidate,purpose);
+        if(item.kind==='email'&&purpose.startsWith('profile_')&&value){
+          const [owner]=await tx.select({phone:usersTable.phone}).from(usersTable).where(sql`lower(${usersTable.email}) = ${value}`).limit(1);
+          if(owner&&owner.phone!==phone){notes.push(EMAIL_TAKEN_NOTE);continue;}
+        }
+        data[item.name]=value;
+      }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);/* The old value stays; the user is told why. */}}}
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
       // Free text we could not read (for example the AI model is unavailable): say so and show the labelled form, instead of silently repeating the question.
       if(!notes.length&&purpose.startsWith('profile_')&&raw&&(/@/.test(raw)||(raw.match(/,/g)??[]).length>=2)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
+      if(!notes.length&&purpose.startsWith('profile_')&&raw&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push(NO_DETAIL_NOTE);
       const requiredDone=questions.every(q=>q.optional||data[q.name]);
       // Target price is optional, so the paragraph flow never asked for it unless the AI extracted it. Ask once.
       if(data.target_price!==undefined&&data.__awaiting==='target_price')delete data.__awaiting;
@@ -159,7 +169,7 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
       const complete=requiredDone&&data.__awaiting!=='target_price';
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
-      return complete?{kind:'review' as const,purpose,data}:{kind:'question' as const,purpose,step,data,note:notes[0]};
+      return complete?{kind:'review' as const,purpose,data,note:notes[0]}:{kind:'question' as const,purpose,step,data,note:notes[0]};
     }
     if(!raw)return {kind:'question' as const,purpose,step:session.step};
     let answer:string;
@@ -175,7 +185,7 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
     case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
     case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
-    case 'review':await review(phone,result.purpose,result.data);return true;
+    case 'review':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
       // Validation and identity conflicts return a useful reply without saving.
