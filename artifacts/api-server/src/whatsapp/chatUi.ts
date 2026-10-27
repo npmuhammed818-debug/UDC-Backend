@@ -248,7 +248,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
        if(joinLink){
          await sendWhatsAppText(phone,'Your personal invite link. When a buyer or seller taps it, WhatsApp opens the UDC chat with your code already typed. They only press send. UDC reviews every referral; no commission or deal access is granted automatically.');
          await sendWhatsAppText(phone,joinLink);
-         await sendWhatsAppText(phone,'A QR code of this same link is available in the UDC web app under your invite page, for cards and events. Send "My invites" to see who joined.');
+         await sendWhatsAppText(phone,'Send "My invites" to see who joined.');
          return true;
        }
        const command=agentReferralWhatsAppCommand(user.id);

@@ -21,3 +21,13 @@ test("first-contact notice return carries the approved Menu line outside the has
   assert.equal((src.match(/return consentNoticeWithHint;/g) ?? []).length, 2);
   assert.match(src, /noticeText: consentNotice/);
 });
+
+test("no customer-facing text implies an app", async () => {
+  const hb = await import("../src/akif/udcHandbook.ts");
+  const dp = await import("../src/deals/dealPauseText.ts");
+  assert.match(hb.udcHandbook, /NO APP: UDC has no app/);
+  assert.doesNotMatch(hb.udcHandbook, /web workspace is admin-only/);
+  for (const t of [dp.pausedConfirmationToSender("D1", false), dp.closedConfirmationToSender("D1", false), hb.verificationAnswer, hb.companyAnswer]) assert.doesNotMatch(t, /\b(app|application|dashboard|portal)\b/i);
+  const chat = readFileSync(new URL("../src/whatsapp/chatUi.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(chat, /UDC web app/);
+});

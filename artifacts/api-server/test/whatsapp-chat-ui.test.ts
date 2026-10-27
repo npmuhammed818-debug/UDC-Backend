@@ -170,7 +170,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       process.env.UDC_WHATSAPP_PUBLIC_NUMBER='+15551234567';
       await m.handleChatUi(agent.phone,ui('invite'));
       assert.match(state.sent.at(-2).body,/^https:\/\/wa\.me\/15551234567\?text=JOIN%20UDC-[0-9A-F]{12}$/);
-      assert.match(last(),/QR code of this same link/);
+      assert.match(last(),/Send "My invites" to see who joined/);
       if(priorPublicNumber===undefined)delete process.env.UDC_WHATSAPP_PUBLIC_NUMBER;
       else process.env.UDC_WHATSAPP_PUBLIC_NUMBER=priorPublicNumber;
 
