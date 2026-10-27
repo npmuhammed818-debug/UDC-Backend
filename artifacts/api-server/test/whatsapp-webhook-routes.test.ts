@@ -316,6 +316,14 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.recorded[0]?.destination, "Jebel Ali");
       assert.equal(state.sent[0].body, state.decision.reply);
     });
+    await t.test("AI down: a buyer inquiry continues in the guided form instead of a dead end", async () => {
+      reset(); state.decision = null; const before = state.uiCalls || 0;
+      assert.equal((await message({ text: { body: "I need 100 MT copper cathode CIF Jebel Ali" } })).status, 200);
+      assert.equal(state.sent[0].body, "My assistant is busy right now, so I will take your details step by step instead.");
+      assert.equal((state.uiCalls || 0), before + 1, "guided form opened exactly once");
+      assert.ok(!state.sent.some((x: any) => /may be busy/.test(x.body)));
+      assert.deepEqual(state.recorded, [], "nothing is recorded without the guided review");
+    });
     await t.test("seller can add another product after an offer is saved without reusing the old offer details", async () => {
       reset();
       state.decision = { role: "seller", newIntake: true, fields: { product: "Copper cathode", quantity: 100, price: 5900, currency: "USD" }, reply: "model reply" };
