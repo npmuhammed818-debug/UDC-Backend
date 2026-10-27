@@ -1240,6 +1240,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           continue;
         }
       }
+      if (message.from && message.text?.body && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
       if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
         try {
           // UDC/AKIF can occur in a person's or company's name. Consume a
