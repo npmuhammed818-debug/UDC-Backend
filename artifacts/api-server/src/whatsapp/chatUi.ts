@@ -1,3 +1,4 @@
+import {emailAuth} from '../auth/emailAuth';
 import { etaAdvisory, etaAdvisoryLabel } from "../tracking/etaAdvisory";
 import { handleWhatsAppIntroduction } from '../referrals/whatsappIntroduction';
 import { respondToTerms } from '../marketplace/termAgreement';
@@ -102,7 +103,8 @@ export async function submitChatFlow(phone:string,raw:unknown){
   let data:any;try{data=JSON.parse(raw);}catch{return 'This form response is invalid. Open a new form from Menu.';}
   const token=readFlowToken(data?.flow_token,phone);
   if(!token)return 'This form expired or belongs to another request. Open a new form from Menu.';
-  try{return await db.transaction(async tx=>{
+  let otpUserId:string|null=null;
+  try{const saved=await db.transaction(async tx=>{
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'chat_flow:'+token.nonce}))`);
     const [seen]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'whatsapp_chat_form_saved'),sql`${auditLogsTable.metadata}->>'nonce' = ${token.nonce}`)).limit(1);
     if(seen)return 'This form was already received. Type Menu for your features.';
@@ -142,8 +144,16 @@ export async function submitChatFlow(phone:string,raw:unknown){
     await tx.insert(auditLogsTable).values({actorUserId:user.id,action:'whatsapp_chat_form_saved',entityType:'user',entityId:user.id,metadata:{nonce:token.nonce,purpose:token.purpose,channel:'whatsapp',requiresAdminReview:true}});
     const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),or(eq(usersTable.status,'active'),eq(usersTable.status,'verified')))).limit(100);
     if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'whatsapp_form_submitted',title:'WhatsApp submission needs review',body:'A registration or trade form was submitted in WhatsApp.',link:'/admin'})));
+    if(token.purpose.startsWith('profile_'))otpUserId=user.id;
     return reply;
-  });}catch(error){if(error instanceof z.ZodError)return 'Please check the required fields, email and positive quantities/prices, then open a new form from Menu.';throw error;}
+  });
+  if(otpUserId){
+    try{
+      if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return saved+'\n\nI sent a 6-digit code to your email. Reply here with the code to confirm it. It expires in 10 minutes.';}
+    }catch{/* email sending off or rate limited: user can still send Verify email later */}
+  }
+  return saved;
+  }catch(error){if(error instanceof z.ZodError)return 'Please check the required fields, email and positive quantities/prices, then open a new form from Menu.';throw error;}
 }
 
 async function companyDocument(phone:string,message:ChatMessage){
