@@ -106,7 +106,12 @@ async function deliverWhatsAppReply(to: string | undefined, body: string, _withM
   try {
     const cleaned = cleanHumanWhatsAppText(body);
     return await sendWhatsAppText(to, cleaned);
-  } catch {
+  } catch (error) {
+    // Safe fields only: never the message body, number, token or provider response text.
+    const e = error as { httpStatus?: unknown; code?: unknown; subcode?: unknown } | null;
+    const msg = error instanceof Error ? error.message : "";
+    const subcode = /subcode=(\d+)/.exec(msg)?.[1];
+    console.warn(JSON.stringify({ event: "whatsapp_reply_send_failed", httpStatus: typeof e?.httpStatus === "number" ? e.httpStatus : null, code: typeof e?.code === "number" ? e.code : null, subcode: subcode ?? null }));
     return {
       delivered: false as const,
       // Provider errors must not be copied into logs: they can contain user or
