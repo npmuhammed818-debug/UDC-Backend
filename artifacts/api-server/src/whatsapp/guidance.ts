@@ -1,3 +1,4 @@
+import { isBareAcknowledgement } from './intentPhrases';
 import { handbookVersion, udcHandbook, trustedGuidanceAnswer, validateGuidanceReply, scopeAnswer } from '../akif/udcHandbook';
 import { createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -30,6 +31,8 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
   // A one-word Incoterm is commonly an answer to an active offer/intake prompt.
   // Let trade intake handle it instead of turning it into an unsolicited lesson.
   if (/^(?:EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)$/i.test(text.trim())) return null;
+  // A bare acknowledgement is not a question: stay quiet instead of a chatty AI reply.
+  if (isBareAcknowledgement(text)) return '';
   const phoneHash = guidanceKey(phone);
   const [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash, phoneHash)).limit(1);
   const fresh = saved && saved.expiresAt > new Date() ? saved : null;
