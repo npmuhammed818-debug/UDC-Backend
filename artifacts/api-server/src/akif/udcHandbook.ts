@@ -18,11 +18,13 @@ PERSONALITY AND SCOPE: Be a friendly trade specialist, not a general coding assi
 
 export const commissionAnswer = 'Commission terms are set in your agent agreement, and UDC will confirm them to you. I cannot state rates, percentages or payment timing in chat.';
 const companyDetailsAnswer = 'UDC is for businesses, so buyers and sellers register with a company name and a company email, and UDC reviews every registration before trading. Agents do not need a company name or company email.';
+export const inviteCountAnswer = 'Your invite counts after your friend taps your link and sends the message, registers, confirms their email, and UDC reviews the referral. Send "My invites" to see who joined. No commission or deal access is granted automatically.';
 export function trustedGuidanceAnswer(text: string, role?: string): string | null {
   const q = text.trim().toLowerCase();
   // Only answer questions/information requests here; never consume transaction commands.
   if (/^(?:deal\s+udc-|accept|approve|submit|forward|send (?:the |my )?(?:offer|requirement|contract|payment))/i.test(q)) return null;
   if (/\b(?:commissions?|referral (?:fee|bonus|reward)s?|payouts?|brokerage)\b/.test(q) && /\?|\b(?:how|what|when|much|rate|percent\w*|pay\w*|earn\w*|get)\b/.test(q)) return commissionAnswer;
+  if (/\b(?:invites?|invited|referrals?|referred)\b/.test(q) && /\b(?:count\w*|when|how long|status|work\w*|join\w*|register\w*|show\w*)\b/.test(q)) return inviteCountAnswer;
   if (/\b(?:passport|national id|bank statement|selfie)\b/.test(q) && /\b(?:verif|register|registration|need|require|upload|document|send|share|attach|whatsapp|give|here)/.test(q)) return role === 'agent' ? agentVerificationAnswer : verificationAnswer;
   if (/\b(?:verif\w*|registration|register)\b/.test(q) && /\b(?:doc\w*|need|required|requirement\w*|how|what)\b/.test(q)) return role === 'agent' || /\bagent\b/.test(q) ? agentVerificationAnswer : verificationAnswer;
   if (/\b(?:why|what for|need|required|requirement|mandatory)\b/.test(q) && /\b(?:company (?:name|email|e-mail|mail)|business (?:name|email|e-mail))\b/.test(q)) return companyDetailsAnswer;
