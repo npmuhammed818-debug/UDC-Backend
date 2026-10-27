@@ -6,12 +6,14 @@ import { requestedDealPause, dealPauseContextKind, dealPausePrompt, pausedNotice
 export { requestedDealPause, dealPauseContextKind, dealPausePrompt, pausedNoticeToOther, closedNoticeToOther, pausedConfirmationToSender, closedConfirmationToSender };
 export type { DealPauseKind };
 
-const FINAL = ["completed", "cancelled", "rejected", "on_hold", "disputed"];
+const FINAL = ["completed", "cancelled", "rejected", "disputed"];
+// A paused deal can still be closed; it cannot be paused twice.
+const blocked = (status: string, kind: DealPauseKind) => FINAL.includes(status) || (kind === "pause" && status === "on_hold");
 
 export async function applyDealPause(input: { dealId: string; dealNumber: string; senderId: string; receiverId: string; kind: DealPauseKind }) {
   const status = input.kind === "pause" ? "on_hold" : "cancelled";
   const [current] = await db.select({ status: dealsTable.status }).from(dealsTable).where(eq(dealsTable.id, input.dealId)).limit(1);
-  if (!current || FINAL.includes(current.status)) return { applied: false as const, told: false };
+  if (!current || blocked(current.status, input.kind)) return { applied: false as const, told: false };
   // Optimistic: only change the row if the status is still what we read.
   const [updated] = await db.update(dealsTable).set({ status, updatedAt: new Date() })
     .where(and(eq(dealsTable.id, input.dealId), eq(dealsTable.status, current.status))).returning({ id: dealsTable.id });
