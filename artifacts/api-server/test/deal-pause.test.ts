@@ -28,3 +28,7 @@ test("buyer intake with the AI down continues in the guided form instead of dead
   const wh = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   assert.ok(wh.includes("so I will take your details step by step instead") && wh.includes("ai-fallback"));
 });
+test("a paused deal can be closed but not paused twice", async () => {
+  const dp = await readFile(new URL("../src/deals/dealPause.ts", import.meta.url), "utf8");
+  assert.ok(dp.includes('kind === "pause" && status === "on_hold"') && !/FINAL = \[[^\]]*on_hold/.test(dp));
+});
