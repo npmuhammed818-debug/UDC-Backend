@@ -19,6 +19,7 @@ import { agentJoinLink } from '../referrals/joinInvite';
 import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, myInvitesReply } from '../referrals/joinService';
 import { getVaultLinkIssuer } from '../vault/issuer';
 import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
+import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 import {PoolAllocationError,poolReplyText,respondToPoolInvite} from '../marketplace/poolInvites';
 
@@ -235,7 +236,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
-    if(!company){await sendWhatsAppTextWithMenu(phone,'Open My profile and add your company details first.');return true;}
+    if(!company){await sendWhatsAppTextWithMenu(phone,ADD_COMPANY_FIRST);return true;}
     await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration')+'\nFor a trade document inside a deal, reply to that deal’s message instead.');return true;
   }
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
@@ -388,4 +389,13 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     await sendWhatsAppInteractive(phone,{type:'list',body:{text:'Choose one of your authorized deals.'},action:{button:'My deals',sections:[{title:'Your deals',rows:rows.map(r=>row('deal:'+r.id,r.number.slice(0,24),r.status))}]}});return true;
   }
   await sendWhatsAppText(phone,'This option is unavailable. Send Menu if you need to choose another.');return true;
+}
+
+/** Plain "send me the link" requests: same result as Menu, More options, Documents. Returns false when the sender is not a usable account. */
+export async function sendDocumentsLink(phone:string):Promise<boolean>{
+  const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+  if(!user||['suspended','rejected'].includes(user.status))return false;
+  const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+  if(!company){await sendWhatsAppTextWithMenu(phone,ADD_COMPANY_FIRST);return true;}
+  await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration')+'\nFor a trade document inside a deal, reply to that deal’s message instead.');return true;
 }

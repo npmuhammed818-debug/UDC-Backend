@@ -5,7 +5,7 @@ import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
 import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
-import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
+import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
@@ -50,6 +50,7 @@ import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
+import { asksForUploadLink } from "../whatsapp/uploadLinkIntent";
 import { askedAboutPausingDeal, dealPauseHowTo } from "../deals/dealPauseText";
 import { requestedDealPause, dealPauseContextKind, dealPausePrompt, applyDealPause, pausedConfirmationToSender, closedConfirmationToSender } from "../deals/dealPause";
 import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
@@ -1246,6 +1247,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           continue;
         }
       }
+      if (message.from && message.text?.body && asksForUploadLink(message.text.body) && await sendDocumentsLink(message.from)) continue;
       if (message.from && message.text?.body && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
       if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
         try {
