@@ -128,7 +128,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status. To confirm your email, send Verify email.':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review. To confirm your email, send Verify email.';
+      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.{{VERIFY_HINT}}':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review.{{VERIFY_HINT}}';
       if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+='\n\n'+inviteNote;}
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
@@ -149,10 +149,10 @@ export async function submitChatFlow(phone:string,raw:unknown){
   });
   if(otpUserId){
     try{
-      if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return saved+'\n\nI sent a 6-digit code to your email. Reply here with the code to confirm it. It expires in 10 minutes.';}
+      if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return saved.split('{{VERIFY_HINT}}').join('')+'\n\nI sent a 6-digit code to your email. Reply here with the code to confirm it. It expires in 10 minutes.';}
     }catch{/* email sending off or rate limited: user can still send Verify email later */}
   }
-  return saved;
+  return saved.split('{{VERIFY_HINT}}').join(' To confirm your email, send Verify email.');
   }catch(error){if(error instanceof z.ZodError)return 'Please check the required fields, email and positive quantities/prices, then open a new form from Menu.';throw error;}
 }
 
