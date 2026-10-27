@@ -15,7 +15,7 @@ import { downloadWhatsAppMedia, sendWhatsAppInteractive, sendWhatsAppText, sendW
 import { uploadDocumentBytes } from '../supabase/storage';
 import { issueFlowToken, readFlowToken, type FlowPurpose } from './flowToken';
 import { publishedFlowId } from './setupFlows';
-import { agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
+import { agentReferralCode, agentReferralWhatsAppCommand, agentReferralWhatsAppLink } from '../referrals/invitation';
 import { agentJoinLink } from '../referrals/joinInvite';
 import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, myInvitesReply } from '../referrals/joinService';
 import { getVaultLinkIssuer } from '../vault/issuer';
@@ -247,6 +247,14 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     // Outcome states only: AKIF never reads or describes the document contents.
     const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
     const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Ask for Menu, then Documents, to get a secure upload link.';
+    if(!company){
+      const u=user as {status:string;emailVerifiedAt?:Date|string|null};
+      const t=['suspended','rejected'].includes(u.status)?'Your account is not active. Please contact service@updowncircle.site.'
+        :u.status==='verified'?'Your account is verified by UDC.'
+        :u.emailVerifiedAt?'Your email is confirmed. UDC approval is still pending. You can chat, upload documents and use your invite link meanwhile.'
+        :'Your email is not confirmed yet. Send "Verify email" and I will email you a 6-digit code.';
+      await sendWhatsAppTextWithMenu(phone,t);return true;
+    }
     await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){
     const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
@@ -261,6 +269,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
        const joinLink=agentJoinLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER);
        if(joinLink){
          await sendWhatsAppText(phone,'Your personal invite link. When a buyer or seller taps it, WhatsApp opens the UDC chat with your code already typed. They only press send. UDC reviews every referral; no commission or deal access is granted automatically.');
+         await sendWhatsAppText(phone,'Your code: '+agentReferralCode(user.id));
          await sendWhatsAppText(phone,joinLink);
          await sendWhatsAppText(phone,'Send "My invites" to see who joined.');
          return true;
