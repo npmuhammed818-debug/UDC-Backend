@@ -1286,11 +1286,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         }
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
-          react("ack", message.from, message.id);
           const media = await downloadWhatsAppMedia(message.audio.id);
           voiceStage = 'transcription';
           const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
           const transcript = heard.text;
+          // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
+          // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.
+          reactByMeaning(message.from, message.id, transcript);
           const pendingOffer = takeVoiceOffer(message.from);
           if (pendingOffer && isOfferYes(transcript)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
           voiceStage = 'answer';
