@@ -5,10 +5,11 @@ import { buildConsentNotice, consentVersion, isExplicitAgree, isWithdrawConsent,
 import { decideWhatsAppConsent } from "../src/privacy/whatsappConsent.ts";
 
 const V = consentVersion("2026-10-27");
-test("notice is itemised, businesses-only, links Terms, states no Aadhaar and withdrawal", () => {
+test("notice is itemised, businesses-only, links Terms, and withdrawal", () => {
   const n = buildConsentNotice("help@example.com");
-  for (const needle of ["businesses only", "What we collect, and why", "never collect Aadhaar", "Raw vault documents never go to the AI", TERMS_URL, '"I agree"', "withdraw consent", "complaint"]) assert.ok(n.includes(needle), needle);
+  for (const needle of ["businesses only", "We collect", "Meta (WhatsApp)", "AI providers", TERMS_URL, '"I agree"', "withdraw consent", "help@example.com"]) assert.ok(n.includes(needle), needle);
   assert.ok(!n.includes("\\n"));
+  assert.ok(!/aadhaar/i.test(n));
   assert.notEqual(noticeHash(n), noticeHash(n + " "));
 });
 test("explicit agree only, withdraw recognised", () => {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 // Shown before any personal data is collected (DPDP Rule 3 style itemised notice).
 // Bump the suffix whenever the wording changes: every user is then asked again.
-export const CONSENT_VERSION_SUFFIX = "consent-v3";
+export const CONSENT_VERSION_SUFFIX = "consent-v4";
 export const SITE_BASE = "https://updowncircle.site";
 export const TERMS_URL = `${SITE_BASE}/#/terms`;
 export const PRIVACY_URL = `${SITE_BASE}/#/privacy`;
@@ -13,24 +13,14 @@ export function consentVersion(policyVersion: string) {
 
 export function buildConsentNotice(supportEmail: string) {
   return [
-    "Welcome to UpDownCircle (UDC).",
+    "Welcome to UpDownCircle (UDC). International trade, made simpler. UDC is for businesses only, for people 18+ who are authorised to act for their business.",
     "",
-    "International trade, made simpler.",
-    "",
-    "UDC is for businesses only, for people aged 18+ who are authorised to act for their business. It is not for personal or consumer purchases.",
-    "",
-    "What we collect, and why:",
-    "- Your name, WhatsApp number and business details: to set up and verify your business account.",
-    "- Your trade requirements, offers and messages: to match buyers and sellers and track deals.",
-    "- Documents you submit: to review verification and deals. Passports, bank and company records go only through a private upload link, never as WhatsApp attachments.",
-    "- We never collect Aadhaar numbers.",
-    "Your messages go through Meta (WhatsApp) and our service and AI providers. Raw vault documents never go to the AI. Verification decisions are reviewed by people.",
+    "We collect your name, WhatsApp number, business details, trade requirements and the documents you send (only through a private link) to set up your account, verify you and match buyers and sellers. Your messages go through Meta (WhatsApp) and our service and AI providers, and people review verification decisions.",
     "",
     `Terms: ${TERMS_URL}`,
     `Privacy: ${PRIVACY_URL}`,
     "",
-    'Reply "I agree" only if you are 18+, authorised to represent your business, accept the Terms and consent to the collection and use above.',
-    'You can withdraw consent at any time by sending "withdraw consent". To complain, send "complaint".',
+    'Reply "I agree" if you are 18+, authorised for your business, and accept the Terms and this use of your data. Send "withdraw consent" any time to stop.',
     `Help or data requests: ${supportEmail}`,
   ].join("\n");
 }

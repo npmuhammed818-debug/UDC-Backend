@@ -158,7 +158,7 @@ try {
     assert.ok(lastText(out).length < 520, `reminder ${n} is short (${lastText(out).length})`);
   }
   out = await say(pB, 'User', 'show notice');
-  assert.match(lastText(out), /What we collect, and why/, 'the full notice can be shown again on request');
+  assert.match(lastText(out), /We collect your name/, 'the full notice can be shown again on request');
   assert.equal(await count('select count(*) from users where phone=$1', [pB]), 0);
   out = await say(pB, 'User', 'I agree');
   assert.equal(out.length, 1);
