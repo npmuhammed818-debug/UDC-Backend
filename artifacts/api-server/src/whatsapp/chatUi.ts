@@ -120,7 +120,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
       const role=token.purpose.slice(8);
       const input=z.object({full_name:z.string().trim().min(2).max(120),email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),company_name:z.string().trim().max(200).optional(),country:z.string().trim().max(120).optional(),registration_number:z.string().trim().max(100).optional()}).parse(data);
       if(existing&&existing.role!==role)return `Your account is already registered as ${existing.role}. UDC must review role changes.`;
-      if(role!=='agent'&&(!businessEmail(input.email)||!input.company_name||!input.country))return 'Buyers and sellers need a company email, company name and country. Open My profile to submit those details. Agents may use personal or business email.';
+      if(role!=='agent'&&(!businessEmail(input.email,phone)||!input.company_name||!input.country))return 'Buyers and sellers need a company email, company name and country. Open My profile to submit those details. Agents may use personal or business email.';
       // An email is contact data; never bind it to an unrelated existing web identity.
       const [emailOwner]=await tx.select({id:usersTable.id}).from(usersTable).where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1);
       if(emailOwner&&emailOwner.id!==existing?.id)return 'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';

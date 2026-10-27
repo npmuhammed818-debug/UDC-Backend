@@ -6,7 +6,7 @@ import { and, eq, lt, sql } from 'drizzle-orm';
 import { auditLogsTable, db, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
-import { businessEmail } from './registrationEmail';
+import { businessEmail, runWithPhone } from './registrationEmail';
 import { classifyTurn } from '../akif/conversationPolicy';
 import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
@@ -105,7 +105,8 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
   if(!scalar)return null;
   try{return {[next.name]:validate(next,text,purpose)};}catch(error){const note=rejectionNote(next,error);return note?{__note:note}:{};}
 }
-export async function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){
+export function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){return runWithPhone(phone,()=>continueGuidedChatInner(phone,message,action,submit,directOnly));}
+async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){
   const raw=message.text?.body?.trim();
   if(!raw&&!['submit','restart','cancel'].includes(action??''))return false;
   const fingerprint=phoneHash(phone);
