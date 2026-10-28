@@ -481,7 +481,7 @@ async function issueDocumentUploadLinks(phone:string,user:DocUser,pick:'all'|str
   if(!link){await sendWhatsAppTextWithMenu(phone,'I could not create your private upload link just now. Please try again in a minute.');return;}
   const intro=keys.length===1
     ?`Your private upload link for ${documentLabel(keys[0])} (single use, works for 15 minutes):`
-    :`One private upload link for ${keys.length} documents. The page takes them one by one; the link works for 15 minutes:\n${keys.map((k,i)=>`${i+1}. ${documentLabel(k)}`).join('\n')}`;
+    :`One private upload link for ${keys.length} documents. Pick them all on one page, then one tap uploads them all. The link works for 15 minutes:\n${keys.map((k,i)=>`${i+1}. ${documentLabel(k)}`).join('\n')}`;
   await sendWhatsAppText(phone,`${intro}\n${link.url}\nOnly UDC's verification team can open what you upload. I only get the result, never the document.`);
   await writeDocListFlag(phone,String(Date.now()));
 }
