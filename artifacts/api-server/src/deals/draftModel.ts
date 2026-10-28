@@ -1,7 +1,7 @@
 import { UDC_DRAFT_WARNING_BOTTOM, UDC_DRAFT_WARNING_TOP } from "./draftWarning.ts";
 import type { SpaDraftInput } from "./spaDraft.ts";
 
-export type DraftType = "LOI" | "ICPO" | "FCO" | "SPA" | "NCNDA";
+export type DraftType = "LOI" | "ICPO" | "FCO" | "SPA" | "NCNDA" | "SELLER_CONTRACT";
 export type Block =
   | { k: "h"; t: string }
   | { k: "p"; t: string }
@@ -124,6 +124,17 @@ function buildBaseModel(type: DraftType, i: SpaDraftInput): DraftModel {
       ["Introducing agent", [AGENT]],
       ["Notices and entire agreement", ["Notices go to the addresses above or by written notice of change. This agreement is the whole agreement. Changes need a written document signed by both parties."]],
     ]), { k: "sig", parties: ["For the Buyer", "For the Seller"] }] };
+  if (type === "SELLER_CONTRACT") return { type, ref, title: "Seller Platform Contract", subtitle: "Discussion draft  |  Not executed or signature-ready", blocks: [head(i), { k: "h", t: "Parties" }, parties(i),
+    ...clauses([
+      ["Purpose", ["The Seller appoints UDC as introducing agent for UDC-brought buyers on the terms below. [LAWYER TO SET exact appointment wording.]"]],
+      ["Commission on UDC-brought buyers", ["The Seller pays UDC a commission on every transaction with a buyer UDC introduced, including any later direct transaction with that buyer.", "Rate, calculation basis, currency, triggering event and payment timing: [OWNER TO SET]. Enforceability, duration and tail period: [LAWYER TO SET].", "This draft creates no fee until those terms are completed and signed."]],
+      ["Contact confidentiality", ["Buyer contact details are revealed only after the SPA for the transaction is signed and UDC has approved the reveal. [LAWYER TO SET breach consequences.]"]],
+      ["Agents", ["Any UDC agent involved signs the agent non-circumvention and non-disclosure terms only after the SPA is signed. [LAWYER TO SET the agent terms.]"]],
+      ["Seller obligations", ["Accurate product, price and capacity information; documents verified before any deal; no bypassing UDC with UDC-brought buyers. [LAWYER TO SET remedies and dispute terms.]"]],
+      ["Duration, law and disputes", ["Effective date, term and termination: [LAWYER TO SET]. Applicable law and forum: [LAWYER TO SET]."]],
+      ["Introducing agent", [AGENT]],
+      ["Authority and execution", ["Each party verifies legal identity and signatory authority. No sale, supply, payment or banking instrument is authorized by this draft."]],
+    ]), { k: "sig", parties: ["For the Seller", "For UDC"] }] };
   return { type, ref, title: "Mutual Non-Disclosure and Non-Circumvention Agreement", subtitle: "Draft for discussion", blocks: [head(i), { k: "h", t: "Parties" }, parties(i),
     ...clauses([
       ["Purpose", [`The parties wish to discuss the transaction under UDC deal reference ${clean(i.dealNumber, "[DEAL REFERENCE]")} and will share confidential information only for that purpose.`]],
