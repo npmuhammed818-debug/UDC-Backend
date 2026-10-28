@@ -41,7 +41,8 @@ export function hashLinkToken(token: string) {
 }
 
 export function issueUploadLinkToken(now: Date = new Date()) {
-  const token = randomBytes(32).toString("base64url");
+  // 128 bits, unguessable; short enough that the link reads clean on a phone.
+  const token = randomBytes(16).toString("base64url");
   return { token, tokenHash: hashLinkToken(token), expiresAt: new Date(now.getTime() + VAULT_LINK_TTL_MS) };
 }
 
@@ -105,7 +106,7 @@ export function vaultPublicOrigin(value: unknown): string | null {
 export function uploadPageUrl(baseUrl: string, token: string) {
   const base = vaultPublicOrigin(baseUrl);
   if (!base) throw Error('invalid_vault_public_origin');
-  return `${base}/api/vault/upload/${encodeURIComponent(token)}`;
+  return `${base}/u/${encodeURIComponent(token)}`;
 }
 
 // WhatsApp reply when someone sends, or asks to send, a confidential document.
