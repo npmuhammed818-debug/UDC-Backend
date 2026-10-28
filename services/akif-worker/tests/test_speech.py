@@ -204,3 +204,50 @@ def test_audio_seconds_measured_or_none(monkeypatch):
     def boom(*a, **k): raise FileNotFoundError()
     monkeypatch.setattr(speech.subprocess, "run", boom)
     assert speech.audio_seconds(b"ogg") is None
+
+
+def test_non_english_uses_multilingual_model_same_voice(monkeypatch):
+    _eleven_env(monkeypatch)
+    seen = []
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _Resp(b"mp3-bytes"))[1])
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    text = next(iter(speech.ALLOWED_TEXTS))
+    assert speech.synthesize(text, language="malayalam") == b"ogg:mp3-bytes"
+    import json
+    req = seen[0]
+    assert req.full_url.startswith("https://api.elevenlabs.io/v1/text-to-speech/voice123?"), "same configured voice, never a hardcoded one"
+    assert json.loads(req.data)["model_id"] == "eleven_multilingual_v2"
+
+
+def test_english_keeps_default_model(monkeypatch):
+    _eleven_env(monkeypatch)
+    seen = []
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _Resp(b"mp3-bytes"))[1])
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    text = next(iter(speech.ALLOWED_TEXTS))
+    speech.synthesize(text, language="english")
+    import json
+    assert json.loads(seen[0].data)["model_id"] == "eleven_flash_v2_5"
+
+
+def test_unknown_language_fails_closed(monkeypatch):
+    _eleven_env(monkeypatch)
+    called = []
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda *a, **k: called.append(1))
+    with pytest.raises(HTTPException) as e:
+        speech.synthesize(next(iter(speech.ALLOWED_TEXTS)), language="kannada")
+    assert e.value.status_code == 503 and e.value.detail == "voice_language_not_allowed"
+    assert not called
+
+
+def test_gemini_path_is_english_only(monkeypatch):
+    monkeypatch.setenv("AKIF_VOICE_REPLIES", "on")
+    monkeypatch.setenv("AKIF_TTS_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("AKIF_GEMINI_DATA_PROCESSING_ACCEPTED", "true")
+    called = []
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda *a, **k: called.append(1))
+    with pytest.raises(HTTPException) as e:
+        speech.synthesize(next(iter(speech.ALLOWED_TEXTS)), language="hindi")
+    assert e.value.status_code == 503 and e.value.detail == "voice_language_not_allowed"
+    assert not called

@@ -23,7 +23,7 @@ test("webhook speaks through one helper and falls back to text only for a known 
   assert.equal((w.match(/speakReply\(/g) || []).length, 1);
   assert.ok(w.includes("if (spoken.status === false) return deliverWhatsAppReply(to, reply);"));
   assert.ok(w.includes('if (spoken.status === "uncertain")'));
-  assert.ok(w.includes("deliverAnswer(message.from, guidance, true)"));
+  assert.ok(w.includes("deliverAnswer(message.from, guidance, true,"));
 });
 
 test("API allowlist and worker allowlist are identical (cross-language parity)", async () => {

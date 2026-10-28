@@ -27,6 +27,15 @@ export const guidanceSystem = `You are Akif, UDC's helpful trade tutor in WhatsA
 function guidanceServiceFallback() {
   return 'My detailed trade-answer service is busy right now. I can still answer UDC’s saved company facts and basic trade questions in English. Please try again in about a minute for a fuller answer.';
 }
+/** The customer's chosen main language, if they picked one (session notebook). "" when unknown. */
+export async function guidanceMainLanguage(phone: string): Promise<string> {
+  try {
+    const [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash, guidanceKey(phone))).limit(1);
+    const language = saved && saved.expiresAt > new Date() ? saved.data.mainLanguage : undefined;
+    return typeof language === "string" ? language : "";
+  } catch { return ""; }
+}
+
 export async function answerGuidance(phone: string, text: string, messageId?: string, voice = false, onlyWithHistory = false, languageHint?: string, quotedReply = false): Promise<string | null> {
   // A one-word Incoterm is commonly an answer to an active offer/intake prompt.
   // Let trade intake handle it instead of turning it into an unsolicited lesson.

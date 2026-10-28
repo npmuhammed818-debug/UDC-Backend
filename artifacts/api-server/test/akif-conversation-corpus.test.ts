@@ -166,7 +166,9 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;export const markReadAndTyping=()=>{};export const trackReplyFailures=(fn)=>fn(new Set());",
     "../akif/recordBuyerRequirement":
       "export const recordPendingBuyerRequirement=async(v)=>{globalThis.__udcChatTest.records.push(v);return {id:'requirement-1',status:'pending_admin_review'}};",
-    "../whatsapp/guidance": "export const isGuidanceQuestion=()=>false;export const answerGuidance=async()=>null;",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=()=>false;export const answerGuidance=async()=>null;export const guidanceMainLanguage=async()=>'';",
+    "../akif/intelligence/hermesClient":
+      "export const runConversationChat=async()=>({content:'',raw:{}});",
     "../vault/service": "export const createVaultUploadLink=async()=>({ok:false,error:'vault_base_url_not_configured'});export const acceptUpload=async()=>({ok:false,error:'invalid'});export const listOwnDocumentStatuses=async()=>[];export const lookupLink=async()=>({row:null,check:{ok:false,reason:'invalid'}});export const requestDocumentDeletion=async()=>({ok:false,error:'not_found'});export const logVaultAccess=async()=>{};",
     "../akif/recordPendingSellerOffer":
       "export const recordPendingSellerOffer=async()=>({id:'offer-1'});",

@@ -3,7 +3,7 @@ import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
-import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
+import { answerGuidance, guidanceMainLanguage, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
 import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
@@ -85,17 +85,26 @@ function cleanHumanWhatsAppText(body: string) {
     .trim();
 }
 
+import { chooseChannel } from "../akif/voiceMoments.ts";
+import { pickVoiceLanguage } from "../akif/voiceLanguage.ts";
+
 const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "malayalam", tam: "tamil", hin: "hindi", ara: "arabic" };
 
 /**
- * Reply the way a person would: voice only when the user used voice (or asked for it) and the reply is warm or
- * explanatory. Exact details, links, codes and anything unsure go as text. A spoken reply is never also sent as
- * text. If the voice cannot be sent, the same reply goes as text. After a long voice reply (over the threshold)
- * a short text offer follows; the text itself is only sent after a yes.
+ * Reply the way a person would. Voice when the user used voice or asked for it; AKIF may also pick
+ * voice by itself for the Master Plan moments (calming an upset user, explaining something long)
+ * when AKIF_VOICE_AUTOPICK=on - never dates or money, never the welcome message (those paths do not
+ * pass a userText). Voice is spoken in the customer's main language or English (AKIF's per-customer
+ * pick); text is always English. A spoken reply is never also sent as text. If the voice cannot be
+ * sent, the same reply goes as text. After a long voice reply (over the threshold) a short text
+ * offer follows; the text itself is only sent after a yes.
  */
-async function deliverAnswer(to: string, reply: string, wantsVoice: boolean) {
-  if (!wantsVoice) return deliverWhatsAppReply(to, reply);
-  const spoken = await speakReply(to, reply);
+async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string } = {}) {
+  const choice = chooseChannel({ wantsVoice, userText: context.userText, reply });
+  if (choice.channel === "text") return deliverWhatsAppReply(to, reply);
+  const mainLanguage = await guidanceMainLanguage(to);
+  const language = pickVoiceLanguage({ mainLanguage, heardLanguage: context.heardLanguage });
+  const spoken = await speakReply(to, reply, { language });
   if (spoken.status === false) return deliverWhatsAppReply(to, reply);
   if (spoken.status === "uncertain") return { delivered: false as const, reason: "provider_outcome_unknown" as const };
   if (spoken.noticeDue) await deliverWhatsAppReply(to, VOICE_NOTICE);
@@ -1280,7 +1289,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // actual learning questions still bypass intake without a model call.
           if (await handleChatUi(message.from, message, true)) continue;
           const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
-          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
+          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from), { userText: message.text.body }); continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
@@ -1315,7 +1324,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
-            if (guidance) await deliverAnswer(message.from, guidance, true);
+            if (guidance) await deliverAnswer(message.from, guidance, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined });
             continue;
           }
           voiceStage = 'trade_context';
@@ -1483,7 +1492,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         try {
           if (!dealActionDirect && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
           const reply = dealActionDirect ? null : await answerGuidance(message.from, message.text.body, message.id, false, true);
-          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from)); continue; }
+          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from), { userText: message.text.body }); continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
