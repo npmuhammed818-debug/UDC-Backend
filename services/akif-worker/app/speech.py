@@ -11,11 +11,15 @@ no user, deal or account text can reach a speech provider. No automatic switch b
 """
 import base64
 import json
+import logging
 import os
 import re
 import subprocess
 import time
+import urllib.error
 import urllib.request
+
+logger = logging.getLogger("akif.speech")
 
 from fastapi import HTTPException
 
@@ -167,7 +171,23 @@ def _synthesize_elevenlabs(text: str, language: str = "english") -> bytes:
             audio = resp.read()
         if not audio:
             raise ValueError("no_audio")
+    except urllib.error.HTTPError as exc:
+        # Name the provider's own answer so a bad key, bad voice, quota and outage can
+        # be told apart. Status and provider message only - never the request text,
+        # never any header (the API key rides in headers).
+        detail = ""
+        try:
+            payload = json.loads(exc.read() or b"{}")
+            raw = payload.get("detail")
+            detail = (raw.get("message") if isinstance(raw, dict) else str(raw or ""))[:200]
+        except Exception:
+            detail = ""
+        logger.warning(json.dumps({"event": "tts_provider_error", "provider": "elevenlabs",
+                                   "httpStatus": exc.code, "providerMessage": detail}))
+        raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
     except Exception as exc:
+        logger.warning(json.dumps({"event": "tts_provider_error", "provider": "elevenlabs",
+                                   "httpStatus": None, "providerMessage": ""}))
         raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
     return wav_to_ogg_opus(audio)  # ffmpeg detects the input format (mp3 here)
 

@@ -108,7 +108,7 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
   const spoken = await speakReply(to, reply, { language });
   if (spoken.status === false) {
     // Content-free diagnosis: which gate turned this voice reply into text.
-    console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown" }));
+    console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown", rule: spoken.detail ?? null }));
     // AKIF promised voice after an explicit request: never break that promise silently.
     if (context.explicitVoice) {
       await deliverWhatsAppReply(to, spoken.reason === "not_speakable"

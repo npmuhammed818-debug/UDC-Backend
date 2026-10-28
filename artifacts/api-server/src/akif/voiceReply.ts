@@ -60,6 +60,24 @@ export function classifyReply(text: string | null | undefined): ReplyClass {
   } catch { return "critical"; }
 }
 
+const BLOCKED_RULE_NAMES = ["link_or_domain", "email", "code_word", "bank_or_id", "vault_word", "approval_instruction", "approval_prompt"];
+
+/** Which rule kept a reply off the air - rule names only, never content. null when speakable. */
+export function speechBlockReason(reply: string | null | undefined, env: Record<string, string | undefined> = process.env): string | null {
+  if (!voiceRepliesEnabled(env)) return "master_off";
+  if (speechTextAllowed(reply)) return null;
+  if (!conversationalVoiceEnabled(env)) return "conversational_off";
+  if (typeof reply !== "string" || !reply.trim()) return "empty";
+  const t = reply.trim();
+  if (t.length > MAX_SPOKEN_CHARS) return "too_long";
+  if (/\d{7,}/.test(t.replace(/[\s().-]/g, ""))) return "long_number";
+  const rule = BLOCKED_PATTERNS.findIndex(pattern => pattern.test(t));
+  if (rule >= 0) return BLOCKED_RULE_NAMES[rule] ?? "blocked_rule";
+  if (/\d/.test(t) && CRITICAL_TERMS.test(t)) return "money_or_terms";
+  if (/\n\s*(?:[-*\u2022]|\d+[.)])\s/.test(t) || t.split("\n").filter(line => line.trim()).length > 3) return "list_shape";
+  return null;
+}
+
 export type SpeechKind = "static" | "conversational" | "none";
 
 export function speechKind(reply: string | null | undefined, env: Record<string, string | undefined> = process.env): SpeechKind {
