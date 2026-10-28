@@ -2,12 +2,13 @@ import {emailAuth} from '../auth/emailAuth';
 import { etaAdvisory, etaAdvisoryLabel } from "../tracking/etaAdvisory";
 import { handleWhatsAppIntroduction } from '../referrals/whatsappIntroduction';
 import { respondToTerms } from '../marketplace/termAgreement';
+import { lcStatusReply } from '../deals/lcStatus';
 import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
 import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { z } from 'zod/v4';
-import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
+import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
@@ -407,7 +408,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     if(user.status!=='verified'){await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Deal access starts after verification.');return true;}
     const fields={id:dealsTable.id,number:dealsTable.dealNumber,status:dealsTable.status};
     const rows=user.role==='agent'?await db.select(fields).from(dealsTable).innerJoin(dealParticipantsTable,eq(dealParticipantsTable.dealId,dealsTable.id)).where(and(eq(dealParticipantsTable.userId,user.id),eq(dealParticipantsTable.participantRole,'agent'),eq(dealParticipantsTable.status,'active'))).orderBy(desc(dealsTable.updatedAt)).limit(10):await db.select(fields).from(dealsTable).where(or(eq(dealsTable.buyerUserId,user.id),eq(dealsTable.sellerUserId,user.id))).orderBy(desc(dealsTable.updatedAt)).limit(10);
-    if(action.startsWith('deal:')){const selected=rows.find(r=>r.id===action.slice(5));if(!selected){await sendWhatsAppTextWithMenu(phone,'That deal is unavailable. Open My deals again.');return true;}await db.insert(whatsappUserContextsTable).values({userId:user.id,activeDealId:selected.id}).onConflictDoUpdate({target:whatsappUserContextsTable.userId,set:{activeDealId:selected.id,updatedAt:new Date()}});await sendWhatsAppTextWithMenu(phone,`${selected.number}: ${selected.status}. Your next trade message will use this deal. Ask for its documents, status or a meeting here.`);await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Track this shipment or choose another deal.'},action:{buttons:[{type:'reply',reply:{id:'udc:track',title:'Track shipment'}},{type:'reply',reply:{id:'udc:deals',title:'My deals'}}]}});return true;}
+    if(action.startsWith('deal:')){const selected=rows.find(r=>r.id===action.slice(5));if(!selected){await sendWhatsAppTextWithMenu(phone,'That deal is unavailable. Open My deals again.');return true;}await db.insert(whatsappUserContextsTable).values({userId:user.id,activeDealId:selected.id}).onConflictDoUpdate({target:whatsappUserContextsTable.userId,set:{activeDealId:selected.id,updatedAt:new Date()}});const [confirmedLc]=await db.select({id:dealFinancialsTable.id}).from(dealFinancialsTable).where(and(eq(dealFinancialsTable.dealId,selected.id),eq(dealFinancialsTable.instrumentType,'DLC'),eq(dealFinancialsTable.status,'confirmed'))).limit(1);await sendWhatsAppTextWithMenu(phone,`${lcStatusReply(selected.number,selected.status,Boolean(confirmedLc))} Your next trade message will use this deal. Ask for its documents, status or a meeting here.`);await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Track this shipment or choose another deal.'},action:{buttons:[{type:'reply',reply:{id:'udc:track',title:'Track shipment'}},{type:'reply',reply:{id:'udc:deals',title:'My deals'}}]}});return true;}
     if(!rows.length){await sendWhatsAppTextWithMenu(phone,'No approved deals are assigned to you yet. UDC will notify you when there is an update.');return true;}
     await sendWhatsAppInteractive(phone,{type:'list',body:{text:'Choose one of your authorized deals.'},action:{button:'My deals',sections:[{title:'Your deals',rows:rows.map(r=>row('deal:'+r.id,r.number.slice(0,24),r.status))}]}});return true;
   }
