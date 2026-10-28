@@ -34,16 +34,19 @@ function withEnv(patch: Record<string, string | undefined>, fn: () => unknown) {
 }
 const ENV = { UDC_TESTER_MODE: undefined, UDC_TESTER_PHONES: undefined, NODE_ENV: undefined, UDC_APP_ENV: undefined };
 
-test('off by default and impossible in production', () => {
-  withEnv({ ...ENV }, () => assert.equal(isTesterModeEnabled(), false));
-  withEnv({ ...ENV, UDC_TESTER_MODE: 'on' }, () => assert.equal(isTesterModeEnabled(), true));
-  withEnv({ ...ENV, UDC_TESTER_MODE: 'on', NODE_ENV: 'production' }, () => assert.equal(isTesterModeEnabled(), false));
-  withEnv({ ...ENV, UDC_TESTER_MODE: 'on', UDC_APP_ENV: 'production' }, () => assert.equal(isTesterModeEnabled(), false));
+test('only UDC_APP_ENV=staging + UDC_TESTER_MODE=on enables it; unset or production refuses', () => {
+  withEnv({ ...ENV }, () => assert.equal(isTesterModeEnabled(), false, 'unset UDC_APP_ENV refuses'));
+  withEnv({ ...ENV, UDC_TESTER_MODE: 'on' }, () => assert.equal(isTesterModeEnabled(), false, 'flag alone is not enough'));
+  withEnv({ ...ENV, UDC_APP_ENV: 'staging' }, () => assert.equal(isTesterModeEnabled(), false, 'staging alone is not enough'));
+  withEnv({ ...ENV, UDC_APP_ENV: 'staging', UDC_TESTER_MODE: 'on' }, () => assert.equal(isTesterModeEnabled(), true));
+  withEnv({ ...ENV, UDC_APP_ENV: 'staging', UDC_TESTER_MODE: 'on', NODE_ENV: 'production' }, () => assert.equal(isTesterModeEnabled(), true, 'staging runs NODE_ENV=production on purpose'));
+  withEnv({ ...ENV, UDC_APP_ENV: 'production', UDC_TESTER_MODE: 'on' }, () => assert.equal(isTesterModeEnabled(), false, 'production refuses'));
+  withEnv({ ...ENV, UDC_APP_ENV: 'STAGING', UDC_TESTER_MODE: 'on' }, () => assert.equal(isTesterModeEnabled(), false, 'exact value only'));
 });
 
 test('only the allowlisted number is a tester, normalized to digits', () => {
   assert.equal(normalizeTesterPhone('+91 70220 32531'), '917022032531');
-  withEnv({ ...ENV, UDC_TESTER_MODE: 'on', UDC_TESTER_PHONES: '917022032531' }, () => {
+  withEnv({ ...ENV, UDC_APP_ENV: 'staging', UDC_TESTER_MODE: 'on', UDC_TESTER_PHONES: '917022032531' }, () => {
     assert.deepEqual(testerPhones(), ['917022032531']);
     assert.equal(isTesterPhone('+917022032531'), true);
     assert.equal(isTesterPhone('917022032531'), true);
@@ -51,7 +54,7 @@ test('only the allowlisted number is a tester, normalized to digits', () => {
     assert.equal(isTesterPhone(''), false);
     assert.equal(isTesterPhone(null), false);
   });
-  withEnv({ ...ENV, UDC_TESTER_MODE: 'off', UDC_TESTER_PHONES: '917022032531' }, () => assert.equal(isTesterPhone('917022032531'), false));
+  withEnv({ ...ENV, UDC_APP_ENV: 'staging', UDC_TESTER_MODE: 'off', UDC_TESTER_PHONES: '917022032531' }, () => assert.equal(isTesterPhone('917022032531'), false));
 });
 
 test('tester sign-in links the phone with no email code; other numbers still need the code', async () => {
@@ -73,7 +76,7 @@ test('tester sign-in links the phone with no email code; other numbers still nee
   const send = async (...args: any[]) => { noEmail.push(args); };
   const { phoneRecoveryCommand, createPhoneRecoveryService } = await loadPhoneRecovery();
   assert.equal(phoneRecoveryCommand('sign in owner@example.invalid')?.kind, 'request');
-  await withEnv({ ...ENV, UDC_TESTER_MODE: 'on', UDC_TESTER_PHONES: '917022032531' }, async () => {
+  await withEnv({ ...ENV, UDC_APP_ENV: 'staging', UDC_TESTER_MODE: 'on', UDC_TESTER_PHONES: '917022032531' }, async () => {
     const service = createPhoneRecoveryService({ database: db, send, budget: async () => {} });
     const reply = await service.request('917022032531', 'owner@example.invalid');
     assert.match(String(reply), /Signed in \(tester mode\)/);
