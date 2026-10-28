@@ -50,6 +50,7 @@ for (const [route, [title, body]] of Object.entries(policies)) {
   app.get(route, (_req, res) => res.type("html").send(renderPolicy(title, body)));
 }
 
+app.use(vaultShortRouter);
 app.use("/api", router);
 
 const webDistPath = fileURLToPath(

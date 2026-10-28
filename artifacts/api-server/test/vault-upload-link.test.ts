@@ -121,3 +121,14 @@ test("the multi upload page takes one file per expected document", () => {
   assert.match(single, /Tax ID/);
   assert.doesNotMatch(single, /data-doc/);
 });
+
+test("short /u/<token> router is mounted before the web app catch-all in app.ts", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
+  const mount = source.indexOf("app.use(vaultShortRouter);");
+  const staticMount = source.indexOf("app.use(express.static(");
+  const apiMount = source.indexOf('app.use("/api", router);');
+  assert.ok(mount !== -1, "vaultShortRouter must be mounted");
+  assert.ok(staticMount !== -1 && mount < staticMount, "vaultShortRouter must mount before express.static and the SPA fallback");
+  assert.ok(apiMount !== -1 && mount < apiMount, "vaultShortRouter mounts ahead of /api");
+});

@@ -238,7 +238,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         await m.handleChatUi(p,ui('doc:upload:tax_id'));
         assert.deepEqual(issued,['tax_id']);assert.match(last(),/Tax ID/);assert.match(last(),/https:\/\/vault\.example\/upload\/TESTTOKEN/);assert.match(last(),/single use/);
         issued.length=0;await m.handleChatUi(p,{id:'m1',context:{id:'wamid-list'},text:{body:'1.2.3'}});
-        assert.deepEqual(issued,['multi:company_registration,tax_id,import_licence']);assert.match(last(),/one by one/);assert.doesNotMatch(last(),/clarify what you mean/);
+        assert.deepEqual(issued,['multi:company_registration,tax_id,import_licence']);assert.match(last(),/one tap uploads them all/);assert.doesNotMatch(last(),/clarify what you mean/);
         issued.length=0;await m.handleChatUi(p,{id:'m2',text:{body:'1. I wanna upload 1'}});
         assert.deepEqual(issued,['company_registration']);
         issued.length=0;await m.handleChatUi(p,{id:'m3',text:{body:'1 , 2 and 3 I wanna upload all of it'}});
