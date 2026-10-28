@@ -1,4 +1,5 @@
 import {runShipmentWatchPoll,WATCH_POLL_INTERVAL_MS} from "./shipmentWatch";
+import {stagingFakeTracker} from "./shipmentWatchScheduler";
 import {isSeventeenTrackConfigured} from "./seventeenTrack";
 import {logger} from "../lib/logger";
 
@@ -13,7 +14,14 @@ export function startShipmentWatchRunner(){
     if(running)return;
     running=true;
     try{
-      const result=await runShipmentWatchPoll();
+      // Respect the staging fake-events switch here too: while it is set, the
+      // in-process runner must not spend real 17TRACK quota.
+      const fake=stagingFakeTracker();
+      if(fake&&"error" in fake){
+        logger.warn("UDC shipment watch skipped: UDC_SHIPMENT_WATCH_FAKE_EVENTS is invalid");
+        return;
+      }
+      const result=await runShipmentWatchPoll(fake?{tracker:fake.tracker}:{});
       logger.info({polled:result.polled,notified:result.notified,failed:result.failed},"UDC shipment watch poll completed");
     }catch{
       logger.warn("UDC shipment watch poll failed");

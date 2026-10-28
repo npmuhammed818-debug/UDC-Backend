@@ -6,7 +6,7 @@ import { udcPaymentTerms } from '../marketplace/paymentPolicy';
 import { buildDefaultCommissionPreview } from "../referrals/defaultCommissionRule";
 import { commissionAmountFitsStorage } from "../referrals/currencyPrecision";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -21,6 +21,7 @@ import {dispatchShipmentNotifications} from "../notifications/shipmentDispatcher
 import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
 import { runShipmentWatchPoll } from "../tracking/shipmentWatch";
+import { schedulerKeyAllowed, stagingFakeTracker } from "../tracking/shipmentWatchScheduler";
 import { fetchAkifSpeechStatus, isAkifWorkerConfigured } from "../akif/intelligence/workerClient";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
@@ -654,18 +655,21 @@ router.get("/admin/voice/status",requireRole("admin"),async(_req,res)=>{
 // 17TRACK response can be supplied through UDC_SHIPMENT_WATCH_FAKE_EVENTS (JSON
 // array of {time,description,location}) so the full delivery chain is testable
 // without spending real 17TRACK quota. The flag is ignored outside staging.
-router.post("/admin/tracking/shipment-watch/run",requireRole("admin"),async(_req,res)=>{
+// Admin session OR the scheduler-scoped key (x-scheduler-key header). The key
+// opens this one route only and is revocable by rotating the env value.
+const adminOrSchedulerKey=(req:Request,res:Response,next:NextFunction)=>{
+  if(schedulerKeyAllowed(req.get("x-scheduler-key"))){next();return;}
+  requireRole("admin")(req,res,next);
+};
+
+router.post("/admin/tracking/shipment-watch/run",adminOrSchedulerKey,async(_req,res)=>{
   try{
-    let tracker;
-    if(process.env.UDC_APP_ENV==="staging"&&process.env.UDC_SHIPMENT_WATCH_FAKE_EVENTS){
-      const parsed=JSON.parse(process.env.UDC_SHIPMENT_WATCH_FAKE_EVENTS) as {time:string;description:string;location?:string}[];
-      if(!Array.isArray(parsed)||parsed.some(e=>!e||typeof e.time!=="string"||typeof e.description!=="string")){
-        res.status(400).json({error:"fake_events_invalid"});
-        return;
-      }
-      tracker={name:"staging-fake",fetchEvents:async()=>parsed};
+    const fake=stagingFakeTracker();
+    if(fake&&"error" in fake){
+      res.status(400).json({error:fake.error});
+      return;
     }
-    const result=await runShipmentWatchPoll(tracker?{tracker}:{});
+    const result=await runShipmentWatchPoll(fake?{tracker:fake.tracker}:{});
     res.json(result);
   }catch{
     res.status(500).json({error:"shipment_watch_run_failed"});
