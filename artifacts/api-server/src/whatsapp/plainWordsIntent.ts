@@ -19,6 +19,8 @@ const NAMED_DOCUMENTS: [RegExp, string][] = [
   [/(?:past\s+exports?|export\s+invoices?|factory\s+photos?)/, 'doc:upload:past_exports'],
 ];
 
+const TRACKING_NUMBER = /^(?:track|tracking)\s+(?:(?:my|the)\s+)?(?:(?:shipment|order|cargo|package|parcel|number)\s+)?([a-z0-9][a-z0-9-]{4,38}[a-z0-9])$/i;
+
 const SPOKEN: [RegExp, string][] = [
   // deals
   [/^(?:my\s+)?deals$/, 'deals'],
@@ -88,5 +90,11 @@ export function plainWordsAction(raw: string | null | undefined): string | null 
   for (const [pattern, action] of SPOKEN) {
     if (pattern.test(t)) return action;
   }
+  // A carrier tracking number after "track" goes to the live lookup, not the
+  // menu action. Exact menu phrases won above, so "track my shipment" and
+  // "track referrals" keep their meaning; a digit is required so ordinary
+  // words ("track orders") still fall through to Akif's brain.
+  const trackingNumber = TRACKING_NUMBER.exec(t);
+  if (trackingNumber && /\d/.test(trackingNumber[1])) return 'tracknum:' + trackingNumber[1].toUpperCase();
   return null;
 }

@@ -26,6 +26,7 @@ import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
 import { documentsStatusText, documentStatusFor, requiredDocuments, documentLabel } from './documentChecklist';
 import { plainWordsAction } from './plainWordsIntent';
+import { liveTrackingReply } from './liveTracking';
 import { parseDocumentPick } from './docUploadIntent';
 import { guidanceKey } from './guidanceSession';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
@@ -313,6 +314,14 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     const rows=await db.select({amount:commissionsTable.amount,currency:commissionsTable.currency,status:commissionsTable.status}).from(commissionsTable).where(eq(commissionsTable.beneficiaryUserId,user.id)).orderBy(desc(commissionsTable.createdAt)).limit(10);await sendWhatsAppTextWithMenu(phone,rows.length?rows.map(r=>`${r.currency} ${r.amount}: ${r.status}`).join('\n'):'No agreed commissions have been recorded for you yet.');return true;
   }
 
+  if(action.startsWith('tracknum:')){
+    if(user.status!=='verified'){
+      await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Tracking opens after verification.');
+      return true;
+    }
+    await sendWhatsAppTextWithMenu(phone,await liveTrackingReply(action.slice('tracknum:'.length)));
+    return true;
+  }
   if(action==='track'){
     if(user.status!=='verified'){
       await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Tracking opens after verification.');
