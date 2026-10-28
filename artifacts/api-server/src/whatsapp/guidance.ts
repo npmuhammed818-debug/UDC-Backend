@@ -5,6 +5,8 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db, usersTable, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { runConversationChat } from '../akif/intelligence/hermesClient';
+import { runStrongModelChat } from '../akif/intelligence/strongModel';
+import { runCheapModelChat } from '../akif/intelligence/cheapModel';
 
 const HISTORY_MESSAGES = 30;
 const HISTORY_CHARS = 1000;
@@ -66,7 +68,7 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
     if (!lastAssistant) reply = 'Sure, I will keep replies short.';
     else {
       try {
-        const response = await runConversationChat(guidancePrompt(history,text.slice(0,4000),voice),
+        const response = await runCheapModelChat(guidancePrompt(history,text.slice(0,4000),voice),
           handbook + ' ' + guidanceSystem + ' The user asked for a shorter reply: summarise your previous answer in at most 3 short lines (under 40 words). No new facts.', 25000);
         reply = response.content.trim();
         if (reply === 'TRADE_ACTION') return null;
@@ -86,13 +88,13 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
       // reply can already use it. Kept cheap: one small extra call, only then.
       if (stats.messages % 5 === 0) {
         try {
-          const noteResponse = await runConversationChat(JSON.stringify({ history, currentNote: profileNote }),
+          const noteResponse = await runStrongModelChat(JSON.stringify({ history, currentNote: profileNote }),
             'You keep AKIF’s private notebook about one customer. Update it in at most 60 words: tone, formality, typical message length, main language, what they care about, what has worked before. Facts from the messages only; never invent; never include phone numbers, documents or private records. Reply with the notebook text only.', 25000);
           const note = noteResponse.content.trim().slice(0, 500);
           if (note) { profileNote = note; profilePayload.note = note; }
         } catch { /* Keep the old notebook when the model is unavailable. */ }
       }
-      const response = await runConversationChat(JSON.stringify({ ...JSON.parse(guidancePrompt(history,text.slice(0,4000),voice)), ...(quotedReply ? {quotedReply:true} : {}), authorizedAccount: account ? {role:account.role,status:account.status} : null, customerProfile: profilePayload }),
+      const response = await runCheapModelChat(JSON.stringify({ ...JSON.parse(guidancePrompt(history,text.slice(0,4000),voice)), ...(quotedReply ? {quotedReply:true} : {}), authorizedAccount: account ? {role:account.role,status:account.status} : null, customerProfile: profilePayload }),
         handbook + ' ' + guidanceSystem + (askLanguage ? ' End this reply with one short question asking which language they are most comfortable in.' : '') + (brief === 'on' ? ' Keep every reply to 3 short lines, under 40 words, unless the user asks for detail.' : ''), 25000);
       reply = response.content.trim();
       if (reply === 'TRADE_ACTION') return null;

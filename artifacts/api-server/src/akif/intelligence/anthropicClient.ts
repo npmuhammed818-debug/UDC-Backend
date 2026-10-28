@@ -14,10 +14,15 @@ export function anthropicStrongModel(): string {
   return process.env.ANTHROPIC_STRONG_MODEL?.trim() || DEFAULT_MODEL;
 }
 
+export function anthropicCheapModel(): string {
+  return process.env.ANTHROPIC_CHEAP_MODEL?.trim() || 'claude-haiku-4-5';
+}
+
 export async function runAnthropicChat(
   message: string,
   system: string | undefined,
   timeoutMs: number,
+  model: string = anthropicStrongModel(),
 ): Promise<{ content: string }> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new Error('Anthropic strong model not configured');
@@ -31,7 +36,7 @@ export async function runAnthropicChat(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: anthropicStrongModel(),
+      model,
       max_tokens: 800,
       ...(system ? { system } : {}),
       messages: [{ role: 'user', content: message }],
