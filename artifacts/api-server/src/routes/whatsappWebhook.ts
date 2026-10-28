@@ -1327,7 +1327,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               ? "I read your voice note, but couldn’t check the deal context. Please confirm any trade instructions in text."
               : voiceStage === 'download'
                 ? "I couldn’t download that voice note just now. Please resend it shortly."
-                : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
+                : error instanceof Error && error.message === "akif_audio_http_503"
+                  ? "Voice notes are still being set up on our side. Please type your message for now."
+                  : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
           await deliverWhatsAppReply(message.from, reply);
           continue;
         }

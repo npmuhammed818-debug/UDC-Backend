@@ -241,6 +241,22 @@ export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: 
   return (await transcribeAkifAudioDetailed(input)).text;
 }
 
+// Render's free tier puts the worker to sleep; a cold start can take ~50s,
+// past any single request timeout. Retry a timeout or network-level failure
+// once with a longer budget. HTTP answers (401, 503, ...) are never retried:
+// they are configuration or provider facts a retry cannot change.
+async function withColdStartRetry<T>(call: (timeoutMs: number) => Promise<T>, firstTimeoutMs: number): Promise<T> {
+  try {
+    return await call(firstTimeoutMs);
+  } catch (error) {
+    const isTimeout = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+    const isNetwork = error instanceof TypeError;
+    if (!isTimeout && !isNetwork) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    return call(60_000);
+  }
+}
+
 /** Transcript plus the detected language code (ISO 639-3 such as "mal" or "hin"), when the provider gives one. */
 export async function transcribeAkifAudioDetailed(input: { bytes: Uint8Array; mimeType: string }): Promise<{ text: string; language: string | null }> {
   const config = workerConfig();
@@ -249,10 +265,10 @@ export async function transcribeAkifAudioDetailed(input: { bytes: Uint8Array; mi
   const bytes = new Uint8Array(input.bytes.length); bytes.set(input.bytes);
   const body = new FormData();
   body.set("file", new Blob([bytes.buffer], { type: input.mimeType }), "voice");
-  const response = await fetch(`${config.baseUrl}/media/audio/transcribe`, {
+  const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/media/audio/transcribe`, {
     method: "POST", headers: { "x-akif-worker-token": config.token }, body,
-    signal: AbortSignal.timeout(25_000),
-  });
+    signal: AbortSignal.timeout(timeoutMs),
+  }), 25_000);
   if (!response.ok) throw new Error(`akif_audio_http_${response.status}`);
   const result = await response.json() as { text?: unknown; language?: unknown };
   if (typeof result.text !== "string" || !result.text.trim()) throw new Error("akif_audio_empty");
@@ -268,12 +284,12 @@ export async function synthesizeAkifSpeech(text: string, conversational = false)
 export async function synthesizeAkifSpeechTimed(text: string, conversational = false): Promise<{ bytes: Uint8Array; seconds: number | null }> {
   const config = workerConfig();
   if (!config) throw new Error("akif_speech_not_configured");
-  const response = await fetch(`${config.baseUrl}/speech/synthesize`, {
+  const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/speech/synthesize`, {
     method: "POST",
     headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
     body: JSON.stringify({ text, conversational }),
-    signal: AbortSignal.timeout(30_000),
-  });
+    signal: AbortSignal.timeout(timeoutMs),
+  }), 30_000);
   if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("akif_speech_size_invalid");
