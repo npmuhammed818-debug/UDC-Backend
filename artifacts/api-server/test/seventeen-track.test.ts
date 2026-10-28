@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { activeTracker, createSeventeenTrackClient, createStubTracker, isSeventeenTrackConfigured } from '../src/tracking/seventeenTrack.ts';
+import { createServer } from 'node:http';
 
 function withEnv(patch: Record<string, string | undefined>, fn: () => unknown) {
   const saved: Record<string, string | undefined> = {};
@@ -54,4 +55,31 @@ test('live client request shape uses the 17token header and parses the latest ev
       assert.deepEqual(JSON.parse(String(calls[0].init.body)), [{ number: 'ABCDE12345' }]);
     });
   } finally { globalThis.fetch = original; }
+});
+
+test('live client against a real local fake 17TRACK server (socket-level)', async () => {
+  const seen: Array<{ token: string | undefined; body: string }> = [];
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      seen.push({ token: req.headers['17token'] as string | undefined, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { accepted: [{ track_info: { latest_event: { time_iso: '2026-10-28T11:00:00Z', description: 'Departed origin port', location: 'Mundra' } } }] } }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  try {
+    await withEnv({ SEVENTEEN_TRACK_API_KEY: 'synthetic-key', SEVENTEEN_TRACK_BASE_URL: `http://127.0.0.1:${port}` }, async () => {
+      const events = await createSeventeenTrackClient().fetchEvents('SYN777');
+      assert.deepEqual(events, [{ time: '2026-10-28T11:00:00Z', description: 'Departed origin port', location: 'Mundra' }]);
+    });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].token, 'synthetic-key');
+    assert.deepEqual(JSON.parse(seen[0].body), [{ number: 'SYN777' }]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

@@ -184,6 +184,28 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);
       await m.handleChatUi(agent.phone,ui('track'));assert.match(last(),/no longer available/);assert.doesNotMatch(last(),/QA-100|Synthetic Carrier/);
     });
+    await t.test('a typed tracking number goes to the live carrier lookup, gated and honest',async()=>{
+      const buyer=rows.usersTable.find((u:any)=>u.phone===phone);
+      const originalFetch=globalThis.fetch;const priorKey=process.env.SEVENTEEN_TRACK_API_KEY;
+      try{
+        delete process.env.SEVENTEEN_TRACK_API_KEY;
+        let calls=0;globalThis.fetch=(async()=>{calls++;throw new Error('must not be called');}) as any;
+        await m.handleChatUi(phone,{id:randomUUID(),text:{body:'track QA-100'}});
+        assert.match(last(),/not switched on yet/);assert.equal(calls,0,'no provider call while live tracking is off');
+        process.env.SEVENTEEN_TRACK_API_KEY='synthetic-key';
+        const bodies:any[]=[];
+        globalThis.fetch=(async(_url:any,init:any)=>{bodies.push(JSON.parse(String(init.body)));return new Response(JSON.stringify({data:{accepted:[{track_info:{latest_event:{time_iso:'2026-10-28T09:30:00Z',description:'Arrived at port',location:'Jebel Ali'}}}]}}),{status:200});}) as any;
+        await m.handleChatUi(phone,{id:randomUUID(),text:{body:'track QA-100'}});
+        assert.match(last(),/Latest carrier update for QA-100/);assert.match(last(),/Arrived at port in Jebel Ali/);assert.match(last(),/UDC has not verified/);
+        assert.deepEqual(bodies[0],[{number:'QA-100'}]);
+        const prior=buyer.status;buyer.status='under_review';
+        await m.handleChatUi(phone,{id:randomUUID(),text:{body:'track QA-100'}});assert.match(last(),/pending UDC approval/);
+        buyer.status=prior;
+      }finally{
+        globalThis.fetch=originalFetch;
+        if(priorKey===undefined)delete process.env.SEVENTEEN_TRACK_API_KEY;else process.env.SEVENTEEN_TRACK_API_KEY=priorKey;
+      }
+    });
     await t.test('ETA advisory distinguishes unconfirmed lateness from a verified delay',()=>{
       const now=new Date('2026-10-24T12:00:00Z');
       assert.equal(m.etaAdvisory('delivered','2026-10-20T00:00:00Z',null,now),'complete');

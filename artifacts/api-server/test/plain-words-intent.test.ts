@@ -22,6 +22,14 @@ test('plain words map to the same actions as the menu buttons', () => {
   assert.equal(plainWordsAction('am i verified?'), 'verification');
   assert.equal(plainWordsAction('track my shipment'), 'track');
   assert.equal(plainWordsAction('where is my order?'), 'track');
+  // A tracking number after "track" goes to the live carrier lookup.
+  assert.equal(plainWordsAction('track 1Z999AA10123456784'), 'tracknum:1Z999AA10123456784');
+  assert.equal(plainWordsAction('track shipment rr123456789in'), 'tracknum:RR123456789IN');
+  assert.equal(plainWordsAction('track my order 1234567890'), 'tracknum:1234567890');
+  assert.equal(plainWordsAction('tracking number AB-123-456CD'), 'tracknum:AB-123-456CD');
+  // Number-less tracking phrases and plain words keep their old meaning.
+  assert.equal(plainWordsAction('track orders'), null);
+  assert.equal(plainWordsAction('track status'), null);
   assert.equal(plainWordsAction('my documents'), 'documents');
   assert.equal(plainWordsAction('document status'), 'documents');
   assert.equal(plainWordsAction('my invite link'), 'invite');
