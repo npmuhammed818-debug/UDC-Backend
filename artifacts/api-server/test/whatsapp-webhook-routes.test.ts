@@ -167,9 +167,9 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
         n=sentBefore();await message({text:{body:"Yes"}});assert.notEqual(state.sent.at(-1)?.body,"Want this in text? Reply yes.");
         state.voiceSeconds=5;state.guidanceReply='The price is 450 USD per metric ton.';
         n=sentBefore();const spokenBefore=state.voice.length;await message({audio:{id:'voice-critical'}});
-        assert.equal(state.voice.length,spokenBefore);assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.equal(state.sent.length,n+1);
+        assert.equal(state.voice.length,spokenBefore);assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.equal(state.sent.at(-2).body,"This one has details that must stay in writing, so here it is in text.","mirrored voice note gets the honest line");assert.equal(state.sent.length,n+2);
         state.guidanceReply='Happy to help with that.';state.voiceFail=true;
-        n=sentBefore();await message({audio:{id:'voice-failure'}});assert.equal(state.sent.at(-1).body,state.guidanceReply,"text fallback when voice cannot be sent");
+        n=sentBefore();await message({audio:{id:'voice-failure'}});assert.equal(state.sent.at(-1).body,state.guidanceReply,"text fallback when voice cannot be sent");assert.equal(state.sent.at(-2).body,"Voice is not working just now, so here is your answer in text.","mirrored voice note gets the honest line");assert.equal(state.sent.length,n+2);
         state.voiceFail=false;state.voiceState='text_only';n=sentBefore();const v=state.voice.length;await message({audio:{id:'voice-textonly'}});
         assert.equal(state.voice.length,v);assert.equal(state.sent.at(-1).body,state.guidanceReply);
         state.voiceState='voice';state.guidanceReply='Sure, here is the short answer.';

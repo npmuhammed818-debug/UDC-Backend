@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 const TTL_MS = 10 * 60_000;
 const offers = new Map<string, { text: string; at: number }>();
 const explicit = new Map<string, number>();
+const answers = new Map<string, { text: string; at: number }>();
 const key = (phone: string) => createHash("sha256").update("wa-voice-session:" + phone).digest("hex").slice(0, 24);
 
 function trim(map: Map<string, unknown>) { if (map.size > 5000) map.delete(map.keys().next().value as string); }
@@ -24,9 +25,23 @@ export function consumeExplicitVoice(phone: string, now = Date.now()): boolean {
   return at !== undefined && now - at <= TTL_MS;
 }
 
+/** Peek: is an "answer in voice" promise still open for this user? Does not consume it. */
+export function hasExplicitVoice(phone: string, now = Date.now()): boolean {
+  const at = explicit.get(key(phone));
+  return at !== undefined && now - at <= TTL_MS;
+}
+
+/** The last answer AKIF delivered, so "do it" after the voice promise can say it aloud. */
+export function setLastAnswer(phone: string, text: string, now = Date.now()) { trim(answers); answers.set(key(phone), { text, at: now }); }
+
+export function getLastAnswer(phone: string, now = Date.now()): string | null {
+  const hit = answers.get(key(phone));
+  return hit && now - hit.at <= TTL_MS ? hit.text : null;
+}
+
 export function textOfferSeconds(env: Record<string, string | undefined> = process.env): number {
   const n = Number(env["AKIF_VOICE_TEXT_OFFER_SECONDS"]);
   return Number.isFinite(n) && n > 0 && env["AKIF_VOICE_TEXT_OFFER_SECONDS"] ? n : 30;
 }
 
-export function resetVoiceSessionForTests() { offers.clear(); explicit.clear(); }
+export function resetVoiceSessionForTests() { offers.clear(); explicit.clear(); answers.clear(); }

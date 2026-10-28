@@ -29,8 +29,8 @@ import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
 import { react, reactByMeaning } from "../whatsapp/reactions";
 import { speakReply } from "../whatsapp/voiceSend";
 import { parseVoiceCommand, setTextOnly, getVoiceState, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
-import { VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMATION, EXPLICIT_VOICE_TEXT_ONLY, parseVoiceRequest, isOfferYes } from "../akif/voiceConsent.ts";
-import { armExplicitVoice, consumeExplicitVoice, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../akif/voiceSession.ts";
+import { isVoiceGoAhead, VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMATION, EXPLICIT_VOICE_TEXT_ONLY, parseVoiceRequest, isOfferYes } from "../akif/voiceConsent.ts";
+import { armExplicitVoice, consumeExplicitVoice, getLastAnswer, hasExplicitVoice, setLastAnswer, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../akif/voiceSession.ts";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { reserveTranscription } from "../akif/voiceLimits.ts";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
@@ -100,7 +100,8 @@ const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "mal
  * sent, the same reply goes as text. After a long voice reply (over the threshold) a short text
  * offer follows; the text itself is only sent after a yes.
  */
-async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string; explicitVoice?: boolean } = {}) {
+async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string; explicitVoice?: boolean; voiceNote?: boolean } = {}) {
+  setLastAnswer(to, reply);
   const choice = chooseChannel({ wantsVoice, userText: context.userText, reply });
   if (choice.channel === "text") return deliverWhatsAppReply(to, reply);
   const mainLanguage = await guidanceMainLanguage(to);
@@ -109,8 +110,8 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
   if (spoken.status === false) {
     // Content-free diagnosis: which gate turned this voice reply into text.
     console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown", rule: spoken.detail ?? null }));
-    // AKIF promised voice after an explicit request: never break that promise silently.
-    if (context.explicitVoice) {
+    // AKIF promised voice (explicit request) or mirrored a voice note: never go text silently.
+    if (context.explicitVoice || context.voiceNote) {
       await deliverWhatsAppReply(to, spoken.reason === "not_speakable"
         ? "This one has details that must stay in writing, so here it is in text."
         : "Voice is not working just now, so here is your answer in text.");
@@ -1284,6 +1285,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           await deliverWhatsAppReply(message.from, wantsVoice ? EXPLICIT_VOICE_CONFIRMATION : EXPLICIT_VOICE_TEXT_ONLY);
           continue;
         }
+        if (isVoiceGoAhead(message.text.body) && hasExplicitVoice(message.from)) {
+          // "do it" after the promise: say the last answer aloud now, don't wait for a new question.
+          consumeExplicitVoice(message.from);
+          const last = getLastAnswer(message.from);
+          if (last) await deliverAnswer(message.from, last, true, { userText: message.text.body, explicitVoice: true });
+          else await deliverWhatsAppReply(message.from, "Ask me your question and I'll answer it in voice.");
+          continue;
+        }
         const voiceCommand = parseVoiceCommand(message.text.body);
         if (voiceCommand) {
           const saved = await setTextOnly(message.from, voiceCommand === "text_only");
@@ -1337,7 +1346,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
-            if (guidance) await deliverAnswer(message.from, guidance, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined });
+            if (guidance) await deliverAnswer(message.from, guidance, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true });
             continue;
           }
           voiceStage = 'trade_context';

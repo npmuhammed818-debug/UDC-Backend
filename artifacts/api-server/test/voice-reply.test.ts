@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { shouldSpeakReply, speechBlockReason, speechTextAllowed, voiceRepliesEnabled } from "../src/akif/voiceReply.ts";
+import { digitNearCriticalTerm, shouldSpeakReply, speechBlockReason, speechTextAllowed, voiceRepliesEnabled } from "../src/akif/voiceReply.ts";
 
 import { AI_FALLBACK_REPLY, HUMAN_HANDOFF_REPLY } from "../src/akif/conversationPolicy.ts";
 test("default-deny: only exact allowlisted fixed sentences may be spoken", () => {
@@ -128,4 +128,42 @@ test("speechBlockReason names the exact rule behind every unspeakable reply", ()
   assert.equal(speechBlockReason("here:\n- one\n- two", env), "list_shape");
   assert.equal(speechBlockReason("hello, how can I help you today?", env), null);
   assert.equal(speechBlockReason(HUMAN_HANDOFF_REPLY, env), null); // allowlisted fixed sentence stays speakable
+});
+
+test("money-or-terms gate only fires when a figure sits near the term", () => {
+  assert.equal(digitNearCriticalTerm("DLC of 500000 USD"), true);
+  assert.equal(digitNearCriticalTerm("the price is 500000 INR"), true);
+  assert.equal(digitNearCriticalTerm("DLC means a documentary letter of credit, used in 3 steps"), false);
+  assert.equal(digitNearCriticalTerm("we ship in 3 containers"), false);
+  const env = { AKIF_VOICE_REPLIES: "on" };
+  assert.equal(speechBlockReason("DLC of 500000 USD", env), "money_or_terms");
+  assert.equal(speechBlockReason("DLC means a documentary letter of credit, used in 3 steps", env), null);
+});
+
+test("voice flow: go-ahead phrases, explicit-flag peek and last-answer memory", async () => {
+  const { isVoiceGoAhead } = await import("../src/akif/voiceConsent.ts");
+  for (const yes of ["do it", "Do it!", "ok do it", "Okey then do it", "go ahead", "yes do it", "please do"]) assert.ok(isVoiceGoAhead(yes), yes);
+  for (const no of ["ok", "yes", "sure", "what is dlc", "do it now please send", ""]) assert.ok(!isVoiceGoAhead(no), no);
+  const { armExplicitVoice, hasExplicitVoice, consumeExplicitVoice, setLastAnswer, getLastAnswer, resetVoiceSessionForTests } = await import("../src/akif/voiceSession.ts");
+  resetVoiceSessionForTests();
+  assert.equal(hasExplicitVoice("+1000"), false);
+  armExplicitVoice("+1000");
+  assert.equal(hasExplicitVoice("+1000"), true); // peek does not consume
+  assert.equal(hasExplicitVoice("+1000"), true);
+  assert.equal(consumeExplicitVoice("+1000"), true);
+  assert.equal(hasExplicitVoice("+1000"), false);
+  setLastAnswer("+1000", "DLC means a documentary letter of credit.");
+  assert.equal(getLastAnswer("+1000"), "DLC means a documentary letter of credit.");
+  assert.equal(getLastAnswer("+2000"), null);
+  resetVoiceSessionForTests();
+});
+
+test("webhook: do-it after the promise re-speaks the last answer, and voice-note fallback is honest", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  assert.ok(w.includes("isVoiceGoAhead(message.text.body) && hasExplicitVoice(message.from)"), "go-ahead hook");
+  assert.ok(w.includes("getLastAnswer(message.from)"), "re-speaks the stored answer");
+  assert.ok(w.includes("setLastAnswer(to, reply)"), "deliverAnswer stores the answer");
+  assert.ok(w.includes("context.explicitVoice || context.voiceNote"), "mirrored voice notes get the honest line too");
+  assert.ok(w.includes("voiceNote: true"), "voice-note path marks itself");
 });
