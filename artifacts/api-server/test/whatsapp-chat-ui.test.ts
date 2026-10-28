@@ -204,6 +204,27 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       state.flowId=null;await m.handleChatUi(phone,ui('requirement'));assert.match(last(),/product/);delete rows.whatsappChatSessionsTable[0].data.__paragraph;assert.equal(rows.whatsappChatSessionsTable.length,1);
       assert.ok(state.sent.every((s:any)=>!s.body.includes('https://udc-backend.onrender.com/login')));
     });
+    await t.test('Upload documents lists each required document with its status; tester numbers are not blocked by missing company details',async()=>{
+      const sellerPhone='10000000040';rows.usersTable.push({id:'doc-seller',phone:sellerPhone,role:'seller',status:'verified',fullName:'Doc Seller'});
+      rows.companiesTable.push({id:'doc-company',ownerUserId:'doc-seller',companyName:'Doc Co'});
+      rows.companyVerificationDocumentsTable.push({id:'d1',companyId:'doc-company',documentType:'company_registration',status:'pending'},{id:'d2',companyId:'doc-company',documentType:'tax_id',status:'approved'});
+      await m.handleChatUi(sellerPhone,ui('documents'));
+      assert.match(last(),/1 of 5 verified/);assert.match(last(),/1\. Company registration or trade licence - uploaded, waiting for UDC review/);assert.match(last(),/2\. Tax ID.*- verified/);assert.match(last(),/5\. Past export invoices or factory photos - not uploaded yet/);assert.match(last(),/private upload link/);
+      const buyerPhone='10000000041';rows.usersTable.push({id:'doc-buyer',phone:buyerPhone,role:'buyer',status:'verified',fullName:'Doc Buyer'});
+      await m.handleChatUi(buyerPhone,ui('documents'));
+      assert.match(last(),/Your documents: 0 of 3 verified/);assert.match(last(),/Add your company details first/);assert.doesNotMatch(last(),/private upload link/);
+      process.env.UDC_APP_ENV='staging';process.env.UDC_TESTER_MODE='on';process.env.UDC_TESTER_PHONES='917022032531';
+      try{
+        const testerPhone='917022032531';rows.usersTable.push({id:'doc-tester',phone:testerPhone,role:'seller',status:'verified',fullName:'Tester User'});
+        const companiesBefore=rows.companiesTable.length;
+        await m.handleChatUi(testerPhone,ui('documents'));
+        assert.equal(rows.companiesTable.length,companiesBefore+1,'tester gets a placeholder company instead of a dead end');
+        assert.match(last(),/private upload link/);
+      }finally{delete process.env.UDC_APP_ENV;delete process.env.UDC_TESTER_MODE;delete process.env.UDC_TESTER_PHONES;}
+      const agentPhone='10000000042';rows.usersTable.push({id:'doc-agent',phone:agentPhone,role:'agent',status:'verified',fullName:'Doc Agent'});
+      await m.handleChatUi(agentPhone,ui('documents'));
+      assert.match(last(),/Agents do not upload company documents/);
+    });
     await t.test('guided WhatsApp intake validates each answer and waits for an explicit submit button',async()=>{
       const before=rows.buyerRequestsTable.length;
       const answer=(id:string,body:string)=>m.handleChatUi(phone,{id,text:{body}});
