@@ -13,6 +13,8 @@ export type SpaDraftInput = {
   hideBuyer?: boolean;
   hideSeller?: boolean;
   governingLaw?: "India" | null;
+  // Agent agreement drafts only: the requesting agent's own recorded name.
+  agentName?: string | null;
   productName: string;
   quantity: string;
   unit: string;

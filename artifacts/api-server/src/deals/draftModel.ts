@@ -1,7 +1,7 @@
 import { UDC_DRAFT_WARNING_BOTTOM, UDC_DRAFT_WARNING_TOP } from "./draftWarning.ts";
 import type { SpaDraftInput } from "./spaDraft.ts";
 
-export type DraftType = "LOI" | "ICPO" | "FCO" | "SPA" | "NCNDA" | "SELLER_CONTRACT";
+export type DraftType = "LOI" | "ICPO" | "FCO" | "SPA" | "NCNDA" | "SELLER_CONTRACT" | "AGENT_AGREEMENT";
 export type Block =
   | { k: "h"; t: string }
   | { k: "p"; t: string }
@@ -135,6 +135,14 @@ function buildBaseModel(type: DraftType, i: SpaDraftInput): DraftModel {
       ["Introducing agent", [AGENT]],
       ["Authority and execution", ["Each party verifies legal identity and signatory authority. No sale, supply, payment or banking instrument is authorized by this draft."]],
     ]), { k: "sig", parties: ["For the Seller", "For UDC"] }] };
+  if (type === "AGENT_AGREEMENT") return { type, ref, title: "Agent Agreement", subtitle: "Discussion draft  |  Not executed or signature-ready", blocks: [head(i), { k: "h", t: "Parties" }, { k: "kv", rows: [["Agent", clean(i.agentName, "[AGENT FULL NAME]")], ["Introducing platform", "UDC - introduces the parties only; not the buyer or seller [LAWYER TO CONFIRM ROLE]"]] },
+    ...clauses([
+      ["Purpose", ["Records the agent's introduction role for this transaction and the non-circumvention and confidentiality duties that follow it. [LAWYER TO SET exact wording.]"]],
+      ["Timing", ["This agreement is signed only after the sale and purchase agreement (SPA) for this deal is signed. It creates no obligation before that signature."]],
+      ["Commission (placeholders only)", ["Any agent commission for this deal: rate, basis, currency, triggering event and payment timing: [OWNER TO SET]. Enforceability and duration: [LAWYER TO SET].", "This draft creates no fee until those terms are completed and signed."]],
+      ["Confidentiality and non-circumvention", ["The agent keeps deal terms and party details confidential and does not bypass UDC in this transaction. [LAWYER TO SET scope, duration and remedies.]"]],
+      ["Role of UDC", [AGENT]],
+    ]), { k: "sig", parties: ["For the Agent", "For UDC"] }] };
   return { type, ref, title: "Mutual Non-Disclosure and Non-Circumvention Agreement", subtitle: "Draft for discussion", blocks: [head(i), { k: "h", t: "Parties" }, parties(i),
     ...clauses([
       ["Purpose", [`The parties wish to discuss the transaction under UDC deal reference ${clean(i.dealNumber, "[DEAL REFERENCE]")} and will share confidential information only for that purpose.`]],
