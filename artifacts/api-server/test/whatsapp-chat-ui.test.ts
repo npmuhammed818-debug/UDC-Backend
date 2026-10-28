@@ -206,6 +206,21 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         if(priorKey===undefined)delete process.env.SEVENTEEN_TRACK_API_KEY;else process.env.SEVENTEEN_TRACK_API_KEY=priorKey;
       }
     });
+    await t.test('counterparty contact details stay locked until the SPA stage, then come only from records',async()=>{
+      const buyer=rows.usersTable.find((u:any)=>u.phone===phone);
+      rows.usersTable.push({id:'seller-user',phone:'10000000099',role:'seller',status:'verified',email:'seller@synthetic.test',fullName:'Synthetic Seller',emailVerifiedAt:new Date()});
+      rows.companiesTable=[...rows.companiesTable.filter((r:any)=>r.ownerUserId!=='seller-user'),{id:'seller-company',ownerUserId:'seller-user',companyName:'Synthetic Exports'}];
+      rows.dealsTable=[{id:'contact-deal',dealNumber:'UDC-CONTACT',buyerUserId:buyer.id,sellerUserId:'seller-user',status:'negotiation'}];
+      rows.whatsappUserContextsTable=[{userId:buyer.id,activeDealId:'contact-deal',updatedAt:new Date()}];
+      await m.handleChatUi(phone,{id:randomUUID(),text:{body:'share seller contact'}});
+      assert.match(last(),/after the SPA is signed and UDC approves/);assert.doesNotMatch(last(),/seller@synthetic\.test|10000000099/);
+      rows.dealsTable[0].status='contract';
+      await m.handleChatUi(phone,{id:randomUUID(),text:{body:'share seller contact'}});
+      assert.match(last(),/Synthetic Seller/);assert.match(last(),/Synthetic Exports/);assert.match(last(),/seller@synthetic\.test/);assert.match(last(),/10000000099/);
+      assert.match(last(),/after SPA signing/);
+      rows.usersTable=rows.usersTable.filter((u:any)=>u.id!=='seller-user');
+      rows.companiesTable=rows.companiesTable.filter((r:any)=>r.ownerUserId!=='seller-user');
+    });
     await t.test('ETA advisory distinguishes unconfirmed lateness from a verified delay',()=>{
       const now=new Date('2026-10-24T12:00:00Z');
       assert.equal(m.etaAdvisory('delivered','2026-10-20T00:00:00Z',null,now),'complete');
