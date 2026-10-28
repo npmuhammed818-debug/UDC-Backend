@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isBrevityRequest, isDetailRequest, trimToBrief } from '../src/whatsapp/brevity.ts';
-import { udcHandbook, udcHandbookForRole } from '../src/akif/udcHandbook.ts';
+import { udcHandbook, udcHandbookForRole, trustedGuidanceAnswer, buyerDocumentsAnswer, sellerDocumentsAnswer, agentVerificationAnswer } from '../src/akif/udcHandbook.ts';
 
 test('brevity requests are detected with typos, without catching real questions', () => {
   for (const text of ['summary', 'Summary please', 'Need summery', 'summery', 'summarise', 'summarized', 'too long', 'It is too long', 'this is too much', 'too much text', 'be brief', 'shorter', 'short please', 'keep it short', 'in short', 'in brief', 'tldr', 'tl;dr', 'less text', 'make it shorter', "I don't want u to text too much"]) {
@@ -45,8 +45,6 @@ test('handbook carries the approved WHAT UDC IS block with confirmed claims only
 
 test('handbook carries the approved style rules', () => {
   assert.match(udcHandbook, /ANSWER FIRST: the first line answers the question asked/);
-  assert.match(udcHandbook, /LANGUAGE LOCK: answer in the language of the user/);
-  assert.match(udcHandbook, /Never mix two languages inside one answer/);
   assert.match(udcHandbook, /NO REPEATED MENUS: never end replies with a Menu hint/);
   assert.match(udcHandbook, /VOICE NOTES: if the user/);
   assert.match(udcHandbook, /never compare UDC to Alibaba or any other marketplace/);
@@ -69,4 +67,41 @@ test('role split: agents never see buyer/seller document steps, buyers never see
   // Unknown role keeps both paragraphs.
   assert.match(udcHandbook, /Buyers and sellers: /);
   assert.match(udcHandbook, /Agents: /);
+});
+
+test('text is always English; voice language and the no-dates-no-money voice rule are fixed policy', () => {
+  assert.match(udcHandbook, /TEXT LANGUAGE: text replies are always in English/);
+  assert.match(udcHandbook, /ask once, early, which language they are most comfortable in/);
+  assert.match(udcHandbook, /voice may be in the customer’s own language or English/);
+  assert.match(udcHandbook, /Voice never carries dates, deadlines, prices, amounts or payment details/);
+  assert.doesNotMatch(udcHandbook, /LANGUAGE LOCK/);
+});
+
+test('problem behaviour rules are fixed policy', () => {
+  assert.match(udcHandbook, /BEHAVIOUR IN PROBLEMS/);
+  assert.match(udcHandbook, /Never guess dates, times, prices or outcomes/);
+  assert.match(udcHandbook, /never decide who is right; pass each side’s exact words/);
+  assert.match(udcHandbook, /Never agree prices, dates or money terms/);
+  assert.match(udcHandbook, /keep payment on hold/);
+  assert.match(udcHandbook, /seller does not ship until the Letter of Credit is in place/);
+  assert.match(udcHandbook, /UDC checks the referral record and will confirm/);
+});
+
+test('document checklists are worldwide, role-aware and country-dependent', () => {
+  assert.match(udcHandbook, /DOCUMENT CHECKLISTS \(worldwide\)/);
+  assert.match(udcHandbook, /import licence, only if their country requires one/);
+  assert.match(udcHandbook, /export licence or exporter ID, only if their country has one/);
+  assert.match(udcHandbook, /Bank proof from both sides is asked only later, before signing the SPA/);
+  assert.match(udcHandbook, /ask which country their company is registered in first/);
+  assert.match(udcHandbook, /entering a deal always needs documents uploaded and verified/);
+  assert.match(udcHandbook, /buyers may post requirements and see offers/);
+  const docsQ = 'What documents do I need for verification?';
+  assert.equal(trustedGuidanceAnswer(docsQ, 'buyer'), buyerDocumentsAnswer);
+  assert.equal(trustedGuidanceAnswer(docsQ, 'seller'), sellerDocumentsAnswer);
+  assert.equal(trustedGuidanceAnswer(docsQ, 'agent'), agentVerificationAnswer);
+  const anyRole = trustedGuidanceAnswer(docsQ) ?? '';
+  assert.match(anyRole, /Buyers: company registration or trade licence/);
+  assert.match(anyRole, /Sellers: company registration certificate/);
+  assert.match(buyerDocumentsAnswer, /Bank proof is only needed later, before signing the SPA/);
+  assert.match(sellerDocumentsAnswer, /past export invoices or photos of your factory or products/);
 });
