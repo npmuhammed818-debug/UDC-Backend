@@ -25,6 +25,13 @@ export function parseVoiceRequest(text: string | null | undefined): boolean {
   return /^(?:(?:can|could) you )?send (?:me )?(?:a )?voice[\s-]?(?:note|message|msg)?(?: please)?$|^reply (?:in|with) (?:a )?voice[\s-]?(?:note|message|msg)?(?: please)?$|^answer (?:in|with) (?:a )?voice[\s-]?(?:note|message|msg)?$|^voice (?:reply|please)$|^in voice please$/.test(t);
 }
 
+/** A short "go on, do it" right after the voice promise. Imperatives only - a plain "ok" or "yes" never triggers this. */
+export function isVoiceGoAhead(text: string | null | undefined): boolean {
+  if (typeof text !== "string") return false;
+  const t = text.trim().replace(/[.!?"'\u201c\u201d]+/g, "").replace(/\s+/g, " ").toLowerCase();
+  return /^(?:(?:ok|okay|okey|yes|sure)(?: then)? )?do (?:it|that)$|^go ahead$|^please do$/.test(t);
+}
+
 /** A yes to the text offer. Only used while an offer for that user is pending. */
 export function isOfferYes(text: string | null | undefined): boolean {
   if (typeof text !== "string") return false;

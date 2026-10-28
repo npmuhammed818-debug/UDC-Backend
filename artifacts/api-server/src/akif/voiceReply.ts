@@ -43,10 +43,25 @@ export type ReplyClass = "warm" | "mixed" | "critical";
 
 const CRITICAL_TERMS = /[$\u20ac\u00a3\u20b9]|\b(?:usd|inr|eur|aed|price|per\s+(?:mt|ton|tonne|kg|unit)|invoice|contract|payment|terms?|incoterm|address|quantity|moq|dlc|deadline|delivery date)\b/i;
 
+const CRITICAL_TERMS_GLOBAL = new RegExp(CRITICAL_TERMS.source, "gi");
+
+/** A figure only turns critical when it sits near a money or term word - "DLC of 500000 USD"
+ *  is critical, while "DLC means a documentary letter of credit, used in 3 steps" is teaching, not terms. */
+export function digitNearCriticalTerm(t: string, windowChars = 40): boolean {
+  CRITICAL_TERMS_GLOBAL.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CRITICAL_TERMS_GLOBAL.exec(t))) {
+    const from = Math.max(0, m.index - windowChars);
+    const to = Math.min(t.length, m.index + m[0].length + windowChars);
+    if (/\d/.test(t.slice(from, to))) return true;
+  }
+  return false;
+}
+
 /**
  * Human-style choice: warm or explanatory replies may be spoken; exact details stay text. Unsure means text.
  *  warm: no digits. mixed: some digits but nothing that looks like a price, term or address (still speakable).
- *  critical: blocked content (links, codes, bank/ID words, approval prompts), too long, a list, or numbers with money or term words.
+ *  critical: blocked content (links, codes, bank/ID words, approval prompts), too long, a list, or a figure next to money or term words.
  */
 export function classifyReply(text: string | null | undefined): ReplyClass {
   try {
@@ -54,7 +69,7 @@ export function classifyReply(text: string | null | undefined): ReplyClass {
     if (!conversationalSpeechAllowed(text)) return "critical";
     const t = (text as string).trim();
     const hasDigit = /\d/.test(t);
-    if (hasDigit && CRITICAL_TERMS.test(t)) return "critical";
+    if (hasDigit && digitNearCriticalTerm(t)) return "critical";
     if (/\n\s*(?:[-*\u2022]|\d+[.)])\s/.test(t) || t.split("\n").filter(line => line.trim()).length > 3) return "critical";
     return hasDigit ? "mixed" : "warm";
   } catch { return "critical"; }
@@ -73,7 +88,7 @@ export function speechBlockReason(reply: string | null | undefined, env: Record<
   if (/\d{7,}/.test(t.replace(/[\s().-]/g, ""))) return "long_number";
   const rule = BLOCKED_PATTERNS.findIndex(pattern => pattern.test(t));
   if (rule >= 0) return BLOCKED_RULE_NAMES[rule] ?? "blocked_rule";
-  if (/\d/.test(t) && CRITICAL_TERMS.test(t)) return "money_or_terms";
+  if (/\d/.test(t) && digitNearCriticalTerm(t)) return "money_or_terms";
   if (/\n\s*(?:[-*\u2022]|\d+[.)])\s/.test(t) || t.split("\n").filter(line => line.trim()).length > 3) return "list_shape";
   return null;
 }
