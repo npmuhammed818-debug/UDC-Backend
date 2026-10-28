@@ -74,7 +74,8 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
-    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};export const guidanceMainLanguage=async()=>'';",
+    "../akif/intelligence/hermesClient": "export const runConversationChat=async()=>({content:'',raw:{}});",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
@@ -96,7 +97,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     plugins: [{ name: "fixtures", setup(b) {
       b.onResolve({ filter: /.*/ }, args => {
         if (args.path === "@workspace/db") return { path: "db", namespace: "fixture" };
-        if (args.importer.endsWith("/whatsapp/voiceSend.ts") && args.path === "../akif/intelligence/workerClient") return { path: args.path, namespace: "fixture" };
+        if (args.importer.endsWith("/whatsapp/voiceSend.ts") && (args.path === "../akif/intelligence/workerClient" || args.path === "../akif/intelligence/hermesClient")) return { path: args.path, namespace: "fixture" };
         if (args.importer.endsWith("/whatsapp/voiceSend.ts") && args.path === "./client") return { path: "../whatsapp/client", namespace: "fixture" };
         if (args.path === "./voicePreference" && args.importer.endsWith("/whatsapp/voiceSend.ts")) return { path: "../whatsapp/voicePreference", namespace: "fixture" };
         if (args.path === "drizzle-orm") return { path: "orm", namespace: "fixture" };

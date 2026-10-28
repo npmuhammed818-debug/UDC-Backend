@@ -281,13 +281,13 @@ export async function synthesizeAkifSpeech(text: string, conversational = false)
 }
 
 /** Same, plus the measured audio length in seconds from the worker (null if it could not measure). */
-export async function synthesizeAkifSpeechTimed(text: string, conversational = false): Promise<{ bytes: Uint8Array; seconds: number | null }> {
+export async function synthesizeAkifSpeechTimed(text: string, conversational = false, language = "english"): Promise<{ bytes: Uint8Array; seconds: number | null }> {
   const config = workerConfig();
   if (!config) throw new Error("akif_speech_not_configured");
   const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/speech/synthesize`, {
     method: "POST",
     headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
-    body: JSON.stringify({ text, conversational }),
+    body: JSON.stringify({ text, conversational, language }),
     signal: AbortSignal.timeout(timeoutMs),
   }), 30_000);
   if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
