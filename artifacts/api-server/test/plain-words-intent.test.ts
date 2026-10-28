@@ -2,6 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { plainWordsAction } from '../src/whatsapp/plainWordsIntent.ts';
 
+test('watch and unwatch phrases resolve to tracking actions', () => {
+  assert.equal(plainWordsAction('watch SYN123456'), 'watchnum:SYN123456');
+  assert.equal(plainWordsAction('watch my shipment syn123456'), 'watchnum:SYN123456');
+  assert.equal(plainWordsAction('follow the package AB-98765'), 'watchnum:AB-98765');
+  assert.equal(plainWordsAction('unwatch SYN123456'), 'unwatchnum:SYN123456');
+  assert.equal(plainWordsAction('stop tracking SYN123456'), 'unwatchnum:SYN123456');
+  assert.equal(plainWordsAction('stop updates for my parcel AB-98765'), 'unwatchnum:AB-98765');
+  assert.equal(plainWordsAction('track 1Z999AA10123456784'), 'tracknum:1Z999AA10123456784', 'one-off live lookup stays untouched');
+  assert.equal(plainWordsAction('watch my shipment'), null, 'number-less watch goes to the brain');
+});
+
 test('plain words map to the same actions as the menu buttons', () => {
   // Every menu item, reachable by just saying it.
   assert.equal(plainWordsAction('my deals'), 'deals');

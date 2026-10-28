@@ -19,6 +19,9 @@ const NAMED_DOCUMENTS: [RegExp, string][] = [
   [/(?:past\s+exports?|export\s+invoices?|factory\s+photos?)/, 'doc:upload:past_exports'],
 ];
 
+const WATCH_NUMBER = /^(?:watch|follow|monitor)\s+(?:(?:my|the)\s+)?(?:(?:shipment|order|cargo|package|parcel|number)\s+)?([a-z0-9][a-z0-9-]{4,38}[a-z0-9])$/i;
+const UNWATCH_NUMBER = /^(?:unwatch|stop\s+(?:watching|tracking|updates(?:\s+for)?))\s+(?:(?:my|the)\s+)?(?:(?:shipment|order|cargo|package|parcel|number)\s+)?([a-z0-9][a-z0-9-]{4,38}[a-z0-9])$/i;
+
 const TRACKING_NUMBER = /^(?:track|tracking)\s+(?:(?:my|the)\s+)?(?:(?:shipment|order|cargo|package|parcel|number)\s+)?([a-z0-9][a-z0-9-]{4,38}[a-z0-9])$/i;
 
 const SPOKEN: [RegExp, string][] = [
@@ -101,6 +104,11 @@ export function plainWordsAction(raw: string | null | undefined): string | null 
   // menu action. Exact menu phrases won above, so "track my shipment" and
   // "track referrals" keep their meaning; a digit is required so ordinary
   // words ("track orders") still fall through to Akif's brain.
+  // "watch <number>" asks for automatic updates; "unwatch" stops them.
+  const watch = WATCH_NUMBER.exec(t);
+  if (watch && /\d/.test(watch[1])) return 'watchnum:' + watch[1].toUpperCase();
+  const unwatch = UNWATCH_NUMBER.exec(t);
+  if (unwatch && /\d/.test(unwatch[1])) return 'unwatchnum:' + unwatch[1].toUpperCase();
   const trackingNumber = TRACKING_NUMBER.exec(t);
   if (trackingNumber && /\d/.test(trackingNumber[1])) return 'tracknum:' + trackingNumber[1].toUpperCase();
   return null;

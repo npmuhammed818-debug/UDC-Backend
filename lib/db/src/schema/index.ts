@@ -33,6 +33,7 @@ export * from "./whatsappChatSessions";
 export * from "./shipmentTracking";
 export * from "./shipmentCargoUnits";
 export * from "./shipmentEtaFollowups";
+export * from "./shipmentWatches";
 export * from "./whatsappShipmentOutbox";
 export * from "./whatsappShipmentReceipts";
 export * from "./whatsappCustomerWindows";
