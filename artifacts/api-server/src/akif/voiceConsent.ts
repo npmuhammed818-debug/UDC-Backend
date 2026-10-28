@@ -22,7 +22,7 @@ export const EXPLICIT_VOICE_TEXT_ONLY = "You have text only on. Send \"voice on\
 export function parseVoiceRequest(text: string | null | undefined): boolean {
   if (typeof text !== "string") return false;
   const t = text.trim().replace(/[.!?"'\u201c\u201d]+/g, "").replace(/\s+/g, " ").toLowerCase();
-  return /^(?:send (?:me )?(?:a )?voice(?: note| message)?(?: please)?|reply (?:in|with) (?:a )?voice(?: note)?(?: please)?|answer (?:in|with) (?:a )?voice(?: note)?|voice (?:reply|please)|in voice please)$/.test(t);
+  return /^(?:(?:can|could) you )?send (?:me )?(?:a )?voice[\s-]?(?:note|message|msg)?(?: please)?$|^reply (?:in|with) (?:a )?voice[\s-]?(?:note|message|msg)?(?: please)?$|^answer (?:in|with) (?:a )?voice[\s-]?(?:note|message|msg)?$|^voice (?:reply|please)$|^in voice please$/.test(t);
 }
 
 /** A yes to the text offer. Only used while an offer for that user is pending. */
