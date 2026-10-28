@@ -24,6 +24,7 @@ import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, m
 import { getVaultLinkIssuer } from '../vault/issuer';
 import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
+import { documentsStatusText } from './documentChecklist';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 import {PoolAllocationError,poolReplyText,respondToPoolInvite} from '../marketplace/poolInvites';
 
@@ -274,11 +275,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       await sendWhatsAppTextWithMenu(phone,t);return true;
     }
     await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
-  if(action==='documents'){
-    const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
-    if(!company){await sendWhatsAppTextWithMenu(phone,ADD_COMPANY_FIRST);return true;}
-    await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration')+'\nFor a trade document inside a deal, reply to that deal’s message instead.');return true;
-  }
+  if(action==='documents'){await sendDocumentsOverview(phone,user);return true;}
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
@@ -433,10 +430,19 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
 }
 
 /** Plain "send me the link" requests: same result as Menu, More options, Documents. Returns false when the sender is not a usable account. */
+async function sendDocumentsOverview(phone:string,user:{id:string;role:string;fullName?:string|null}):Promise<void>{
+  if(user.role==='agent'){await sendWhatsAppTextWithMenu(phone,'Agents do not upload company documents. Buyers and sellers share company documents; your verified agent profile is enough.');return;}
+  let [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+  if(!company&&isTesterPhone(phone)){
+    [company]=await db.insert(companiesTable).values({ownerUserId:user.id,companyName:user.fullName?`${user.fullName}’s company`:'Test company'}).returning({id:companiesTable.id});
+  }
+  const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
+  const list=documentsStatusText(user.role,docs);
+  if(!company){await sendWhatsAppTextWithMenu(phone,`${list}\n${ADD_COMPANY_FIRST}`);return;}
+  await sendWhatsAppTextWithMenu(phone,`${list}\n${await vaultReplyFor({id:user.id,role:user.role},'company_registration')}\nFor a trade document inside a deal, reply to that deal’s message instead.`);
+}
 export async function sendDocumentsLink(phone:string):Promise<boolean>{
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
   if(!user||['suspended','rejected'].includes(user.status))return false;
-  const [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
-  if(!company){await sendWhatsAppTextWithMenu(phone,ADD_COMPANY_FIRST);return true;}
-  await sendWhatsAppTextWithMenu(phone,await vaultReplyFor({id:user.id,role:user.role},'company_registration')+'\nFor a trade document inside a deal, reply to that deal’s message instead.');return true;
+  await sendDocumentsOverview(phone,user);return true;
 }
