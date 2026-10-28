@@ -27,18 +27,17 @@ router.post("/vault/upload-links", requireAuth, async (req, res) => {
 });
 
 // Public bearer page: the unguessable single-use token is the credential.
-router.get("/vault/upload/:token", async (req, res) => {
+const sendUploadPage = async (req: import("express").Request, res: import("express").Response) => {
   noStore(res);
   res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'");
   try {
     const { row, check } = await lookupLink(String(req.params["token"] ?? ""));
     res.status(check.ok ? 200 : 410).type("html").send(uploadPageHtml(check.ok ? { state: "ready", documentType: row!.documentType } : { state: "closed" }));
   } catch { res.status(500).type("html").send(uploadPageHtml({ state: "closed" })); }
-});
-
-router.post("/vault/upload/:token",
+};
+const acceptUploadFile = [
   raw({ type: ["application/pdf", "image/png", "image/jpeg", "application/octet-stream"], limit: VAULT_MAX_UPLOAD_BYTES }),
-  async (req, res) => {
+  async (req: import("express").Request, res: import("express").Response) => {
     noStore(res);
     try {
       const docKey = typeof req.query["doc"] === "string" ? req.query["doc"] : undefined;
@@ -47,7 +46,17 @@ router.post("/vault/upload/:token",
       const code = result.error === "unsupported_file" ? 415 : result.error === "already_uploaded" ? 409 : result.error === "upload_failed" ? 502 : 410;
       res.status(code).json({ error: result.error });
     } catch { res.status(500).json({ error: "vault_upload_failed" }); }
-  });
+  },
+] as const;
+
+// Short public form (/u/<token>); the long /api/vault/upload/<token> route
+// stays so links issued before the change keep working until they expire.
+router.get("/vault/upload/:token", sendUploadPage);
+router.post("/vault/upload/:token", ...acceptUploadFile);
+
+export const vaultShortRouter: IRouter = Router();
+vaultShortRouter.get("/u/:token", sendUploadPage);
+vaultShortRouter.post("/u/:token", ...acceptUploadFile);
 
 router.get("/vault/documents", requireAuth, async (req, res) => {
   noStore(res);

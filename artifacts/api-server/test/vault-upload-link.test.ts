@@ -60,7 +60,7 @@ test("users and AKIF only ever see outcome states", () => {
 
 test("WhatsApp redirect never invites attachments and carries only the link", () => {
   const url = uploadPageUrl("https://udc.example.invalid/", "abc_DEF-123");
-  assert.equal(url, "https://udc.example.invalid/api/vault/upload/abc_DEF-123");
+  assert.equal(url, "https://udc.example.invalid/u/abc_DEF-123");
   const withLink = vaultRedirectReply({ url, expiresAt: now });
   assert.ok(withLink.includes(url) && /15 minutes/.test(withLink) && /never the document/.test(withLink));
   assert.ok(!/send (it|them) here/i.test(withLink));
@@ -112,11 +112,12 @@ test("the multi upload page takes one file per expected document", () => {
   const html = uploadPageHtml({ state: "ready", documentType: "multi:company_registration,tax_id" });
   assert.match(html, /data-doc="company_registration"/);
   assert.match(html, /data-doc="tax_id"/);
-  assert.match(html, /company registration or trade licence/);
-  assert.match(html, /tax ID/);
+  assert.match(html, /Company registration or trade licence/);
+  assert.match(html, /Tax ID/);
   assert.match(html, /\?doc=/);
-  assert.match(html, /one by one/);
+  assert.match(html, /one tap uploads them all/);
+  assert.match(html, /Upload all securely/);
   const single = uploadPageHtml({ state: "ready", documentType: "tax_id" });
-  assert.match(single, /tax ID/);
+  assert.match(single, /Tax ID/);
   assert.doesNotMatch(single, /data-doc/);
 });
