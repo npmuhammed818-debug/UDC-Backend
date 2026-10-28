@@ -10,7 +10,7 @@ import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { z } from 'zod/v4';
-import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, usersTable, whatsappUserContextsTable } from '@workspace/db';
+import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, usersTable, whatsappChatSessionsTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
@@ -24,7 +24,9 @@ import { claimInviteAfterRegistration, handleInviteDecline, handleJoinMessage, m
 import { getVaultLinkIssuer } from '../vault/issuer';
 import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
-import { documentsStatusText } from './documentChecklist';
+import { documentsStatusText, documentStatusFor, requiredDocuments, documentLabel } from './documentChecklist';
+import { parseDocumentPick } from './docUploadIntent';
+import { guidanceKey } from './guidanceSession';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 import {PoolAllocationError,poolReplyText,respondToPoolInvite} from '../marketplace/poolInvites';
 
@@ -34,7 +36,7 @@ export function chatAction(message:ChatMessage){
   const i=message.interactive;
   if(i?.type==='button_reply'||i?.type==='list_reply'){
     const id=i.type==='button_reply'?i.button_reply?.id:i.list_reply?.id;
-    if(typeof id==='string'&&(actions.some(a=>id==='udc:'+a)||/^udc:deal:[a-f0-9-]{36}$/.test(id)))return id.slice(4);
+    if(typeof id==='string'&&(actions.some(a=>id==='udc:'+a)||/^udc:deal:[a-f0-9-]{36}$/.test(id)||/^udc:doc:upload:[a-z_]+$/.test(id)))return id.slice(4);
     return 'invalid';
   }
   if(i?.type==='nfm_reply')return 'flow';
@@ -221,7 +223,10 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(!action || ['submit','restart','cancel'].includes(action)){
     const handled=await continueGuidedChat(phone,message,action,submitChatFlow);
     if(handled)return true;
-    if(!action)return false;
+    if(!action){
+      if(await handleDocumentPickText(phone,message.text?.body,Boolean(message.context?.id)))return true;
+      return false;
+    }
     await sendWhatsAppText(phone,'No active form to change. Send Menu only if you want your options.');return true;
   }
   if(action==='menu'){await sendChatHome(phone);return true;}
@@ -265,7 +270,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(action==='verification'){const [company]=await db.select({id:companiesTable.id,status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     // Outcome states only: AKIF never reads or describes the document contents.
     const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
-    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Ask for Menu, then Documents, to get a secure upload link.';
+    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Tap Upload documents in the menu to get a secure upload link.';
     if(!company){
       const u=user as {status:string;emailVerifiedAt?:Date|string|null};
       const t=['suspended','rejected'].includes(u.status)?'Your account is not active. Please contact service@updowncircle.site.'
@@ -276,6 +281,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     }
     await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){await sendDocumentsOverview(phone,user);return true;}
+  if(action.startsWith('doc:upload:')){const key=action.slice('doc:upload:'.length);await issueDocumentUploadLinks(phone,user,key==='all'?'all':[key]);return true;}
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
   if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
@@ -430,16 +436,88 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
 }
 
 /** Plain "send me the link" requests: same result as Menu, More options, Documents. Returns false when the sender is not a usable account. */
-async function sendDocumentsOverview(phone:string,user:{id:string;role:string;fullName?:string|null}):Promise<void>{
+type DocUser={id:string;role:string;fullName?:string|null};
+
+async function ensureDocCompany(phone:string,user:DocUser){
+  const [existing]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+  if(existing)return existing;
+  // Tester numbers on staging never hit a dead end: a placeholder company holds their uploads.
+  if(!isTesterPhone(phone))return null;
+  const [created]=await db.insert(companiesTable).values({ownerUserId:user.id,companyName:user.fullName?`${user.fullName}’s company`:'Test company'}).returning({id:companiesTable.id});
+  return created??null;
+}
+
+const DOC_LIST_FLAG_MS=30*60_000;
+async function writeDocListFlag(phone:string,value:string){
+  try{
+    const phoneHash=guidanceKey(phone);
+    const [saved]=await db.select().from(whatsappChatSessionsTable).where(eq(whatsappChatSessionsTable.phoneHash,phoneHash)).limit(1);
+    if(!saved)return; // merge into an existing chat session only; never create one for a flag
+    const data={...(saved.data??{}),__docList:value};
+    await db.update(whatsappChatSessionsTable).set({data,expiresAt:new Date(Date.now()+72*60*60_000),updatedAt:new Date()}).where(eq(whatsappChatSessionsTable.phoneHash,phoneHash));
+  }catch{/* the flag is a convenience, never a blocker */}
+}
+async function docListContextActive(phone:string):Promise<boolean>{
+  try{
+    const [saved]=await db.select().from(whatsappChatSessionsTable).where(eq(whatsappChatSessionsTable.phoneHash,guidanceKey(phone))).limit(1);
+    const ts=Number(saved?.data?.__docList);
+    return Number.isFinite(ts)&&ts>0&&Date.now()-ts<DOC_LIST_FLAG_MS;
+  }catch{return false;}
+}
+
+async function issueDocumentUploadLinks(phone:string,user:DocUser,pick:'all'|string[]):Promise<void>{
   if(user.role==='agent'){await sendWhatsAppTextWithMenu(phone,'Agents do not upload company documents. Buyers and sellers share company documents; your verified agent profile is enough.');return;}
-  let [company]=await db.select({id:companiesTable.id}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
-  if(!company&&isTesterPhone(phone)){
-    [company]=await db.insert(companiesTable).values({ownerUserId:user.id,companyName:user.fullName?`${user.fullName}’s company`:'Test company'}).returning({id:companiesTable.id});
-  }
+  const required=requiredDocuments(user.role);
+  if(!required.length)return;
+  const company=await ensureDocCompany(phone,user);
+  if(!company){await sendWhatsAppTextWithMenu(phone,ADD_COMPANY_FIRST);return;}
+  const docRows=await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id));
+  const valid=required.map(d=>d.key);
+  const keys=[...new Set((pick==='all'?valid:pick).filter(k=>valid.includes(k)))].filter(k=>documentStatusFor(docRows,k)!=='verified');
+  if(!keys.length){await sendWhatsAppTextWithMenu(phone,'Those documents are already verified. Send Menu, then Upload documents, for your current list.');return;}
+  const docType=keys.length===1?keys[0]:'multi:'+keys.join(',');
+  let link:{url:string;expiresAt:Date}|null=null;
+  try{const issue=getVaultLinkIssuer();const result=issue?await issue({id:user.id,role:user.role},docType):null;if(result?.ok)link={url:result.url,expiresAt:result.expiresAt};}catch{}
+  if(!link){await sendWhatsAppTextWithMenu(phone,'I could not create your private upload link just now. Please try again in a minute.');return;}
+  const intro=keys.length===1
+    ?`Your private upload link for ${documentLabel(keys[0])} (single use, works for 15 minutes):`
+    :`One private upload link for ${keys.length} documents. The page takes them one by one; the link works for 15 minutes:\n${keys.map((k,i)=>`${i+1}. ${documentLabel(k)}`).join('\n')}`;
+  await sendWhatsAppText(phone,`${intro}\n${link.url}\nOnly UDC's verification team can open what you upload. I only get the result, never the document.`);
+  await writeDocListFlag(phone,String(Date.now()));
+}
+
+// Short follow-ups to the Upload documents list: "1", "1.2.3", "upload 1",
+// "1 , 2 and 3 I wanna upload all of it", "all". Bare numbers need the list
+// context (a recent list or a quoted reply to it); explicit upload wording
+// always counts. The list itself is never answered with a menu loop.
+export async function handleDocumentPickText(phone:string,text:string|undefined,quotedReply=false):Promise<boolean>{
+  if(!text)return false;
+  const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+  if(!user||!['buyer','seller'].includes(user.role)||['suspended','rejected'].includes(user.status))return false;
+  const required=requiredDocuments(user.role);
+  if(!required.length)return false;
+  const contextActive=quotedReply||await docListContextActive(phone);
+  const pick=parseDocumentPick(text,required.length,contextActive);
+  if(!pick)return false;
+  await writeDocListFlag(phone,'');
+  await issueDocumentUploadLinks(phone,user,pick.kind==='all'?'all':pick.indexes.map(i=>required[i-1].key));
+  return true;
+}
+
+async function sendDocumentsOverview(phone:string,user:DocUser):Promise<void>{
+  if(user.role==='agent'){await sendWhatsAppTextWithMenu(phone,'Agents do not upload company documents. Buyers and sellers share company documents; your verified agent profile is enough.');return;}
+  const company=await ensureDocCompany(phone,user);
   const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
   const list=documentsStatusText(user.role,docs);
   if(!company){await sendWhatsAppTextWithMenu(phone,`${list}\n${ADD_COMPANY_FIRST}`);return;}
-  await sendWhatsAppTextWithMenu(phone,`${list}\n${await vaultReplyFor({id:user.id,role:user.role},'company_registration')}\nFor a trade document inside a deal, reply to that deal’s message instead.`);
+  const missing=requiredDocuments(user.role).map((d,i)=>({...d,index:i+1})).filter(d=>documentStatusFor(docs,d.key)!=='verified');
+  await sendWhatsAppTextWithMenu(phone,`${list}\nPlease don't send passports, IDs, bank statements or company records on WhatsApp - chats aren't a safe place for them.\nFor a trade document inside a deal, reply to that deal’s message instead.`);
+  if(missing.length){
+    const rows=missing.map(d=>row('doc:upload:'+d.key,`Upload ${d.index}`,d.label.slice(0,72)));
+    if(missing.length>1)rows.push(row('doc:upload:all','Upload all','One private link for every missing document'));
+    await sendWhatsAppInteractive(phone,{type:'list',body:{text:'Tap a document for its private upload link, or reply with its number (or "all").'},action:{button:'Upload',sections:[{title:'Missing documents',rows}]}});
+    await writeDocListFlag(phone,String(Date.now()));
+  }
 }
 export async function sendDocumentsLink(phone:string):Promise<boolean>{
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);

@@ -41,9 +41,10 @@ router.post("/vault/upload/:token",
   async (req, res) => {
     noStore(res);
     try {
-      const result = await acceptUpload(String(req.params["token"] ?? ""), req.body);
+      const docKey = typeof req.query["doc"] === "string" ? req.query["doc"] : undefined;
+      const result = await acceptUpload(String(req.params["token"] ?? ""), req.body, docKey);
       if (result.ok) { res.status(201).json({ status: "pending" }); return; }
-      const code = result.error === "unsupported_file" ? 415 : result.error === "upload_failed" ? 502 : 410;
+      const code = result.error === "unsupported_file" ? 415 : result.error === "already_uploaded" ? 409 : result.error === "upload_failed" ? 502 : 410;
       res.status(code).json({ error: result.error });
     } catch { res.status(500).json({ error: "vault_upload_failed" }); }
   });
