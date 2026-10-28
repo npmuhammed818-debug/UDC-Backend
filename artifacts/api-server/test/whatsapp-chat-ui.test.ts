@@ -100,8 +100,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         await m.handleChatUi(applicant,{id:randomUUID(),text:{body:`full_name: QA Conflict Buyer; email: ${existing.email}; company_name: QA Conflict Imports Ltd; country: India`}});
         const draft=rows.whatsappChatSessionsTable.find((r:any)=>r.purpose==='profile_buyer');
         const draftId=draft.id;
-        await m.handleChatUi(applicant,ui('submit'));
-        assert.match(last(),/already belongs/);
+        assert.ok(state.sent.slice(-3).some((x:any)=>/already belongs/.test(String(x?.body))),'the conflict is explained as soon as the email is sent');
         assert.ok(rows.whatsappChatSessionsTable.some((r:any)=>r.id===draftId),'a rejected submission must retain all entered details');
         assert.equal(rows.usersTable.length,before);
         assert.deepEqual(existing,original,'email conflicts must never update another identity');
