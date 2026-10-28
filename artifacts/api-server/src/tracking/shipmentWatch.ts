@@ -92,9 +92,10 @@ export async function runShipmentWatchPoll(options: {
           userId: watch.userId, type: "shipment_watch_update", title, body,
           link: watch.dealId ? `/deals/${watch.dealId}/tracking` : null,
         }).returning({ id: notificationsTable.id });
-        // Deal-linked watches queue the WhatsApp intent in the same transaction;
-        // no live provider request is made by this producer.
-        if (notice && watch.dealId) {
+        // Every watch queues the WhatsApp intent in the same transaction (deal-less
+        // jobs carry deal_id NULL and use the deal-less eligibility branch at send
+        // time). No live provider request is made by this producer.
+        if (notice) {
           await enqueueShipmentWhatsApp(tx, { notificationId: notice.id, dealId: watch.dealId, recipientUserId: watch.userId });
         }
         await tx.insert(auditLogsTable).values({

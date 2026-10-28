@@ -131,7 +131,8 @@ test("shipment watch poll: sparing, deduplicated, honest and transactionally saf
     const fourth=await m.runShipmentWatchPoll({database:db,tracker,now:new Date('2026-10-29T14:00:00Z')});
     assert.equal(fourth.notified,2,'a real class change messages each watch again');
     assert.match(rows.notificationsTable[1].body,/Delivered/);
-    assert.equal(rows.whatsappShipmentOutboxTable.length,2,'only the deal-linked watch queues WhatsApp');
+    assert.equal(rows.whatsappShipmentOutboxTable.length,3,'both watches queue WhatsApp after the class change');
+    assert.ok(rows.whatsappShipmentOutboxTable.some(r=>r.dealId===null&&r.recipientUserId==='u2'),'deal-less watch queues with deal_id NULL');
     assert.ok(rows.notificationsTable.every(n=>n.userId),'deal-less watch still gets the in-app notification');
 
     trackerEvents.value=[];

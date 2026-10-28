@@ -25,11 +25,12 @@ export async function dispatchShipmentNotifications(options: {
       const eligible = await executor.execute(sql`
         SELECT u.id,u.role,n.type FROM public.users u
         JOIN public.notifications n ON n.id=(SELECT notification_id FROM public.whatsapp_shipment_outbox WHERE id=${context.jobId}) AND n.user_id=u.id
-        JOIN public.deals d ON d.id=${context.dealId}
+        LEFT JOIN public.deals d ON d.id=${context.dealId}
         JOIN public.notification_preferences p ON p.user_id=u.id
         WHERE u.id=${context.userId} AND u.phone=${phone} AND u.status='verified'
           AND p.optional_whatsapp=true AND p.reminders=true
-          AND ((u.role='buyer' AND d.buyer_user_id=u.id)
+          AND (${context.dealId} IS NULL
+            OR (u.role='buyer' AND d.buyer_user_id=u.id)
             OR (u.role='seller' AND d.seller_user_id=u.id)
             OR (u.role='agent' AND EXISTS(SELECT 1 FROM public.deal_participants dp
               WHERE dp.deal_id=d.id AND dp.user_id=u.id AND dp.participant_role='agent' AND dp.status='active')))
@@ -38,7 +39,7 @@ export async function dispatchShipmentNotifications(options: {
       const audience=eligible.rows[0] as {role:string;type:string};
       const safeBody=notificationText(audience.type,audience.role);
       if(!safeBody)return {delivered:false,reason:'provider_rejected'};
-      const freeForm = await authorizeCustomerWindow(phone, context.userId, context.dealId, { executor, now, secret });
+      const freeForm = await authorizeCustomerWindow(phone, context.userId, context.dealId ?? "", { executor, now, secret });
       return sendWhatsAppNotification({ phone, body:safeBody, freeForm }, { env, transport: options.transport });
     },
   });

@@ -8,7 +8,9 @@ import {usersTable} from "./users";
 export const whatsappShipmentOutboxTable=pgTable("whatsapp_shipment_outbox",{
   id:uuid("id").primaryKey().defaultRandom(),
   notificationId:uuid("notification_id").notNull().references(()=>notificationsTable.id,{onDelete:"cascade"}),
-  dealId:uuid("deal_id").notNull().references(()=>dealsTable.id,{onDelete:"cascade"}),
+  // Null for user-initiated jobs without a deal (shipment watch updates). Deal-linked
+  // jobs still cascade with their deal; null rows cascade with the notification.
+  dealId:uuid("deal_id").references(()=>dealsTable.id,{onDelete:"cascade"}),
   recipientUserId:uuid("recipient_user_id").notNull().references(()=>usersTable.id,{onDelete:"cascade"}),
   status:text("status").notNull().default("pending"),
   attempts:integer("attempts").notNull().default(0),

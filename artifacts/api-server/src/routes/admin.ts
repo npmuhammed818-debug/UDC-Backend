@@ -20,6 +20,7 @@ import {notificationText} from "../notifications/deliveryContent";
 import {dispatchShipmentNotifications} from "../notifications/shipmentDispatcher";
 import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
+import { runShipmentWatchPoll } from "../tracking/shipmentWatch";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { managedDealDocumentPath, managedCompanyDocumentPath } from "../supabase/documentAccessPath";
@@ -621,6 +622,29 @@ router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:A
     res.json(result);
   }catch{
     res.status(500).json({error:"eta_followup_run_failed"});
+  }
+});
+
+// Operator-triggered shipment watch poll (external schedulers wake the service with
+// this call; the in-process runner stays as a fallback). On staging only, a fake
+// 17TRACK response can be supplied through UDC_SHIPMENT_WATCH_FAKE_EVENTS (JSON
+// array of {time,description,location}) so the full delivery chain is testable
+// without spending real 17TRACK quota. The flag is ignored outside staging.
+router.post("/admin/tracking/shipment-watch/run",requireRole("admin"),async(_req,res)=>{
+  try{
+    let tracker;
+    if(process.env.UDC_APP_ENV==="staging"&&process.env.UDC_SHIPMENT_WATCH_FAKE_EVENTS){
+      const parsed=JSON.parse(process.env.UDC_SHIPMENT_WATCH_FAKE_EVENTS) as {time:string;description:string;location?:string}[];
+      if(!Array.isArray(parsed)||parsed.some(e=>!e||typeof e.time!=="string"||typeof e.description!=="string")){
+        res.status(400).json({error:"fake_events_invalid"});
+        return;
+      }
+      tracker={name:"staging-fake",fetchEvents:async()=>parsed};
+    }
+    const result=await runShipmentWatchPoll(tracker?{tracker}:{});
+    res.json(result);
+  }catch{
+    res.status(500).json({error:"shipment_watch_run_failed"});
   }
 });
 

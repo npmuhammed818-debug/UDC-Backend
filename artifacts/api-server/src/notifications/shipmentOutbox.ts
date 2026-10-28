@@ -7,10 +7,10 @@ import type {NotificationTransportResult} from "../whatsapp/notificationTranspor
 type Client=Pick<typeof db,"execute">;
 type Job={id:string,deal_id:string,recipient_user_id:string,claim_token:string,attempts:number};
 type Recipient={phone:string,user_id:string,role:string,type:string};
-export type DeliveryContext={userId:string;dealId:string;jobId:string};
+export type DeliveryContext={userId:string;dealId:string|null;jobId:string};
 type Result=NotificationTransportResult;
 export async function enqueueShipmentWhatsApp(executor:Client,input:{
-  notificationId:string;dealId:string;recipientUserId:string;
+  notificationId:string;dealId:string|null;recipientUserId:string;
 }){
   const result=await executor.execute(sql`
     INSERT INTO public.whatsapp_shipment_outbox(notification_id,deal_id,recipient_user_id)
@@ -80,7 +80,7 @@ export async function runShipmentWhatsAppOutbox(options:{
         contexts AS (
           INSERT INTO public.whatsapp_message_contexts(provider_message_id,deal_id,recipient_user_id,kind)
           SELECT provider_message_id,deal_id,recipient_user_id,'shipment_notification' FROM updated
-          WHERE status='accepted' AND provider_message_id IS NOT NULL
+          WHERE status='accepted' AND provider_message_id IS NOT NULL AND deal_id IS NOT NULL
           ON CONFLICT(provider_message_id) DO NOTHING
         )
         INSERT INTO public.audit_logs(action,entity_type,entity_id,metadata)
@@ -101,12 +101,13 @@ export async function runShipmentWhatsAppOutbox(options:{
       FROM public.whatsapp_shipment_outbox o
       JOIN public.notifications n ON n.id=o.notification_id AND n.user_id=o.recipient_user_id
       JOIN public.users u ON u.id=o.recipient_user_id
-      JOIN public.deals d ON d.id=o.deal_id
+      LEFT JOIN public.deals d ON d.id=o.deal_id
       JOIN public.notification_preferences p ON p.user_id=u.id
       WHERE o.id=${job.id} AND o.claim_token=${token}
         AND u.status='verified' AND u.phone IS NOT NULL
         AND p.optional_whatsapp=true AND p.reminders=true
-        AND ((d.buyer_user_id=u.id AND u.role='buyer') OR (d.seller_user_id=u.id AND u.role='seller')
+        AND (o.deal_id IS NULL
+          OR (d.buyer_user_id=u.id AND u.role='buyer') OR (d.seller_user_id=u.id AND u.role='seller')
           OR (u.role='agent' AND EXISTS(
             SELECT 1 FROM public.deal_participants dp
             WHERE dp.deal_id=d.id AND dp.user_id=u.id
