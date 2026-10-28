@@ -2,6 +2,7 @@ import {emailAuth} from '../auth/emailAuth';
 import { etaAdvisory, etaAdvisoryLabel } from "../tracking/etaAdvisory";
 import { handleWhatsAppIntroduction } from '../referrals/whatsappIntroduction';
 import { respondToTerms } from '../marketplace/termAgreement';
+import { asksForOpenRequirements, openRequirementsReplyForSeller, respondToRequirementInterest } from '../marketplace/sellerRequirementNotify';
 import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
 import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -193,6 +194,12 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   const termId=message.interactive?.button_reply?.id;
   const termAction=typeof termId==='string'?/^udc:terms:(accept|reject):([a-f0-9-]{36})$/.exec(termId):null;
   if(termAction){await respondToTerms(phone,termAction[2],termAction[1]==='accept');return true;}
+  const reqAction=typeof termId==='string'?/^udc:req:(interested|pass):([a-f0-9-]{36})$/.exec(termId):null;
+  if(reqAction){await respondToRequirementInterest(phone,reqAction[2],reqAction[1]==='interested');return true;}
+  if(typeof message.text?.body==='string'&&asksForOpenRequirements(message.text.body)){
+    const reply=await openRequirementsReplyForSeller(phone);
+    if(reply){await sendWhatsAppText(phone,reply);return true;}
+  }
   const poolAction=typeof termId==='string'?/^udc:pool:(accept|decline):([a-f0-9-]{36})$/.exec(termId):null;
   if(poolAction){
     const decision=poolAction[1]==='accept'?'accepted' as const:'declined' as const;
