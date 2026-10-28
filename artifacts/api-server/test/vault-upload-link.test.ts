@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  VAULT_LINK_TTL_MS, checkUploadLink, hashLinkToken, issueUploadLinkToken, looksLikeConfidentialDocumentTopic,
-  publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath, vaultRedirectReply,
+  VAULT_DOCUMENT_TYPES, VAULT_LINK_TTL_MS, checkUploadLink, hashLinkToken, issueUploadLinkToken, looksLikeConfidentialDocumentTopic,
+  parseMultiDocumentType, publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath, vaultRedirectReply,
 } from "../src/vault/uploadLink.ts";
 import { managedCompanyDocumentPath } from "../src/supabase/documentAccessPath.ts";
 import { uploadPageHtml } from "../src/vault/uploadPage.ts";
@@ -95,4 +95,28 @@ test("accepted deal uploads carry the sensitive-file warning", async () => {
 test("vault public base rejects credential-bearing, non-origin and insecure destinations",()=>{
   for(const base of ["http://vault.example.invalid","https://u:p@vault.example.invalid","https://vault.example.invalid/path","https://vault.example.invalid/?x=1","https://vault.example.invalid/#fragment","https://"])
     assert.throws(()=>uploadPageUrl(base,"synthetic-token"),/invalid_vault_public_origin/);
+});
+
+test("multi document links carry several checklist keys", () => {
+  for (const key of ["tax_id", "import_licence", "export_licence", "product_licence", "past_exports"]) {
+    assert.ok((VAULT_DOCUMENT_TYPES as readonly string[]).includes(key), key);
+  }
+  assert.deepEqual(parseMultiDocumentType("multi:company_registration,tax_id,import_licence"), ["company_registration", "tax_id", "import_licence"]);
+  assert.equal(parseMultiDocumentType("multi:company_registration,nope"), null);
+  assert.equal(parseMultiDocumentType("multi:"), null);
+  assert.equal(parseMultiDocumentType("company_registration"), null);
+  assert.equal(parseMultiDocumentType(42), null);
+});
+
+test("the multi upload page takes one file per expected document", () => {
+  const html = uploadPageHtml({ state: "ready", documentType: "multi:company_registration,tax_id" });
+  assert.match(html, /data-doc="company_registration"/);
+  assert.match(html, /data-doc="tax_id"/);
+  assert.match(html, /company registration or trade licence/);
+  assert.match(html, /tax ID/);
+  assert.match(html, /\?doc=/);
+  assert.match(html, /one by one/);
+  const single = uploadPageHtml({ state: "ready", documentType: "tax_id" });
+  assert.match(single, /tax ID/);
+  assert.doesNotMatch(single, /data-doc/);
 });

@@ -28,7 +28,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
   let queue=Promise.resolve();state.db.transaction=(f:any)=>{const job=queue.then(async()=>{const before=structuredClone(rows);try{return await f(state.db);}catch(error){for(const n of names)rows[n]=before[n];throw error;}});queue=job.catch(()=>{});return job;};
   (globalThis as any).__chatUiFixture=state;
   const output=fileURLToPath(new URL(`./chat-ui-${randomUUID()}.mjs`,import.meta.url));
-  const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';export * from '../src/tracking/etaAdvisory';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
+  const bundle=await build({stdin:{contents:"export * from '../src/whatsapp/chatUi';export * from '../src/vault/issuer';export * from '../src/whatsapp/guidanceSession';export * from '../src/whatsapp/flowToken';export * from '../src/whatsapp/flowDefinitions';export * from '../src/tracking/etaAdvisory';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'chat-ui-fixture',setup(b){
     const fixtures:any={hermes:"export const runConversationChat=async()=>{const s=globalThis.__chatUiFixture;s.modelCalls++;if(s.modelError)throw new DOMException('Synthetic provider deadline','TimeoutError');return {content:s.modelOutput};};",db:'const s=globalThis.__chatUiFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const inArray=(a,list)=>({kind:'in',a,list});export const lt=(a,b)=>({kind:'lt',a,b});export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});",client:"export const isWindowClosedError=()=>false;const s=globalThis.__chatUiFixture;export const sendWhatsAppText=async(to,body)=>{s.sent.push({to,body});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppTextWithMenu=async(to,body)=>{s.sent.push({to,body,withMenu:true});return {delivered:true,messageId:'out-'+s.sent.length}};export const sendWhatsAppInteractive=async(to,body)=>{s.interactive.push({to,body});return {delivered:true,messageId:'ui-'+s.interactive.length}};export const downloadWhatsAppMedia=async()=>({bytes:Buffer.from('%PDF-synthetic-document'),mimeType:'application/pdf'});export const markReadAndTyping=()=>{};export const trackReplyFailures=(fn)=>fn(new Set());",storage:"export const uploadDocumentBytes=async(path)=>{globalThis.__chatUiFixture.uploads.push(path);return 'storage://private/'+path;};",setup:"export const publishedFlowId=async()=>globalThis.__chatUiFixture.flowId;",password:"export const hashPassword=async()=> 'synthetic-unusable-hash';",sellerNotify:"export const asksForOpenRequirements=()=>false;export const openRequirementsReplyForSeller=async()=>null;export const respondToRequirementInterest=async()=>{};",roleChange:"export const requestRoleChange=async(phone,toRole)=>{globalThis.__chatUiFixture.roleChangeCalls.push({phone,toRole});return {status:'pending'};};export const roleChangeReply=(status,role)=>'Request saved for '+role+'. Your current role and access remain unchanged.';"};
     for(const [filter,path] of [[/marketplace\/sellerRequirementNotify$/,'sellerNotify'],[/intelligence\/hermesClient(\.ts)?$/,'hermes'],[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/whatsapp\/client$|^\.\/client$/,'client'],[/supabase\/storage$/,'storage'],[/^\.\/setupFlows$/,'setup'],[/auth\/passwords$/,'password'],[/accounts\/roleChangeRequest$/,'roleChange']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
@@ -196,7 +196,8 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
     });
     await t.test('company PDFs are never accepted on WhatsApp: the vault link is offered instead',async()=>{
       const before=state.uploads.length,rowsBefore=rows.companyVerificationDocumentsTable.length;
-      await m.handleChatUi(phone,ui('documents'));assert.match(last(),/don't send/i);assert.match(last(),/private upload link/);
+      await m.handleChatUi(phone,ui('documents'));assert.match(last(),/don't send/i);
+      assert.match(state.interactive.at(-1).body.body.text,/private upload link/);assert.ok(state.interactive.at(-1).body.action.sections[0].rows.length>0);
       const doc={id:'synthetic-doc-message',context:{id:'out-'+state.sent.length},document:{id:'media-1'}};
       assert.equal(await m.handleChatUi('10000000003',doc),false);
       await m.handleChatUi(phone,doc);
@@ -209,7 +210,10 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       rows.companiesTable.push({id:'doc-company',ownerUserId:'doc-seller',companyName:'Doc Co'});
       rows.companyVerificationDocumentsTable.push({id:'d1',companyId:'doc-company',documentType:'company_registration',status:'pending'},{id:'d2',companyId:'doc-company',documentType:'tax_id',status:'approved'});
       await m.handleChatUi(sellerPhone,ui('documents'));
-      assert.match(last(),/1 of 5 verified/);assert.match(last(),/1\. Company registration or trade licence - uploaded, waiting for UDC review/);assert.match(last(),/2\. Tax ID.*- verified/);assert.match(last(),/5\. Past export invoices or factory photos - not uploaded yet/);assert.match(last(),/private upload link/);
+      assert.match(last(),/1 of 5 verified/);assert.match(last(),/1\. Company registration or trade licence - uploaded, waiting for UDC review/);assert.match(last(),/2\. Tax ID.*- verified/);assert.match(last(),/5\. Past export invoices or factory photos - not uploaded yet/);
+      const sellerRows=state.interactive.at(-1).body.action.sections[0].rows;
+      assert.deepEqual(sellerRows.map((r:any)=>r.id),['udc:doc:upload:company_registration','udc:doc:upload:export_licence','udc:doc:upload:product_licence','udc:doc:upload:past_exports','udc:doc:upload:all']);
+      assert.deepEqual(sellerRows.map((r:any)=>r.title),['Upload 1','Upload 3','Upload 4','Upload 5','Upload all']);
       const buyerPhone='10000000041';rows.usersTable.push({id:'doc-buyer',phone:buyerPhone,role:'buyer',status:'verified',fullName:'Doc Buyer'});
       await m.handleChatUi(buyerPhone,ui('documents'));
       assert.match(last(),/Your documents: 0 of 3 verified/);assert.match(last(),/Add your company details first/);assert.doesNotMatch(last(),/private upload link/);
@@ -219,11 +223,37 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         const companiesBefore=rows.companiesTable.length;
         await m.handleChatUi(testerPhone,ui('documents'));
         assert.equal(rows.companiesTable.length,companiesBefore+1,'tester gets a placeholder company instead of a dead end');
-        assert.match(last(),/private upload link/);
+        assert.match(state.interactive.at(-1).body.body.text,/private upload link/);
       }finally{delete process.env.UDC_APP_ENV;delete process.env.UDC_TESTER_MODE;delete process.env.UDC_TESTER_PHONES;}
       const agentPhone='10000000042';rows.usersTable.push({id:'doc-agent',phone:agentPhone,role:'agent',status:'verified',fullName:'Doc Agent'});
       await m.handleChatUi(agentPhone,ui('documents'));
       assert.match(last(),/Agents do not upload company documents/);
+    });
+    await t.test('document picks issue a private link per tap, per number reply, or one link for all - never a menu loop',async()=>{
+      const issued:string[]=[];
+      m.setVaultLinkIssuer(async (_user:any,docType:string)=>{issued.push(docType);return {ok:true,url:'https://vault.example/upload/TESTTOKEN',expiresAt:new Date(Date.now()+9e5)};});
+      try{
+        const p='10000000050';rows.usersTable.push({id:'link-buyer',phone:p,role:'buyer',status:'verified',fullName:'Link Buyer'});
+        rows.companiesTable.push({id:'link-company',ownerUserId:'link-buyer',companyName:'Link Co'});
+        await m.handleChatUi(p,ui('doc:upload:tax_id'));
+        assert.deepEqual(issued,['tax_id']);assert.match(last(),/Tax ID/);assert.match(last(),/https:\/\/vault\.example\/upload\/TESTTOKEN/);assert.match(last(),/single use/);
+        issued.length=0;await m.handleChatUi(p,{id:'m1',context:{id:'wamid-list'},text:{body:'1.2.3'}});
+        assert.deepEqual(issued,['multi:company_registration,tax_id,import_licence']);assert.match(last(),/one by one/);assert.doesNotMatch(last(),/clarify what you mean/);
+        issued.length=0;await m.handleChatUi(p,{id:'m2',text:{body:'1. I wanna upload 1'}});
+        assert.deepEqual(issued,['company_registration']);
+        issued.length=0;await m.handleChatUi(p,{id:'m3',text:{body:'1 , 2 and 3 I wanna upload all of it'}});
+        assert.deepEqual(issued,['multi:company_registration,tax_id,import_licence']);
+        const plain='10000000051';rows.usersTable.push({id:'plain-buyer',phone:plain,role:'buyer',status:'verified',fullName:'Plain Buyer'});
+        issued.length=0;assert.equal(await m.handleChatUi(plain,{id:'m4',text:{body:'2'}}),false);assert.equal(issued.length,0,'a bare number without list context is not a document pick');
+        rows.whatsappChatSessionsTable.push({id:'sess-p',phoneHash:m.guidanceKey(p),purpose:'buyer',step:0,data:{history:'[]'},lastMessageId:null,expiresAt:new Date(Date.now()+9e5)});
+        await m.handleChatUi(p,ui('documents'));
+        issued.length=0;await m.handleChatUi(p,{id:'m5',text:{body:'2'}});
+        assert.deepEqual(issued,['tax_id'],'right after the list, a bare number picks that document');
+        assert.equal(rows.whatsappChatSessionsTable.filter((r:any)=>r.phoneHash===m.guidanceKey(p)).length,1,'the flag never creates a session row');
+        rows.whatsappChatSessionsTable=rows.whatsappChatSessionsTable.filter((r:any)=>r.id!=='sess-p');
+        issued.length=0;await m.handleChatUi('10000000052',{id:'m6',text:{body:'upload 1'}});
+        assert.equal(issued.length,0,'unknown numbers never get a link');
+      }finally{m.setVaultLinkIssuer(null);}
     });
     await t.test('guided WhatsApp intake validates each answer and waits for an explicit submit button',async()=>{
       const before=rows.buyerRequestsTable.length;

@@ -23,7 +23,7 @@ export function requiredDocuments(role: string): RequiredDocument[] {
   return [];
 }
 
-function documentStatus(docs: DocumentStatusRow[], key: string): string {
+export function documentStatusFor(docs: DocumentStatusRow[], key: string): string {
   const doc = [...docs].reverse().find((d) => d.documentType === key);
   if (!doc) return 'not uploaded yet';
   if (doc.status === 'approved') return 'verified';
@@ -33,10 +33,20 @@ function documentStatus(docs: DocumentStatusRow[], key: string): string {
 
 export function documentsStatusText(role: string, docs: DocumentStatusRow[]): string {
   const list = requiredDocuments(role);
-  const lines = list.map((d, i) => `${i + 1}. ${d.label} - ${documentStatus(docs, d.key)}`);
-  const verified = list.filter((d) => documentStatus(docs, d.key) === 'verified').length;
+  const lines = list.map((d, i) => `${i + 1}. ${d.label} - ${documentStatusFor(docs, d.key)}`);
+  const verified = list.filter((d) => documentStatusFor(docs, d.key) === 'verified').length;
   const head = verified === list.length && list.length > 0
     ? 'All your documents are verified.'
     : `Your documents: ${verified} of ${list.length} verified.`;
   return `${head}\n${lines.join('\n')}`;
+}
+
+const LABEL_BY_KEY: Record<string, string> = Object.fromEntries(
+  [...BUYER_DOCUMENTS, ...SELLER_DOCUMENTS].map((d) => [d.key, d.label]),
+);
+export function documentLabel(key: string): string {
+  return LABEL_BY_KEY[key] ?? key;
+}
+export function allDocumentKeys(): string[] {
+  return Object.keys(LABEL_BY_KEY);
 }

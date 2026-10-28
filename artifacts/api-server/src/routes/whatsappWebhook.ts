@@ -43,7 +43,11 @@ import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 import { looksLikeConfidentialDocumentTopic, SENSITIVE_UPLOAD_WARNING, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
 import { wantsHumanHelp, HUMAN_HANDOFF_REPLY } from "../akif/conversationPolicy";
-import { getVaultLinkIssuer } from "../vault/issuer";
+import { getVaultLinkIssuer, setVaultLinkIssuer } from "../vault/issuer";
+import { createVaultUploadLink } from "../vault/service";
+// The WhatsApp process must be able to issue vault links even when the vault
+// router (which also registers this) is not loaded in it.
+setVaultLinkIssuer(createVaultUploadLink);
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { triageSellerOffer } from "../akif/sellerOfferTriage";
@@ -468,7 +472,7 @@ async function resolveActiveDealForUser(userId: string, replyToProviderMessageId
 export function noDealFileReply(role: string) {
   return role === "agent"
     ? "I got the file. Agents do not upload documents here, so I have not kept it."
-    : "I got the file, but you have no active deal yet. To send company papers, use Menu, then More options, then Documents for a secure upload link.";
+    : "I got the file, but you have no active deal yet. To send company papers, tap Upload documents in the menu for a secure upload link.";
 }
 
 async function handleWhatsAppDealDocument(

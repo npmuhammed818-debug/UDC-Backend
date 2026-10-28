@@ -9,7 +9,7 @@ test("plain upload-link requests are detected, other text is not", () => {
 });
 
 test("approved wording, no app or Upload documents menu", () => {
-  assert.match(verificationAnswer, /Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link/);
+  assert.match(verificationAnswer, /single-use upload link for your company registration or trade-license PDF right away/);
   assert.doesNotMatch(udcHandbook, /Upload documents/);
   assert.equal(ADD_COMPANY_FIRST, "Add your company details first (send Menu, then My profile).");
 });
