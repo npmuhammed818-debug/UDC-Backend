@@ -4,6 +4,7 @@ import { handleWhatsAppIntroduction } from '../referrals/whatsappIntroduction';
 import { respondToTerms } from '../marketplace/termAgreement';
 import { asksForOpenRequirements, openRequirementsReplyForSeller, respondToRequirementInterest } from '../marketplace/sellerRequirementNotify';
 import { lcStatusReply } from '../deals/lcStatus';
+import { isTesterPhone } from '../auth/testerMode';
 import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
 import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -38,7 +39,7 @@ export function chatAction(message:ChatMessage){
   if(i?.type==='nfm_reply')return 'flow';
   const text=message.text?.body?.trim().toLowerCase();
   const typed:Record<string,string>={
-    'my deals':'deals','show my deals':'deals','track shipment':'track','shipment status':'track','track my shipment':'track','verification status':'verification',
+    'my deals':'deals','show my deals':'deals','switch role':'change_role','track shipment':'track','shipment status':'track','track my shipment':'track','verification status':'verification',
     'my profile':'profile','my commissions':'commissions','track referrals':'referrals',
     'my referrals':'referrals','referral code':'invite','my code':'invite','share code':'invite',
     'copy code':'invite','more options':'more','all options':'more',
@@ -128,6 +129,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
       if(emailOwner&&emailOwner.id!==existing?.id)return 'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
       if(existing){[user]=await tx.update(usersTable).set({fullName:input.full_name,email:input.email,country:input.country||null,...(existing.status==='verified' && (existing.email!==input.email || existing.fullName!==input.full_name || (existing.country||null)!==(input.country||null))?{status:'under_review'}:{}),updatedAt:new Date()}).where(eq(usersTable.id,existing.id)).returning();}
       else{[user]=await tx.insert(usersTable).values({phone,fullName:input.full_name,email:input.email,country:input.country||null,role,status:'pending',passwordHash:await hashPassword(randomBytes(32).toString('base64url'))}).returning();}
+      if(isTesterPhone(phone)){[user]=await tx.update(usersTable).set({emailVerifiedAt:new Date(),verifiedEmail:input.email,updatedAt:new Date()}).where(eq(usersTable.id,user.id)).returning();}
       if(input.company_name){
         const [company]=await tx.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
         const fields={companyName:input.company_name,registrationNumber:input.registration_number||null,country:input.country||null};
@@ -153,6 +155,9 @@ export async function submitChatFlow(phone:string,raw:unknown){
     if(token.purpose.startsWith('profile_'))otpUserId=user.id;
     return reply;
   });
+  if(otpUserId&&isTesterPhone(phone)){
+    return saved.split('{{VERIFY_HINT}}').join('')+'\n\nEmail confirmed automatically (tester mode).';
+  }
   if(otpUserId){
     try{
       if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return saved.split('{{VERIFY_HINT}}').join('')+'\n\nI sent a 6-digit code to your email. Reply here with the code to confirm it. It expires in 10 minutes.';}
@@ -234,6 +239,11 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(['buyer','seller','agent'].includes(action)){
     if(user&&user.role!==action){
       const target=action as 'buyer'|'seller'|'agent';
+      if(isTesterPhone(phone)){
+        await db.update(usersTable).set({role:target,updatedAt:new Date()}).where(eq(usersTable.id,user.id));
+        await db.insert(auditLogsTable).values({actorUserId:user.id,action:'tester_role_switch',entityType:'user',entityId:user.id,metadata:{from:user.role,to:target,testerMode:true}});
+        await sendWhatsAppText(phone,`Role switched to ${target} (tester mode). Type Menu for that role's options.`);return true;
+      }
       const result=await requestRoleChange(phone,target);
       await sendWhatsAppText(phone,roleChangeReply(result.status,target));return true;
     }
