@@ -25,6 +25,7 @@ import { getVaultLinkIssuer } from '../vault/issuer';
 import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
 import { documentsStatusText, documentStatusFor, requiredDocuments, documentLabel } from './documentChecklist';
+import { plainWordsAction } from './plainWordsIntent';
 import { parseDocumentPick } from './docUploadIntent';
 import { guidanceKey } from './guidanceSession';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
@@ -219,15 +220,19 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     return true;
   }
   if(await companyDocument(phone,message))return true;
-  const action=chatAction(message);
+  let action=chatAction(message);
   if(!action || ['submit','restart','cancel'].includes(action)){
     const handled=await continueGuidedChat(phone,message,action,submitChatFlow);
     if(handled)return true;
     if(!action){
       if(await handleDocumentPickText(phone,message.text?.body,Boolean(message.context?.id)))return true;
-      return false;
+      // Plain-words menu: saying any menu item runs the same action as tapping it.
+      const spoken=plainWordsAction(message.text?.body);
+      if(!spoken)return false;
+      action=spoken;
+    }else{
+      await sendWhatsAppText(phone,'No active form to change. Send Menu only if you want your options.');return true;
     }
-    await sendWhatsAppText(phone,'No active form to change. Send Menu only if you want your options.');return true;
   }
   if(action==='menu'){await sendChatHome(phone);return true;}
   if(action==='more'){await sendChatMore(phone);return true;}
@@ -468,7 +473,7 @@ async function docListContextActive(phone:string):Promise<boolean>{
 async function issueDocumentUploadLinks(phone:string,user:DocUser,pick:'all'|string[]):Promise<void>{
   if(user.role==='agent'){await sendWhatsAppTextWithMenu(phone,'Agents do not upload company documents. Buyers and sellers share company documents; your verified agent profile is enough.');return;}
   const required=requiredDocuments(user.role);
-  if(!required.length)return;
+  if(!required.length){if(user.role==='agent')await sendWhatsAppTextWithMenu(phone,'Agents do not upload company documents. Buyers and sellers share company documents; your verified agent profile is enough.');return;}
   const company=await ensureDocCompany(phone,user);
   if(!company){await sendWhatsAppTextWithMenu(phone,ADD_COMPANY_FIRST);return;}
   const docRows=await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id));
@@ -480,9 +485,9 @@ async function issueDocumentUploadLinks(phone:string,user:DocUser,pick:'all'|str
   try{const issue=getVaultLinkIssuer();const result=issue?await issue({id:user.id,role:user.role},docType):null;if(result?.ok)link={url:result.url,expiresAt:result.expiresAt};}catch{}
   if(!link){await sendWhatsAppTextWithMenu(phone,'I could not create your private upload link just now. Please try again in a minute.');return;}
   const intro=keys.length===1
-    ?`Your private upload link for ${documentLabel(keys[0])} (single use, works for 15 minutes):`
-    :`One private upload link for ${keys.length} documents. Pick them all on one page, then one tap uploads them all. The link works for 15 minutes:\n${keys.map((k,i)=>`${i+1}. ${documentLabel(k)}`).join('\n')}`;
-  await sendWhatsAppText(phone,`${intro}\n${link.url}\nOnly UDC's verification team can open what you upload. I only get the result, never the document.`);
+    ?`Your private upload link for ${documentLabel(keys[0])} (single use, works 15 minutes):`
+    :`One private link for ${keys.length} documents - one tap uploads them all (works 15 minutes):\n\n${keys.map((k,i)=>`${i+1}. ${documentLabel(k)}`).join('\n')}`;
+  await sendWhatsAppText(phone,`${intro}\n\n${link.url}\n\nOnly UDC's verification team can open what you upload. I only get the result, never the document.`);
   await writeDocListFlag(phone,String(Date.now()));
 }
 
