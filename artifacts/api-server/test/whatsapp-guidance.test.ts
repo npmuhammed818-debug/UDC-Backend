@@ -24,6 +24,9 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.match(trustedGuidanceAnswer('What is CIF?')??'',/Cost, Insurance and Freight/);
  assert.match(trustedGuidanceAnswer('What is CIF?')??'',/risk transfers to the buyer when the goods are loaded on board/);
  assert.equal(isGuidanceQuestion('Deal UDC-123: accept offer?'),false);
+ assert.equal(isGuidanceQuestion('Need summery'),true);
+ assert.equal(isGuidanceQuestion('too long'),true);
+ assert.equal(isGuidanceQuestion('explain more'),true);
  assert.equal(isGuidanceQuestion('100 MT copper at 5900'),false);
  await answerGuidance('phone-one','Can you speak in malayalam?','1');
  state.reply='DLC വിശദീകരണം';assert.equal(await answerGuidance('phone-one','What is dlc','2'),state.reply);
@@ -62,5 +65,27 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  const offlineGeneral=await answerGuidance('phone-offline','Explain export insurance?','offline-general');
  assert.match(offlineGeneral,/detailed trade-answer service is busy right now/);
  assert.doesNotMatch(offlineGeneral,/couldn’t prepare that answer just now/);
+ // Brevity: "summary" uses history, sets the brief preference and never hits the scope line.
+ state.modelFailure=false;
+ state.reply='Short version.';
+ const briefReply=await answerGuidance('phone-one','summary please','brief-1');
+ assert.equal(briefReply,'Short version.');
+ assert.match(state.calls.at(-1).system,/summarise your previous answer/i);
+ assert.equal(state.rows.get(guidanceKey('phone-one')).data.brief,'on');
+ // No earlier answer: approved acknowledgement, no model call.
+ const callsBeforeNew=state.calls.length;
+ assert.equal(await answerGuidance('phone-brevity-new','Need summery','brief-2'),'Sure, I will keep replies short.');
+ assert.equal(state.calls.length,callsBeforeNew);
+ // Brief preference shortens normal answers until the user asks for detail.
+ state.reply='First sentence here. Second sentence here. '+'word '.repeat(70);
+ const trimmedReply=await answerGuidance('phone-one','Explain export insurance?','brief-3');
+ assert.equal(trimmedReply,'First sentence here. Second sentence here.');
+ assert.match(state.calls.at(-1).system,/Keep every reply to 3 short lines/);
+ state.reply='A detailed answer.';
+ assert.equal(await answerGuidance('phone-one','explain more','brief-4'),'A detailed answer.');
+ assert.equal(state.rows.get(guidanceKey('phone-one')).data.brief,'');
+ // Offline summary: the previous answer is trimmed locally, never the busy fallback.
+ state.modelFailure=true;
+ assert.equal(await answerGuidance('phone-one','too long','brief-5'),'A detailed answer.');
  }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
 });

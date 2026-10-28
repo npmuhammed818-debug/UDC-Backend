@@ -1,5 +1,6 @@
 import { isBareAcknowledgement } from './intentPhrases';
-import { handbookVersion, udcHandbook, trustedGuidanceAnswer, validateGuidanceReply, scopeAnswer } from '../akif/udcHandbook';
+import { isBrevityRequest, isDetailRequest, trimToBrief } from './brevity';
+import { handbookVersion, udcHandbookForRole, trustedGuidanceAnswer, validateGuidanceReply, scopeAnswer } from '../akif/udcHandbook';
 import { createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { db, usersTable, whatsappChatSessionsTable as sessions } from '@workspace/db';
@@ -16,6 +17,8 @@ export function guidanceKey(phone: string) {
 }
 export function isGuidanceQuestion(text: string) {
   if (/^deal\s+UDC-/i.test(text.trim())) return false;
+  // A "make it shorter" / "more detail" request is a chat turn even without a question mark.
+  if (isBrevityRequest(text) || isDetailRequest(text)) return true;
   return /\?|^(?:what|why|how|which|can you|could you|do you|does|explain|teach|tell me|even (?:for|to)|speak|talk|answer|i (?:don.t|do not) understand)\b|malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்|\b(?:udc|updowncircle|akif|website|founder|verification documents)\b/i.test(text.trim());
 }
 export function guidancePrompt(history: {role:string;content:string}[], message: string, voice: boolean) {
@@ -50,15 +53,38 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
   const [account] = await db.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
   const trusted = trustedGuidanceAnswer(text, account?.role);
   const useEnglish = !language || language === 'english';
+  // "summary / short / too long" sets the brief preference; "more detail" clears it.
+  const brevity = isBrevityRequest(text);
+  const brief = isDetailRequest(text) ? '' : brevity ? 'on' : (fresh?.data.brief ?? '');
+  const handbook = udcHandbookForRole(account?.role);
   let reply: string;
-  if (trusted && useEnglish) reply = trusted;
+  if (brevity) {
+    const lastAssistant = [...history].reverse().find(m => m.role === 'assistant' && m.content.trim());
+    if (!lastAssistant) reply = 'Sure, I will keep replies short.';
+    else {
+      try {
+        const response = await runConversationChat(guidancePrompt(history,text.slice(0,4000),voice),
+          handbook + ' ' + guidanceSystem + ' The user asked for a shorter reply: summarise your previous answer in at most 3 short lines (under 40 words). No new facts.' + (language ? ` Preferred reply language: ${language}.` : ''), 25000);
+        reply = response.content.trim();
+        if (reply === 'TRADE_ACTION') return null;
+        if (!validateGuidanceReply(reply)) reply = trimToBrief(lastAssistant.content);
+      } catch (error) {
+        console.warn('AKIF WhatsApp guidance used offline summary', {
+          reason: error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'provider_unavailable',
+        });
+        reply = trimToBrief(lastAssistant.content);
+      }
+    }
+  }
+  else if (trusted && useEnglish) reply = trusted;
   else {
     try {
       const response = await runConversationChat(JSON.stringify({ ...JSON.parse(guidancePrompt(history,text.slice(0,4000),voice)), ...(quotedReply ? {quotedReply:true} : {}), authorizedAccount: account ? {role:account.role,status:account.status} : null, ...(trusted ? {approvedAnswer:trusted} : {}) }),
-        udcHandbook + ' ' + guidanceSystem + ' If approvedAnswer is supplied, translate it faithfully into the preferred language; do not add facts or change its meaning.' + (language ? ` Preferred reply language: ${language}.` : ''), 25000);
+        handbook + ' ' + guidanceSystem + ' If approvedAnswer is supplied, translate it faithfully into the preferred language; do not add facts or change its meaning.' + (language ? ` Preferred reply language: ${language}.` : '') + (brief === 'on' ? ' Keep every reply to 3 short lines, under 40 words, unless the user asks for detail.' : ''), 25000);
       reply = response.content.trim();
       if (reply === 'TRADE_ACTION') return null;
       if (!validateGuidanceReply(reply)) reply = trusted ?? scopeAnswer;
+      else if (brief === 'on') reply = trimToBrief(reply);
     } catch (error) {
       console.warn('AKIF WhatsApp guidance used offline fallback', {
         reason: error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'provider_unavailable',
@@ -67,7 +93,7 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
       reply = guidanceServiceFallback(trusted, language);
     }
   }
-  const data = { __kind: 'akif_guidance', handbookVersion, language: storedLanguage, history: JSON.stringify([...history, {role:'user',content:text.slice(0,HISTORY_CHARS)}, {role:'assistant',content:reply.slice(0,HISTORY_CHARS)}].slice(-HISTORY_MESSAGES)) };
+  const data = { __kind: 'akif_guidance', handbookVersion, language: storedLanguage, brief, history: JSON.stringify([...history, {role:'user',content:text.slice(0,HISTORY_CHARS)}, {role:'assistant',content:reply.slice(0,HISTORY_CHARS)}].slice(-HISTORY_MESSAGES)) };
   // Existing DB constraint permits only form purposes. The distinct HMAC namespace
   // and data marker isolate tutoring state; this does not create a buyer or trade.
   const values = { id: randomUUID(), phoneHash, purpose:'buyer', step:0, data, lastMessageId:messageId ?? null, expiresAt:new Date(Date.now()+HISTORY_TTL_MS), updatedAt:new Date() };
