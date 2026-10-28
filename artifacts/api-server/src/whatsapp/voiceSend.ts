@@ -1,4 +1,4 @@
-import { speechKind } from "../akif/voiceReply.ts";
+import { speechKind, voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { reserveSpeech } from "../akif/voiceLimits.ts";
 import { synthesizeAkifSpeechTimed } from "../akif/intelligence/workerClient";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
@@ -7,7 +7,10 @@ import type { VoiceLanguage } from "../akif/voiceLanguage.ts";
 import { sendWhatsAppVoiceNote } from "./client";
 import { getVoiceState, recordNotice } from "./voicePreference";
 
-export type SpeakResult = { status: boolean | "uncertain"; seconds: number | null; noticeDue: boolean; language?: VoiceLanguage };
+export type SpeakFailure =
+  | "master_off" | "not_speakable" | "text_only" | "preferences_unavailable"
+  | "daily_limit" | "notice_save_failed" | "synthesis_or_send_failed";
+export type SpeakResult = { status: boolean | "uncertain"; seconds: number | null; noticeDue: boolean; language?: VoiceLanguage; reason?: SpeakFailure };
 
 /** The brain rewrites the approved English reply in the customer's language, for speech only. */
 async function translateForSpeech(reply: string, language: Exclude<VoiceLanguage, "english">): Promise<string | null> {
@@ -28,23 +31,24 @@ async function translateForSpeech(reply: string, language: Exclude<VoiceLanguage
  * sent as text. Audio and reply text are never logged.
  */
 export async function speakReply(to: string, reply: string, options: { language?: VoiceLanguage } = {}): Promise<SpeakResult> {
-  const none: SpeakResult = { status: false, seconds: null, noticeDue: false };
+  const none = (reason: SpeakFailure): SpeakResult => ({ status: false, seconds: null, noticeDue: false, reason });
   const kind = speechKind(reply);
-  if (kind === "none") return none;
+  if (kind === "none") return none(voiceRepliesEnabled() ? "not_speakable" : "master_off");
   const state = await getVoiceState(to);
-  if (state !== "voice" && state !== "needs_notice") return none; // text only, or preferences unavailable: fail closed
+  if (state === "text_only") return none("text_only");
+  if (state !== "voice" && state !== "needs_notice") return none("preferences_unavailable"); // fail closed
   // Voice in their language or English (AKIF's pick, made by the caller). The translated text is
   // checked again before it can reach the provider; any doubt falls back to the English reply.
   const spoken = await spokenTextFor(reply, options.language ?? "english", translateForSpeech);
-  if (kind === "conversational" && !reserveSpeech(to, spoken.text.trim().length)) return none;
+  if (kind === "conversational" && !reserveSpeech(to, spoken.text.trim().length)) return none("daily_limit");
   let noticeDue = false;
-  if (state === "needs_notice") { if (!(await recordNotice(to))) return none; noticeDue = true; }
+  if (state === "needs_notice") { if (!(await recordNotice(to))) return none("notice_save_failed"); noticeDue = true; }
   try {
     const { bytes, seconds } = await synthesizeAkifSpeechTimed(spoken.text, kind === "conversational", spoken.language);
     const result = await sendWhatsAppVoiceNote(to, bytes);
     return { status: !result.delivered && result.reason === "provider_outcome_unknown" ? "uncertain" : result.delivered, seconds, noticeDue, language: spoken.language };
   } catch {
-    return none;
+    return none("synthesis_or_send_failed");
   }
 }
 

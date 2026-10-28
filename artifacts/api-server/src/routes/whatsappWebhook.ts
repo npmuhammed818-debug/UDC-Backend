@@ -86,6 +86,7 @@ function cleanHumanWhatsAppText(body: string) {
 }
 
 import { chooseChannel } from "../akif/voiceMoments.ts";
+import { guardOutboundText } from "../akif/outboundGuard.ts";
 import { pickVoiceLanguage } from "../akif/voiceLanguage.ts";
 
 const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "malayalam", tam: "tamil", hin: "hindi", ara: "arabic" };
@@ -105,7 +106,11 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
   const mainLanguage = await guidanceMainLanguage(to);
   const language = pickVoiceLanguage({ mainLanguage, heardLanguage: context.heardLanguage });
   const spoken = await speakReply(to, reply, { language });
-  if (spoken.status === false) return deliverWhatsAppReply(to, reply);
+  if (spoken.status === false) {
+    // Content-free diagnosis: which gate turned this voice reply into text.
+    console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown" }));
+    return deliverWhatsAppReply(to, reply);
+  }
   if (spoken.status === "uncertain") return { delivered: false as const, reason: "provider_outcome_unknown" as const };
   if (spoken.noticeDue) await deliverWhatsAppReply(to, VOICE_NOTICE);
   if (spoken.seconds !== null && spoken.seconds > textOfferSeconds()) {
@@ -119,7 +124,9 @@ async function deliverWhatsAppReply(to: string | undefined, body: string, _withM
   if (!to) return { delivered: false as const, reason: "missing_sender" as const };
 
   try {
-    const cleaned = cleanHumanWhatsAppText(body);
+    const guarded = guardOutboundText(body);
+    if (guarded.replaced) console.warn(JSON.stringify({ event: "outbound_placeholder_blocked" }));
+    const cleaned = cleanHumanWhatsAppText(guarded.text);
     return await sendWhatsAppText(to, cleaned);
   } catch (error) {
     // Safe fields only: never the message body, number, token or provider response text.

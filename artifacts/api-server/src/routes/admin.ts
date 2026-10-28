@@ -21,6 +21,7 @@ import {dispatchShipmentNotifications} from "../notifications/shipmentDispatcher
 import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
 import { runShipmentWatchPoll } from "../tracking/shipmentWatch";
+import { fetchAkifSpeechStatus, isAkifWorkerConfigured } from "../akif/intelligence/workerClient";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { managedDealDocumentPath, managedCompanyDocumentPath } from "../supabase/documentAccessPath";
@@ -622,6 +623,29 @@ router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:A
     res.json(result);
   }catch{
     res.status(500).json({error:"eta_followup_run_failed"});
+  }
+});
+
+// Voice diagnostics for operators: which gates are open, never any key, voice ID or content.
+router.get("/admin/voice/status",requireRole("admin"),async(_req,res)=>{
+  try{
+    let preferencesTable=false;
+    try{
+      await db.execute(sql`SELECT 1 FROM public.whatsapp_voice_preferences LIMIT 0`);
+      preferencesTable=true;
+    }catch{preferencesTable=false;}
+    const worker=await fetchAkifSpeechStatus();
+    res.json({
+      masterSwitch:process.env.AKIF_VOICE_REPLIES==="on",
+      conversational:process.env.AKIF_VOICE_REPLIES==="on"&&process.env.AKIF_VOICE_CONVERSATIONAL!=="off",
+      autopick:process.env.AKIF_VOICE_AUTOPICK==="on",
+      preferencesTable,
+      workerConfigured:isAkifWorkerConfigured(),
+      workerReachable:worker!==null,
+      workerSpeech:worker??undefined,
+    });
+  }catch{
+    res.status(500).json({error:"voice_status_unavailable"});
   }
 });
 

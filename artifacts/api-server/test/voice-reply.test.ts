@@ -21,7 +21,8 @@ test("off by default; needs a voice note from the user", () => {
 test("webhook speaks through one helper and falls back to text only for a known failure", async () => {
   const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   assert.equal((w.match(/speakReply\(/g) || []).length, 1);
-  assert.ok(w.includes("if (spoken.status === false) return deliverWhatsAppReply(to, reply);"));
+  assert.ok(w.includes("if (spoken.status === false) {"), "known voice failure falls back to text");
+  assert.ok(w.includes("voice_reply_text_fallback"), "the fallback reason is logged without content");
   assert.ok(w.includes('if (spoken.status === "uncertain")'));
   assert.ok(w.includes("deliverAnswer(message.from, guidance, true,"));
 });
