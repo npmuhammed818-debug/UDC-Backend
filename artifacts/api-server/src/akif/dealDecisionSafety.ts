@@ -1,4 +1,5 @@
 import { containsContactDetails, violatesPrivateRelay } from "./dealConversationPrivacy.ts";
+import { contactsUnlocked } from "../deals/contactSharing.ts";
 import { triageBuyerRequirement } from "./buyerRequirementTriage.ts";
 
 export type DealConversationDecision = {
@@ -286,7 +287,7 @@ export function normalizeModelDecision(input: {
     ? rawRelay
     : null;
 
-  if (relayToCounterparty && violatesPrivateRelay(relayToCounterparty, [input.incomingMessage, ...(input.privateContext ?? [])], input.incomingMessage)) {
+  if (relayToCounterparty && violatesPrivateRelay(relayToCounterparty, [input.incomingMessage, ...(input.privateContext ?? [])], input.incomingMessage, { allowContactDetails: contactsUnlocked(input.deal.status) })) {
     return { intent, replyToSender: "I’ll keep those details private. Send the terms you want shared with the other party.", relay: false, relayToCounterparty: null, newTradeIntake: false };
   }
 

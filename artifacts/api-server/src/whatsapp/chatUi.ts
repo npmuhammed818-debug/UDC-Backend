@@ -27,6 +27,7 @@ import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
 import { documentsStatusText, documentStatusFor, requiredDocuments, documentLabel } from './documentChecklist';
 import { plainWordsAction } from './plainWordsIntent';
 import { liveTrackingReply } from './liveTracking';
+import { CONTACTS_LOCKED_REPLY, contactShareReply, contactsUnlocked } from '../deals/contactSharing';
 import { parseDocumentPick } from './docUploadIntent';
 import { guidanceKey } from './guidanceSession';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
@@ -320,6 +321,28 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       return true;
     }
     await sendWhatsAppTextWithMenu(phone,await liveTrackingReply(action.slice('tracknum:'.length)));
+    return true;
+  }
+  if(action==='deal_contact'){
+    if(user.status!=='verified'){
+      await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Deal features open after verification.');
+      return true;
+    }
+    if(user.role!=='buyer'&&user.role!=='seller'){await sendWhatsAppTextWithMenu(phone,CONTACTS_LOCKED_REPLY);return true;}
+    const [context]=await db.select({activeDealId:whatsappUserContextsTable.activeDealId})
+      .from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,user.id)).limit(1);
+    if(!context?.activeDealId){await sendWhatsAppTextWithMenu(phone,'Open My deals and select your deal first, then ask for contact details.');return true;}
+    const [deal]=await db.select({id:dealsTable.id,status:dealsTable.status,buyerUserId:dealsTable.buyerUserId,sellerUserId:dealsTable.sellerUserId})
+      .from(dealsTable).where(and(eq(dealsTable.id,context.activeDealId),or(eq(dealsTable.buyerUserId,user.id),eq(dealsTable.sellerUserId,user.id)))).limit(1);
+    if(!deal){await sendWhatsAppTextWithMenu(phone,'That deal is no longer available to your account. Open My deals again.');return true;}
+    if(!contactsUnlocked(deal.status)){await sendWhatsAppTextWithMenu(phone,CONTACTS_LOCKED_REPLY);return true;}
+    const counterpartId=user.role==='buyer'?deal.sellerUserId:deal.buyerUserId;
+    const [counterpart]=counterpartId?await db.select({fullName:usersTable.fullName,email:usersTable.email,phone:usersTable.phone}).from(usersTable).where(eq(usersTable.id,counterpartId)).limit(1):[];
+    const [counterpartCompany]=counterpart?await db.select({companyName:companiesTable.companyName}).from(companiesTable).where(eq(companiesTable.ownerUserId,counterpartId)).limit(1):[];
+    await sendWhatsAppTextWithMenu(phone,contactShareReply(user.role==='buyer'?'seller':'buyer',{
+      fullName:counterpart?.fullName??null,companyName:counterpartCompany?.companyName??null,
+      email:counterpart?.email??null,phone:counterpart?.phone??null,
+    }));
     return true;
   }
   if(action==='track'){

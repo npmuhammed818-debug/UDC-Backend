@@ -47,6 +47,10 @@ const SPOKEN: [RegExp, string][] = [
   [/^verification(\s+status)?$/, 'verification'],
   [/^(?:my|account)\s+status$/, 'verification'],
   [/^am\s+i\s+verified$/, 'verification'],
+  // counterparty contact ask (deal-gated in the dispatch: SPA signed + UDC ok)
+  [/^(?:share|send|give)(?:\s+me)?(?:\s+the)?(?:\s+(?:buyer|seller|other\s+(?:party|side)))'?s?\s+contact(?:\s+details?)?$/, 'deal_contact'],
+  [/^(?:buyer|seller|their)\s+(?:phone|number|email|contact)$/, 'deal_contact'],
+  [/^(?:contact|phone\s+number)(?:\s+details?)?(?:\s+of\s+the\s+(?:buyer|seller))?$/, 'deal_contact'],
   // tracking
   [/^(?:track|tracking)(?:\s+my)?(?:\s+(?:shipment|order|cargo))?$/, 'track'],
   [/^(?:shipment|order)\s+status$/, 'track'],
