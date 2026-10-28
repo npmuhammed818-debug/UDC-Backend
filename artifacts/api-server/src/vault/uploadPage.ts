@@ -29,6 +29,7 @@ const PAGE_CSS = `
   .field .status.ok{color:#1a7f37}
   .field .status.err{color:#b3261e}
   button{width:100%;border:0;border-radius:.8rem;background:#111;color:#fff;font-size:1rem;padding:.95rem;cursor:pointer}
+  .btn{display:block;width:100%;box-sizing:border-box;border-radius:.8rem;background:#111;color:#fff;font-size:1rem;padding:.95rem;margin-top:1.5rem;text-decoration:none;text-align:center}
   button:disabled{opacity:.55;cursor:default}
   .note{display:flex;gap:.45rem;align-items:flex-start;justify-content:center;color:#8a8580;font-size:.8rem;line-height:1.45;margin-top:1.5rem;text-align:center}
   .note svg{flex:none;margin-top:.1rem}
@@ -40,6 +41,14 @@ const PAGE_CSS = `
 function pageShell(title: string, inner: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>UDC secure upload</title><style>${PAGE_CSS}</style></head><body><main><div class="logo">UDC</div><h1>${esc(title)}</h1>${inner}</main></body></html>`;
 }
+
+// The UDC WhatsApp number customers return to; the deployed number wins, the
+// staging number is the fallback.
+function backToChatUrl(): string {
+  const num = (process.env.UDC_WHATSAPP_PUBLIC_NUMBER?.trim() || "918136942531").replace(/\D/g, "");
+  return `https://wa.me/${num}`;
+}
+const BACK_TO_CHAT = `<a class="btn" href="${backToChatUrl()}">Back to chat</a>`;
 
 const PRIVACY_NOTE = `<p class="note">${LOCK_SVG}<span>Stored privately. Only UDC's verification team can open it. This link works once and expires 15 minutes after it was sent.</span></p>`;
 
@@ -54,16 +63,29 @@ export function uploadPageHtml(input: { state: "ready"; documentType: string } |
   <label class="field" data-field="${esc(k)}"><input type="file" accept="application/pdf,image/png,image/jpeg" data-doc="${esc(k)}">
     <span class="lab">${LOCK_SVG}<span>Choose file</span></span><span class="name"></span><span class="status" data-msg="${esc(k)}"></span>
   </label></div>`).join("");
-    return pageShell("Your documents", `<p class="sub">PDF, PNG or JPG, up to 8 MB each. Upload them one by one below.</p>${fields}${PRIVACY_NOTE}
+    return pageShell("Your documents", `<p class="sub">PDF, PNG or JPG, up to 8 MB each. Pick your files, then one tap uploads them all.</p>${fields}
+<button id="b" type="button">Upload all securely</button>
+<p class="note" id="m" role="status"></p>
+${PRIVACY_NOTE}
 <script>
-document.querySelectorAll('input[type=file]').forEach((inp)=>{inp.onchange=async()=>{const f=inp.files[0];if(!f)return;
-const field=inp.closest('.field'),m=field.querySelector('.status');
-field.querySelector('.name').textContent=f.name;
-m.className='status';m.textContent='Uploading...';
+const inputs=[...document.querySelectorAll('input[type=file]')],btn=document.getElementById('b'),m=document.getElementById('m');
+inputs.forEach((inp)=>{inp.onchange=()=>{const f=inp.files[0];const field=inp.closest('.field');
+field.querySelector('.name').textContent=f?f.name:'';};});
+btn.onclick=async()=>{
+const chosen=inputs.filter((i)=>i.files[0]&&!i.disabled);
+if(!chosen.length){m.textContent='Choose at least one file first.';return;}
+btn.disabled=true;m.textContent='';
+await Promise.all(chosen.map(async(inp)=>{
+const f=inp.files[0],field=inp.closest('.field'),st=field.querySelector('.status');
+st.className='status';st.textContent='Uploading...';
 try{const r=await fetch(location.pathname+'?doc='+encodeURIComponent(inp.dataset.doc),{method:'POST',headers:{'content-type':f.type||'application/octet-stream'},body:f,credentials:'omit'});
-if(r.status===201||r.status===409){m.className='status ok';m.textContent='Received.';field.classList.add('done');inp.disabled=true;}
-else{m.className='status err';m.textContent=r.status===415?'Only PDF, PNG or JPG files are accepted.':r.status===410?'This link has expired. Ask AKIF for a new one.':'Upload failed. Please try again.';}
-}catch(e){m.className='status err';m.textContent='Upload failed. Please try again.';}};});
+if(r.status===201||r.status===409){st.className='status ok';st.textContent='Received.';field.classList.add('done');inp.disabled=true;}
+else{st.className='status err';st.textContent=r.status===415?'Only PDF, PNG or JPG files are accepted.':r.status===410?'This link has expired. Ask AKIF for a new one.':'Upload failed. Please try again.';btn.disabled=false;}
+}catch(e){st.className='status err';st.textContent='Upload failed. Please try again.';btn.disabled=false;}
+}));
+if(inputs.every((i)=>i.disabled||!i.files[0])&&chosen.every((i)=>i.disabled)){
+document.querySelector('main').innerHTML='<div class="logo">UDC</div><div class="tick">${TICK_SVG}</div><h1>Received</h1><p class="sub">UDC will review your documents and update your status.</p>${BACK_TO_CHAT}';}
+};
 </script>`);
   }
   const label = esc(cap(LABELS[input.documentType] ?? "document"));
@@ -81,7 +103,7 @@ form.onsubmit=async(e)=>{e.preventDefault();const file=f.files[0];
 if(!file){m.textContent='Choose a file first.';return;}
 m.textContent='Uploading...';
 try{const r=await fetch(location.pathname,{method:'POST',headers:{'content-type':file.type||'application/octet-stream'},body:file,credentials:'omit'});
-if(r.status===201){document.querySelector('main').innerHTML='<div class="logo">UDC</div><div class="tick">${TICK_SVG}</div><h1>Received</h1><p class="sub">UDC will review it and update your status. You can close this page.</p>';}
+if(r.status===201){document.querySelector('main').innerHTML='<div class="logo">UDC</div><div class="tick">${TICK_SVG}</div><h1>Received</h1><p class="sub">UDC will review it and update your status.</p>${BACK_TO_CHAT}';}
 else m.textContent=r.status===415?'Only PDF, PNG or JPG files are accepted.':r.status===410?'This link has expired or was already used. Ask AKIF for a new one.':'Upload failed. Please try again.';
 }catch(err){m.textContent='Upload failed. Please try again.';}};
 </script>`);

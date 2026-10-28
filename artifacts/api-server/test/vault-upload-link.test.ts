@@ -115,7 +115,8 @@ test("the multi upload page takes one file per expected document", () => {
   assert.match(html, /Company registration or trade licence/);
   assert.match(html, /Tax ID/);
   assert.match(html, /\?doc=/);
-  assert.match(html, /one by one/);
+  assert.match(html, /one tap uploads them all/);
+  assert.match(html, /Upload all securely/);
   const single = uploadPageHtml({ state: "ready", documentType: "tax_id" });
   assert.match(single, /Tax ID/);
   assert.doesNotMatch(single, /data-doc/);
