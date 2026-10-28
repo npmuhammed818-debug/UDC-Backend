@@ -106,5 +106,12 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  // Offline summary: the previous answer is trimmed locally, never the busy fallback.
  state.modelFailure=true;
  assert.equal(await answerGuidance('phone-one','too long','brief-5'),'A detailed answer.');
- }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
+ 
+
+ // Trusted answers also carry the one-time language question for new users (message >= 2), then never again.
+ const c1=await answerGuidance('phone-three','What is dlc','t1');assert.match(c1??'',/Documentary Letter of Credit/);assert.doesNotMatch(c1??'',/comfortable in/);
+ const c2=await answerGuidance('phone-three','What is CIF?','t2');assert.match(c2??'',/Cost, Insurance and Freight/);assert.match(c2??'',/Which language are you most comfortable in\?/);
+ assert.equal(state.rows.get(guidanceKey('phone-three')).data.languageAsked,'1');
+ const c3=await answerGuidance('phone-three','Who founded UDC?','t3');assert.match(c3??'',/founded by Muhammed NP/);assert.doesNotMatch(c3??'',/comfortable in/);
+  }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
 });

@@ -79,7 +79,10 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
       }
     }
   }
-  else if (trusted) reply = trusted;
+  else if (trusted) {
+    reply = trusted;
+    if (askLanguage) reply += '\n\nWhich language are you most comfortable in?';
+  }
   else {
     try {
       // Refresh the notebook every 5th model turn, before replying, so this
