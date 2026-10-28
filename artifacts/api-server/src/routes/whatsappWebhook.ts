@@ -100,7 +100,7 @@ const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "mal
  * sent, the same reply goes as text. After a long voice reply (over the threshold) a short text
  * offer follows; the text itself is only sent after a yes.
  */
-async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string } = {}) {
+async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string; explicitVoice?: boolean } = {}) {
   const choice = chooseChannel({ wantsVoice, userText: context.userText, reply });
   if (choice.channel === "text") return deliverWhatsAppReply(to, reply);
   const mainLanguage = await guidanceMainLanguage(to);
@@ -109,6 +109,12 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
   if (spoken.status === false) {
     // Content-free diagnosis: which gate turned this voice reply into text.
     console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown" }));
+    // AKIF promised voice after an explicit request: never break that promise silently.
+    if (context.explicitVoice) {
+      await deliverWhatsAppReply(to, spoken.reason === "not_speakable"
+        ? "This one has details that must stay in writing, so here it is in text."
+        : "Voice is not working just now, so here is your answer in text.");
+    }
     return deliverWhatsAppReply(to, reply);
   }
   if (spoken.status === "uncertain") return { delivered: false as const, reason: "provider_outcome_unknown" as const };
@@ -1296,7 +1302,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // actual learning questions still bypass intake without a model call.
           if (await handleChatUi(message.from, message, true)) continue;
           const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
-          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from), { userText: message.text.body }); continue; }
+          if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
@@ -1499,7 +1505,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         try {
           if (!dealActionDirect && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
           const reply = dealActionDirect ? null : await answerGuidance(message.from, message.text.body, message.id, false, true);
-          if (reply !== null) { if (reply) await deliverAnswer(message.from, reply, consumeExplicitVoice(message.from), { userText: message.text.body }); continue; }
+          if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;

@@ -12,6 +12,11 @@ test('placeholder markers never reach a customer', () => {
     'Here is your file: [link]',
     'Upload at [url1] please',
     'See {link} for details',
+    '1 - Company Registration: [Upload Link]',
+    'Click [Upload link] to continue',
+    'Open <your link here> now',
+    'Use [document link] please',
+    'The code is [code]',
   ]) assert.ok(hasUnresolvedPlaceholder(bad), bad);
   for (const ok of [
     'Sure, a DLC is a bank payment guarantee.',
@@ -19,6 +24,7 @@ test('placeholder markers never reach a customer', () => {
     'Costs 450 USD per MT as a rough example.',
     'You wrote <3 and that is fine',
     'Send "Menu" any time.',
+    'DLC means the bank pays when documents match.',
   ]) assert.ok(!hasUnresolvedPlaceholder(ok), ok);
 });
 
@@ -49,4 +55,7 @@ test('the guard is wired into the one outbound helper, and the brain knows it ca
   const g = await readFile(new URL('../src/whatsapp/guidance.ts', import.meta.url), 'utf8');
   assert.ok(g.includes('CAN send voice replies'), 'the brain never claims it cannot send voice');
   assert.ok(g.includes('Never invent links'), 'the brain is told not to invent placeholders');
+  assert.ok(w.includes('explicitVoice'), 'a broken voice promise is explained honestly in text');
+  assert.ok(w.includes('Voice is not working just now'), 'technical voice failure is named');
+  assert.ok(w.includes('must stay in writing'), 'privacy-blocked voice is named');
 });
