@@ -345,6 +345,12 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     }));
     return true;
   }
+  if(action==='bank_info'){
+    // DECIDED (Master Plan v3, section 4): bank proof is asked just before the
+    // SPA is signed, only through a private secure link - never in chat.
+    await sendWhatsAppTextWithMenu(phone,'UDC will ask for bank proof through a private secure link just before the SPA is signed. Nothing is needed before that, and you never send bank details in this chat.');
+    return true;
+  }
   if(action==='track'){
     if(user.status!=='verified'){
       await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Tracking opens after verification.');

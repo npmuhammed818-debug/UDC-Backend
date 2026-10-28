@@ -51,6 +51,9 @@ const SPOKEN: [RegExp, string][] = [
   [/^(?:share|send|give)(?:\s+me)?(?:\s+the)?(?:\s+(?:buyer|seller|other\s+(?:party|side)))'?s?\s+contact(?:\s+details?)?$/, 'deal_contact'],
   [/^(?:buyer|seller|their)\s+(?:phone|number|email|contact)$/, 'deal_contact'],
   [/^(?:contact|phone\s+number)(?:\s+details?)?(?:\s+of\s+the\s+(?:buyer|seller))?$/, 'deal_contact'],
+  // bank details ask: never collected in chat; fixed timing reply in dispatch
+  [/^(?:bank\s+(?:details?|proof|statement|account))$/, 'bank_info'],
+  [/^(?:how|when|where)\s+(?:do|did)\s+i\s+(?:give|send|share|add)\s+(?:my\s+)?bank\s+(?:details?|proof)$/, 'bank_info'],
   // tracking
   [/^(?:track|tracking)(?:\s+my)?(?:\s+(?:shipment|order|cargo))?$/, 'track'],
   [/^(?:shipment|order)\s+status$/, 'track'],
