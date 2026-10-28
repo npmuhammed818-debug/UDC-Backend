@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { shouldSpeakReply, speechTextAllowed, voiceRepliesEnabled } from "../src/akif/voiceReply.ts";
+import { shouldSpeakReply, speechBlockReason, speechTextAllowed, voiceRepliesEnabled } from "../src/akif/voiceReply.ts";
 
 import { AI_FALLBACK_REPLY, HUMAN_HANDOFF_REPLY } from "../src/akif/conversationPolicy.ts";
 test("default-deny: only exact allowlisted fixed sentences may be spoken", () => {
@@ -110,4 +110,22 @@ test("explicit voice request, offer yes and once-only offers", () => {
   assert.equal(consumeExplicitVoice("+912", t0 + 2000), false);
   assert.equal(textOfferSeconds({}), 30);
   assert.equal(textOfferSeconds({ AKIF_VOICE_TEXT_OFFER_SECONDS: "20" }), 20);
+});
+
+test("speechBlockReason names the exact rule behind every unspeakable reply", () => {
+  const env = { AKIF_VOICE_REPLIES: "on" };
+  assert.equal(speechBlockReason("hello", { AKIF_VOICE_REPLIES: "off" }), "master_off");
+  assert.equal(speechBlockReason("your payout is ready", { AKIF_VOICE_REPLIES: "on", AKIF_VOICE_CONVERSATIONAL: "off" }), "conversational_off");
+  assert.equal(speechBlockReason("", env), "empty");
+  assert.equal(speechBlockReason(null, env), "empty");
+  assert.equal(speechBlockReason("x".repeat(601), env), "too_long");
+  assert.equal(speechBlockReason("call 9876543210", env), "long_number");
+  assert.equal(speechBlockReason("see https://example.com", env), "link_or_domain");
+  assert.equal(speechBlockReason("write to a@example.xyz", env), "email");
+  assert.equal(speechBlockReason("your IFSC is HDFC0001", env), "bank_or_id");
+  assert.equal(speechBlockReason("I saved it in the vault", env), "vault_word");
+  assert.equal(speechBlockReason("the price is 500000 INR", env), "money_or_terms");
+  assert.equal(speechBlockReason("here:\n- one\n- two", env), "list_shape");
+  assert.equal(speechBlockReason("hello, how can I help you today?", env), null);
+  assert.equal(speechBlockReason(HUMAN_HANDOFF_REPLY, env), null); // allowlisted fixed sentence stays speakable
 });

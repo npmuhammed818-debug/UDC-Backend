@@ -1,4 +1,4 @@
-import { speechKind, voiceRepliesEnabled } from "../akif/voiceReply.ts";
+import { speechKind, speechBlockReason, voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { reserveSpeech } from "../akif/voiceLimits.ts";
 import { synthesizeAkifSpeechTimed } from "../akif/intelligence/workerClient";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
@@ -10,7 +10,7 @@ import { getVoiceState, recordNotice } from "./voicePreference";
 export type SpeakFailure =
   | "master_off" | "not_speakable" | "text_only" | "preferences_unavailable"
   | "daily_limit" | "notice_save_failed" | "synthesis_or_send_failed";
-export type SpeakResult = { status: boolean | "uncertain"; seconds: number | null; noticeDue: boolean; language?: VoiceLanguage; reason?: SpeakFailure };
+export type SpeakResult = { status: boolean | "uncertain"; seconds: number | null; noticeDue: boolean; language?: VoiceLanguage; reason?: SpeakFailure; detail?: string };
 
 /** The brain rewrites the approved English reply in the customer's language, for speech only. */
 async function translateForSpeech(reply: string, language: Exclude<VoiceLanguage, "english">): Promise<string | null> {
@@ -33,7 +33,7 @@ async function translateForSpeech(reply: string, language: Exclude<VoiceLanguage
 export async function speakReply(to: string, reply: string, options: { language?: VoiceLanguage } = {}): Promise<SpeakResult> {
   const none = (reason: SpeakFailure): SpeakResult => ({ status: false, seconds: null, noticeDue: false, reason });
   const kind = speechKind(reply);
-  if (kind === "none") return none(voiceRepliesEnabled() ? "not_speakable" : "master_off");
+  if (kind === "none") { const r = none(voiceRepliesEnabled() ? "not_speakable" : "master_off"); r.detail = speechBlockReason(reply) ?? undefined; return r; }
   const state = await getVoiceState(to);
   if (state === "text_only") return none("text_only");
   if (state !== "voice" && state !== "needs_notice") return none("preferences_unavailable"); // fail closed

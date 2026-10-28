@@ -117,6 +117,24 @@ def test_elevenlabs_failure_is_502_without_switching_provider(monkeypatch):
     assert len(calls) == 1 and all("elevenlabs" in c for c in calls)  # one try, no Gemini fallback
 
 
+def test_elevenlabs_http_error_logs_status_and_provider_message(monkeypatch, caplog):
+    import io, json, urllib.error
+    _eleven_env(monkeypatch)
+    body = json.dumps({"detail": {"status": "quota_exceeded", "message": "quota exceeded"}}).encode()
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
+    monkeypatch.setattr(speech.urllib.request, "urlopen", boom)
+    with caplog.at_level("WARNING", logger="akif.speech"):
+        with pytest.raises(HTTPException) as e:
+            speech.synthesize(next(iter(speech.ALLOWED_TEXTS)))
+    assert e.value.status_code == 502
+    record = next(r for r in caplog.records if "tts_provider_error" in r.getMessage())
+    payload = json.loads(record.getMessage())
+    assert payload["httpStatus"] == 429
+    assert payload["providerMessage"] == "quota exceeded"
+    assert "test-key" not in record.getMessage()  # the API key never reaches logs
+
+
 def test_elevenlabs_daily_cap_and_unknown_provider(monkeypatch):
     _eleven_env(monkeypatch)
     monkeypatch.setenv("AKIF_TTS_DAILY_CAP", "1")
