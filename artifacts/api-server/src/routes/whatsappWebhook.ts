@@ -58,6 +58,7 @@ import { asksForUploadLink } from "../whatsapp/uploadLinkIntent";
 import { askedAboutPausingDeal, dealPauseHowTo } from "../deals/dealPauseText";
 import { requestedDealPause, dealPauseContextKind, dealPausePrompt, applyDealPause, pausedConfirmationToSender, closedConfirmationToSender } from "../deals/dealPause";
 import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
+import { contactsUnlocked } from "../deals/contactSharing";
 import type { SpaDraftInput } from "../deals/spaDraft";
 
 const router: IRouter = Router();
@@ -811,6 +812,16 @@ async function handleDealWhatsAppMessage(
   if (draftRequest) {
     if (!mayPrepareWhatsAppDraft(draftRequest.type, sender.id === deal.buyerUserId)) {
       return { reply: "That draft needs to be requested by the authorized party for this deal.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
+    // Owner decision (28 Oct): agents sign their agreement only after the SPA
+    // for the deal is signed. The contract stage moves only by UDC's own ops.
+    if (draftRequest.type === "AGENT_AGREEMENT") {
+      if (sender.role !== "agent") {
+        return { reply: "Agent agreements are for UDC agents.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+      }
+      if (!contactsUnlocked(deal.status)) {
+        return { reply: "Your agent agreement is signed after the SPA for this deal is signed. UDC will share it with you then.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+      }
     }
     const [product] = await db.select({ name: productsTable.name }).from(productsTable)
       .where(eq(productsTable.id, deal.productId)).limit(1);
