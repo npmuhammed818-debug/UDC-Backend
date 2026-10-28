@@ -10,7 +10,7 @@ import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { z } from 'zod/v4';
-import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, usersTable, whatsappChatSessionsTable, whatsappUserContextsTable } from '@workspace/db';
+import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, shipmentWatchesTable, usersTable, whatsappChatSessionsTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
@@ -27,6 +27,7 @@ import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
 import { documentsStatusText, documentStatusFor, requiredDocuments, documentLabel } from './documentChecklist';
 import { plainWordsAction } from './plainWordsIntent';
 import { liveTrackingReply } from './liveTracking';
+import { WATCH_MAX_PER_USER, WATCH_POLL_INTERVAL_MS } from '../tracking/shipmentWatch';
 import { CONTACTS_LOCKED_REPLY, contactShareReply, contactsUnlocked } from '../deals/contactSharing';
 import { parseDocumentPick } from './docUploadIntent';
 import { guidanceKey } from './guidanceSession';
@@ -349,6 +350,34 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     // DECIDED (Master Plan v3, section 4): bank proof is asked just before the
     // SPA is signed, only through a private secure link - never in chat.
     await sendWhatsAppTextWithMenu(phone,'UDC will ask for bank proof through a private secure link just before the SPA is signed. Nothing is needed before that, and you never send bank details in this chat.');
+    return true;
+  }
+  if(action.startsWith('watchnum:')){
+    if(user.status!=='verified'){
+      await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Shipment watching opens after verification.');
+      return true;
+    }
+    const number=action.slice('watchnum:'.length);
+    const hours=Math.round(WATCH_POLL_INTERVAL_MS/3_600_000);
+    const existing=await db.select({id:shipmentWatchesTable.id,active:shipmentWatchesTable.active}).from(shipmentWatchesTable)
+      .where(eq(shipmentWatchesTable.userId,user.id)).limit(WATCH_MAX_PER_USER+1);
+    if(existing.filter(w=>w.active).length>=WATCH_MAX_PER_USER){
+      await sendWhatsAppTextWithMenu(phone,`You already have ${WATCH_MAX_PER_USER} watched numbers. Send Unwatch followed by a number to free one up.`);
+      return true;
+    }
+    const [context]=await db.select({activeDealId:whatsappUserContextsTable.activeDealId})
+      .from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,user.id)).limit(1);
+    await db.insert(shipmentWatchesTable).values({userId:user.id,trackingNumber:number,dealId:context?.activeDealId??null})
+      .onConflictDoUpdate({target:[shipmentWatchesTable.userId,shipmentWatchesTable.trackingNumber],set:{active:true,updatedAt:new Date()}});
+    await sendWhatsAppTextWithMenu(phone,`I'll watch ${number} and message you here when it ships, is delayed or is delivered. Carriers are checked at most once every ${hours} hours. Send Unwatch ${number} to stop.`);
+    return true;
+  }
+  if(action.startsWith('unwatchnum:')){
+    const number=action.slice('unwatchnum:'.length);
+    const stopped=await db.update(shipmentWatchesTable).set({active:false,updatedAt:new Date()})
+      .where(and(eq(shipmentWatchesTable.userId,user.id),eq(shipmentWatchesTable.trackingNumber,number),eq(shipmentWatchesTable.active,true)))
+      .returning({id:shipmentWatchesTable.id});
+    await sendWhatsAppTextWithMenu(phone,stopped.length?`Stopped watching ${number}.`:`I'm not watching ${number}. Nothing changed.`);
     return true;
   }
   if(action==='track'){
