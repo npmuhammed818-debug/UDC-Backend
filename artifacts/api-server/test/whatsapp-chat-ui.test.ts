@@ -228,6 +228,8 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       const agentPhone='10000000042';rows.usersTable.push({id:'doc-agent',phone:agentPhone,role:'agent',status:'verified',fullName:'Doc Agent'});
       await m.handleChatUi(agentPhone,ui('documents'));
       assert.match(last(),/Agents do not upload company documents/);
+      await m.handleChatUi(agentPhone,{id:'ag1',text:{body:'I wanna upload docs'}});
+      assert.match(last(),/Agents do not upload company documents/,'plain-words upload from an agent gets the same answer, never a link');
     });
     await t.test('document picks issue a private link per tap, per number reply, or one link for all - never a menu loop',async()=>{
       const issued:string[]=[];
@@ -253,7 +255,35 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         rows.whatsappChatSessionsTable=rows.whatsappChatSessionsTable.filter((r:any)=>r.id!=='sess-p');
         issued.length=0;await m.handleChatUi('10000000052',{id:'m6',text:{body:'upload 1'}});
         assert.equal(issued.length,0,'unknown numbers never get a link');
+        issued.length=0;await m.handleChatUi(p,{id:'m7',text:{body:'upload my tax id'}});
+        assert.deepEqual(issued,['tax_id'],'a named document in plain words sends that one link');
+        issued.length=0;await m.handleChatUi(p,{id:'m8',text:{body:'I wanna upload docs'}});
+        assert.deepEqual(issued,['multi:company_registration,tax_id,import_licence'],'a general upload ask sends one link for all missing');
+        assert.match(last(),/one tap uploads them all/);
       }finally{m.setVaultLinkIssuer(null);}
+    });
+    await t.test('every menu item runs from plain words, no tapping',async()=>{
+      const bp='10000000060';rows.usersTable.push({id:'pw-buyer',phone:bp,role:'buyer',status:'verified',fullName:'Pw Buyer',email:'pw@example.com'});
+      rows.companiesTable.push({id:'pw-company',ownerUserId:'pw-buyer',companyName:'Pw Co'});
+      await m.handleChatUi(bp,{id:'p1',text:{body:'my deals'}});assert.match(last(),/No approved deals/);
+      await m.handleChatUi(bp,{id:'p2',text:{body:'track my order'}});assert.match(last(),/Open My deals and select your deal first/);
+      await m.handleChatUi(bp,{id:'p3',text:{body:'verification status'}});assert.match(last(),/Your account: verified/);
+      await m.handleChatUi(bp,{id:'p4',text:{body:'my profile'}});assert.match(state.sent.at(-1)?.body,/Pw Buyer/);
+      try{
+        assert.equal(await m.handleChatUi(bp,{id:'p5',text:{body:'I want to buy copper'}}),true,'a buy ask starts the requirement intake');
+        assert.match(last(),/What product do you need/);
+      }finally{await m.handleChatUi(bp,{id:'p5c',text:{body:'cancel'}});}
+      const sp='10000000061';rows.usersTable.push({id:'pw-seller',phone:sp,role:'seller',status:'verified',fullName:'Pw Seller',email:'ps@example.com'});
+      try{
+        assert.equal(await m.handleChatUi(sp,{id:'p6',text:{body:'I wanna sell my rice'}}),true,'a sell ask starts the offer intake');
+        assert.match(last(),/product|offer/i);
+      }finally{await m.handleChatUi(sp,{id:'p6c',text:{body:'cancel'}});}
+      await m.handleChatUi(sp,{id:'p7',text:{body:'I want to buy copper'}});assert.match(last(),/registered as seller/,'role guard still applies from plain words');
+      const ap='10000000062';rows.usersTable.push({id:'a1b2c3d4-0000-4000-8000-000000000062',phone:ap,role:'agent',status:'verified',fullName:'Pw Agent',email:'pa@example.com',emailVerifiedAt:new Date()});
+      const sentBefore=state.sent.length;await m.handleChatUi(ap,{id:'p8',text:{body:'my commissions'}});assert.match(last(),/No agreed commissions/);
+      await m.handleChatUi(ap,{id:'p9',text:{body:'my invite link'}});assert.ok(state.sent.length>sentBefore,'agent invite answer sent');
+      assert.equal(await m.handleChatUi(bp,{id:'p10',text:{body:'tell me about my deals options'}}),false,'chat about deals still goes to Akif, not the menu');
+      assert.equal(await m.handleChatUi(bp,{id:'p11',text:{body:'what documents do I need for importing rice?'}}),false,'document questions still go to Akif');
     });
     await t.test('guided WhatsApp intake validates each answer and waits for an explicit submit button',async()=>{
       const before=rows.buyerRequestsTable.length;
