@@ -13,7 +13,7 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';export * from '../src/akif/udcHandbook';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
  b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$|sharedLessons(\.ts)?$|emotionContext(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
- b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('emotionContext')?"export const estimateCustomerEmotion=async()=>({valence:'negative',cues:['anger'],confidence:0.6,evidence:'why'});export const feelingEventFor=()=> 'ordinary_turn';export const loadAkifFeelings=async()=>({state:{},lastTrigger:null});export const recordAkifFeeling=async o=>{const s=globalThis.__guidance;s.emotions=(s.emotions||[]).concat([o]);return {warmth:0.6,grief:0,tension:0.2,trust:0.5,engagement:0.6,uncertainty:0.3};};export const formatEmotionalContextForPrompt=()=>'EMOTION::ctx';":a.path.includes('sharedLessons')?"export const recallSharedLessons=async o=>{const s=globalThis.__guidance;s.sharedRecalls=(s.sharedRecalls||[]).concat([o]);return s.shared??[];};export const formatSharedLessonsForPrompt=m=>m.length?'SHARED::'+m.map(x=>x.content).join('|'):'';":a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
+ b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('emotionContext')?"export const estimateCustomerEmotion=async()=>({valence:'negative',cues:['anger'],confidence:0.6,evidence:'why'});export const feelingEventFor=()=> 'ordinary_turn';export const loadAkifFeelings=async()=>({state:{},lastTrigger:null});export const recordAkifFeeling=async o=>{const s=globalThis.__guidance;s.emotions=(s.emotions||[]).concat([o]);return {warmth:0.6,grief:0,tension:0.2,trust:0.5,engagement:0.6,uncertainty:0.3};};export const formatEmotionalContextForPrompt=()=>'EMOTION::ctx';":a.path.includes('sharedLessons')?"export const recallSharedLessons=async o=>{const s=globalThis.__guidance;s.sharedRecalls=(s.sharedRecalls||[]).concat([o]);return s.shared??[];};export const formatSharedLessonsForPrompt=m=>m.length?'SHARED::'+m.map(x=>x.content).join('|'):'';export const learnSharedLesson=async o=>{const s=globalThis.__guidance;s.sharedLearn=(s.sharedLearn||[]).concat([o]);return {status:'approved',id:'sl1'};};export const withdrawSharedLessons=async o=>{const s=globalThis.__guidance;s.withdrawn=(s.withdrawn||[]).concat(o.ids);return o.ids.length;};":a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';export const saveCustomerMemory=async o=>{const s=globalThis.__guidance;s.corrections=(s.corrections||[]).concat([o]);if(o.sharedLearner)await o.sharedLearner({userId:o.userId,topic:o.kind,content:o.content});return {id:'m1'};};":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
  }}]});await writeFile(path,result.outputFiles[0].text);
  const secret=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='test-guidance-secret-123';
  try{
@@ -108,6 +108,29 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  state.account=null;await answerGuidance('phone-public','Why is this so hard?','emo-2');
  assert.ok(!('emotionalContext' in JSON.parse(state.calls.at(-1).message)));
  assert.equal(state.emotions.length,emotionCallsBefore+1,'no feeling state without an identified account');
+ // Phase 6: an opted-in customer's correction is remembered privately and
+ // offered to shared learning; a non-opted-in customer's is not.
+ state.account={id:'u-10',role:'buyer',status:'verified',optIn:true};
+ state.reply='Noted.';await answerGuidance('phone-six','I meant 500 MT, not 50','corr-1');
+ assert.equal(state.corrections.length,1);assert.equal(state.corrections[0].kind,'correction');
+ assert.equal(state.corrections[0].source,'whatsapp:corr-1');
+ assert.equal(state.sharedLearn.length,1);assert.equal(state.sharedLearn[0].topic,'correction');
+ state.account={id:'u-11',role:'buyer',status:'verified'};
+ await answerGuidance('phone-six','I meant 500 MT, not 50','corr-2');
+ assert.equal(state.corrections.length,1,'no correction memory without opt-in');
+ state.account=null;
+ // Phase 6: a customer dispute of a shared lesson withdraws it immediately,
+ // and AKIF is told to acknowledge honestly, never to defend it.
+ state.shared=[{id:'L1',topic:'inspection',content:'Always confirm inspection terms before signing',origin:'real'}];
+ state.reply='Noted.';await answerGuidance('phone-seven','What should I check before signing?','disp-1');
+ assert.deepEqual(JSON.parse(state.rows.get(guidanceKey('phone-seven')).data.lastSharedLessonIds),['L1']);
+ state.reply='You are right, I removed it.';await answerGuidance('phone-seven',"that's not true, explain more?",'disp-2');
+ assert.deepEqual(state.withdrawn,['L1']);
+ assert.equal(JSON.parse(state.calls.at(-1).message).lessonWithdrawn,true);
+ assert.match(state.calls.at(-1).system,/withdrawn immediately/);
+ assert.match(state.calls.at(-1).system,/never defend it/);
+ state.shared=[];
+ state.rows.delete(guidanceKey('phone-six'));state.rows.delete(guidanceKey('phone-seven'));
  state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','Explain export insurance?','7',true),state.reply);assert.equal(state.rows.size,3);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
  state.saveFailure=false;state.modelFailure=false;state.reply='I can speak Malayalam.';
  await answerGuidance('phone-offline','Can you speak in Malayalam?','offline-language');

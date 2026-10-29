@@ -32,6 +32,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "usersTable",
     "notificationsTable", "auditLogsTable",
     "notificationPreferencesTable",
+    "akifSharedLessonsTable",
     "dealConversationEventsTable",
     "dealParticipantsTable",
     "dealsTable",

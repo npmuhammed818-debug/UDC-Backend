@@ -53,7 +53,7 @@ test("akif shared lessons: opt-in gated automatic learning, clean-or-nothing, ho
   const bundle=await build({stdin:{contents:"export * from '../src/akif/sharedLessons';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'fixture',setup(b){
     const fixtures={
       db:'export const db=globalThis.__lessonsFixture.db;export const akifCustomerMemoriesTable={};'+tableNames.map(n=>`export const ${n}=globalThis.__lessonsFixture.db.__tables.${n};`).join(''),
-      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});",
+      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});export const inArray=(a,list)=>({kind:'in',a,list});",
       cheap:"export const runCheapModelChat=async()=>{throw Error('tests must inject generalize');};",
     };
     db.__tables=tables;

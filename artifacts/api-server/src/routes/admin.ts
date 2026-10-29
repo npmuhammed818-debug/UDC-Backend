@@ -23,6 +23,7 @@ import { runEtaFollowups } from "../tracking/etaFollowups";
 import { runShipmentWatchPoll } from "../tracking/shipmentWatch";
 import { schedulerKeyAllowed, stagingFakeTracker } from "../tracking/shipmentWatchScheduler";
 import { fetchAkifSpeechStatus, isAkifWorkerConfigured } from "../akif/intelligence/workerClient";
+import { learnFromDealOutcome } from "../akif/dealOutcomeLessons";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { managedDealDocumentPath, managedCompanyDocumentPath } from "../supabase/documentAccessPath";
@@ -1182,6 +1183,15 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
           : `We’re at ${deal.status} now.`,
         `/deals/${deal.id}`,
       );
+    }
+    // Phase 6: a terminal status reached through the admin console also
+    // teaches AKIF one structural outcome lesson. Never blocks the update.
+    if (existingDeal.status !== deal.status && ["completed", "cancelled"].includes(deal.status)) {
+      try {
+        await learnFromDealOutcome({ dealId: deal.id });
+      } catch {
+        console.warn("AKIF deal outcome learning unavailable", { reason: "learn_failed" });
+      }
     }
     res.json({ deal });
   } catch (error) {
