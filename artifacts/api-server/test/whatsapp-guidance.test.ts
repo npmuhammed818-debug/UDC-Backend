@@ -12,8 +12,8 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  (globalThis as any).__guidance=state;
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';export * from '../src/akif/udcHandbook';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
- b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$|sharedLessons(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
- b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('sharedLessons')?"export const recallSharedLessons=async o=>{const s=globalThis.__guidance;s.sharedRecalls=(s.sharedRecalls||[]).concat([o]);return s.shared??[];};export const formatSharedLessonsForPrompt=m=>m.length?'SHARED::'+m.map(x=>x.content).join('|'):'';":a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
+ b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$|sharedLessons(\.ts)?$|emotionContext(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
+ b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('emotionContext')?"export const estimateCustomerEmotion=async()=>({valence:'negative',cues:['anger'],confidence:0.6,evidence:'why'});export const feelingEventFor=()=> 'ordinary_turn';export const loadAkifFeelings=async()=>({state:{},lastTrigger:null});export const recordAkifFeeling=async o=>{const s=globalThis.__guidance;s.emotions=(s.emotions||[]).concat([o]);return {warmth:0.6,grief:0,tension:0.2,trust:0.5,engagement:0.6,uncertainty:0.3};};export const formatEmotionalContextForPrompt=()=>'EMOTION::ctx';":a.path.includes('sharedLessons')?"export const recallSharedLessons=async o=>{const s=globalThis.__guidance;s.sharedRecalls=(s.sharedRecalls||[]).concat([o]);return s.shared??[];};export const formatSharedLessonsForPrompt=m=>m.length?'SHARED::'+m.map(x=>x.content).join('|'):'';":a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
  }}]});await writeFile(path,result.outputFiles[0].text);
  const secret=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='test-guidance-secret-123';
  try{
@@ -95,6 +95,19 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.match(state.calls.at(-1).system,/Never claim to be human/);
  state.shared=[];await answerGuidance('phone-public','What should I check before signing?','shared-2');
  assert.ok(!('sharedLessons' in JSON.parse(state.calls.at(-1).message)));
+ // Emotional context wiring: identified customers get the feeling block as
+ // data with the no-pressure and facts-independence rules; anonymous callers
+ // get none.
+ state.account={id:'u-9',role:'buyer',status:'verified'};
+ const emotionCallsBefore=state.emotions?.length??0;
+ state.reply='Noted.';await answerGuidance('phone-public','Why is this so hard?','emo-1');
+ assert.equal(JSON.parse(state.calls.at(-1).message).emotionalContext,'EMOTION::ctx');
+ assert.match(state.calls.at(-1).system,/never pressure the customer to stay, return or transact/);
+ assert.match(state.calls.at(-1).system,/facts, deal terms, approvals and safety never change with any mood/);
+ assert.equal(state.emotions.length,emotionCallsBefore+1);assert.equal(state.emotions.at(-1).userId,'u-9');
+ state.account=null;await answerGuidance('phone-public','Why is this so hard?','emo-2');
+ assert.ok(!('emotionalContext' in JSON.parse(state.calls.at(-1).message)));
+ assert.equal(state.emotions.length,emotionCallsBefore+1,'no feeling state without an identified account');
  state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','Explain export insurance?','7',true),state.reply);assert.equal(state.rows.size,3);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
  state.saveFailure=false;state.modelFailure=false;state.reply='I can speak Malayalam.';
  await answerGuidance('phone-offline','Can you speak in Malayalam?','offline-language');
