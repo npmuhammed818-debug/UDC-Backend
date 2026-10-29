@@ -69,7 +69,7 @@ test("akif customer memory: opt-in gated, ownership-checked, honest deletion, in
   const bundle=await build({stdin:{contents:"export * from '../src/akif/customerMemory';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'fixture',setup(b){
     const fixtures={
       db:'export const db=globalThis.__memoryFixture.db;'+tableNames.map(n=>`export const ${n}=globalThis.__memoryFixture.db.__tables.${n};`).join(''),
-      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});",
+      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});",
     };
     db.__tables=tables;
     for(const [filter,path] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm']])b.onResolve({filter},()=>({path,namespace:'fixture'}));

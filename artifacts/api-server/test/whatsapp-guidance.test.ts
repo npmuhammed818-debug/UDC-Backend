@@ -12,8 +12,8 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  (globalThis as any).__guidance=state;
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';export * from '../src/akif/udcHandbook';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
- b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
- b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
+ b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
+ b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
  }}]});await writeFile(path,result.outputFiles[0].text);
  const secret=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='test-guidance-secret-123';
  try{
@@ -72,6 +72,17 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.equal(profileSent.messages,10);
  assert.ok('mainLanguage' in profileSent && 'note' in profileSent && 'voiceNotes' in profileSent);
  assert.ok(JSON.parse(state.rows.get(guidanceKey('phone-public')).data.stats).messages>=10);
+ // Memory recall wiring: an opted-in customer's own memories reach the model
+ // as quoted data; without opt-in there is no recall and no block at all.
+ state.account={id:'u-1',role:'buyer',status:'verified',optIn:true};state.memories=[{kind:'preference',content:'Prefers CIF'}];
+ state.reply='Noted.';await answerGuidance('phone-public','Which incoterm did I prefer?','recall-1');
+ assert.equal(state.recalls.length,1);assert.equal(state.recalls[0].userId,'u-1');assert.equal(state.recalls[0].viewerUserId,'u-1');assert.equal(state.recalls[0].query,'Which incoterm did I prefer?');
+ assert.equal(JSON.parse(state.calls.at(-1).message).rememberedFacts,'REMEMBERED::Prefers CIF');
+ state.account={id:'u-2',role:'buyer',status:'verified'};
+ await answerGuidance('phone-public','Which incoterm did I prefer?','recall-2');
+ assert.equal(state.recalls.length,1,'no recall without opt-in');
+ assert.ok(!('rememberedFacts' in JSON.parse(state.calls.at(-1).message)));
+ state.account=null;
  state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','Explain export insurance?','7',true),state.reply);assert.equal(state.rows.size,3);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
  state.saveFailure=false;state.modelFailure=false;state.reply='I can speak Malayalam.';
  await answerGuidance('phone-offline','Can you speak in Malayalam?','offline-language');
