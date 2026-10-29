@@ -24,6 +24,7 @@ export const usersTable = pgTable(
     role: text("role").notNull().default("buyer"),
     status: text("status").notNull().default("pending"),
     country: text("country"),
+    akifLearningOptIn: boolean("akif_learning_opt_in").notNull().default(false),
     userType: text("user_type"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
