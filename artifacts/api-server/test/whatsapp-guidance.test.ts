@@ -12,8 +12,8 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  (globalThis as any).__guidance=state;
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';export * from '../src/akif/udcHandbook';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
- b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
- b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
+ b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$|sharedLessons(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
+ b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('sharedLessons')?"export const recallSharedLessons=async o=>{const s=globalThis.__guidance;s.sharedRecalls=(s.sharedRecalls||[]).concat([o]);return s.shared??[];};export const formatSharedLessonsForPrompt=m=>m.length?'SHARED::'+m.map(x=>x.content).join('|'):'';":a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
  }}]});await writeFile(path,result.outputFiles[0].text);
  const secret=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='test-guidance-secret-123';
  try{
@@ -83,6 +83,18 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.equal(state.recalls.length,1,'no recall without opt-in');
  assert.ok(!('rememberedFacts' in JSON.parse(state.calls.at(-1).message)));
  state.account=null;
+ // Shared lessons + emotion reference wiring: shared recall runs for every
+ // customer (it reads no customer data), lessons reach the model as quoted
+ // data, and the emotion reference is marked as ideas, never scripts.
+ state.shared=[{topic:'inspection',content:'Always confirm inspection terms before signing',origin:'real'}];
+ state.reply='Noted.';await answerGuidance('phone-public','What should I check before signing?','shared-1');
+ assert.ok(state.sharedRecalls.length>=1);assert.equal(state.sharedRecalls.at(-1).query,'What should I check before signing?');
+ assert.equal(JSON.parse(state.calls.at(-1).message).sharedLessons,'SHARED::Always confirm inspection terms before signing');
+ assert.match(state.calls.at(-1).system,/similar past case ONLY/);
+ assert.match(state.calls.at(-1).system,/ideas, never scripts/);
+ assert.match(state.calls.at(-1).system,/Never claim to be human/);
+ state.shared=[];await answerGuidance('phone-public','What should I check before signing?','shared-2');
+ assert.ok(!('sharedLessons' in JSON.parse(state.calls.at(-1).message)));
  state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','Explain export insurance?','7',true),state.reply);assert.equal(state.rows.size,3);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
  state.saveFailure=false;state.modelFailure=false;state.reply='I can speak Malayalam.';
  await answerGuidance('phone-offline','Can you speak in Malayalam?','offline-language');

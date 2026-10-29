@@ -17,6 +17,7 @@ export async function saveCustomerMemory(options: {
   content: string;
   source: string;
   dealId?: string | null;
+  sharedLearner?: (input: { userId: string; topic: string; content: string }) => Promise<unknown>;
   database?: typeof db;
 }) {
   const database = options.database ?? db;
@@ -42,6 +43,16 @@ export async function saveCustomerMemory(options: {
       source: options.source.trim(),
     })
     .returning({ id: akifCustomerMemoriesTable.id });
+  // Automatic shared learning (phase 4): the fresh private note is offered to
+  // the shared-lesson pipeline, which generalizes and safety-checks it. Its
+  // failure never blocks the private save.
+  if (options.sharedLearner && memory) {
+    try {
+      await options.sharedLearner({ userId: options.userId, topic: options.kind, content });
+    } catch {
+      console.warn("AKIF shared learning unavailable", { reason: "learn_failed" });
+    }
+  }
   return memory;
 }
 
