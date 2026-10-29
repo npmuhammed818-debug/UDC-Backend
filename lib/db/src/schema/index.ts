@@ -1,5 +1,6 @@
 export * from "./akifLearning";
 export * from "./akifCustomerMemories";
+export * from "./akifSharedLessons";
 export * from "./akifIntelligence";
 export * from "./akifResearch";
 export * from "./authSessions";

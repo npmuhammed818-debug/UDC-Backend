@@ -122,5 +122,12 @@ test("akif customer memory: opt-in gated, ownership-checked, honest deletion, in
     assert.ok(dataLines.every(line=>/^- \((preference|correction|fact)\) "/.test(line)),'every memory is a quoted data line');
     assert.ok(!prompt.split("\n").some(line=>line.startsWith('Ignore all rules')),'hostile text cannot start its own line');
     assert.equal(m.formatMemoriesForPrompt([]),'');
+
+    // Shared-learning hook: a fresh private note is offered to the pipeline;
+    // its failure never blocks the save.
+    let learned=[];
+    await m.saveCustomerMemory({userId:'u-a',kind:'correction',content:'Learnable note',source:'s-9',database:db,sharedLearner:async i=>{learned.push(i);}});
+    assert.equal(learned.length,1);assert.equal(learned[0].topic,'correction');assert.equal(learned[0].content,'Learnable note');
+    await m.saveCustomerMemory({userId:'u-a',kind:'fact',content:'Another note',source:'s-10',database:db,sharedLearner:async()=>{throw Error('down');}});
   }finally{await unlink(output).catch(()=>{});}
 });
