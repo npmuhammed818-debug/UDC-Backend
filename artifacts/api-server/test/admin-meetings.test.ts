@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 test('admin trade workflows preserve verification, ownership, review and payment controls', async t => {
   const source=await readFile(new URL('../src/routes/admin.ts',import.meta.url),'utf8');
   const dealSource=await readFile(new URL('../src/routes/deals.ts',import.meta.url),'utf8');
-  const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable','shipmentWatchesTable'])];
+  const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable','shipmentWatchesTable','akifSharedLessonsTable'])];
   const tables:any=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{get:(t,k)=>k==='_table'?name:{column:k,table:name}})]));
   const records:any=Object.fromEntries(names.map(name=>[name,[]]));
   records.whatsappShipmentOutboxTable=[];

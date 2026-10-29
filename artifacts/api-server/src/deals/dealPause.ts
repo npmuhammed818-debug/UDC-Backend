@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db, dealsTable, auditLogsTable, notificationsTable, usersTable } from "@workspace/db";
 import { sendWhatsAppText } from "../whatsapp/client.ts";
 
+import { learnFromDealOutcome } from "../akif/dealOutcomeLessons.ts";
 import { requestedDealPause, dealPauseContextKind, dealPausePrompt, pausedNoticeToOther, closedNoticeToOther, pausedConfirmationToSender, closedConfirmationToSender, type DealPauseKind } from "./dealPauseText.ts";
 export { requestedDealPause, dealPauseContextKind, dealPausePrompt, pausedNoticeToOther, closedNoticeToOther, pausedConfirmationToSender, closedConfirmationToSender };
 export type { DealPauseKind };
@@ -18,6 +19,15 @@ export async function applyDealPause(input: { dealId: string; dealNumber: string
   const [updated] = await db.update(dealsTable).set({ status, updatedAt: new Date() })
     .where(and(eq(dealsTable.id, input.dealId), eq(dealsTable.status, current.status))).returning({ id: dealsTable.id });
   if (!updated) return { applied: false as const, told: false };
+  // Phase 6: a party closed the deal, so AKIF learns one structural outcome
+  // lesson (status + incoterm only). Learning never blocks the close.
+  if (status === "cancelled") {
+    try {
+      await learnFromDealOutcome({ dealId: input.dealId });
+    } catch {
+      console.warn("AKIF deal outcome learning unavailable", { reason: "learn_failed" });
+    }
+  }
   await db.insert(auditLogsTable).values({ actorUserId: input.senderId, action: input.kind === "pause" ? "deal_paused_by_party" : "deal_closed_by_party",
     entityType: "deal", entityId: input.dealId, metadata: { newStatus: status, channel: "whatsapp", reasonShared: false } });
   const body = input.kind === "pause" ? pausedNoticeToOther(input.dealNumber) : closedNoticeToOther(input.dealNumber);

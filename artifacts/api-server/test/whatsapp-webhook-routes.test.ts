@@ -10,7 +10,7 @@ import { build } from "esbuild";
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const names = ["notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
-    "documentAccessTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable"];
+    "documentAccessTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
   })]));
