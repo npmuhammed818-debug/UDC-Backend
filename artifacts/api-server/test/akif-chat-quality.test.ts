@@ -19,6 +19,6 @@ test("prompt carries the approved scope and estimate rules and quoted-reply hint
 });
 
 test("no-deal file reply wording is the approved text", () => {
-  assert.match(webhook, /you have no active deal yet\. To send company papers, tap Upload documents in the menu for a secure upload link\./);
+  assert.match(webhook, /you have no active deal yet\. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF\./);
   assert.match(webhook, /Agents do not upload documents here, so I have not kept it\./);
 });

@@ -143,7 +143,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.{{VERIFY_HINT}}':'Registration saved. Verification pending. Send your company documents using Upload documents. You can submit your requirement or offer now; it stays private until verification and review.{{VERIFY_HINT}}';
+      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.{{VERIFY_HINT}}':'Registration saved. Verification pending. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF. You can submit your requirement or offer now; it stays private until verification and review.{{VERIFY_HINT}}';
       if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+='\n\n'+inviteNote;}
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
@@ -278,7 +278,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(action==='verification'){const [company]=await db.select({id:companiesTable.id,status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     // Outcome states only: AKIF never reads or describes the document contents.
     const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
-    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Tap Upload documents in the menu to get a secure upload link.';
+    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF.';
     if(!company){
       const u=user as {status:string;emailVerifiedAt?:Date|string|null};
       const t=['suspended','rejected'].includes(u.status)?'Your account is not active. Please contact service@updowncircle.site.'
