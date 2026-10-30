@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 test('native WhatsApp menus and forms preserve role, privacy, review and replay boundaries',async t=>{
-  const names=['buyerPoolsTable','buyerPoolAllocationsTable','auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealFinancialsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','akifCustomerMemoriesTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable','shipmentCargoUnitsTable','shipmentWatchesTable'];
+  const names=['buyerPoolsTable','buyerPoolAllocationsTable','auditLogsTable','companiesTable','companyVerificationDocumentsTable','commissionsTable','dealFinancialsTable','dealParticipantsTable','dealsTable','notificationsTable','referralsTable','usersTable','whatsappUserContextsTable','buyerRequestsTable','sellerListingsTable','productsTable','whatsappChatSessionsTable','akifCustomerMemoriesTable','akifEmotionalStatesTable','matchesTable','shipmentsTable','shipmentTrackingEventsTable','shipmentCargoUnitsTable','shipmentWatchesTable'];
   const tables:any=Object.fromEntries(names.map(n=>[n,new Proxy({_table:n},{get:(_,k)=>k==='_table'?n:{column:k,table:n}})]));
   const rows:any=Object.fromEntries(names.map(n=>[n,[]]));
   const value=(x:any,r:any):any=>x?.column?(r[x.table]??r)[x.column]:x;
