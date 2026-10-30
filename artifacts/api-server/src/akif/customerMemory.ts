@@ -1,3 +1,4 @@
+import { scoreMemoryRecall } from "./memoryRanking";
 // AKIF private customer memory (audit File, phase 2 step 1; owner-approved
 // code-only step of 29 Oct). Every function takes the requesting customer's
 // userId and enforces ownership: no cross-customer reads, ever. Writes are
@@ -179,19 +180,6 @@ export async function recallCustomerMemories(options: {
     .orderBy(desc(akifCustomerMemoriesTable.createdAt))
     .limit(50);
   const activeDeal = options.dealId ?? null;
-  return rows
-    .map((row) => ({
-      row,
-      score:
-        (activeDeal && row.dealId === activeDeal ? 2 : 0) +
-        tokens.filter((token) => row.content.toLowerCase().includes(token)).length,
-    }))
-    .filter((entry) => tokens.length === 0 || entry.score > 0)
-    .sort(
-      (a, b) =>
-        b.score - a.score ||
-        +new Date(b.row.createdAt) - +new Date(a.row.createdAt),
-    )
-    .slice(0, limit)
-    .map((entry) => entry.row);
+  return scoreMemoryRecall(rows, tokens, { activeDeal, limit });
 }
+
