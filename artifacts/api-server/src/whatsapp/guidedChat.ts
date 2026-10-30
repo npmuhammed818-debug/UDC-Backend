@@ -8,7 +8,8 @@ import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail, runWithPhone } from './registrationEmail';
 import { classifyTurn } from '../akif/conversationPolicy';
-import { interpretProfileIntakeConversation, requirementKeysFor, type ProfilePurpose } from '../akif/profileIntakeConversation';
+import { interpretProfileIntakeConversation, requirementKeysFor, detectCorrections, type ProfilePurpose } from '../akif/profileIntakeConversation';
+import { recallCustomerMemories, formatMemoriesForPrompt, saveCustomerMemory } from '../akif/customerMemory';
 import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 
@@ -142,9 +143,28 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
       // Brain-led registration: the model reads details in any order and picks
       // the words. Deterministic validation below still gates every value, and
       // a null decision falls back to the fixed-question flow.
-      const decision=await interpretProfileIntakeConversation({message:raw,purpose:snapshot.purpose as ProfilePurpose,collected:Object.fromEntries(Object.entries(snapshot.data).filter(([key])=>!key.startsWith('__')))});
+      const collected=Object.fromEntries(Object.entries(snapshot.data).filter(([key])=>!key.startsWith('__')));
+      // Memory (Phase 9 item 3a): only for a registered, opted-in customer;
+      // registration of a brand-new customer simply has no memories yet.
+      let memoryNotes:string|undefined;
+      let memoryUserId:string|null=null;
+      try{
+        const [u]=await db.select({id:usersTable.id,optIn:usersTable.akifLearningOptIn}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+        if(u?.optIn){
+          memoryUserId=u.id;
+          const memories=await recallCustomerMemories({userId:u.id,viewerUserId:u.id,query:raw,limit:5}).catch(()=>[]);
+          const formatted=formatMemoriesForPrompt(memories);
+          if(formatted)memoryNotes=formatted;
+        }
+      }catch{ memoryNotes=undefined; }
+      const decision=await interpretProfileIntakeConversation({message:raw,purpose:snapshot.purpose as ProfilePurpose,collected,memoryNotes});
       if(decision){
         extracted=decision.fields;brainReply=decision.reply;
+        if(memoryUserId){
+          for(const c of detectCorrections(collected,decision.fields)){
+            try{await saveCustomerMemory({userId:memoryUserId,kind:'correction',content:`${c.field}: customer corrected "${c.from.slice(0,120)}" to "${c.to.slice(0,120)}"`,source:'registration chat'});}catch{/* not opted in or unavailable - never blocks the chat */}
+          }
+        }
         const allowedReq=requirementKeysFor(snapshot.purpose as ProfilePurpose);
         brainRequirements=Object.fromEntries(Object.entries(decision.requirements).filter(([key])=>allowedReq.includes(key)));
       }else extracted=await extractParagraph(snapshot.purpose as FlowPurpose,raw);
