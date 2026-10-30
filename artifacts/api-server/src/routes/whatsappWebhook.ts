@@ -1343,6 +1343,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           reactByMeaning(message.from, message.id, transcript);
           const pendingOffer = takeVoiceOffer(message.from);
           if (pendingOffer && isOfferYes(transcript)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
+          // A voice note during an active form or registration is the same turn, spoken: the
+          // guided flow hears the transcript exactly like typed text, and the brain's
+          // conversational reply can come back as a voice note (voice MVP, Phase 9 item 5e).
+          // Structured content - fixed questions, review screens, notes - always stays text.
+          try {
+            const voiceLanguage = pickVoiceLanguage({ mainLanguage: await guidanceMainLanguage(message.from), heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined });
+            if (await handleChatUi(message.from, { id: message.id, text: { body: transcript } } as ChatMessage, false, { voiceNote: true, language: voiceLanguage })) continue;
+          } catch { /* fall through to guidance, same as before voice intake existed */ }
           voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
