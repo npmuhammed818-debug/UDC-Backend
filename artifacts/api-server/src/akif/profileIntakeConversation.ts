@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
 import { claimsUnverifiedFact } from "./conversationPolicy";
+import { checkReplyQuality } from "./answerScoring";
 import type { FlowPurpose } from "../whatsapp/flowToken";
 
 // Registration is always pending UDC review: the model must never present
@@ -48,7 +49,7 @@ const decisionSchema = z.preprocess(value => {
   reply: z.string().trim().min(1).max(1200),
 }));
 
-export function parseProfileIntakeConversation(content: string) {
+export function parseProfileIntakeConversation(content: string, customerMessage?: string) {
   let raw: unknown;
   try {
     raw = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
@@ -69,6 +70,14 @@ export function parseProfileIntakeConversation(content: string) {
   // verification can be claimed.
   if (claimsUnverifiedFact(result.data.reply, {}) || STATUS_CLAIM.test(result.data.reply)) {
     console.warn("AKIF profile intake response rejected", { reason: "unverified_claim" });
+    return null;
+  }
+  // Rubric guard (Phase 9 item 2): menu-style interviews, robotic acks,
+  // human claims, app mentions, Aadhaar asks, commission mechanics, mangled
+  // emails and wrong-language replies fall back to the fixed flow.
+  const quality = checkReplyQuality(result.data.reply, customerMessage);
+  if (!quality.ok) {
+    console.warn("AKIF profile intake response rejected", { reason: "low_quality_reply", issue: quality.issue });
     return null;
   }
   return result.data;
@@ -105,7 +114,7 @@ export async function interpretProfileIntakeConversation(input: {
       // exactly once; read + typing indicators show while the customer waits.
       60_000,
     );
-    return parseProfileIntakeConversation(content);
+    return parseProfileIntakeConversation(content, input.message);
   } catch {
     console.warn("AKIF profile intake unavailable", { reason: "model_request_failed" });
     return null;
