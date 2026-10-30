@@ -10,6 +10,7 @@ import { businessEmail, runWithPhone } from './registrationEmail';
 import { classifyTurn } from '../akif/conversationPolicy';
 import { interpretProfileIntakeConversation, requirementKeysFor, detectCorrections, type ProfilePurpose } from '../akif/profileIntakeConversation';
 import { recallCustomerMemories, formatMemoriesForPrompt, saveCustomerMemory } from '../akif/customerMemory';
+import { estimateCustomerEmotion, loadAkifFeelings, recordAkifFeeling, feelingEventFor, formatEmotionalContextForPrompt, FEELING_BASELINE } from '../akif/emotionContext';
 import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 
@@ -157,7 +158,20 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
           if(formatted)memoryNotes=formatted;
         }
       }catch{ memoryNotes=undefined; }
-      const decision=await interpretProfileIntakeConversation({message:raw,purpose:snapshot.purpose as ProfilePurpose,collected,memoryNotes});
+      // Emotional context (Phase 9 item 5d): a probabilistic guess at the
+      // customer's feelings plus AKIF's own persistent state for a known
+      // opted-in user. Any failure leaves it empty - never blocks the chat.
+      let emotionalContext:string|undefined;
+      try{
+        const guess=await estimateCustomerEmotion({history:[{role:'user',content:raw}],currentMessage:raw});
+        let feelings=FEELING_BASELINE;
+        if(memoryUserId){
+          feelings=(await loadAkifFeelings({userId:memoryUserId}).catch(()=>({state:FEELING_BASELINE}))).state;
+          await recordAkifFeeling({userId:memoryUserId,event:feelingEventFor(raw,guess)}).catch(()=>{});
+        }
+        emotionalContext=formatEmotionalContextForPrompt(guess,feelings);
+      }catch{ emotionalContext=undefined; }
+      const decision=await interpretProfileIntakeConversation({message:raw,purpose:snapshot.purpose as ProfilePurpose,collected,memoryNotes,emotionalContext});
       if(decision){
         extracted=decision.fields;brainReply=decision.reply;
         if(memoryUserId){
