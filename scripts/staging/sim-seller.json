@@ -1,0 +1,47 @@
+{
+ "label": "B seller, labelled fields",
+ "steps": [
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "text": "Hello"
+  },
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "text": "I agree"
+  },
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "text": "Seller"
+  },
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "text": "full name: Omar Said; email: omar@said-exports.example.invalid; company name: Said Exports LLC; country: Oman"
+  },
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "interactive": {
+    "type": "button_reply",
+    "button_reply": {
+     "id": "udc:submit",
+     "title": "Submit for review"
+    }
+   },
+   "label": "button Submit for review"
+  },
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "text": "product: copper cathode; quantity: 300 MT; price: 5900; currency: USD; origin: Oman; incoterm: FOB"
+  },
+  {
+   "from": "15555550132",
+   "name": "Sim Seller",
+   "text": "price: 5950"
+  }
+ ]
+}
