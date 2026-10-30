@@ -13,6 +13,28 @@ import { recallCustomerMemories, formatMemoriesForPrompt, saveCustomerMemory } f
 import { estimateCustomerEmotion, loadAkifFeelings, recordAkifFeeling, feelingEventFor, formatEmotionalContextForPrompt, FEELING_BASELINE } from '../akif/emotionContext';
 import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
+import { speakReply } from './voiceSend';
+import { VOICE_NOTICE } from '../akif/voiceConsent';
+import type { VoiceLanguage } from '../akif/voiceLanguage';
+
+export type GuidedVoiceContext={voiceNote?:boolean;language?:VoiceLanguage};
+/**
+ * The brain's conversational reply inside a form: spoken as a voice note when the customer
+ * spoke to us (voice MVP, Phase 9 item 5e) and every voice gate passes, text otherwise.
+ * The master switch (AKIF_VOICE_REPLIES) and all speech privacy rules still gate inside
+ * speakReply, so with the switch off this is exactly the old text send. Structured content
+ * (fixed questions, review screens, validation notes) is never spoken.
+ */
+async function sendIntakeBrainReply(phone:string,reply:string,voice?:GuidedVoiceContext){
+  if(voice?.voiceNote){
+    try{
+      const spoken=await speakReply(phone,reply,{language:voice.language??'english'});
+      if(spoken.status===true){if(spoken.noticeDue)await sendWhatsAppTextWithMenu(phone,VOICE_NOTICE);return;}
+      if(spoken.status==='uncertain')return; // the audio may already be out; the reply must never be doubled
+    }catch{/* text fallback below */}
+  }
+  await sendWhatsAppTextWithMenu(phone,reply);
+}
 
 type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
 const q=(name:string,label:string,options:Omit<Question,'name'|'label'>={}):Question=>({name,label,...options});
@@ -116,8 +138,8 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
   if(!scalar)return null;
   try{return {[next.name]:validate(next,text,purpose)};}catch(error){const note=rejectionNote(next,error);return note?{__note:note}:{};}
 }
-export function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){return runWithPhone(phone,()=>continueGuidedChatInner(phone,message,action,submit,directOnly));}
-async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){
+export function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false,voice?:GuidedVoiceContext){return runWithPhone(phone,()=>continueGuidedChatInner(phone,message,action,submit,directOnly,voice));}
+async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false,voice?:GuidedVoiceContext){
   const raw=message.text?.body?.trim();
   if(!raw&&!['submit','restart','cancel'].includes(action??''))return false;
   const fingerprint=phoneHash(phone);
@@ -213,10 +235,10 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
           data[item.name]=value;
         }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);}}}
         await tx.update(sessions).set({data,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
-        return {kind:'review' as const,purpose,data,note:brainReply??notes[0]};
+        return {kind:'review' as const,purpose,data,note:brainReply??notes[0],noteFromBrain:!!brainReply};
       }
       // A correction the brain could not read (model down or reply rejected) must never be a silent re-show: say why nothing changed.
-      return {kind:'review' as const,purpose,data:session.data,note:brainReply??(raw?REVIEW_CHANGE_UNREAD_NOTE:undefined)};
+      return {kind:'review' as const,purpose,data:session.data,note:brainReply??(raw?REVIEW_CHANGE_UNREAD_NOTE:undefined),noteFromBrain:!!brainReply};
     }
     if(session.data.__paragraph==='1'){
       // A concurrent edit/menu must never apply extraction to a different draft.
@@ -246,7 +268,7 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
       const complete=requiredDone&&data.__awaiting!=='target_price';
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
-      return complete?{kind:'review' as const,purpose,data,note:notes[0]}:{kind:'question' as const,purpose,step,data,note:notes[0],brainReply:brainReply??undefined};
+      return complete?{kind:'review' as const,purpose,data,note:brainReply??notes[0],noteFromBrain:!!brainReply}:{kind:'question' as const,purpose,step,data,note:notes[0],brainReply:brainReply??undefined};
     }
     if(!raw)return {kind:'question' as const,purpose,step:session.step};
     let answer:string;
@@ -261,8 +283,8 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
     case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Send Menu to start again.');return true;
     case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
     case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
-    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);if('brainReply' in result&&result.brainReply)await sendWhatsAppTextWithMenu(phone,result.brainReply);else await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
-    case 'review':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await review(phone,result.purpose,result.data);return true;
+    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);if('brainReply' in result&&result.brainReply)await sendIntakeBrainReply(phone,result.brainReply,voice);else await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
+    case 'review':if('note' in result&&result.note){if('noteFromBrain' in result&&result.noteFromBrain)await sendIntakeBrainReply(phone,result.note,voice);else await sendWhatsAppTextWithMenu(phone,result.note);}await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
       // Validation and identity conflicts return a useful reply without saving.

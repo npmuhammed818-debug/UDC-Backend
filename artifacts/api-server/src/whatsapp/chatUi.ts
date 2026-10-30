@@ -5,7 +5,7 @@ import { respondToTerms } from '../marketplace/termAgreement';
 import { asksForOpenRequirements, openRequirementsReplyForSeller, respondToRequirementInterest } from '../marketplace/sellerRequirementNotify';
 import { lcStatusReply } from '../deals/lcStatus';
 import { isTesterPhone } from '../auth/testerMode';
-import { clearGuidedChat, continueGuidedChat, startGuidedChat } from './guidedChat';
+import { clearGuidedChat, continueGuidedChat, startGuidedChat, type GuidedVoiceContext } from './guidedChat';
 import { businessEmail } from './registrationEmail';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, desc, eq, or, sql } from 'drizzle-orm';
@@ -192,8 +192,8 @@ async function vaultReplyFor(user:{id:string;role:string},type:'company_registra
   return vaultRedirectReply();
 }
 
-export async function handleChatUi(phone:string,message:ChatMessage,directOnly=false){
-  if(directOnly)return continueGuidedChat(phone,message,null,submitChatFlow,true);
+export async function handleChatUi(phone:string,message:ChatMessage,directOnly=false,voice?:GuidedVoiceContext){
+  if(directOnly)return continueGuidedChat(phone,message,null,submitChatFlow,true,voice);
   {
     const joinText=message.text?.body;
     const joinReply=(await handleJoinMessage(phone,joinText))??(await handleInviteDecline(phone,joinText));
@@ -225,7 +225,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   if(await companyDocument(phone,message))return true;
   let action=chatAction(message);
   if(!action || ['submit','restart','cancel'].includes(action)){
-    const handled=await continueGuidedChat(phone,message,action,submitChatFlow);
+    const handled=await continueGuidedChat(phone,message,action,submitChatFlow,false,voice);
     if(handled)return true;
     if(!action){
       if(await handleDocumentPickText(phone,message.text?.body,Boolean(message.context?.id)))return true;
