@@ -116,6 +116,26 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         assert.equal(draft().data.company_name,'QA Correct Exports Ltd');
       }finally{state.flowId=oldFlow;state.modelOutput=oldOutput;await m.handleChatUi(p,ui('cancel'));}
     });
+    await t.test('a brain failure at the review screen explains itself and labelled corrections still land',async()=>{
+      const p='10000000092',oldFlow=state.flowId,oldOutput=state.modelOutput;
+      try{
+        state.flowId=null;
+        state.modelOutput=JSON.stringify({fields:{full_name:'QA Fragile Buyer',email:'qa-fragile@example.invalid',company_name:'QA Fragile Ltd',country:'India'},requirements:{},reply:'Thanks, please review your details.'});
+        await m.handleChatUi(p,{text:{body:'Buyer'}});
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'QA Fragile Buyer, qa-fragile@example.invalid, QA Fragile Ltd, India'}}),true);
+        const draft=()=>rows.whatsappChatSessionsTable.find((r:any)=>r.purpose==='profile_buyer'&&String(r.data.email??'').includes('qa-fragile'));
+        assert.equal(draft().data.email,'qa-fragile@example.invalid');
+        // Brain down at the review screen: the correction is not applied, and the customer is told why instead of a silent re-show.
+        state.modelError=true;
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'Actually my email is qa-fragile-fixed@example.invalid'}}),true);
+        assert.ok(state.sent.slice(-3).some((x:any)=>/could not read that change/.test(String(x?.body))),'a failed correction explains itself');
+        assert.equal(draft().data.email,'qa-fragile@example.invalid','a failed correction must not change saved details');
+        // A labelled correction needs no brain call and lands even while the model is down.
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'email: qa-fragile-fixed@example.invalid'}}),true);
+        assert.equal(draft().data.email,'qa-fragile-fixed@example.invalid','a labelled correction is written back without the brain');
+        assert.ok(state.sent.slice(-3).some((x:any)=>/qa-fragile-fixed@example\.invalid/.test(String(x?.body))),'the review shows the new value');
+      }finally{state.flowId=oldFlow;state.modelOutput=oldOutput;state.modelError=false;await m.handleChatUi(p,ui('cancel'));}
+    });
     await t.test('a rejected email conflict keeps the registration draft editable without merging accounts',async()=>{
       const applicant='10000000081',oldFlow=state.flowId;
       const existing=rows.usersTable.find((u:any)=>u.phone===phone);

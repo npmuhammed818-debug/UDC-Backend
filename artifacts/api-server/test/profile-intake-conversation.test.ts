@@ -81,5 +81,31 @@ test("brain-led profile intake: schema, guards, field filtering and model-down f
       assert.equal(await interpretProfileIntakeConversation({ message: "x".repeat(6001), purpose: "profile_buyer", collected: {} }), null);
       assert.equal(calls, 0);
     } finally { globalThis.fetch = countingFetch; }
+
+    // Broken brain JSON gets one stricter retry; other rejections stay single-attempt.
+    const brainUrlBefore = process.env.AKIF_BRAIN_URL;
+    process.env.AKIF_BRAIN_URL = "http://127.0.0.1:9/synthetic-brain";
+    const brainResponse = (content: string) => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) }) as Response;
+    try {
+      let brainCalls = 0;
+      globalThis.fetch = async () => { brainCalls++; return brainCalls === 1 ? brainResponse("PRIVATE_BROKEN_JSON") : brainResponse(JSON.stringify(valid)); };
+      const retried = await interpretProfileIntakeConversation({ message: "I am Asha from Fiction Metals", purpose: "profile_buyer", collected: {} });
+      assert.equal(retried?.fields?.full_name, "Asha Nair", "a broken first reply is retried once and can succeed");
+      assert.equal(brainCalls, 2);
+      assert.doesNotMatch(JSON.stringify(logs), /PRIVATE_BROKEN_JSON/);
+
+      brainCalls = 0;
+      globalThis.fetch = async () => { brainCalls++; return brainResponse("still broken"); };
+      assert.equal(await interpretProfileIntakeConversation({ message: "I am Asha", purpose: "profile_buyer", collected: {} }), null);
+      assert.equal(brainCalls, 2, "two broken replies stop after exactly one retry");
+
+      brainCalls = 0;
+      globalThis.fetch = async () => { brainCalls++; return brainResponse(JSON.stringify({ ...valid, reply: "Your account is verified." })); };
+      assert.equal(await interpretProfileIntakeConversation({ message: "I am Asha", purpose: "profile_buyer", collected: {} }), null);
+      assert.equal(brainCalls, 1, "a non-JSON rejection is never retried");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (brainUrlBefore === undefined) delete process.env.AKIF_BRAIN_URL; else process.env.AKIF_BRAIN_URL = brainUrlBefore;
+    }
   } finally { console.warn = originalWarn; await unlink(output); }
 });

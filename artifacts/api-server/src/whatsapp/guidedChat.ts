@@ -23,6 +23,7 @@ export function guidedQuestions(purpose:FlowPurpose):Question[]{
 }
 export const EMAIL_TAKEN_NOTE='This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
 export const NO_DETAIL_NOTE='I am sorry, I did not quite catch that. Say it in your own words - for example your name, or Email name@company.com - and I will take it from there.';
+export const REVIEW_CHANGE_UNREAD_NOTE='I am sorry, I could not read that change. Send it labelled, for example: email: name@company.com; company name: Your Company Ltd; country: India - or tap Submit for review if everything is already correct.';
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
@@ -136,7 +137,8 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
   let brainRequirements:Record<string,string>={};
   const inReview=!!snapshot&&snapshot.expiresAt>new Date()&&snapshot.step>=guidedQuestions(snapshot.purpose as FlowPurpose).length;
   if(snapshot&&snapshot.expiresAt>new Date()&&(snapshot.data.__paragraph==='1'||inReview)&&raw&&!action&&!/^(?:cancel|stop|edit|submit)$/i.test(raw)){
-    const labelled=inReview?{}:extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
+    // Labelled corrections (email: x@y.com) need no brain call, so they land at the review screen even while the model is down.
+    const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
     const local=Object.keys(labelled).length?labelled:directAnswer(snapshot.purpose as FlowPurpose,raw,snapshot.data);
     if(directOnly&&!local)return false;
     fromLocal=!!local;
@@ -213,7 +215,8 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
         await tx.update(sessions).set({data,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
         return {kind:'review' as const,purpose,data,note:brainReply??notes[0]};
       }
-      return {kind:'review' as const,purpose,data:session.data,note:brainReply??undefined};
+      // A correction the brain could not read (model down or reply rejected) must never be a silent re-show: say why nothing changed.
+      return {kind:'review' as const,purpose,data:session.data,note:brainReply??(raw?REVIEW_CHANGE_UNREAD_NOTE:undefined)};
     }
     if(session.data.__paragraph==='1'){
       // A concurrent edit/menu must never apply extraction to a different draft.
