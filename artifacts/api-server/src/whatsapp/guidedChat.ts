@@ -22,7 +22,7 @@ export function guidedQuestions(purpose:FlowPurpose):Question[]{
   return [q('product','What product can you supply?'),q('quantity','What quantity can you supply?',{kind:'positive'}),q('unit','What unit is that quantity and price based on? (for example, MT, kg or pieces)',{max:24}),q('specification','What grade or specification can you supply?',{optional:true,max:2000}),q('price','What price are you offering?',{kind:'positive'}),q('currency','What currency is that price in? (for example, USD, AED or EUR)',{max:3}),q('origin','What is the origin country?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('availability','When is the product available for delivery?',{optional:true,max:500}),q('destination','What is the delivery port or named place? You can skip it if the buyer will choose the destination.',{optional:true,max:120}),q('payment_terms','What payment terms do you propose?',{optional:true,max:2000})];
 }
 export const EMAIL_TAKEN_NOTE='This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
-export const NO_DETAIL_NOTE='I did not find a detail to change in that. Send it like: Email name@company.com';
+export const NO_DETAIL_NOTE='I am sorry, I did not quite catch that. Say it in your own words - for example your name, or Email name@company.com - and I will take it from there.';
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
@@ -128,14 +128,15 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
     const purpose=snapshot.purpose as FlowPurpose;
     if(turn==='pause'){await sendWhatsAppTextWithMenu(phone,'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.');return true;}
     if(turn==='resume'){await question(phone,purpose,snapshot.step,snapshot.data);return true;}
-    if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length)return false;
+    if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length&&!purpose.startsWith('profile_'))return false;
   }
   let extracted:Record<string,string>|null=null;
   let fromLocal=false;
   let brainReply:string|null=null;
   let brainRequirements:Record<string,string>={};
-  if(snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)){
-    const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
+  const inReview=!!snapshot&&snapshot.expiresAt>new Date()&&snapshot.step>=guidedQuestions(snapshot.purpose as FlowPurpose).length;
+  if(snapshot&&snapshot.expiresAt>new Date()&&(snapshot.data.__paragraph==='1'||inReview)&&raw&&!action&&!/^(?:cancel|stop|edit|submit)$/i.test(raw)){
+    const labelled=inReview?{}:extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
     const local=Object.keys(labelled).length?labelled:directAnswer(snapshot.purpose as FlowPurpose,raw,snapshot.data);
     if(directOnly&&!local)return false;
     fromLocal=!!local;
@@ -197,7 +198,22 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
     const questions=guidedQuestions(purpose);
     if(session.step>=questions.length){
       if(action==='submit'||/^submit$/i.test(raw??''))return {kind:'submit' as const,purpose,id:session.id,data:session.data};
-      return {kind:'review' as const,purpose,data:session.data};
+      // Correction at the review screen: the brain read the message; every
+      // extracted value is validated here before it replaces a saved detail.
+      if(extracted&&Object.keys(extracted).length){
+        const data={...session.data};const notes:string[]=[];
+        for(const item of questions){const candidate=extracted[item.name];if(candidate!==undefined){try{
+          const value=validate(item,candidate,purpose);
+          if(item.kind==='email'&&purpose.startsWith('profile_')&&value){
+            const [owner]=await tx.select({phone:usersTable.phone}).from(usersTable).where(sql`lower(${usersTable.email}) = ${value}`).limit(1);
+            if(owner&&owner.phone!==phone){notes.push(EMAIL_TAKEN_NOTE);continue;}
+          }
+          data[item.name]=value;
+        }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);}}}
+        await tx.update(sessions).set({data,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
+        return {kind:'review' as const,purpose,data,note:brainReply??notes[0]};
+      }
+      return {kind:'review' as const,purpose,data:session.data,note:brainReply??undefined};
     }
     if(session.data.__paragraph==='1'){
       // A concurrent edit/menu must never apply extraction to a different draft.

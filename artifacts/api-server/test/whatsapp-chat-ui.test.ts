@@ -90,6 +90,32 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       state.failAudit=true;await assert.rejects(m.submitChatFlow(phone,JSON.stringify({...form,flow_token:m.issueFlowToken(phone,'buyer')})),/audit_failure/);assert.equal(rows.buyerRequestsTable.length,1);
       const b=rows.usersTable.find((u:any)=>u.phone===phone);b.status='suspended';assert.match(await m.submitChatFlow(phone,JSON.stringify({...form,flow_token:m.issueFlowToken(phone,'buyer')})),/UDC review/);b.status='verified';
     });
+    await t.test('corrections at the review screen are written back and unsorted turns reach the brain',async()=>{
+      const p='10000000091',oldFlow=state.flowId,oldOutput=state.modelOutput;
+      try{
+        state.flowId=null;
+        state.modelOutput=JSON.stringify({fields:{full_name:'QA Correct Buyer',email:'qa-correct@example.invalid',company_name:'QA Correct Ltd',country:'India'},requirements:{},reply:'Thanks, please review your details.'});
+        await m.handleChatUi(p,{text:{body:'Buyer'}});
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'QA Correct Buyer, qa-correct@example.invalid, QA Correct Ltd, India'}}),true);
+        const draft=()=>rows.whatsappChatSessionsTable.find((r:any)=>r.purpose==='profile_buyer'&&r.data.email&&String(r.data.email).includes('qa-'));
+        assert.equal(draft().data.email,'qa-correct@example.invalid');
+        // Fault 1: a correction typed at the review screen replaces the saved value and the review shows it.
+        state.modelOutput=JSON.stringify({fields:{email:'qa-fixed@example.invalid'},requirements:{},reply:'Got it, I have updated your email.'});
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'Wait, my email is wrong - use qa-fixed@example.invalid instead'}}),true);
+        assert.equal(draft().data.email,'qa-fixed@example.invalid','the corrected email must replace the saved one');
+        assert.ok(state.sent.slice(-3).some((x:any)=>/qa-fixed@example\.invalid/.test(String(x?.body))),'the review screen shows the new value');
+        assert.ok(state.sent.slice(-4).some((x:any)=>/updated your email/.test(String(x?.body))),'the brain answer is shown');
+        // Fault 2: a question the deterministic layer cannot sort goes to the brain, never swallowed.
+        state.modelOutput=JSON.stringify({fields:{},requirements:{},reply:'UDC is a WhatsApp-first trade platform.'});
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'What is UDC?'}}),true,'an unsorted question must be handled, not dropped');
+        assert.ok(state.sent.slice(-3).some((x:any)=>/WhatsApp-first trade platform/.test(String(x?.body))),'the brain answer is sent, not swallowed');
+        assert.equal(draft().data.email,'qa-fixed@example.invalid','a question must not change saved details');
+        // A detail-heavy message misread as a question also reaches the brain.
+        state.modelOutput=JSON.stringify({fields:{company_name:'QA Correct Exports Ltd'},requirements:{},reply:'Noted, company name updated.'});
+        assert.equal(await m.handleChatUi(p,{id:randomUUID(),text:{body:'Thank you for understanding. The company is QA Correct Exports Ltd'}}),true);
+        assert.equal(draft().data.company_name,'QA Correct Exports Ltd');
+      }finally{state.flowId=oldFlow;state.modelOutput=oldOutput;await m.handleChatUi(p,ui('cancel'));}
+    });
     await t.test('a rejected email conflict keeps the registration draft editable without merging accounts',async()=>{
       const applicant='10000000081',oldFlow=state.flowId;
       const existing=rows.usersTable.find((u:any)=>u.phone===phone);
