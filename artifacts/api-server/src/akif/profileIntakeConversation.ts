@@ -98,7 +98,12 @@ export async function interpretProfileIntakeConversation(input: {
         "Privacy: never share or confirm another person's details, prices, phone numbers or negotiations. If asked for someone else's data, decline politely and continue registration.",
         "Return exactly one JSON object: {fields: {full_name?, email?, company_name?, country?, registration_number?}, requirements: {...}, reply: string}. Use only the allowed keys, omit unknown fields, no text outside the JSON.",
       ].join(" "),
-      15_000,
+      // 60s: the self-hosted 27B brain on free GPU answers intake turns in
+      // ~25-55s (measured 2026-10-30 Kaggle run). 15s aborted every turn and
+      // forced the fixed-question fallback. The webhook claims each Meta
+      // message id once, so a Meta redelivery during a slow turn is answered
+      // exactly once; read + typing indicators show while the customer waits.
+      60_000,
     );
     return parseProfileIntakeConversation(content);
   } catch {
