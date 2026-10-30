@@ -8,6 +8,7 @@ import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
 import { businessEmail, runWithPhone } from './registrationEmail';
 import { classifyTurn } from '../akif/conversationPolicy';
+import { interpretProfileIntakeConversation, requirementKeysFor, type ProfilePurpose } from '../akif/profileIntakeConversation';
 import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 
@@ -39,6 +40,11 @@ export async function startGuidedChat(phone:string,purpose:FlowPurpose,initial:R
   await db.delete(sessions).where(lt(sessions.expiresAt,new Date()));
   const input={id:randomUUID(),phoneHash:phoneHash(phone),purpose,step:0,data:{...initial,__paragraph:'1'},lastMessageId:null,expiresAt:expiry(),updatedAt:new Date()};
   await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+input.phoneHash}))`);await tx.insert(sessions).values(input).onConflictDoUpdate({target:sessions.phoneHash,set:input});});
+  // A draft seeded with every required detail (for example trade facts captured
+  // during brain-led registration) goes straight to review instead of re-asking.
+  const seeded:Record<string,string>={...initial,__paragraph:'1'};
+  const requiredMissing=guidedQuestions(purpose).some(item=>!item.optional&&!seeded[item.name]);
+  if(!requiredMissing&&(purpose==='buyer'||purpose==='seller')){await review(phone,purpose,seeded);return;}
   await question(phone,purpose,0,input.data);
 }
 
@@ -124,12 +130,25 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
   }
   let extracted:Record<string,string>|null=null;
   let fromLocal=false;
+  let brainReply:string|null=null;
+  let brainRequirements:Record<string,string>={};
   if(snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)){
     const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
     const local=Object.keys(labelled).length?labelled:directAnswer(snapshot.purpose as FlowPurpose,raw,snapshot.data);
     if(directOnly&&!local)return false;
     fromLocal=!!local;
-    extracted=local??await extractParagraph(snapshot.purpose as FlowPurpose,raw);
+    if(local)extracted=local;
+    else if(snapshot.purpose.startsWith('profile_')){
+      // Brain-led registration: the model reads details in any order and picks
+      // the words. Deterministic validation below still gates every value, and
+      // a null decision falls back to the fixed-question flow.
+      const decision=await interpretProfileIntakeConversation({message:raw,purpose:snapshot.purpose as ProfilePurpose,collected:Object.fromEntries(Object.entries(snapshot.data).filter(([key])=>!key.startsWith('__')))});
+      if(decision){
+        extracted=decision.fields;brainReply=decision.reply;
+        const allowedReq=requirementKeysFor(snapshot.purpose as ProfilePurpose);
+        brainRequirements=Object.fromEntries(Object.entries(decision.requirements).filter(([key])=>allowedReq.includes(key)));
+      }else extracted=await extractParagraph(snapshot.purpose as FlowPurpose,raw);
+    }else extracted=await extractParagraph(snapshot.purpose as FlowPurpose,raw);
   }else if(directOnly)return false;
   const result=await db.transaction(async tx=>{
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+fingerprint}))`);
@@ -159,10 +178,14 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
         }
         data[item.name]=value;
       }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);/* The old value stays; the user is told why. */}}}
+      if(purpose.startsWith('profile_')){
+        const reqPurpose=purpose==='profile_buyer'?'buyer':purpose==='profile_seller'?'seller':null;
+        if(reqPurpose)for(const item of guidedQuestions(reqPurpose)){const candidate=brainRequirements[item.name];if(candidate!==undefined){try{data['__req_'+item.name]=validate(item,candidate,reqPurpose);}catch{/* an unreadable volunteered detail is simply asked again in the requirement flow */}}}
+      }
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
       // Free text we could not read (for example the AI model is unavailable): say so and show the labelled form, instead of silently repeating the question.
-      if(!notes.length&&purpose.startsWith('profile_')&&raw&&(/@/.test(raw)||(raw.match(/,/g)??[]).length>=2)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
-      if(!notes.length&&purpose.startsWith('profile_')&&raw&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push(NO_DETAIL_NOTE);
+      if(!brainReply&&!notes.length&&purpose.startsWith('profile_')&&raw&&(/@/.test(raw)||(raw.match(/,/g)??[]).length>=2)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
+      if(!brainReply&&!notes.length&&purpose.startsWith('profile_')&&raw&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push(NO_DETAIL_NOTE);
       const requiredDone=questions.every(q=>q.optional||data[q.name]);
       // Target price is optional, so the paragraph flow never asked for it unless the AI extracted it. Ask once.
       if(data.target_price!==undefined&&data.__awaiting==='target_price')delete data.__awaiting;
@@ -170,7 +193,7 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
       const complete=requiredDone&&data.__awaiting!=='target_price';
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
-      return complete?{kind:'review' as const,purpose,data,note:notes[0]}:{kind:'question' as const,purpose,step,data,note:notes[0]};
+      return complete?{kind:'review' as const,purpose,data,note:notes[0]}:{kind:'question' as const,purpose,step,data,note:notes[0],brainReply:brainReply??undefined};
     }
     if(!raw)return {kind:'question' as const,purpose,step:session.step};
     let answer:string;
@@ -185,7 +208,7 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
     case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Send Menu to start again.');return true;
     case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
     case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
-    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
+    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);if('brainReply' in result&&result.brainReply)await sendWhatsAppTextWithMenu(phone,result.brainReply);else await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
     case 'review':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
@@ -194,6 +217,13 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
       const [saved]=await db.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'whatsapp_chat_form_saved'),sql`${auditLogsTable.metadata}->>'nonce' = ${result.id}`)).limit(1);
       if(saved)await db.delete(sessions).where(and(eq(sessions.id,result.id),eq(sessions.phoneHash,fingerprint),eq(sessions.data,result.data)));
       await sendWhatsAppTextWithMenu(phone,saved?reply:`${reply}\nYour details are still here. Reply Edit to change them or Cancel.`);if(saved)react('complete',phone,message.id); // one ✅ on the submit tap once the form is saved
+      if(saved&&result.purpose.startsWith('profile_')){
+        const reqPurpose=result.purpose==='profile_buyer'?'buyer':result.purpose==='profile_seller'?'seller':null;
+        const seeded=Object.fromEntries(Object.entries(result.data).filter(([key])=>key.startsWith('__req_')).map(([key,value])=>[key.slice(6),value]));
+        // Trade details volunteered during registration carry into the
+        // requirement/offer draft, prefilled and never re-asked.
+        if(reqPurpose&&Object.keys(seeded).length)await startGuidedChat(phone,reqPurpose,seeded);
+      }
       return true;
     }
   }
