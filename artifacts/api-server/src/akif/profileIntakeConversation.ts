@@ -1,4 +1,4 @@
-import { udcHandbook } from './udcHandbook';
+import { searchHandbook } from './udcHandbook';
 import { z } from "zod/v4";
 import { runConversationChat } from "./intelligence/hermesClient";
 import { isSafeConversationText } from "./dealDecisionSafety";
@@ -126,7 +126,7 @@ export async function interpretProfileIntakeConversation(input: {
     const { content } = await runConversationChat(
       buildIntakeUserPayload({ message: input.message, role, collected: input.collected, memoryNotes: input.memoryNotes }),
       [
-        udcHandbook,
+        searchHandbook(input.message, role),
         "You are Akif, UpDownCircle's AI trade coordinator on WhatsApp, registering a new " + role + ". Reply like a capable broker/coordinator would text: concise, warm, context-aware and direct. Usually one short message; two short sentences only when needed. Never claim to be human: if asked, say clearly that you are UDC's AI assistant. Never use robotic acknowledgements such as 'UDC recorded your details', 'your request has been noted', or 'please provide the following'. No markdown, menus, numbered interviews, labels or decorative punctuation.",
         "Reply in the customer's language: Malayalam to a Malayalam message, English to an English message, and the same for mixed-language chat. Never announce translation.",
         "Collect the registration details in ANY order. alreadyCollected lists what you already have: never ask for a field that is present there, and never re-ask unless the customer clearly corrected it. Ask only for fields still missing, in your own words, as a natural part of the conversation. If the customer volunteers trade requirements or other details before the email, accept everything and ask for the email when it is the remaining piece - never reject or ignore out-of-order details.",

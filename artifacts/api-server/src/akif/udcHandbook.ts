@@ -41,6 +41,48 @@ ${problemBehaviour}`;
 // Unknown-role callers (intake and deal conversations) keep both registration paragraphs.
 export const udcHandbook = udcHandbookForRole();
 
+// Handbook search (Phase 9 item 5b): the same owner-approved text, split into
+// named sections so the brain prompt can carry the sections relevant to the
+// customer's message instead of the whole book. Hard rules are always
+// included; when nothing matches, the full handbook is returned unchanged.
+type HandbookSection = { id: string; keywords: string[]; always?: boolean; text: string };
+
+function handbookSectionsForRole(role?: string): HandbookSection[] {
+  return [
+    { id: 'identity', keywords: ['udc', 'updowncircle', 'akif', 'who', 'founder', 'company', 'website', 'about'], always: true,
+      text: `APPROVED UDC HANDBOOK (${handbookVersion}): UDC means UpDownCircle ONLY, never Uniform Document Code, Universal Document Code or an ICC standard. Founder: Muhammed NP. AKIF stands for Advanced Knowledge and Intelligent Framework, UpDownCircle's AI trade assistant; do not explain the personal name. Official public website: ${publicWebsite}. Do not invent a registered legal entity, office, address, licenses, phone, bank account, achievements, partnerships or founder biography.` },
+    { id: 'what_udc_is', keywords: ['platform', 'feature', 'register', 'registration', 'verify', 'verification', 'match', 'matching', 'deal', 'invite', 'referral', 'document', 'offer', 'requirement', 'buyer', 'seller', 'agent', 'workflow'], text: whatUdcIs },
+    { id: 'documents', keywords: ['document', 'license', 'licence', 'certificate', 'upload', 'gst', 'vat', 'ein', 'tax', 'import', 'export', 'invoice', 'checklist', 'papers'], text: documentChecklists },
+    { id: 'registration', keywords: ['register', 'registration', 'sign', 'join', 'verify', 'verification', 'account', 'approve', 'approval'], text: registrationWorkflow(role) },
+    { id: 'payments', keywords: ['payment', 'pay', 'dlc', 'lc', 'letter', 'credit', 'bank', 'sgs', 'inspection', 'safe', 'escrow', 'money'], text: `TRADE ACCURACY: ${dlcAnswer} ${paymentAnswer}` },
+    { id: 'incoterms', keywords: ['incoterm', 'cif', 'fob', 'exw', 'dap', 'ddp', 'freight', 'shipping', 'insurance', 'port'], text: `INCOTERMS ACCURACY: CIF means Cost, Insurance and Freight, never Credit Information File in a trade-term question. ${cifAnswer}` },
+    { id: 'hard_rules', keywords: [], always: true,
+      text: `COMMISSION: Never state commission rates, percentages, formulas, timing or conditions. Say only that terms are in the agent agreement and UDC will confirm them. BANK PROOF: Never ask for or accept bank details, bank statements or bank proof in chat; UDC asks through a private secure link just before the SPA is signed. NO APP: UDC has no app, mobile app, dashboard or portal for customers; everything happens in this WhatsApp chat. Never ask for passport, national ID, selfie or bank statement as a UDC requirement. If you do not know, say: I am not sure, UDC will confirm.` },
+    { id: 'style', keywords: [], always: true, text: styleAndScope },
+    { id: 'problems', keywords: ['problem', 'dispute', 'damage', 'damaged', 'delay', 'delayed', 'customs', 'reject', 'rejected', 'complaint', 'angry', 'refund', 'quiet', 'back out', 'cancel'], text: problemBehaviour },
+  ];
+}
+
+const sectionStop = new Set(['the', 'and', 'for', 'with', 'what', 'how', 'can', 'you', 'are', 'this', 'that', 'have', 'from', 'your', 'about', 'want', 'need', 'will', 'please']);
+
+// Returns the always-on rules plus the sections whose keywords the message
+// hits (max 3, by hit count). No hit at all returns the full handbook, so a
+// retrieval miss can never hide rules or facts from the brain.
+export function searchHandbook(query: string, role?: string): string {
+  const sections = handbookSectionsForRole(role);
+  const tokens = new Set((query.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((t) => !sectionStop.has(t)));
+  const scored = sections
+    .filter((s) => !s.always)
+    .map((s) => ({ s, hits: s.keywords.filter((k) => tokens.has(k)).length }))
+    .filter((x) => x.hits > 0)
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, 3);
+  if (scored.length === 0) return udcHandbookForRole(role);
+  const picked = [...sections.filter((s) => s.always), ...scored.map((x) => x.s)];
+  return `APPROVED UDC HANDBOOK (${handbookVersion}) - sections relevant to this message:
+${picked.map((s) => s.text).join('\n')}`;
+}
+
 export const commissionAnswer = 'Commission terms are set in your agent agreement, and UDC will confirm them to you. I cannot state rates, percentages or payment timing in chat.';
 export const buyerDocumentsAnswer = 'To get verified as a buyer, UDC needs: 1) company registration or trade licence, 2) tax ID (GST, VAT, EIN or your local equivalent), 3) import licence, only if your country requires one. Tell me which document you want to submit - or reply with its number from your documents list, or "all" - and I will send a private single-use upload link right away. Never send documents in this chat. A human at UDC reviews every document. Bank proof is only needed later, before signing the SPA.';
 export const sellerDocumentsAnswer = 'To get verified as a seller, UDC needs: 1) company registration certificate, 2) tax registration (GST, VAT, EIN or your local equivalent), 3) export licence or exporter ID, if your country has one, 4) product licences or certificates, if your product needs them, 5) past export invoices or photos of your factory or products. Tell me which document you want to submit - or reply with its number from your documents list, or "all" - and I will send a private single-use upload link right away. Never send documents in this chat. A human at UDC reviews every document. Bank proof is only needed later, before signing the SPA.';
