@@ -72,7 +72,7 @@ router.post("/deals/:dealId/documents/upload", requireAuth, requireNonAgentDealA
       dealId: deal.id, uploadedBy: req.authUser!.id,
       documentType: type, fileUrl, status: "pending",
     }).returning();
-    await db.insert(documentAccessTable).values({ documentId: document.id, userId: req.authUser!.id, accessRole: "owner" });
+    await db.insert(documentAccessTable).values({ documentId: document.id, userId: req.authUser!.id, accessRole: "editor" });
     await db.insert(auditLogsTable).values({ actorUserId: req.authUser!.id,
       action: "deal_document_uploaded", entityType: "document", entityId: document.id,
       metadata: { dealId: deal.id, documentType: type },

@@ -2,14 +2,23 @@ import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { emailAuth, EmailAuthError } from "../auth/emailAuth";
 
+import { isVerifyEmailRequest } from "./intentPhrases";
+
 // Called only after signed Meta webhook, privacy consent and blocked-account gates.
 // Consume code commands before AI/memory routing so credentials never reach a model.
 export async function handleEmailVerification(
   phone: string,
   text: string,
 ): Promise<string | null> {
-  const request = /^verify email$/i.test(text.trim());
-  const confirm = /^email code(?:\s+(.*))?$/i.exec(text.trim());
+  const request = isVerifyEmailRequest(text);
+  let confirm = /^email code(?:\s+(.*))?$/i.exec(text.trim());
+  // A bare 6-digit reply counts as the code only while a code is waiting for this phone.
+  if (!request && !confirm && /^\d{6}$/.test(text.trim())) {
+    const { rows: waiting } = await db.execute(
+      sql`select 1 from email_auth_challenges c join users u on u.id=c.user_id where u.phone=${phone} and c.purpose='verify_email' and c.consumed_at is null and c.expires_at>now() limit 1`,
+    );
+    if (waiting.length) confirm = ["", text.trim()] as unknown as RegExpExecArray;
+  }
   if (!request && !confirm) return null;
   try {
     await emailAuth.ipBudget(`whatsapp:${phone}`, request ? "send" : "check");
@@ -26,10 +35,10 @@ export async function handleEmailVerification(
       if ((await emailAuth.status(user.id)).emailVerified)
         return "Your email is already verified. Company approval is a separate UDC review.";
       await emailAuth.requestVerification(user.id);
-      return "Check your registered email for a 6-digit code. Reply Email code followed by the code. It expires in 10 minutes; wait one minute before requesting another.";
+      return "Check your registered email for a 6-digit code. Reply here with the 6-digit code. It expires in 10 minutes; wait one minute before requesting another.";
     }
     if (!/^\d{6}$/.test(confirm![1] ?? ""))
-      return "Reply Email code followed by the 6-digit code from your email.";
+      return "Reply here with the 6-digit code from your email.";
     // The user row lock in verify rechecks ownership and serializes one-time use.
     const { rows: challenges } = await db.execute(
       sql`select id from email_auth_challenges where user_id=${user.id} and purpose='verify_email' and consumed_at is null order by created_at desc limit 1`,

@@ -15,6 +15,9 @@ const keys = [
   "OPENAI_CHAT_MODEL",
   "HERMES_AKIF_URL",
   "HERMES_AKIF_API_KEY",
+  "GROQ_API_KEY",
+  "GROQ_BASE_URL",
+  "GROQ_MODEL",
 ];
 
 function snapshotEnv() {

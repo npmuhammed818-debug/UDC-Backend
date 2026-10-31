@@ -1,9 +1,20 @@
+import { withUdcWarning } from "./draftWarning.ts";
 import { udcPaymentTerms } from '../marketplace/paymentPolicy.ts';
 export type SpaDraftInput = {
   dealNumber: string;
   date: string;
   buyerName?: string | null;
   sellerName?: string | null;
+  buyerAddress?: string | null;
+  buyerRegistrationNo?: string | null;
+  sellerAddress?: string | null;
+  sellerRegistrationNo?: string | null;
+  // Counterparty identity stays hidden until the NCNDA stage.
+  hideBuyer?: boolean;
+  hideSeller?: boolean;
+  governingLaw?: "India" | null;
+  // Agent agreement drafts only: the requesting agent's own recorded name.
+  agentName?: string | null;
   productName: string;
   quantity: string;
   unit: string;
@@ -25,7 +36,7 @@ export function createSpaDraft(input: SpaDraftInput) {
   const seller = safe(input.sellerName, "[SELLER LEGAL NAME AND REGISTERED ADDRESS — COMPLETE BEFORE SIGNING]");
   const delivery = [input.incoterm, input.destination].filter(Boolean).join(" · ") || "[INCOTERM, NAMED PLACE AND DELIVERY SCHEDULE — AGREE BEFORE SIGNING]";
 
-  return [
+  return withUdcWarning([
     "SALE AND PURCHASE AGREEMENT",
     `DRAFT FOR DISCUSSION ONLY · ${safe(input.dealNumber, "UDC DEAL")}`,
     "NOT AN OFFER, ACCEPTANCE OR EXECUTED CONTRACT. Complete every bracketed item and obtain independent legal review before either party signs.",
@@ -74,5 +85,5 @@ export function createSpaDraft(input: SpaDraftInput) {
     "Signature: ______________________________    Date: __________________",
     "",
     "Prepared from UDC deal fields for discussion. UDC has not verified unstored terms and does not provide legal advice. Do not sign until all placeholders are completed and the final text has been independently reviewed.",
-  ].join("\n");
+  ].join("\n"));
 }

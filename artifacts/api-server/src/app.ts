@@ -6,6 +6,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import { vaultShortRouter } from "./routes/vault";
 import { logger } from "./lib/logger";
 import { loadAuth } from "./auth/middleware";
 import { safeRequestLogPath } from "./lib/requestLog";
@@ -49,6 +50,7 @@ for (const [route, [title, body]] of Object.entries(policies)) {
   app.get(route, (_req, res) => res.type("html").send(renderPolicy(title, body)));
 }
 
+app.use(vaultShortRouter);
 app.use("/api", router);
 
 const webDistPath = fileURLToPath(

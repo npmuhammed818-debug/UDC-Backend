@@ -206,7 +206,9 @@ export function isAkifWorkerConversationEnabled() {
   return process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" && isAkifWorkerConfigured();
 }
 
-export async function runAkifWorkerChat(message: string, system?: string, timeoutMs = 15_000) {
+// Conversation text is private by default (deal, company, price, contact data). Only a caller that
+// guarantees no such data may pass "generic"; the worker then may use Gemini without the data gate.
+export async function runAkifWorkerChat(message: string, system?: string, timeoutMs = 15_000, sensitivity: "private" | "generic" = "private") {
   // Leave transport overhead within the caller's deadline; no retries at either layer.
   const budget = Math.max(1, Math.min(25_000, timeoutMs));
   const raw = await requestWorker<{
@@ -216,6 +218,7 @@ export async function runAkifWorkerChat(message: string, system?: string, timeou
     body: {
       messages: [...(system ? [{ role: "system", content: system }] : []), { role: "user", content: message }],
       timeout_seconds: Math.max(1, Math.min(20, (budget - 1_000) / 1_000)),
+      sensitivity: sensitivity === "generic" ? "generic" : "private",
     },
   });
   const content = raw.choices?.[0]?.message?.content;
@@ -235,34 +238,72 @@ export function transcribeAkifImage(input: { mime_type: string; base64: string }
 }
 
 export async function transcribeAkifAudio(input: { bytes: Uint8Array; mimeType: string }) {
+  return (await transcribeAkifAudioDetailed(input)).text;
+}
+
+// Render's free tier puts the worker to sleep; a cold start can take ~50s,
+// past any single request timeout. Retry a timeout or network-level failure
+// once with a longer budget. HTTP answers (401, 503, ...) are never retried:
+// they are configuration or provider facts a retry cannot change.
+async function withColdStartRetry<T>(call: (timeoutMs: number) => Promise<T>, firstTimeoutMs: number): Promise<T> {
+  try {
+    return await call(firstTimeoutMs);
+  } catch (error) {
+    const isTimeout = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+    const isNetwork = error instanceof TypeError;
+    if (!isTimeout && !isNetwork) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    return call(60_000);
+  }
+}
+
+/** Transcript plus the detected language code (ISO 639-3 such as "mal" or "hin"), when the provider gives one. */
+export async function transcribeAkifAudioDetailed(input: { bytes: Uint8Array; mimeType: string }): Promise<{ text: string; language: string | null }> {
   const config = workerConfig();
   if (!config || !isAkifWorkerMediaEnabled()) throw new Error("akif_audio_not_configured");
   if (!input.bytes.length || input.bytes.length > 10 * 1024 * 1024) throw new Error("akif_audio_too_large");
   const bytes = new Uint8Array(input.bytes.length); bytes.set(input.bytes);
   const body = new FormData();
   body.set("file", new Blob([bytes.buffer], { type: input.mimeType }), "voice");
-  const response = await fetch(`${config.baseUrl}/media/audio/transcribe`, {
+  const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/media/audio/transcribe`, {
     method: "POST", headers: { "x-akif-worker-token": config.token }, body,
-    signal: AbortSignal.timeout(25_000),
-  });
+    signal: AbortSignal.timeout(timeoutMs),
+  }), 25_000);
   if (!response.ok) throw new Error(`akif_audio_http_${response.status}`);
-  const result = await response.json() as { text?: unknown };
+  const result = await response.json() as { text?: unknown; language?: unknown };
   if (typeof result.text !== "string" || !result.text.trim()) throw new Error("akif_audio_empty");
-  return result.text.trim().slice(0, 30_000);
+  return { text: result.text.trim().slice(0, 30_000), language: typeof result.language === "string" ? result.language : null };
 }
 
-/** Draft: speech for short generic replies. Returns OGG/Opus bytes. Worker enforces its own gates. */
-export async function synthesizeAkifSpeech(text: string): Promise<Uint8Array> {
+/** Speech for short replies; conversational=true lets the worker apply its privacy rules instead of the fixed list. Returns OGG/Opus bytes. Worker enforces its own gates. */
+export async function synthesizeAkifSpeech(text: string, conversational = false): Promise<Uint8Array> {
+  return (await synthesizeAkifSpeechTimed(text, conversational)).bytes;
+}
+
+/** Same, plus the measured audio length in seconds from the worker (null if it could not measure). */
+export type AkifSpeechStatus = { provider?: string; configured?: boolean; reason?: string; model?: string };
+
+/** Worker speech configuration probe for operators. Returns null when the worker is unreachable. */
+export async function fetchAkifSpeechStatus(): Promise<AkifSpeechStatus | null> {
+  try {
+    return await requestWorker<AkifSpeechStatus>("/speech/status", { method: "GET", timeoutMs: 8_000 });
+  } catch {
+    return null;
+  }
+}
+
+export async function synthesizeAkifSpeechTimed(text: string, conversational = false, language = "english"): Promise<{ bytes: Uint8Array; seconds: number | null }> {
   const config = workerConfig();
   if (!config) throw new Error("akif_speech_not_configured");
-  const response = await fetch(`${config.baseUrl}/speech/synthesize`, {
+  const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/speech/synthesize`, {
     method: "POST",
     headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
-    body: JSON.stringify({ text }),
-    signal: AbortSignal.timeout(30_000),
-  });
+    body: JSON.stringify({ text, conversational, language }),
+    signal: AbortSignal.timeout(timeoutMs),
+  }), 30_000);
   if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("akif_speech_size_invalid");
-  return bytes;
+  const seconds = Number(response.headers.get("x-audio-seconds"));
+  return { bytes, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null };
 }

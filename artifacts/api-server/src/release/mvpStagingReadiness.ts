@@ -41,8 +41,16 @@ export function evaluateMvpEnvironment(env:NodeJS.ProcessEnv=process.env):Readin
        ?"ETA runner flag is enabled; operational acceptance still required."
        :"Overdue ETA runner is disabled."},
     {id:"shipment_send_gate",label:"Shipment WhatsApp outbound worker",
-      state:"disabled",
-      detail:"No production outbox dispatcher is wired or authorized; pending alerts cannot send automatically."},
+      state:env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"?"review_required":"disabled",
+      detail:env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"
+       ?"Shipment send flag is enabled and the dispatch runner starts at boot; confirm owner authorization, template approval and delivery tests."
+       :"Shipment WhatsApp sending is disabled; pending alerts do not send automatically."},
+    {id:"chat_typing_flag",label:"WhatsApp read tick and typing indicator",
+      state:env.UDC_WHATSAPP_TYPING==="on"?"configured":"disabled",
+      detail:env.UDC_WHATSAPP_TYPING==="on"?"UDC_WHATSAPP_TYPING is on in this process.":"UDC_WHATSAPP_TYPING is not exactly \"on\" in this process."},
+    {id:"chat_reactions_flag",label:"WhatsApp emoji reactions",
+      state:env.UDC_WHATSAPP_REACTIONS==="on"?"configured":"disabled",
+      detail:env.UDC_WHATSAPP_REACTIONS==="on"?"UDC_WHATSAPP_REACTIONS is on in this process.":"UDC_WHATSAPP_REACTIONS is not exactly \"on\" in this process."},
     {id:"human_acceptance",label:"Human staging acceptance",
       state:"review_required",
       detail:"Buyer, seller, agent, SGS/DLC, OTP, signed Meta and rollback testing require human evidence."},

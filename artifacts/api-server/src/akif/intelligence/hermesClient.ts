@@ -1,4 +1,5 @@
 import { isAkifWorkerConversationEnabled, runAkifWorkerChat } from "./workerClient.ts";
+import { isGroqConfigured, runGroqChat } from "./groqClient.ts";
 
 type HermesChatResponse = {
   choices?: Array<{
@@ -290,6 +291,25 @@ export async function runConversationChat(
     }
   } else {
     console.warn("Direct OpenAI conversation skipped", { reason: "not_configured" });
+  }
+
+  if (isGroqConfigured()) {
+    try {
+      return await withinDeadline(async budget => { const r = await runGroqChat(message, system, budget); return { content: r.content, raw: r.raw as HermesChatResponse }; });
+    } catch (error) {
+      remaining();
+      const statusMatch = error instanceof Error
+        ? error.message.match(/Groq returned HTTP (\d{3})/)
+        : null;
+      console.warn("Groq backup conversation failed; falling back to Hermes", {
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : "provider_request_failed",
+        ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+      });
+    }
+  } else {
+    console.warn("Groq backup conversation skipped", { reason: "not_configured" });
   }
 
   return withinDeadline(budget => runHermesChat(message, system, budget));

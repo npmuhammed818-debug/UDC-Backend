@@ -150,7 +150,7 @@ try {
   assert.equal((await call("POST", `/admin/deals/${dealId}/agents`, { userId: agent.id, commissionSharePct: 50 }, admin.cookie)).status, 201);
   assert.equal((await call("GET", `/deals/${dealId}`, undefined, agent.cookie)).status, 403);
   const ad = await call("GET", "/agent/deals", undefined, agent.cookie);
-  assert.equal(ad.status, 200); assert.ok(!JSON.stringify(ad.body).includes("505"));
+  assert.equal(ad.status, 200); assert.ok(!/(?<![0-9a-f-])505(?![0-9a-f-])/i.test(JSON.stringify(ad.body)));
   const ref = await call("POST", "/admin/referrals", { agentUserId: agent.id, referredUserId: buyer.id, referralCode: "QA-REF-1" }, admin.cookie);
   assert.equal(ref.status, 201, JSON.stringify(ref.body));
   assert.equal(ref.body.referral.status, "pending");
@@ -179,7 +179,7 @@ try {
   assert.equal((await call("GET", `/deals/${dealId}/tracking`, undefined, seller.cookie)).status, 200);
   assert.equal((await call("PATCH", `/admin/shipments/${shId}`, { status: "in_transit" }, admin.cookie)).status, 200);
   const agentTr = await call("GET", `/deals/${dealId}/tracking`, undefined, agent.cookie);
-  assert.ok(!JSON.stringify(agentTr.body).includes("505"), "tracking shows the agent no price");
+  assert.ok(!/(?<![0-9a-f-])505(?![0-9a-f-])/i.test(JSON.stringify(agentTr.body)), "tracking shows the agent no price");
   pass("shipment created, milestone replay-safe and conflict-checked, future/unsourced milestones refused, tracking visible to the deal's buyer and seller only, no price to the agent");
 
   // 6 commission recorded by admin for the agent; each user sees only their own
@@ -268,14 +268,38 @@ try {
   const freshRequest=(await pool.query("select id from user_role_change_requests where user_id=$1 and status='pending'",[switchCandidate.id])).rows[0].id;
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},switchCandidate.cookie)).status,403);
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate'},admin.cookie)).status,409);
+  await pool.query("insert into whatsapp_intake_drafts(phone,role,draft) values($1,'buyer','{}'::jsonb)",[switchPhone]);
   const activated=await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},admin.cookie);
   assert.equal(activated.status,200,JSON.stringify(activated.body));assert.equal(activated.body.roleChanged,true);
   assert.equal((await pool.query('select role from users where id=$1',[switchCandidate.id])).rows[0].role,'seller');
+  assert.equal((await pool.query('select count(*)::int n from whatsapp_intake_drafts where phone=$1',[switchPhone])).rows[0].n,0,'half-finished buyer intake is dropped');
+  const audited=(await pool.query("select metadata from audit_logs where action='role_change_activated' and entity_id=$1",[switchCandidate.id])).rows;
+  assert.equal(audited.length,1);assert.equal(audited[0].metadata.fromRole,'buyer');assert.equal(audited[0].metadata.toRole,'seller');assert.equal(audited[0].metadata.historyPreserved,true);
+  assert.equal((await pool.query("select status from user_role_change_requests where id=$1",[freshRequest])).rows[0].status,'activated');
   assert.equal((await call('GET','/auth/me',undefined,switchCandidate.cookie)).status,401,'old role session revoked');
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Duplicate should fail closed'},admin.cookie)).status,409);
   const relogin=await call('POST','/auth/login',{email:switchCandidate.email,password});assert.equal(relogin.status,200);
   assert.equal((await call('POST','/buyer-requests',{product_id:product,quantity:1,unit:'MT'},relogin.cookie)).status,403,'former buyer cannot create buyer request');
   pass('role activation requires admin and evidence, revokes prior sessions, blocks replay and removes former role permissions');
+  // More role-switch gates: concurrency, company verification, agent isolation.
+  {
+    const activate=(rid,cookie=admin.cookie)=>call('POST',`/admin/role-change-requests/${rid}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified target role KYC and scope'},cookie);
+    const reqFor=async(user,phone,role)=>{await pool.query('update users set phone=$2 where id=$1',[user.id,phone]);assert.equal((await app.requestRoleChange(phone,role)).status,'pending');return (await pool.query("select id from user_role_change_requests where user_id=$1 and status='pending'",[user.id])).rows[0].id;};
+    const racer=await mk('buyer');const racerReq=await reqFor(racer,'10000007771','seller');
+    const results=await Promise.all([activate(racerReq),activate(racerReq),activate(racerReq)]);
+    const codes=results.map(r=>r.status).sort();
+    assert.deepEqual(codes,[200,409,409],'concurrent activations: exactly one wins '+codes);
+    assert.equal((await pool.query("select count(*)::int n from audit_logs where action='role_change_activated' and entity_id=$1",[racer.id])).rows[0].n,1);
+    const unverified=await mk('buyer');await pool.query("update companies set verification_status='pending' where owner_user_id=$1",[unverified.id]);
+    const unverifiedReq=await reqFor(unverified,'10000007772','seller');
+    const blocked=await activate(unverifiedReq);assert.equal(blocked.status,409);assert.equal(blocked.body.error,'company_verification_required');
+    assert.equal((await pool.query('select role from users where id=$1',[unverified.id])).rows[0].role,'buyer');
+    const agentUser=await mk('agent');const agentReq=await reqFor(agentUser,'10000007773','buyer');
+    const agentBlocked=await activate(agentReq);assert.equal(agentBlocked.status,409);assert.equal(agentBlocked.body.error,'company_verification_required','an agent has no company, so buyer activation needs the company review first');
+    assert.equal((await pool.query('select role from users where id=$1',[agentUser.id])).rows[0].role,'agent');
+    assert.equal((await call('GET','/auth/me',undefined,agentUser.cookie)).status,200,'a blocked activation revokes nothing');
+    pass('role switching gates: one winner under concurrency, buyer/seller targets need a verified company, a blocked activation changes and revokes nothing, every activation audited');
+  }
   const transition=(status,extra={},cookie=admin.cookie)=>call('PATCH',`/admin/deals/${dealId}/status`,{status,...extra},cookie);
   assert.equal((await transition('payment',{confirmDestinationSgs:true},buyer.cookie)).status,403);
   assert.equal((await transition('payment',{confirmDestinationSgs:true})).status,409);

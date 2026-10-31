@@ -15,7 +15,21 @@ export const VAULT_DOCUMENT_TYPES = [
   "tax_certificate",
   "commercial_agreement",
   "other",
+  // Role checklist keys (Upload documents flow): the link carries the same key
+  // the status list matches on, so an upload updates the list directly.
+  "tax_id",
+  "import_licence",
+  "export_licence",
+  "product_licence",
+  "past_exports",
 ] as const;
+// One link covering several documents: "multi:<key>,<key>" with checklist keys.
+export const MULTI_DOCUMENT_PREFIX = "multi:";
+export function parseMultiDocumentType(value: unknown): string[] | null {
+  if (typeof value !== "string" || !value.startsWith(MULTI_DOCUMENT_PREFIX)) return null;
+  const keys = value.slice(MULTI_DOCUMENT_PREFIX.length).split(",").filter(Boolean);
+  return keys.length && keys.every((k) => (VAULT_DOCUMENT_TYPES as readonly string[]).includes(k)) ? keys : null;
+}
 export type VaultDocumentType = (typeof VAULT_DOCUMENT_TYPES)[number];
 
 export function isVaultDocumentType(value: unknown): value is VaultDocumentType {
@@ -27,7 +41,8 @@ export function hashLinkToken(token: string) {
 }
 
 export function issueUploadLinkToken(now: Date = new Date()) {
-  const token = randomBytes(32).toString("base64url");
+  // 128 bits, unguessable; short enough that the link reads clean on a phone.
+  const token = randomBytes(16).toString("base64url");
   return { token, tokenHash: hashLinkToken(token), expiresAt: new Date(now.getTime() + VAULT_LINK_TTL_MS) };
 }
 
@@ -91,7 +106,7 @@ export function vaultPublicOrigin(value: unknown): string | null {
 export function uploadPageUrl(baseUrl: string, token: string) {
   const base = vaultPublicOrigin(baseUrl);
   if (!base) throw Error('invalid_vault_public_origin');
-  return `${base}/api/vault/upload/${encodeURIComponent(token)}`;
+  return `${base}/u/${encodeURIComponent(token)}`;
 }
 
 // WhatsApp reply when someone sends, or asks to send, a confidential document.

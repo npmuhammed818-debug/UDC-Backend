@@ -1,5 +1,6 @@
 import base64
 import io
+from json import dumps as _dumps
 import json
 import os
 
@@ -16,30 +17,84 @@ class ImageRequest(BaseModel):
     base64: str = Field(min_length=4, max_length=7_000_000)
 
 
+_AUDIO_TYPES = {"audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/webm", "audio/flac"}
+ELEVENLABS_STT_MODELS = {"scribe_v1", "scribe_v2"}
+
+
+def _stt_provider() -> str:
+    """elevenlabs (default when ELEVENLABS_API_KEY is set, Groq Whisper is the fallback) or groq."""
+    chosen = os.getenv("AKIF_STT_PROVIDER", "").strip().lower()
+    if chosen in {"elevenlabs", "groq"}:
+        return chosen
+    return "elevenlabs" if os.getenv("ELEVENLABS_API_KEY") else "groq"
+
+
+def _transcribe_elevenlabs(data: bytes, mime_type: str) -> dict:
+    import json as _json
+    import urllib.request
+    import uuid
+    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+    model = os.getenv("ELEVENLABS_STT_MODEL_ID", "scribe_v1").strip()
+    if not key or model not in ELEVENLABS_STT_MODELS:
+        raise ValueError("elevenlabs_stt_not_configured")
+    boundary = uuid.uuid4().hex
+    base = mime_type.split(";")[0].lower()
+    parts = [
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model_id\"\r\n\r\n{model}\r\n".encode(),
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"tag_audio_events\"\r\n\r\nfalse\r\n".encode(),
+        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice\"\r\nContent-Type: {base}\r\n\r\n").encode(),
+        data, f"\r\n--{boundary}--\r\n".encode(),
+    ]
+    req = urllib.request.Request("https://api.elevenlabs.io/v1/speech-to-text", data=b"".join(parts), method="POST",
+        headers={"xi-api-key": key, "content-type": f"multipart/form-data; boundary={boundary}"})
+    with urllib.request.urlopen(req, timeout=25) as resp:  # one try; the caller decides on fallback
+        payload = _json.loads(resp.read())
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("empty_transcript")
+    language = payload.get("language_code")
+    return {"text": text.strip()[:30_000], "language": language if isinstance(language, str) else None}
+
+
+def _transcribe_groq(data: bytes, mime_type: str) -> dict:
+    if not os.getenv("GROQ_API_KEY"):
+        raise ValueError("groq_not_configured")
+    from litellm import transcription
+    audio = io.BytesIO(data)
+    # A generated filename prevents passing untrusted provider names as filesystem paths.
+    suffix = {"audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/webm": ".webm", "audio/wav": ".wav", "audio/flac": ".flac"}.get(mime_type.split(";")[0], ".mp3")
+    audio.name = "voice" + suffix
+    result = transcription(model="groq/whisper-large-v3-turbo", file=audio, timeout=20, max_retries=0)
+    text = result.text
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("empty_transcript")
+    return {"text": text.strip()[:30_000], "language": None}
+
+
 def transcribe_audio(data: bytes, filename: str, mime_type: str) -> dict:
     if not data or len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="audio_size_invalid")
-    if mime_type.split(";")[0].lower() not in {
-        "audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/webm", "audio/flac",
-    }:
+    if mime_type.split(";")[0].lower() not in _AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="audio_type_unsupported")
-    if not os.getenv("GROQ_API_KEY"):
+    order = ["elevenlabs", "groq"] if _stt_provider() == "elevenlabs" else ["groq"]
+    if not os.getenv("GROQ_API_KEY") and not (order[0] == "elevenlabs" and os.getenv("ELEVENLABS_API_KEY")):
         raise HTTPException(status_code=503, detail="groq_not_configured")
-    try:
-        from litellm import transcription
-        audio = io.BytesIO(data)
-        # A generated filename prevents passing untrusted provider names as filesystem paths.
-        suffix = {"audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/webm": ".webm", "audio/wav": ".wav", "audio/flac": ".flac"}.get(mime_type.split(";")[0], ".mp3")
-        audio.name = "voice" + suffix
-        result = transcription(model="groq/whisper-large-v3-turbo", file=audio,
-                               timeout=20, max_retries=0)
-        text = result.text
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("empty_transcript")
-        return {"text": text.strip()[:30_000], "source": "voice_transcription",
-                "requires_confirmation": True}
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="audio_transcription_failed") from exc
+    used = None
+    result = None
+    for provider in order:
+        try:
+            result = _transcribe_elevenlabs(data, mime_type) if provider == "elevenlabs" else _transcribe_groq(data, mime_type)
+            used = provider
+            break
+        except Exception as exc:
+            # Never log audio, transcripts or keys: type and size only.
+            print("AKIF audio provider failure: " + _dumps({"provider": provider, "error_type": type(exc).__name__,
+                  "audio_bytes": len(data)}), flush=True)
+    if result is None:
+        # An empty or failed transcript is never guessed at: the caller tells the user it was not understood.
+        raise HTTPException(status_code=502, detail="audio_transcription_failed")
+    return {"text": result["text"], "language": result["language"], "source": "voice_transcription",
+            "provider": used, "requires_confirmation": True}
 
 
 def _gemini_model(override: str | None = None) -> str:

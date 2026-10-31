@@ -1,3 +1,4 @@
+process.env.WHATSAPP_INBOUND_PER_MINUTE = "100000"; // these fixtures reuse one phone; the cap has its own test
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { build } from "esbuild";
@@ -31,6 +32,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "usersTable",
     "notificationsTable", "auditLogsTable",
     "notificationPreferencesTable",
+    "akifSharedLessonsTable",
     "dealConversationEventsTable",
     "dealParticipantsTable",
     "dealsTable",
@@ -38,7 +40,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "documentAccessTable",
     "productsTable",
     "whatsappMessageContextsTable",
-    "whatsappUserContextsTable",
+    "whatsappUserContextsTable","companiesTable",
     "whatsappChatSessionsTable",
     "whatsappIntakeDraftsTable",
   ];
@@ -147,7 +149,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
   };
   (globalThis as any).__udcChatTest = s;
   const stubs: Record<string, string> = {
-    "../whatsapp/chatUi": "export const chatAction=()=>null;export const sendChatHome=async(phone)=>{const s=globalThis.__udcChatTest;s.sent.push({to:phone,body:'Welcome to UDC. Are you a buyer, seller or agent?'});};export const handleChatUi=async()=>false;",
+    "../whatsapp/chatUi": "export const chatAction=()=>null;export const sendChatHome=async(phone)=>{const s=globalThis.__udcChatTest;s.sent.push({to:phone,body:'Welcome to UDC. Are you a buyer, seller or agent?'});};export const handleChatUi=async()=>false;export const sendDocumentsLink=async()=>false;",
     "../auth/whatsappSignin": "export const parseSigninCommand=()=>null;export const handleWhatsAppSignin=async()=>null;",
     "@workspace/db": `export const db=globalThis.__udcChatTest.db;${names.map((n) => `export const ${n}=new Proxy({_name:'${n}'},{get:(t,k)=>k==='_name'?t._name:{key:k}});`).join("")}`,
     "drizzle-orm":
@@ -159,12 +161,16 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       "export const processDocumentIntelligence=async()=>{};",
     "../supabase/storage":
       "export const createSignedDownloadUrl=async()=>'';export const parseStoragePath=()=>null;export const uploadDocumentBytes=async()=>({});",
-    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};",
+    "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>'voice';export const recordNotice=async()=>true;export const VOICE_NOTICE='Fixture voice notice';",
+    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
     "../whatsapp/client":
-      "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;",
+      "const s=globalThis.__udcChatTest;export const sendWhatsAppText=async(to,body)=>{const id='out-'+s.sent.length;s.sent.push({to,body,id});return {delivered:true,messageId:id}};export const sendWhatsAppTextWithMenu=sendWhatsAppText;export const sendWhatsAppDocument=async()=>({delivered:false});export const downloadWhatsAppMedia=async()=>null;export const markReadAndTyping=()=>{};export const trackReplyFailures=(fn)=>fn(new Set());",
     "../akif/recordBuyerRequirement":
       "export const recordPendingBuyerRequirement=async(v)=>{globalThis.__udcChatTest.records.push(v);return {id:'requirement-1',status:'pending_admin_review'}};",
-    "../whatsapp/guidance": "export const isGuidanceQuestion=()=>false;export const answerGuidance=async()=>null;",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=()=>false;export const answerGuidance=async()=>null;export const guidanceMainLanguage=async()=>'';",
+    "../akif/intelligence/hermesClient":
+      "export const runConversationChat=async()=>({content:'',raw:{}});",
+    "../vault/service": "export const createVaultUploadLink=async()=>({ok:false,error:'vault_base_url_not_configured'});export const acceptUpload=async()=>({ok:false,error:'invalid'});export const listOwnDocumentStatuses=async()=>[];export const lookupLink=async()=>({row:null,check:{ok:false,reason:'invalid'}});export const requestDocumentDeletion=async()=>({ok:false,error:'not_found'});export const logVaultAccess=async()=>{};",
     "../akif/recordPendingSellerOffer":
       "export const recordPendingSellerOffer=async()=>({id:'offer-1'});",
     "./intelligence/dealContext":
@@ -189,7 +195,9 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
         name: "fixtures",
         setup(b) {
           b.onResolve({ filter: /.*/ }, (a) =>
-            a.path in stubs
+            a.path === "./voicePreference" && a.importer.endsWith("/whatsapp/voiceSend.ts")
+              ? { path: "../whatsapp/voicePreference", namespace: "fixture" }
+              : a.path in stubs
               ? { path: a.path, namespace: "fixture" }
               : undefined,
           );

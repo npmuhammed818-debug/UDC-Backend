@@ -6,7 +6,7 @@ import { udcPaymentTerms } from '../marketplace/paymentPolicy';
 import { buildDefaultCommissionPreview } from "../referrals/defaultCommissionRule";
 import { commissionAmountFitsStorage } from "../referrals/currencyPrecision";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -20,6 +20,10 @@ import {notificationText} from "../notifications/deliveryContent";
 import {dispatchShipmentNotifications} from "../notifications/shipmentDispatcher";
 import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
+import { runShipmentWatchPoll } from "../tracking/shipmentWatch";
+import { schedulerKeyAllowed, stagingFakeTracker } from "../tracking/shipmentWatchScheduler";
+import { fetchAkifSpeechStatus, isAkifWorkerConfigured } from "../akif/intelligence/workerClient";
+import { learnFromDealOutcome } from "../akif/dealOutcomeLessons";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
 import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
 import { managedDealDocumentPath, managedCompanyDocumentPath } from "../supabase/documentAccessPath";
@@ -624,6 +628,55 @@ router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:A
   }
 });
 
+// Voice diagnostics for operators: which gates are open, never any key, voice ID or content.
+router.get("/admin/voice/status",requireRole("admin"),async(_req,res)=>{
+  try{
+    let preferencesTable=false;
+    try{
+      await db.execute(sql`SELECT 1 FROM public.whatsapp_voice_preferences LIMIT 0`);
+      preferencesTable=true;
+    }catch{preferencesTable=false;}
+    const worker=await fetchAkifSpeechStatus();
+    res.json({
+      masterSwitch:process.env.AKIF_VOICE_REPLIES==="on",
+      conversational:process.env.AKIF_VOICE_REPLIES==="on"&&process.env.AKIF_VOICE_CONVERSATIONAL!=="off",
+      autopick:process.env.AKIF_VOICE_AUTOPICK==="on",
+      preferencesTable,
+      workerConfigured:isAkifWorkerConfigured(),
+      workerReachable:worker!==null,
+      workerSpeech:worker??undefined,
+    });
+  }catch{
+    res.status(500).json({error:"voice_status_unavailable"});
+  }
+});
+
+// Operator-triggered shipment watch poll (external schedulers wake the service with
+// this call; the in-process runner stays as a fallback). On staging only, a fake
+// 17TRACK response can be supplied through UDC_SHIPMENT_WATCH_FAKE_EVENTS (JSON
+// array of {time,description,location}) so the full delivery chain is testable
+// without spending real 17TRACK quota. The flag is ignored outside staging.
+// Admin session OR the scheduler-scoped key (x-scheduler-key header). The key
+// opens this one route only and is revocable by rotating the env value.
+const adminOrSchedulerKey=(req:Request,res:Response,next:NextFunction)=>{
+  if(schedulerKeyAllowed(req.get("x-scheduler-key"))){next();return;}
+  requireRole("admin")(req,res,next);
+};
+
+router.post("/admin/tracking/shipment-watch/run",adminOrSchedulerKey,async(_req,res)=>{
+  try{
+    const fake=stagingFakeTracker();
+    if(fake&&"error" in fake){
+      res.status(400).json({error:fake.error});
+      return;
+    }
+    const result=await runShipmentWatchPoll(fake?{tracker:fake.tracker}:{});
+    res.json(result);
+  }catch{
+    res.status(500).json({error:"shipment_watch_run_failed"});
+  }
+});
+
 router.post("/admin/deal-escalations/run", requireRole("admin"), async (req, res) => {
   try {
     const now = new Date();
@@ -1124,10 +1177,21 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       await notifyDealCounterparties(
         deal.id,
         "deal_status_updated",
-        "Deal status updated",
-        `We’re at ${deal.status} now.`,
+        deal.status === "on_hold" ? "Deal paused" : deal.status === "cancelled" ? "Deal closed" : "Deal status updated",
+        deal.status === "on_hold" ? `Deal ${deal.dealNumber} is paused. No action is needed from you right now. UDC will message you if it restarts.`
+          : deal.status === "cancelled" ? `Deal ${deal.dealNumber} has been closed. Thank you for your time. You can post a new requirement or offer any time.`
+          : `We’re at ${deal.status} now.`,
         `/deals/${deal.id}`,
       );
+    }
+    // Phase 6: a terminal status reached through the admin console also
+    // teaches AKIF one structural outcome lesson. Never blocks the update.
+    if (existingDeal.status !== deal.status && ["completed", "cancelled"].includes(deal.status)) {
+      try {
+        await learnFromDealOutcome({ dealId: deal.id });
+      } catch {
+        console.warn("AKIF deal outcome learning unavailable", { reason: "learn_failed" });
+      }
     }
     res.json({ deal });
   } catch (error) {

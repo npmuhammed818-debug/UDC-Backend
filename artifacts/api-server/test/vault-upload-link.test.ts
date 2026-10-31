@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  VAULT_LINK_TTL_MS, checkUploadLink, hashLinkToken, issueUploadLinkToken, looksLikeConfidentialDocumentTopic,
-  publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath, vaultRedirectReply,
+  VAULT_DOCUMENT_TYPES, VAULT_LINK_TTL_MS, checkUploadLink, hashLinkToken, issueUploadLinkToken, looksLikeConfidentialDocumentTopic,
+  parseMultiDocumentType, publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath, vaultRedirectReply,
 } from "../src/vault/uploadLink.ts";
 import { managedCompanyDocumentPath } from "../src/supabase/documentAccessPath.ts";
 import { uploadPageHtml } from "../src/vault/uploadPage.ts";
@@ -60,7 +60,7 @@ test("users and AKIF only ever see outcome states", () => {
 
 test("WhatsApp redirect never invites attachments and carries only the link", () => {
   const url = uploadPageUrl("https://udc.example.invalid/", "abc_DEF-123");
-  assert.equal(url, "https://udc.example.invalid/api/vault/upload/abc_DEF-123");
+  assert.equal(url, "https://udc.example.invalid/u/abc_DEF-123");
   const withLink = vaultRedirectReply({ url, expiresAt: now });
   assert.ok(withLink.includes(url) && /15 minutes/.test(withLink) && /never the document/.test(withLink));
   assert.ok(!/send (it|them) here/i.test(withLink));
@@ -95,4 +95,40 @@ test("accepted deal uploads carry the sensitive-file warning", async () => {
 test("vault public base rejects credential-bearing, non-origin and insecure destinations",()=>{
   for(const base of ["http://vault.example.invalid","https://u:p@vault.example.invalid","https://vault.example.invalid/path","https://vault.example.invalid/?x=1","https://vault.example.invalid/#fragment","https://"])
     assert.throws(()=>uploadPageUrl(base,"synthetic-token"),/invalid_vault_public_origin/);
+});
+
+test("multi document links carry several checklist keys", () => {
+  for (const key of ["tax_id", "import_licence", "export_licence", "product_licence", "past_exports"]) {
+    assert.ok((VAULT_DOCUMENT_TYPES as readonly string[]).includes(key), key);
+  }
+  assert.deepEqual(parseMultiDocumentType("multi:company_registration,tax_id,import_licence"), ["company_registration", "tax_id", "import_licence"]);
+  assert.equal(parseMultiDocumentType("multi:company_registration,nope"), null);
+  assert.equal(parseMultiDocumentType("multi:"), null);
+  assert.equal(parseMultiDocumentType("company_registration"), null);
+  assert.equal(parseMultiDocumentType(42), null);
+});
+
+test("the multi upload page takes one file per expected document", () => {
+  const html = uploadPageHtml({ state: "ready", documentType: "multi:company_registration,tax_id" });
+  assert.match(html, /data-doc="company_registration"/);
+  assert.match(html, /data-doc="tax_id"/);
+  assert.match(html, /Company registration or trade licence/);
+  assert.match(html, /Tax ID/);
+  assert.match(html, /\?doc=/);
+  assert.match(html, /one tap uploads them all/);
+  assert.match(html, /Upload all securely/);
+  const single = uploadPageHtml({ state: "ready", documentType: "tax_id" });
+  assert.match(single, /Tax ID/);
+  assert.doesNotMatch(single, /data-doc/);
+});
+
+test("short /u/<token> router is mounted before the web app catch-all in app.ts", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../src/app.ts", import.meta.url), "utf8");
+  const mount = source.indexOf("app.use(vaultShortRouter);");
+  const staticMount = source.indexOf("app.use(express.static(");
+  const apiMount = source.indexOf('app.use("/api", router);');
+  assert.ok(mount !== -1, "vaultShortRouter must be mounted");
+  assert.ok(staticMount !== -1 && mount < staticMount, "vaultShortRouter must mount before express.static and the SPA fallback");
+  assert.ok(apiMount !== -1 && mount < apiMount, "vaultShortRouter mounts ahead of /api");
 });

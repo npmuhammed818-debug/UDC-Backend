@@ -12,8 +12,8 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  (globalThis as any).__guidance=state;
  const path=fileURLToPath(new URL('./guidance-'+randomUUID()+'.mjs',import.meta.url));
  const result=await build({stdin:{contents:"export * from '../src/whatsapp/guidance';export * from '../src/akif/udcHandbook';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'guidance-fixtures',setup(b){
- b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient$/},a=>({path:a.path,namespace:'fixture'}));
- b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
+ b.onResolve({filter:/^@workspace\/db$|^drizzle-orm$|hermesClient(\.ts)?$|customerMemory(\.ts)?$|sharedLessons(\.ts)?$|emotionContext(\.ts)?$|taskPlanner(\.ts)?$/},a=>({path:a.path,namespace:'fixture'}));
+ b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.includes('taskPlanner')?"export const looksLikeComplexGoal=t=>/help me (import|export|buy|sell)/i.test(t);export const isApprovalReply=t=>/^(yes|yes please|go ahead|proceed|do it|ok)[.! ]*$/i.test(t.trim());export const isStatusQuestion=t=>/\\b(status|progress)\\b/i.test(t);export const planTask=async o=>{const s=globalThis.__guidance;s.plans=(s.plans||[]).concat([o]);return s.planResult??null;};export const readOpenTasks=async()=>{const s=globalThis.__guidance;return s.tasks??[];};export const approveStep=async o=>{const s=globalThis.__guidance;s.approvals=(s.approvals||[]).concat([o]);return {ok:true,step:{label:'Contact the seller',state:'in_progress',gated:true,approved:true}};};export const completeStep=async()=>({ok:true});export const cancelTask=async()=>true;export const formatPlanForCustomer=(g,steps)=>'PLAN::'+steps.map(x=>x.label).join('|');export const formatTasksForPrompt=ts=>ts.length?'TASKS::'+ts.map(t=>t.goal+'='+t.state).join('|'):'';":a.path.includes('emotionContext')?"export const estimateCustomerEmotion=async()=>({valence:'negative',cues:['anger'],confidence:0.6,evidence:'why'});export const feelingEventFor=()=> 'ordinary_turn';export const loadAkifFeelings=async()=>({state:{},lastTrigger:null});export const recordAkifFeeling=async o=>{const s=globalThis.__guidance;s.emotions=(s.emotions||[]).concat([o]);return {warmth:0.6,grief:0,tension:0.2,trust:0.5,engagement:0.6,uncertainty:0.3};};export const formatEmotionalContextForPrompt=()=>'EMOTION::ctx';":a.path.includes('sharedLessons')?"export const recallSharedLessons=async o=>{const s=globalThis.__guidance;s.sharedRecalls=(s.sharedRecalls||[]).concat([o]);return s.shared??[];};export const formatSharedLessonsForPrompt=m=>m.length?'SHARED::'+m.map(x=>x.content).join('|'):'';export const learnSharedLesson=async o=>{const s=globalThis.__guidance;s.sharedLearn=(s.sharedLearn||[]).concat([o]);return {status:'approved',id:'sl1'};};export const withdrawSharedLessons=async o=>{const s=globalThis.__guidance;s.withdrawn=(s.withdrawn||[]).concat(o.ids);return o.ids.length;};":a.path.includes('customerMemory')?"export const recallCustomerMemories=async o=>{const s=globalThis.__guidance;s.recalls=(s.recalls||[]).concat([o]);return s.memories??[];};export const formatMemoriesForPrompt=m=>m.length?'REMEMBERED::'+m.map(x=>x.content).join('|'):'';export const saveCustomerMemory=async o=>{const s=globalThis.__guidance;s.corrections=(s.corrections||[]).concat([o]);if(o.sharedLearner)await o.sharedLearner({userId:o.userId,topic:o.kind,content:o.content});return {id:'m1'};};":a.path==='@workspace/db'?"export const db=globalThis.__guidance.db;export const whatsappChatSessionsTable={phoneHash:'hash'};export const usersTable={role:'role',status:'status',phone:'phone'};":a.path==='drizzle-orm'?"export const eq=(a,b)=>({a,b});":"export const runConversationChat=async(message,system)=>{const s=globalThis.__guidance;s.calls.push({message,system});if(s.modelFailure)throw Error('MODEL_UNAVAILABLE');return {content:s.reply};};"}));
  }}]});await writeFile(path,result.outputFiles[0].text);
  const secret=process.env.WHATSAPP_APP_SECRET;process.env.WHATSAPP_APP_SECRET='test-guidance-secret-123';
  try{
@@ -24,40 +24,172 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.match(trustedGuidanceAnswer('What is CIF?')??'',/Cost, Insurance and Freight/);
  assert.match(trustedGuidanceAnswer('What is CIF?')??'',/risk transfers to the buyer when the goods are loaded on board/);
  assert.equal(isGuidanceQuestion('Deal UDC-123: accept offer?'),false);
+ assert.equal(isGuidanceQuestion('Need summery'),true);
+ assert.equal(isGuidanceQuestion('too long'),true);
+ assert.equal(isGuidanceQuestion('explain more'),true);
  assert.equal(isGuidanceQuestion('100 MT copper at 5900'),false);
  await answerGuidance('phone-one','Can you speak in malayalam?','1');
- state.reply='DLC വിശദീകരണം';assert.equal(await answerGuidance('phone-one','What is dlc','2'),state.reply);
- let last=state.calls.at(-1);assert.match(last.system,/Preferred reply language: malayalam/);let prompt=JSON.parse(last.message);assert.equal(prompt.currentMessage,'What is dlc');assert.equal(prompt.history[0].content,'Can you speak in malayalam?');
+ assert.equal(state.rows.get(guidanceKey('phone-one')).data.mainLanguage,'malayalam');
+ // Text is always English: a saved fact answer goes directly, with no model call.
+ const beforeDlc=state.calls.length;
+ assert.match(await answerGuidance('phone-one','What is dlc','2'),/Documentary Letter of Credit/);
+ assert.equal(state.calls.length,beforeDlc);
  const count=state.calls.length;assert.equal(await answerGuidance('phone-one','What is dlc','2'),'');assert.equal(state.calls.length,count);
  await answerGuidance('phone-two','Explain export insurance?','3');assert.deepEqual(JSON.parse(state.calls.at(-1).message).history,[]);
- state.reply='You can ask learning questions before verification.';await answerGuidance('phone-one','Even to answer a question?','4');assert.match(JSON.parse(state.calls.at(-1).message).history.at(-1).content,/വിശദീകരണം/);
+ state.reply='You can ask learning questions before verification.';await answerGuidance('phone-one','Even to answer a question?','4');assert.match(JSON.parse(state.calls.at(-1).message).history.at(-1).content,/Documentary Letter of Credit/);
  state.reply='അതെ';await answerGuidance('phone-one','മലയാളത്തിൽ സംസാരിക്കാമോ?','5',true);assert.equal(JSON.parse(state.calls.at(-1).message).source,'voice_transcript');
  const before=state.rows.get(guidanceKey('phone-one'));state.reply='TRADE_ACTION';assert.equal(await answerGuidance('phone-one','Accept the seller offer','6',true),null);assert.equal(state.rows.get(guidanceKey('phone-one')),before);
  const oldHistory=state.rows.get(guidanceKey('phone-two'));oldHistory.data.handbookVersion='old';oldHistory.data.history=JSON.stringify([{role:'assistant',content:'UDC means Uniform Document Code'}]);
+ state.reply='More about insurance.';
  await answerGuidance('phone-two','Tell me more about export insurance','history-reset');assert.deepEqual(JSON.parse(state.calls.at(-1).message).history,[]);
+ // The comfortable-language question is asked once, early, and then saved.
+ assert.match(state.calls.at(-1).system,/which language they are most comfortable in/);
+ assert.equal(state.rows.get(guidanceKey('phone-two')).data.languageAsked,'1');
  for(const unsafe of ['UDC means Uniform Document Code.','Upload a passport and bank statement.','DLC is guaranteed safe.','Our website is https://fake.example/','long '.repeat(120)])assert.equal(validateGuidanceReply(unsafe),false,unsafe);
  assert.equal(trustedGuidanceAnswer('Who founded Apple?'),null);
+ for(const q of ['How much commission do agents get?','When is my commission paid?','what is the referral fee?'])assert.match(trustedGuidanceAnswer(q,'agent')??'',/agent agreement.*UDC will confirm/,q);
+ for(const bad of ['Referral commissions are usually a percentage of the deal value.','Your commission is paid after the deal closes.','Agents earn 2% commission.'])assert.equal(validateGuidanceReply(bad),false,bad);
+ assert.equal(validateGuidanceReply('Commission terms are set in your agent agreement, and UDC will confirm them to you.'),true);
  assert.equal(trustedGuidanceAnswer('Deal UDC-123: accept offer'),null);
  state.reply='UDC means Uniform Document Code.';
  const facts=await answerGuidance('phone-public','What is UDC?','public-1');assert.match(facts,/UpDownCircle/);assert.doesNotMatch(facts,/Uniform/);
  assert.match(await answerGuidance('phone-public','Who is the founder?','public-2'),/Muhammed NP/);
  assert.match(await answerGuidance('phone-public','Give me our company website','public-3'),/https:\/\/updowncircle.site\//);
  assert.match(await answerGuidance('phone-public','Full form of akif','public-4'),/Advanced Knowledge and Intelligent Framework/);
- assert.match(await answerGuidance('phone-public','What documents do I need for verification?','public-5'),/company registration or trade-license PDF/);
+ const docsAny=await answerGuidance('phone-public','What documents do I need for verification?','public-5');
+ assert.match(docsAny,/company registration or trade licence/);
+ assert.match(docsAny,/import licence/);
+ assert.match(docsAny,/Bank proof from both sides is only needed later, before signing the SPA/);
+ assert.match(docsAny,/Never send documents in this chat/);
  assert.match(await answerGuidance('phone-public','What is DLC?','public-6'),/Banks examine documents, not the actual goods/);
  const redirected=await answerGuidance('phone-public','Can you code a website?','public-7');assert.match(redirected,/trade assistant/);
  const guarded=await answerGuidance('phone-public','Explain export insurance?','public-8');assert.doesNotMatch(guarded,/Uniform/);
  state.account={role:'agent',status:'pending'};assert.match(await answerGuidance('phone-public','What documents do I need for verification?','public-9'),/personal or business email/);state.account=null;
  state.reply='The safest choice is guaranteed safe.';assert.doesNotMatch(await answerGuidance('phone-public','Explain export insurance?','public-10'),/guaranteed safe/);
+ // Customer profile: the notebook refreshed before the 10th reply and the reply carried the profile.
+ assert.match(state.calls.at(-2).system,/private notebook/);
+ const profileSent=JSON.parse(state.calls.at(-1).message).customerProfile;
+ assert.equal(profileSent.messages,10);
+ assert.ok('mainLanguage' in profileSent && 'note' in profileSent && 'voiceNotes' in profileSent);
+ assert.ok(JSON.parse(state.rows.get(guidanceKey('phone-public')).data.stats).messages>=10);
+ // Memory recall wiring: an opted-in customer's own memories reach the model
+ // as quoted data; without opt-in there is no recall and no block at all.
+ state.account={id:'u-1',role:'buyer',status:'verified',optIn:true};state.memories=[{kind:'preference',content:'Prefers CIF'}];
+ state.reply='Noted.';await answerGuidance('phone-public','Which incoterm did I prefer?','recall-1');
+ assert.equal(state.recalls.length,1);assert.equal(state.recalls[0].userId,'u-1');assert.equal(state.recalls[0].viewerUserId,'u-1');assert.equal(state.recalls[0].query,'Which incoterm did I prefer?');
+ assert.equal(JSON.parse(state.calls.at(-1).message).rememberedFacts,'REMEMBERED::Prefers CIF');
+ state.account={id:'u-2',role:'buyer',status:'verified'};
+ await answerGuidance('phone-public','Which incoterm did I prefer?','recall-2');
+ assert.equal(state.recalls.length,1,'no recall without opt-in');
+ assert.ok(!('rememberedFacts' in JSON.parse(state.calls.at(-1).message)));
+ state.account=null;
+ // Shared lessons + emotion reference wiring: shared recall runs for every
+ // customer (it reads no customer data), lessons reach the model as quoted
+ // data, and the emotion reference is marked as ideas, never scripts.
+ state.shared=[{topic:'inspection',content:'Always confirm inspection terms before signing',origin:'real'}];
+ state.reply='Noted.';await answerGuidance('phone-public','What should I check before signing?','shared-1');
+ assert.ok(state.sharedRecalls.length>=1);assert.equal(state.sharedRecalls.at(-1).query,'What should I check before signing?');
+ assert.equal(JSON.parse(state.calls.at(-1).message).sharedLessons,'SHARED::Always confirm inspection terms before signing');
+ assert.match(state.calls.at(-1).system,/similar past case ONLY/);
+ assert.match(state.calls.at(-1).system,/ideas, never scripts/);
+ assert.match(state.calls.at(-1).system,/Never claim to be human/);
+ state.shared=[];await answerGuidance('phone-public','What should I check before signing?','shared-2');
+ assert.ok(!('sharedLessons' in JSON.parse(state.calls.at(-1).message)));
+ // Emotional context wiring: identified customers get the feeling block as
+ // data with the no-pressure and facts-independence rules; anonymous callers
+ // get none.
+ state.account={id:'u-9',role:'buyer',status:'verified'};
+ const emotionCallsBefore=state.emotions?.length??0;
+ state.reply='Noted.';await answerGuidance('phone-public','Why is this so hard?','emo-1');
+ assert.equal(JSON.parse(state.calls.at(-1).message).emotionalContext,'EMOTION::ctx');
+ assert.match(state.calls.at(-1).system,/never pressure the customer to stay, return or transact/);
+ assert.match(state.calls.at(-1).system,/facts, deal terms, approvals and safety never change with any mood/);
+ assert.equal(state.emotions.length,emotionCallsBefore+1);assert.equal(state.emotions.at(-1).userId,'u-9');
+ state.account=null;await answerGuidance('phone-public','Why is this so hard?','emo-2');
+ assert.ok(!('emotionalContext' in JSON.parse(state.calls.at(-1).message)));
+ assert.equal(state.emotions.length,emotionCallsBefore+1,'no feeling state without an identified account');
+ // Phase 6: an opted-in customer's correction is remembered privately and
+ // offered to shared learning; a non-opted-in customer's is not.
+ state.account={id:'u-10',role:'buyer',status:'verified',optIn:true};
+ state.reply='Noted.';await answerGuidance('phone-six','I meant 500 MT, not 50','corr-1');
+ assert.equal(state.corrections.length,1);assert.equal(state.corrections[0].kind,'correction');
+ assert.equal(state.corrections[0].source,'whatsapp:corr-1');
+ assert.equal(state.sharedLearn.length,1);assert.equal(state.sharedLearn[0].topic,'correction');
+ state.account={id:'u-11',role:'buyer',status:'verified'};
+ await answerGuidance('phone-six','I meant 500 MT, not 50','corr-2');
+ assert.equal(state.corrections.length,1,'no correction memory without opt-in');
+ state.account=null;
+ // Phase 6: a customer dispute of a shared lesson withdraws it immediately,
+ // and AKIF is told to acknowledge honestly, never to defend it.
+ state.shared=[{id:'L1',topic:'inspection',content:'Always confirm inspection terms before signing',origin:'real'}];
+ state.reply='Noted.';await answerGuidance('phone-seven','What should I check before signing?','disp-1');
+ assert.deepEqual(JSON.parse(state.rows.get(guidanceKey('phone-seven')).data.lastSharedLessonIds),['L1']);
+ state.reply='You are right, I removed it.';await answerGuidance('phone-seven',"that's not true, explain more?",'disp-2');
+ assert.deepEqual(state.withdrawn,['L1']);
+ assert.equal(JSON.parse(state.calls.at(-1).message).lessonWithdrawn,true);
+ assert.match(state.calls.at(-1).system,/withdrawn immediately/);
+ assert.match(state.calls.at(-1).system,/never defend it/);
+ state.shared=[];
+ state.rows.delete(guidanceKey('phone-six'));state.rows.delete(guidanceKey('phone-seven'));
+ // Phase 7: a complex goal gets a stored plan and the reply is the plain plan.
+ state.account={id:'u-12',role:'buyer',status:'verified'};
+ state.planResult={id:'t1',goal:'help me import copper',state:'in_progress',steps:[{label:'Confirm your quantity and terms',state:'in_progress'},{label:'Contact the seller',state:'pending',gated:true}]};
+ const planAnswer=await answerGuidance('phone-eight','Help me import copper','plan-1');
+ assert.match(planAnswer??'',/^PLAN::/);
+ assert.equal(state.plans.length,1);assert.equal(state.plans[0].source,'whatsapp:plan-1');
+ // A waiting gated step: the customer's yes approves it, nothing else changes.
+ state.planResult=null;state.tasks=[{id:'t1',goal:'help me import copper',state:'awaiting_approval',steps:[{label:'Contact the seller',state:'awaiting_approval',gated:true}]}];
+ const approvedReply=await answerGuidance('phone-eight','yes','plan-2');
+ assert.match(approvedReply??'',/^Approved\./);
+ assert.deepEqual(state.approvals,[{taskId:'t1'}]);
+ // Open tasks reach the model as quoted data with the honest-state rules.
+ state.tasks=[{id:'t1',goal:'help me import copper',state:'in_progress',steps:[{label:'Confirm your quantity and terms',state:'completed'},{label:'Contact the seller',state:'in_progress',gated:true,approved:true}]}];
+ state.reply='We are on step 2.';await answerGuidance('phone-eight','what is the status?','plan-3');
+ assert.equal(JSON.parse(state.calls.at(-1).message).openTasks,'TASKS::help me import copper=in_progress');
+ assert.match(state.calls.at(-1).system,/Never say a step is done unless its state is completed/);
+ assert.match(state.calls.at(-1).system,/awaiting_approval needs the customer/);
+ state.tasks=[];state.account=null;
+ state.rows.delete(guidanceKey('phone-eight'));
  state.reply='The answer remains available.';state.saveFailure=true;assert.equal(await answerGuidance('phone-three','Explain export insurance?','7',true),state.reply);assert.equal(state.rows.size,3);assert.ok(![...state.rows.keys()].some(k=>k.includes('phone')));
  state.saveFailure=false;state.modelFailure=false;state.reply='I can speak Malayalam.';
  await answerGuidance('phone-offline','Can you speak in Malayalam?','offline-language');
+ assert.equal(state.rows.get(guidanceKey('phone-offline')).data.mainLanguage,'malayalam');
  state.modelFailure=true;
+ const beforeOfflineDlc=state.calls.length;
  const offlineDlc=await answerGuidance('phone-offline','What is DLC?','offline-dlc');
  assert.match(offlineDlc,/bank’s undertaking to pay/);
- assert.match(offlineDlc,/answering in English for now/);
+ assert.equal(state.calls.length,beforeOfflineDlc,'saved fact answers never touch the model');
  const offlineGeneral=await answerGuidance('phone-offline','Explain export insurance?','offline-general');
- assert.match(offlineGeneral,/detailed trade-answer service is temporarily unavailable/);
+ assert.match(offlineGeneral,/detailed trade-answer service is busy right now/);
  assert.doesNotMatch(offlineGeneral,/couldn’t prepare that answer just now/);
- }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
+ // Brevity: "summary" uses history, sets the brief preference and never hits the scope line.
+ state.modelFailure=false;
+ state.reply='Short version.';
+ const briefReply=await answerGuidance('phone-one','summary please','brief-1');
+ assert.equal(briefReply,'Short version.');
+ assert.match(state.calls.at(-1).system,/summarise your previous answer/i);
+ assert.equal(state.rows.get(guidanceKey('phone-one')).data.brief,'on');
+ // No earlier answer: approved acknowledgement, no model call.
+ const callsBeforeNew=state.calls.length;
+ assert.equal(await answerGuidance('phone-brevity-new','Need summery','brief-2'),'Sure, I will keep replies short.');
+ assert.equal(state.calls.length,callsBeforeNew);
+ // Brief preference shortens normal answers until the user asks for detail.
+ state.reply='First sentence here. Second sentence here. '+'word '.repeat(70);
+ const trimmedReply=await answerGuidance('phone-one','Explain export insurance?','brief-3');
+ assert.equal(trimmedReply,'First sentence here. Second sentence here.');
+ assert.match(state.calls.at(-1).system,/Keep every reply to 3 short lines/);
+ state.reply='A detailed answer.';
+ assert.equal(await answerGuidance('phone-one','explain more','brief-4'),'A detailed answer.');
+ assert.equal(state.rows.get(guidanceKey('phone-one')).data.brief,'');
+ // Offline summary: the previous answer is trimmed locally, never the busy fallback.
+ state.modelFailure=true;
+ assert.equal(await answerGuidance('phone-one','too long','brief-5'),'A detailed answer.');
+ 
+
+ // Trusted answers also carry the one-time language question for new users (message >= 2), then never again.
+ const c1=await answerGuidance('phone-three','What is dlc','t1');assert.match(c1??'',/Documentary Letter of Credit/);assert.doesNotMatch(c1??'',/comfortable in/);
+ const c2=await answerGuidance('phone-three','What is CIF?','t2');assert.match(c2??'',/Cost, Insurance and Freight/);assert.match(c2??'',/Which language are you most comfortable in\?/);
+ assert.equal(state.rows.get(guidanceKey('phone-three')).data.languageAsked,'1');
+ const c3=await answerGuidance('phone-three','Who founded UDC?','t3');assert.match(c3??'',/founded by Muhammed NP/);assert.doesNotMatch(c3??'',/comfortable in/);
+  }finally{if(secret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=secret;await unlink(path);delete (globalThis as any).__guidance;}
 });

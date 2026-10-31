@@ -10,6 +10,7 @@ import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./wh
 import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
 import { startWhatsAppWebhookInboxRunner } from "./whatsapp/webhookInboxRunner";
 import { startEtaFollowupRunner } from "./tracking/etaFollowupRunner";
+import { startShipmentWatchRunner } from "./tracking/shipmentWatchRunner";
 import { startShipmentNotificationRunner } from "./notifications/shipmentRunner";
 
 const rawPort = process.env["PORT"];
@@ -40,6 +41,7 @@ app.listen(port, (err) => {
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
   startEtaFollowupRunner();
+  startShipmentWatchRunner();
   startShipmentNotificationRunner();
   if (isAkifWorkerConfigured()) {
     void getAkifWorkerCapabilities().then((worker) => {
@@ -48,7 +50,20 @@ app.listen(port, (err) => {
         model: gateway?.model ?? null, missingConfiguration: gateway?.missing_configuration ?? null,
         conversationEnabled: process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" },
         "AKIF worker connection check completed");
-    }).catch(() => logger.warn({ workerReachable: false }, "AKIF worker connection check failed"));
+    }).catch((error: unknown) => {
+      // Log only a bounded, sanitized failure category; never log headers, tokens, or response bodies.
+      const message = error instanceof Error ? error.message : "";
+      const httpStatus = /\bHTTP\s+(\d{3})\b/i.exec(message)?.[1];
+      const failure = httpStatus
+        ? `http_${httpStatus}`
+        : /abort|timeout/i.test(message)
+          ? "timeout"
+          : /fetch|network|connect|ENOTFOUND|ECONN/i.test(message)
+            ? "network_error"
+            : "other_error";
+      const errorType = error instanceof Error && ["TypeError", "SyntaxError", "AbortError", "TimeoutError", "Error"].includes(error.name) ? error.name : "UnknownError";
+      logger.warn({ workerReachable: false, failure, errorType }, "AKIF worker connection check failed");
+    });
   }
 
   void Promise.all([

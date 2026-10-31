@@ -1,4 +1,71 @@
 import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
+import { AsyncLocalStorage } from "node:async_hooks";
+import { replySinkEnabled, recordSunkReply } from "./replySink.ts";
+
+// ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
+// Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
+// WHATSAPP_OUTBOUND_PER_SECOND. Meta's own per-number throughput is higher, so this stays well under it.
+const bucket = { tokens: -1, last: 0 };
+export function resetOutboundPacingForTest() { bucket.tokens = -1; bucket.last = 0; }
+async function takeOutboundToken(sleep: (ms: number) => Promise<void>) {
+  const rate = Math.max(1, Number(process.env.WHATSAPP_OUTBOUND_PER_SECOND) || 20);
+  const now = Date.now();
+  if (bucket.tokens < 0) { bucket.tokens = rate; bucket.last = now; }
+  bucket.tokens = Math.min(rate, bucket.tokens + ((now - bucket.last) / 1000) * rate);
+  bucket.last = now;
+  if (bucket.tokens >= 1) { bucket.tokens -= 1; return; }
+  const wait = Math.ceil(((1 - bucket.tokens) / rate) * 1000);
+  bucket.tokens = 0; bucket.last = now + wait;
+  await sleep(wait);
+}
+
+// Meta throttling and pair-rate limits. Retrying these is safe: the message was not accepted.
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80007, 130429, 131048, 131056]);
+export const WINDOW_CLOSED_CODE = 131047; // re-engagement: outside the 24 hour customer service window
+const MAX_ATTEMPTS = 4;
+let sleepImpl: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+export function setSleepForTest(fn: ((ms: number) => Promise<void>) | null) { sleepImpl = fn ?? ((ms) => new Promise((r) => setTimeout(r, ms))); }
+
+export class WhatsAppSendError extends Error {
+  httpStatus: number;
+  code?: number;
+  retryable: boolean;
+  constructor(message: string, httpStatus: number, code?: number, retryable = false) { super(message); this.httpStatus = httpStatus; this.code = code; this.retryable = retryable; }
+}
+export const isWindowClosedError = (e: unknown) => e instanceof WhatsAppSendError && e.code === WINDOW_CLOSED_CODE;
+
+// Per-request record of recipients whose reply could not be delivered after retries, so the webhook can
+// release its dedup claim and let Meta redeliver instead of silently dropping the reply.
+const failures = new AsyncLocalStorage<Set<string>>();
+export function trackReplyFailures<T>(fn: (failed: Set<string>) => Promise<T>): Promise<T> {
+  const set = new Set<string>();
+  return failures.run(set, () => fn(set));
+}
+// Sends one provider request with pacing and rate-limit retry. Returns null when the outcome is unknown
+// (timeout or 5xx: the message may have been accepted, so it is NEVER retried; callers quarantine it).
+// Returns the last non-ok response when Meta keeps throttling, so the caller raises its usual error.
+async function metaPost(to: string, url: string, init: RequestInit): Promise<Response | null> {
+  if (replySinkEnabled() && url.endsWith("/messages")) { // staging reply sink: store, never send
+    let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
+    return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
+  }
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    await takeOutboundToken(sleepImpl);
+    const response = await maybeSubmitted(fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }));
+    if (!response || response.ok) return response;
+    const peek = response.clone();
+    const error = await providerError(peek);
+    const limited = error.httpStatus === 429 || (error.code !== undefined && RATE_LIMIT_CODES.has(error.code));
+    if (!limited) return response;
+    if (attempt === MAX_ATTEMPTS) { failures.getStore()?.add(to); return response; }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    await response.body?.cancel();
+    const backoff = Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250);
+    await sleepImpl(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : backoff);
+  }
+  return null;
+}
+
 type WhatsAppConfig = {
   accessToken: string;
   phoneNumberId: string;
@@ -7,6 +74,7 @@ type WhatsAppConfig = {
 export function getWhatsAppConfig(env:NodeJS.ProcessEnv=process.env): WhatsAppConfig | null {
   const accessToken = env.WHATSAPP_ACCESS_TOKEN?.trim();
   const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+  if (replySinkEnabled(env)) return { accessToken: accessToken || "sink", phoneNumberId: phoneNumberId || "sink" };
   return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : null;
 }
 
@@ -78,9 +146,7 @@ export async function sendWhatsAppText(to: string, body: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await maybeSubmitted(fetch(
-    `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
-    {
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: {
@@ -93,13 +159,12 @@ export async function sendWhatsAppText(to: string, body: string) {
         type: "text",
         text: { body },
       }),
-    },
-  ));
+    });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
     const error = await providerError(response);
-    throw new Error(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
+    throw new WhatsAppSendError(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
   return readMessageAcknowledgement(response);
@@ -116,9 +181,9 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
   const config=getConfig();
   if(!config)return {delivered:false as const,reason:'not_configured' as const};
-  const response=await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})}));
+  const response=await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
   if(!response)return unknownSubmission();
-  if(!response.ok){const error=await providerError(response);throw new Error(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`);}
+  if(!response.ok){const error=await providerError(response);throw new WhatsAppSendError(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`, error.httpStatus, error.code);}
   return readMessageAcknowledgement(response);
 }
 
@@ -137,9 +202,7 @@ export async function sendWhatsAppDocument(
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await maybeSubmitted(fetch(
-    `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
-    {
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: {
@@ -156,13 +219,12 @@ export async function sendWhatsAppDocument(
           ...(caption ? { caption } : {}),
         },
       }),
-    },
-  ));
+    });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
     const error = await providerError(response);
-    throw new Error(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
+    throw new WhatsAppSendError(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
   return readMessageAcknowledgement(response);
@@ -240,12 +302,12 @@ export async function downloadWhatsAppMedia(mediaId: string) {
 export async function sendWhatsAppReaction(to: string, inboundMessageId: string, emoji: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
-  const response = await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
     method: "POST",
     signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "reaction", reaction: { message_id: inboundMessageId, emoji } }),
-  }));
+  });
   if(!response)return unknownSubmission();
   if(!response.ok){await response.body?.cancel();return {delivered:false as const,reason:'provider_rejected' as const};}
   return readMessageAcknowledgement(response);
@@ -255,6 +317,7 @@ export async function sendWhatsAppReaction(to: string, inboundMessageId: string,
 export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  if (replySinkEnabled()) { const id = recordSunkReply(to, { type: "audio" }).id; return readMessageAcknowledgement(Response.json({ messages: [{ id }] })); }
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", "audio/ogg");
@@ -266,12 +329,29 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   if (!up.ok) { await up.body?.cancel(); return { delivered: false as const, reason: "upload_failed" as const }; }
   const mediaId = ((await up.json().catch(() => null)) as { id?: unknown } | null)?.id;
   if (typeof mediaId !== "string") return { delivered: false as const, reason: "upload_failed" as const };
-  const sent = await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+  const sent = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
     method: "POST", signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId } }),
-  }));
+  });
   if(!sent)return unknownSubmission();
   if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}
   return readMessageAcknowledgement(sent);
+}
+
+/**
+ * Marks an inbound message as read (blue ticks) and shows "typing..." until we reply (WhatsApp drops it after 25 s).
+ * Off unless UDC_WHATSAPP_TYPING=on. Fire-and-forget: short timeout, no retry, never throws, never logs.
+ * With the staging reply sink on, nothing is sent to Meta; a "read_typing" entry is stored instead.
+ */
+export function markReadAndTyping(to: string, inboundMessageId: string | null | undefined): void {
+  if (process.env["UDC_WHATSAPP_TYPING"] !== "on" || typeof inboundMessageId !== "string" || !inboundMessageId) return;
+  if (replySinkEnabled()) { recordSunkReply(to, { type: "read_typing" }); return; }
+  const config = getConfig();
+  if (!config) return;
+  void fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST", signal: AbortSignal.timeout(3_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: inboundMessageId, typing_indicator: { type: "text" } }),
+  }).then(r => r.body?.cancel(), () => undefined).catch(() => undefined);
 }

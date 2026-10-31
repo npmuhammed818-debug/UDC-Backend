@@ -32,10 +32,10 @@ test("outbox leases and uncertain-provider outcomes never produce unsafe retries
       const [jobId,token]=v,j=jobs.find(j=>j.id===jobId&&j.claimToken===token);
       if(!j)return {rows:[]};
       const user=users.get(j.recipientUserId),deal=deals.get(j.dealId),n=notices.get(j.notificationId),pref=preferences.get(j.recipientUserId);
-      if(!user||!deal||!n||n.userId!==user.id||!["active","verified"].includes(user.status)
-        ||!user.phone||!pref?.optionalWhatsApp||!pref?.reminders
-        ||!(deal.buyer===user.id||deal.seller===user.id||
-          (user.role==="agent"&&members.has(j.dealId+":"+user.id))))return {rows:[]};
+      if(!user||!n||n.userId!==user.id||!["active","verified"].includes(user.status)
+        ||!user.phone||!pref?.optionalWhatsApp||!pref?.reminders)return {rows:[]};
+      if(j.dealId!==null&&(!deal||!(deal.buyer===user.id||deal.seller===user.id||
+          (user.role==="agent"&&members.has(j.dealId+":"+user.id)))))return {rows:[]};
       return {rows:[{user_id:user.id,phone:user.phone,body:n.body,type:"shipment_milestone",role:user.role}]};
     }
     if(sql.startsWith("with updated as (update public.whatsapp_shipment_outbox set status=")){
@@ -111,6 +111,14 @@ test("outbox leases and uncertain-provider outcomes never produce unsafe retries
     outcome=await run({send:async()=>({delivered:true})});
     assert.equal(outcome.uncertain,1);assert.equal(jobs[6].status,"uncertain");
     assert.equal(jobs.length,7);
+
+    // Deal-less job (shipment watch): no deal row, no membership - the recipient's
+    // own verified account, phone and opt-in preferences are the whole audience check.
+    notices.set("watchless",{userId:uid,body:"UDC watch update"});
+    assert.equal(await mod.enqueueShipmentWhatsApp(fake,{notificationId:"watchless",dealId:null,recipientUserId:uid}),true);
+    outcome=await run({send:async()=>({delivered:true,messageId:"wamid.watch"})});
+    assert.equal(outcome.accepted,1,"deal-less watch job is delivered");
+    assert.equal(jobs[7].status,"accepted");
   }finally{
     await unlink(filename);delete globalThis.__outboxFixture;
   }

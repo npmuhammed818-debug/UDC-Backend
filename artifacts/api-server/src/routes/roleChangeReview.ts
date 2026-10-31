@@ -3,6 +3,7 @@ import {and,desc,eq,sql} from "drizzle-orm";
 import {z} from "zod/v4";
 import {db,userRoleChangeRequestsTable,usersTable,auditLogsTable,notificationsTable} from "@workspace/db";
 import {requireRole,type AuthenticatedRequest} from "../auth/middleware";
+import {guidedChatPhoneHash} from "../whatsapp/phoneFingerprint";
 const router:IRouter=Router();
 
 // No email, phone, bank documents, or identity papers in the review list.
@@ -28,7 +29,7 @@ router.post("/admin/role-change-requests/:requestId/review",
   try{
     const id=z.string().uuid().parse(req.params["requestId"]);
     const input=review.parse(req.body);
-    const result=await db.transaction(async tx=>{
+    const run=()=>db.transaction(async tx=>{
       const rows=await tx.execute(sql`
         SELECT r.id,r.user_id,r.from_role,r.to_role,r.status,u.role,u.status AS user_status
         FROM public.user_role_change_requests r
@@ -55,9 +56,45 @@ router.post("/admin/role-change-requests/:requestId/review",
         `);
         const flags=obligations.rows[0] as Record<string,boolean>|undefined;
         if(!flags||Object.values(flags).some(Boolean))return "existing_obligations" as const;
-        // Update identity and revoke every browser session in the same transaction.
-        // WhatsApp conversation state must also be invalidated before enabling this path.
-        return "conversation_invalidation_pending" as const;
+        // Buyer and seller roles need a human-verified company. Agents need none, and an
+        // agent switching to buyer/seller has no company yet, so that stays blocked.
+        if(item.to_role==="buyer"||item.to_role==="seller"){
+          const company=await tx.execute(sql`
+            SELECT 1 FROM public.companies WHERE owner_user_id=${item.user_id} AND verification_status='verified' LIMIT 1
+          `);
+          if(!company.rows.length)return "company_verification_required" as const;
+        }
+        // Everything below is one transaction: role, sessions, WhatsApp state, request, audit, notice.
+        const moved=await tx.execute(sql`
+          UPDATE public.users SET role=${item.to_role},updated_at=now()
+          WHERE id=${item.user_id} AND role=${item.from_role} AND status='verified' RETURNING phone
+        `);
+        if(!moved.rows.length)return "account_changed" as const;
+        const phone=(moved.rows[0] as {phone:string|null}).phone;
+        await tx.execute(sql`UPDATE public.auth_sessions SET revoked_at=now() WHERE user_id=${item.user_id} AND revoked_at IS NULL`);
+        await tx.execute(sql`UPDATE public.whatsapp_signin_challenges SET status='expired' WHERE (link_user_id=${item.user_id} OR approved_user_id=${item.user_id}) AND status='pending'`);
+        if(phone){
+          // Role-bound WhatsApp state: half-finished intake and guided-chat steps are dropped,
+          // so the next message starts clean under the new role. Nothing historical is touched.
+          await tx.execute(sql`DELETE FROM public.whatsapp_intake_drafts WHERE phone=${phone}`);
+          await tx.execute(sql`DELETE FROM public.whatsapp_chat_sessions WHERE phone_hash=${guidedChatPhoneHash(phone)}`);
+        }
+        await tx.execute(sql`
+          UPDATE public.user_role_change_requests
+          SET status='activated',reviewer_user_id=${req.authUser!.id},review_note=${input.note??null},reviewed_at=now(),updated_at=now()
+          WHERE id=${id} AND status='pending'
+        `);
+        await tx.insert(auditLogsTable).values({
+          actorUserId:req.authUser!.id,action:"role_change_activated",entityType:"user",entityId:item.user_id,
+          metadata:{fromRole:item.from_role,toRole:item.to_role,requestId:id,sessionsRevoked:true,whatsappStateReset:true,
+            historyPreserved:true},
+        });
+        await tx.insert(notificationsTable).values({
+          userId:item.user_id,type:"role_change_review",title:"UDC role changed",
+          body:`Your UDC account is now a ${item.to_role} account. Please sign in again. Your earlier activity stays on record under your previous role.`,
+          link:"/profile",
+        });
+        return "activated" as const;
       }
       // Reviewed does not confer approval or access. Require a verified\n      // account and lock both request and identity to avoid stale review.\n      // Deliberately NOT an approval/role update: switching canonical
       // users.role could grant unrelated deal/referral access or erase role
@@ -84,6 +121,17 @@ router.post("/admin/role-change-requests/:requestId/review",
       });
       return "recorded" as const;
     },{isolationLevel:"serializable"});
+    // Concurrent reviews of one request conflict at SERIALIZABLE (40001). Retry, so the loser sees
+    // the committed outcome ("already_reviewed") instead of a 503.
+    let result:Awaited<ReturnType<typeof run>>|undefined;
+    for(let attempt=1;attempt<=4&&result===undefined;attempt++){
+      try{result=await run();}
+      catch(e){
+        const code=(e as {code?:string;cause?:{code?:string}})?.code??(e as {cause?:{code?:string}})?.cause?.code;
+        if(code!=="40001"||attempt===4)throw e;
+      }
+    }
+    if(result===undefined)throw new Error("role_review_no_result");
     if(result==="not_found"){res.status(404).json({error:"request_not_found"});return;}
     if(result!=="recorded"&&result!=="activated"){res.status(409).json({error:result});return;}
     res.set("Cache-Control","no-store").json({
