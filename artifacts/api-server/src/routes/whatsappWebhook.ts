@@ -15,7 +15,8 @@ import { trackReplyFailures, markReadAndTyping } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -594,9 +595,12 @@ async function handleWhatsAppDealDocument(
       const warning = result.status === "needs_review"
         ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
         : "";
+      const summaryOffer = ["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA"].includes(documentType.toUpperCase())
+        ? " Reply SUMMARY anytime for a plain-words summary."
+        : "";
       await sendWhatsAppTextWithMenu(
         from,
-        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}`,
+        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}${summaryOffer}`,
       ).catch(() => undefined);
     })
     .catch(async () => {
@@ -986,6 +990,62 @@ async function handleDealWhatsAppMessage(
         contextKind: "mediator_reply_document_missing",
       };
     }
+  }
+
+  // Contract summary (AI tools): a plain-words reading helper rendered
+  // deterministically from the structured extraction - no model writes the
+  // numbers. The same read rules as the document itself apply.
+  const summaryAsk = contractSummaryRequest(messageBody);
+  if (summaryAsk) {
+    const summaryAccess = inArray(documentsTable.id,
+      db.select({ documentId: documentAccessTable.documentId }).from(documentAccessTable)
+        .where(eq(documentAccessTable.userId, sender.id)));
+    const [extraction] = await db
+      .select({
+        documentType: documentsTable.documentType,
+        structuredData: documentExtractionsTable.structuredData,
+        warnings: documentExtractionsTable.warnings,
+        status: documentExtractionsTable.status,
+      })
+      .from(documentExtractionsTable)
+      .innerJoin(documentsTable, eq(documentsTable.id, documentExtractionsTable.documentId))
+      .where(and(
+        eq(documentExtractionsTable.dealId, deal.id),
+        inArray(documentExtractionsTable.status, ["completed", "needs_review"]),
+        summaryAsk.documentType
+          ? eq(documentsTable.documentType, summaryAsk.documentType)
+          : inArray(documentsTable.documentType, ["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA"]),
+        // A deal association alone is not permission to read another party's
+        // extraction; the same rules as the document apply.
+        or(eq(documentsTable.uploadedBy, sender.id),
+          and(eq(documentsTable.status, "approved"), summaryAccess)),
+      ))
+      .orderBy(desc(documentExtractionsTable.updatedAt))
+      .limit(1);
+    const summary = extraction?.structuredData
+      ? renderContractSummary({
+          documentType: extraction.documentType,
+          structured: extraction.structuredData,
+          warnings: extraction.warnings,
+          status: extraction.status,
+        })
+      : null;
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "contract_summary_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: summary ?? "I don't have a finished contract analysis to summarize yet. Upload the contract here and I will extract it first, then ask me again.",
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: summary ? "mediator_reply_contract_summary" : "mediator_reply_contract_summary_missing",
+    };
   }
 
   const aiDecision = await interpretActiveDealConversation({

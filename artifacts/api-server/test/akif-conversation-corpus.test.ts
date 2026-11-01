@@ -37,7 +37,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "dealParticipantsTable",
     "dealsTable",
     "documentsTable",
-    "documentAccessTable",
+    "documentAccessTable", "documentExtractionsTable",
     "productsTable",
     "whatsappMessageContextsTable",
     "whatsappUserContextsTable","companiesTable",
