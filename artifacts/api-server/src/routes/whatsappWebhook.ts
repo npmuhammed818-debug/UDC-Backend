@@ -34,7 +34,7 @@ import { isVoiceGoAhead, VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMA
 import { armExplicitVoice, consumeExplicitVoice, getLastAnswer, hasExplicitVoice, setLastAnswer, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../akif/voiceSession.ts";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { reserveTranscription } from "../akif/voiceLimits.ts";
-import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
+import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppImage, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
@@ -382,6 +382,7 @@ function inferDocumentType(filename?: string, caption?: string) {
   if (/bill of lading|\bbl\b/.test(value)) return "BL";
   if (/certificate of origin|\bco\b/.test(value)) return "CO";
   if (/coa|assay/.test(value)) return "COA";
+  if (/\.(jpe?g|png|webp)$/i.test(filename ?? "")) return "image";
   return "trade_document";
 }
 
@@ -398,6 +399,7 @@ function requestedStoredDocumentType(text: string, replyContextKind?: string) {
     ["BL", /bill of lading|\bbl\b/],
     ["COA", /\bcoa\b|assay/],
     ["CO", /certificate of origin/],
+    ["image", /\b(?:photo|photos|picture|pictures|image|images|img|pic)\b/],
   ] as const;
 
   const requested = explicit.find(([, pattern]) => pattern.test(normalized))?.[0];
@@ -927,12 +929,19 @@ async function handleDealWhatsAppMessage(
           let documentMessageId: string | undefined;
           try {
             const signedUrl = await createSignedDownloadUrl(storageObjectPath);
-            const documentDelivery = await sendWhatsAppDocument(
-              receiver.phone,
-              signedUrl,
-              `${storedDocument.documentType}.${extension}`,
-              `${storedDocument.documentType} for review. Let me know what you want to do next.`,
-            );
+            // Photos arrive as viewable images, not generic file documents.
+            const documentDelivery = /^(jpe?g|png|webp)$/i.test(extension)
+              ? await sendWhatsAppImage(
+                  receiver.phone,
+                  signedUrl,
+                  `${storedDocument.documentType} for review. Let me know what you want to do next.`,
+                )
+              : await sendWhatsAppDocument(
+                  receiver.phone,
+                  signedUrl,
+                  `${storedDocument.documentType}.${extension}`,
+                  `${storedDocument.documentType} for review. Let me know what you want to do next.`,
+                );
             documentDelivered = documentDelivery.delivered;
             documentMessageId = "messageId" in documentDelivery
               ? documentDelivery.messageId
@@ -1608,12 +1617,20 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
 
             try {
               const signedUrl = await createSignedDownloadUrl(dealMessage.documentToSender.storageObjectPath);
-              const documentDelivery = await sendWhatsAppDocument(
-                message.from,
-                signedUrl,
-                dealMessage.documentToSender.fileName,
-                `UDC ${dealMessage.documentToSender.documentType} document`,
-              );
+              // Photos arrive as viewable images, not generic file documents.
+              const isImage = /\.(jpe?g|png|webp)$/i.test(dealMessage.documentToSender.fileName);
+              const documentDelivery = isImage
+                ? await sendWhatsAppImage(
+                    message.from,
+                    signedUrl,
+                    `UDC ${dealMessage.documentToSender.documentType} image`,
+                  )
+                : await sendWhatsAppDocument(
+                    message.from,
+                    signedUrl,
+                    dealMessage.documentToSender.fileName,
+                    `UDC ${dealMessage.documentToSender.documentType} document`,
+                  );
               documentDelivered = documentDelivery.delivered;
               documentMessageId = "messageId" in documentDelivery
                 ? documentDelivery.messageId

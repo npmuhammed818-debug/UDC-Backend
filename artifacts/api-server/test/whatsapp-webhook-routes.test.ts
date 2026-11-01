@@ -81,7 +81,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
     "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
-    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const markReadAndTyping=()=>{};export const trackReplyFailures=(fn)=>fn(new Set());export const sendWhatsAppVoiceNote=async(to)=>{s.voice=(s.voice||[]);s.voice.push(to);return s.voiceFail?{delivered:false,reason:'upload_failed'}:{delivered:true};};",
+    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const sendWhatsAppImage=async(to,link,caption)=>{s.images=(s.images||[]).concat([{to,link,caption}]);return {delivered:true,messageId:'img-1'};};export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const markReadAndTyping=()=>{};export const trackReplyFailures=(fn)=>fn(new Set());export const sendWhatsAppVoiceNote=async(to)=>{s.voice=(s.voice||[]);s.voice.push(to);return s.voiceFail?{delivered:false,reason:'upload_failed'}:{delivered:true};};",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
     "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
     "../akif/documentIntelligence": "export const processDocumentIntelligence=async()=>({status:'needs_review'});",
@@ -438,6 +438,19 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ text: { body: "send FCO to me" } });
       assert.deepEqual(state.signed,[],"legacy HTTPS URL cannot be forwarded");
 
+    });
+    await t.test("approved deal photos deliver as viewable images", async () => {
+      reset(); seedDeal();
+      rows.documentsTable = [{ id: "img", dealId: "deal-a", documentType: "image", uploadedBy: "seller", status: "approved", fileUrl: "storage://udc-documents/deals/deal-a/photo.jpg" }];
+      rows.documentAccessTable = [{ documentId: "img", userId: "buyer" }];
+      await message({ text: { body: "send photo to me" } });
+      assert.equal(state.images.length, 1, "photo must go through the image send, not file document");
+      assert.match(String(state.images[0].link), /photo\.jpg/);
+      // Without a grant the photo stays private.
+      reset(); seedDeal(); state.images = [];
+      rows.documentsTable = [{ id: "img", dealId: "deal-a", documentType: "image", uploadedBy: "seller", status: "approved", fileUrl: "storage://udc-documents/deals/deal-a/photo.jpg" }];
+      await message({ text: { body: "send photo to me" } });
+      assert.equal(state.images?.length ?? 0, 0);
     });
     await t.test("media replies attach to the quoted deal, with an owner grant", async () => {
       reset(); seedDeal();
