@@ -649,6 +649,7 @@ async function handleDealWhatsAppMessage(
   text: string,
   replyToProviderMessageId?: string,
   inboundProviderMessageId?: string,
+  options: { voiceTranscript?: boolean } = {},
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
 
@@ -1090,6 +1091,29 @@ async function handleDealWhatsAppMessage(
     };
   }
 
+  // Voice notes inside a deal room flow through the same interpreter as typed
+  // messages, but a transcript can mis-hear numbers, so commercial commitments
+  // (accept / reject / counteroffer) spoken on a voice note always require the
+  // participant to confirm them in text before anything is forwarded or applied.
+  if (options.voiceTranscript && ["acceptance", "rejection", "counteroffer"].includes(aiDecision.intent)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "voice_transcript_unconfirmed",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: `I heard: ${messageBody.slice(0, 2000)}. Voice notes can mis-hear numbers, so please confirm this ${aiDecision.intent} in text before I act on it.`,
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_voice_unconfirmed",
+    };
+  }
+
   const effectiveIntent = aiDecision.intent;
   const exactCounteroffer = ["acceptance", "rejection"].includes(effectiveIntent)
     ? await exactCounterofferForReply(deal.id, replyContextKind)
@@ -1431,13 +1455,20 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
           const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id, message.context?.id) : null;
           if (voiceDealId && speaker) {
-            await db.insert(dealConversationEventsTable).values({ dealId: voiceDealId, userId: speaker.id,
-              participantRole: speaker.role, intent: "voice_transcript_unconfirmed",
-              originalText: transcript, relayText: null, relayed: false });
+            // Voice inside a deal room: treat the transcript like a typed deal
+            // message and let the normal text pipeline below handle it
+            // (questions, clarifications, document requests, relay drafts).
+            // Commercial commitments (accept/reject/counteroffer) from voice
+            // still require a text confirmation inside handleDealWhatsAppMessage.
+            req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "routing_to_deal_conversation" }, "UDC deal voice note routed to deal conversation");
+            (message as { voiceTranscript?: boolean }).voiceTranscript = true;
+            message.text = { body: transcript };
+            message.audio = undefined;
+          } else {
+            req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "awaiting_text_confirmation" }, "UDC voice note needs text confirmation before trade action");
+            await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
+            continue;
           }
-          req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "awaiting_text_confirmation" }, "UDC voice note needs text confirmation before trade action");
-          await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
-          continue;
         } catch (error) {
           req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed', errorType: error instanceof Error ? error.name : 'unknown' }, 'UDC voice processing failed');
           const reply = voiceStage === 'answer'
@@ -1601,6 +1632,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           message.text.body,
           message.context?.id,
           message.id,
+          { voiceTranscript: (message as { voiceTranscript?: boolean }).voiceTranscript },
         );
         if (dealMessage) {
           if ("duplicate" in dealMessage && dealMessage.duplicate) {

@@ -532,6 +532,21 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ text: { body: "Can we arrange a video call?" } });
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_request").length, 1);
     });
+    await t.test("voice notes inside a deal room join the deal conversation; spoken commitments still need text", async () => {
+      reset(); seedDeal(); state.transcript = "When does the seller ship?";
+      state.dealDecision = { intent: "question", replyToSender: "The seller plans to ship within 7 days.", relay: false, relayToCounterparty: null };
+      await message({ audio: { id: "voice-deal-question" } });
+      assert.equal(state.dealCalls, 1);
+      assert.equal(state.sent.at(-1).body, "The seller plans to ship within 7 days.");
+      assert.equal(rows.dealConversationEventsTable.at(-1).intent, "coordinator_reply");
+      state.transcript = "Yes I accept that price";
+      state.dealDecision = { intent: "acceptance", replyToSender: "Accepted.", relay: true, relayToCounterparty: "Buyer accepted." };
+      await message({ audio: { id: "voice-deal-accept" } });
+      assert.match(state.sent.at(-1).body, /confirm this acceptance in text/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 1);
+      assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
+      delete state.transcript;
+    });
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     await unlink(output); delete (globalThis as any).__whatsappRoutes;
