@@ -17,6 +17,8 @@ import { runStrongModelChat } from '../akif/intelligence/strongModel';
 import { runCheapModelChat } from '../akif/intelligence/cheapModel';
 import { isDualBrainEnabled, runDualBrainReply } from '../akif/intelligence/dualBrain';
 import { markReadAndTyping } from './client';
+import { commodityReferenceAnswer, commodityReferenceQuery, getCommodityReference } from '../akif/intelligence/commodityPrices';
+import { parseTranslateRequest, translateTradeText } from '../akif/textTranslation';
 
 const HISTORY_MESSAGES = 30;
 const HISTORY_CHARS = 1000;
@@ -26,6 +28,8 @@ export function isGuidanceQuestion(text: string) {
   if (/^deal\s+UDC-/i.test(text.trim())) return false;
   // A "make it shorter" / "more detail" request is a chat turn even without a question mark.
   if (isBrevityRequest(text) || isDetailRequest(text)) return true;
+  // An explicit translation ask is an AI-tool turn even without a question mark.
+  if (/^translate\b/i.test(text.trim())) return true;
   return /\?|^(?:what|why|how|which|can you|could you|do you|does|explain|teach|tell me|even (?:for|to)|speak|talk|answer|i (?:don.t|do not) understand)\b|malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்|\b(?:udc|updowncircle|akif|website|founder|verification documents)\b/i.test(text.trim());
 }
 export function guidancePrompt(history: {role:string;content:string}[], message: string, voice: boolean) {
@@ -138,6 +142,27 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
       console.warn('AKIF task planning unavailable', { reason: 'plan_failed' });
     }
   }
+  // AI tools (deterministic): on-demand translation and World Bank commodity
+  // reference prices. Numbers and translated text never pass through the
+  // conversational model here; a busy tool gives an honest fixed line.
+  let toolReply: string | null = null;
+  if (!planReply) {
+    const translateRequest = parseTranslateRequest(text);
+    if (translateRequest) {
+      const translated = await translateTradeText(translateRequest);
+      toolReply = translated ?? 'Sorry, my translation service is busy right now. Please send the text again in a minute.';
+    } else {
+      const series = commodityReferenceQuery(text);
+      if (series) {
+        try {
+          toolReply = commodityReferenceAnswer(await getCommodityReference(series));
+        } catch {
+          console.warn('AKIF commodity reference unavailable', { reason: 'source_unavailable' });
+          toolReply = 'I cannot reach the World Bank price reference right now. Please ask again in a little while. Any price I give is a monthly world reference, not a live deal quote.';
+        }
+      }
+    }
+  }
   const trusted = trustedGuidanceAnswer(text, account?.role);
   let profileNote: string = fresh?.data.profileNote ?? '';
   const profilePayload = { mainLanguage: mainLanguage || null, note: profileNote || null, messages: stats.messages, voiceNotes: stats.voiceNotes, averageMessageChars: Math.round(stats.totalChars / stats.messages) };
@@ -172,6 +197,10 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
         reply = trimToBrief(lastAssistant.content);
       }
     }
+  }
+  else if (toolReply) {
+    reply = toolReply;
+    if (askLanguage) reply += '\n\nWhich language are you most comfortable in?';
   }
   else if (trusted) {
     reply = trusted;
