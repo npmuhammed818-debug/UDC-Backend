@@ -1136,10 +1136,11 @@ async function handleDealWhatsAppMessage(
   }
 
   // Voice notes inside a deal room flow through the same interpreter as typed
-  // messages, but a transcript can mis-hear numbers, so commercial commitments
-  // (accept / reject / counteroffer) spoken on a voice note always require the
-  // participant to confirm them in text before anything is forwarded or applied.
-  if (options.voiceTranscript && ["acceptance", "rejection", "counteroffer"].includes(aiDecision.intent)) {
+  // messages, but a transcript can mis-hear numbers, so anything voice-derived
+  // that would commit commercially (accept / reject / counteroffer) or reach
+  // the counterparty (relay) is always held for a text confirmation first.
+  const voiceRelay = aiDecision.relay === true && typeof aiDecision.relayToCounterparty === "string" && aiDecision.relayToCounterparty.trim().length > 0;
+  if (options.voiceTranscript && (["acceptance", "rejection", "counteroffer"].includes(aiDecision.intent) || voiceRelay)) {
     await db.insert(dealConversationEventsTable).values({
       dealId: deal.id,
       userId: sender.id,
@@ -1149,8 +1150,11 @@ async function handleDealWhatsAppMessage(
       relayText: null,
       relayed: false,
     });
+    const voiceAction = ["acceptance", "rejection", "counteroffer"].includes(aiDecision.intent)
+      ? `this ${aiDecision.intent}`
+      : "what you want me to pass to the other side";
     return {
-      reply: `I heard: ${messageBody.slice(0, 2000)}. Voice notes can mis-hear numbers, so please confirm this ${aiDecision.intent} in text before I act on it.`,
+      reply: `I heard: ${messageBody.slice(0, 2000)}. Voice notes can mis-hear numbers, so please confirm ${voiceAction} in text before I act on it.`,
       deliveredToCounterparty: false,
       dealId: deal.id,
       recipientUserId: sender.id,

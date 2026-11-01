@@ -545,6 +545,19 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.match(state.sent.at(-1).body, /confirm this acceptance in text/);
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 1);
       assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
+      // A voice note that only RELAYS commercial content (no commitment intent)
+      // is held the same way - a mis-heard number must never reach the other side.
+      state.transcript = "I can offer 500 dollars per ton";
+      state.dealDecision = { intent: "clarification", replyToSender: "Noted.", relay: true, relayToCounterparty: "Seller offers $500/MT." };
+      await message({ audio: { id: "voice-deal-offer" } });
+      assert.match(state.sent.at(-1).body, /confirm what you want me to pass to the other side in text/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 2);
+      assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
+      // A pure question on a voice note still answers directly, no hold needed.
+      state.transcript = "What is the agreed quantity?";
+      state.dealDecision = { intent: "deal_question", replyToSender: "The agreed quantity is 100 MT.", relay: false, relayToCounterparty: null };
+      await message({ audio: { id: "voice-deal-question" } });
+      assert.equal(state.sent.at(-1).body, "The agreed quantity is 100 MT.");
       delete state.transcript;
     });
     await t.test("meeting details questions read the scheduled record; arrange requests still reach the model", async () => {
