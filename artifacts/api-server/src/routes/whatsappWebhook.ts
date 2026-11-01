@@ -17,6 +17,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
+import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -1055,6 +1056,27 @@ async function handleDealWhatsAppMessage(
       dealId: deal.id,
       recipientUserId: sender.id,
       contextKind: summary ? "mediator_reply_contract_summary" : "mediator_reply_contract_summary_missing",
+    };
+  }
+
+  // Meeting details: confirmed times, providers and join links come straight
+  // from the meeting record UDC staff scheduled - never from the model.
+  if (meetingDetailsQuestion(messageBody)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "meeting_details_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: await upcomingDealMeetingsReply(deal.id),
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_meeting_details",
     };
   }
 

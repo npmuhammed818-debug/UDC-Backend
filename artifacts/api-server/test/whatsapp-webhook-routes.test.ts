@@ -10,7 +10,7 @@ import { build } from "esbuild";
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const names = ["notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
-    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable"];
+    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
   })]));
@@ -546,6 +546,19 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 1);
       assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
       delete state.transcript;
+    });
+    await t.test("meeting details questions read the scheduled record; arrange requests still reach the model", async () => {
+      reset(); seedDeal();
+      rows.dealMeetingsTable = [{ id: "m1", dealId: "deal-a", status: "scheduled", scheduledAt: new Date("2026-11-03T15:00:00Z"), provider: "zoom", meetingUrl: "https://zoom.us/j/123", agenda: null }];
+      await message({ text: { body: "When is our meeting?" } });
+      assert.equal(state.dealCalls, 0);
+      assert.match(state.sent.at(-1).body, /Tue, 03 Nov 2026 15:00:00 UTC/);
+      assert.match(state.sent.at(-1).body, /zoom\.us\/j\/123/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_details_request").length, 1);
+      state.dealDecision = { intent: "meeting_request", replyToSender: "I’ll ask UDC to arrange a call.", relay: false, relayToCounterparty: null };
+      await message({ text: { body: "Can we arrange a video call?" } });
+      assert.equal(state.dealCalls, 1);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_request").length, 1);
     });
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
