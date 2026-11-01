@@ -48,7 +48,10 @@ export function renderContractSummary(input: {
 
   const parties = Array.isArray(s.parties) ? (s.parties as Structured[]) : [];
   const partyLines = parties
-    .map((p) => joinParts([text(p.name, 80), p.role ? `(${text(p.role, 30)})` : null]))
+    .map((p) => {
+      const role = p.role ? text(p.role, 30) : null;
+      return joinParts([text(p.name, 80), role ? `(${role})` : null]);
+    })
     .filter((p): p is string => Boolean(p))
     .slice(0, 4);
   if (partyLines.length) lines.push(`Parties: ${partyLines.join(", ")}.`);
