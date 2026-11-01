@@ -318,8 +318,14 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,409);
       assert.equal(records.commissionsTable[0].status,'pending');
       assert.equal((await request(`/admin/deals/${dealId}/status`,{status:'completed',confirmDestinationSgs:true},'PATCH')).status,200);
+      records.usersTable.push({id:'agent',role:'agent',status:'verified',phone:'10000000009'});
+      records.dealsTable.find(r=>r.id===dealId).dealNumber='UDC-A';
+      const sentBefore=state.sent.length;
       assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,200);
       assert.ok(records.commissionsTable[0].paidAt);assert.equal(records.commissionsTable[0].status,'paid');
+      const notice=state.sent.slice(sentBefore).find(m=>m.to==='10000000009');
+      assert.ok(notice,'beneficiary hears the payout on WhatsApp');
+      assert.match(notice.body,/USD 100/);assert.match(notice.body,/UDC-A/);assert.match(notice.body,/marked paid/);
     });
     await t.test('inspection, shipment and customs records use existing audited operations',async()=>{
       const inspection=await request('/admin/inspections',{dealId,inspectorName:'Synthetic SGS',scheduledAt:'2026-11-01T10:00:00Z'});assert.equal(inspection.status,201);

@@ -18,6 +18,7 @@ import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
 import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
+import { dealPaymentStatusReply, paymentStatusQuestion } from "../whatsapp/dealPayments";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
@@ -1077,6 +1078,27 @@ async function handleDealWhatsAppMessage(
       dealId: deal.id,
       recipientUserId: sender.id,
       contextKind: "mediator_reply_meeting_details",
+    };
+  }
+
+  // Payment steps: the DLC status, amount and terms come straight from the
+  // financial-instrument record UDC staff maintain - never from the model.
+  if (paymentStatusQuestion(messageBody)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "payment_status_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: await dealPaymentStatusReply(deal.id),
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_payment_status",
     };
   }
 

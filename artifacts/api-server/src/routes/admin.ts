@@ -1494,6 +1494,24 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
         body: `Your commission is now ${commission.status}.`,
         link: "/commissions",
       });
+      if (commission.status === "paid" || commission.status === "cancelled") {
+        const [beneficiary] = await db.select({ phone: usersTable.phone }).from(usersTable)
+          .where(eq(usersTable.id, commission.beneficiaryUserId)).limit(1);
+        const [deal] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+          .where(eq(dealsTable.id, commission.dealId)).limit(1);
+        if (beneficiary?.phone) {
+          const label = deal?.dealNumber ? ` on deal ${deal.dealNumber}` : "";
+          const body = commission.status === "paid"
+            ? `Your UDC commission of ${commission.currency} ${commission.amount}${label} has been marked paid.`
+            : `Your UDC commission of ${commission.currency} ${commission.amount}${label} has been cancelled. Reply here if you have questions.`;
+          try {
+            await sendWhatsAppText(beneficiary.phone, body);
+          } catch {
+            // WhatsApp delivery failure must not roll back the payout record;
+            // the in-app notification above remains the record of the change.
+          }
+        }
+      }
     }
     res.json({ commission });
   } catch (error) {

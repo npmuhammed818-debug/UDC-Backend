@@ -10,7 +10,7 @@ import { build } from "esbuild";
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const names = ["notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
-    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable"];
+    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable", "dealFinancialsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
   })]));
@@ -559,6 +559,20 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ text: { body: "Can we arrange a video call?" } });
       assert.equal(state.dealCalls, 1);
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_request").length, 1);
+    });
+    await t.test("payment status questions read the DLC record; other payment chat still reaches the model", async () => {
+      reset(); seedDeal();
+      rows.dealFinancialsTable = [{ id: "fin-1", dealId: "deal-a", instrumentType: "DLC", status: "received", amount: "590000.00", currency: "USD", terms: "Release after SGS inspection at destination" }];
+      await message({ text: { body: "What is the payment status?" } });
+      assert.equal(state.dealCalls, 0);
+      assert.match(state.sent.at(-1).body, /received by the bank/);
+      assert.match(state.sent.at(-1).body, /Step 3 of 4/);
+      assert.match(state.sent.at(-1).body, /USD 590000\.00/);
+      assert.match(state.sent.at(-1).body, /bank's own confirmation is what counts/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "payment_status_request").length, 1);
+      state.dealDecision = { intent: "casual", replyToSender: "Got it.", relay: false, relayToCounterparty: null };
+      await message({ text: { body: "I will pay on Monday" } });
+      assert.equal(state.dealCalls, 1);
     });
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));

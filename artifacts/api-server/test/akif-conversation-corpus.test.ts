@@ -44,6 +44,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "whatsappChatSessionsTable",
     "whatsappIntakeDraftsTable",
     "dealMeetingsTable",
+    "dealFinancialsTable",
   ];
   names.forEach((n) => (s.tables[n] = []));
   s.tables.usersTable = ["buyer", "seller"].map((role, i) => ({
