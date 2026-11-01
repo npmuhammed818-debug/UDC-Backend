@@ -549,16 +549,29 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     });
     await t.test("meeting details questions read the scheduled record; arrange requests still reach the model", async () => {
       reset(); seedDeal();
-      rows.dealMeetingsTable = [{ id: "m1", dealId: "deal-a", status: "scheduled", scheduledAt: new Date("2026-11-03T15:00:00Z"), provider: "zoom", meetingUrl: "https://zoom.us/j/123", agenda: null }];
+      rows.dealMeetingsTable = [{ id: "m1", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() + 2 * 86400000), provider: "zoom", meetingUrl: "https://zoom.us/j/123", agenda: null }];
       await message({ text: { body: "When is our meeting?" } });
       assert.equal(state.dealCalls, 0);
-      assert.match(state.sent.at(-1).body, /Tue, 03 Nov 2026 15:00:00 UTC/);
+      assert.match(state.sent.at(-1).body, /UTC/);
       assert.match(state.sent.at(-1).body, /zoom\.us\/j\/123/);
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_details_request").length, 1);
       state.dealDecision = { intent: "meeting_request", replyToSender: "I’ll ask UDC to arrange a call.", relay: false, relayToCounterparty: null };
       await message({ text: { body: "Can we arrange a video call?" } });
       assert.equal(state.dealCalls, 1);
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_request").length, 1);
+      // "need" plus a booking detail is a question about the existing booking,
+      // not an arrange request.
+      await message({ text: { body: "I need the meeting link" } });
+      assert.equal(state.dealCalls, 1);
+      assert.match(state.sent.at(-1).body, /zoom\.us\/j\/123/);
+      // A meeting whose time already passed is never offered as the next one.
+      rows.dealMeetingsTable = [{ id: "m2", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() - 86400000), provider: "zoom", meetingUrl: "https://zoom.us/j/999", agenda: null }];
+      await message({ text: { body: "When is our meeting?" } });
+      assert.match(state.sent.at(-1).body, /No meeting is scheduled on this deal yet/);
+      // An in-person meeting keeps its agenda labelled as agenda, never as a place.
+      rows.dealMeetingsTable = [{ id: "m3", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() + 86400000), provider: "in_person", meetingUrl: null, agenda: "final terms" }];
+      await message({ text: { body: "Where is the meeting?" } });
+      assert.match(state.sent.at(-1).body, /in person \(agenda: final terms\)/);
     });
     await t.test("payment status questions read the DLC record; other payment chat still reaches the model", async () => {
       reset(); seedDeal();
@@ -570,6 +583,10 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.match(state.sent.at(-1).body, /USD 590000\.00/);
       assert.match(state.sent.at(-1).body, /bank's own confirmation is what counts/);
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "payment_status_request").length, 1);
+      // "paid" questions reach the same recorded-status reply.
+      await message({ text: { body: "When will I get paid?" } });
+      assert.equal(state.dealCalls, 0);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "payment_status_request").length, 2);
       state.dealDecision = { intent: "casual", replyToSender: "Got it.", relay: false, relayToCounterparty: null };
       await message({ text: { body: "I will pay on Monday" } });
       assert.equal(state.dealCalls, 1);

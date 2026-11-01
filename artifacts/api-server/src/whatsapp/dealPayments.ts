@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 
 export function paymentStatusQuestion(text: string): boolean {
   const t = text.trim().toLowerCase();
-  return /\b(?:payment|lc|letter of credit|dlc)\b/.test(t)
+  return /\b(?:payment|paid|payout|lc|letter of credit|dlc)\b/.test(t)
     && /\b(?:status|step|steps|stage|progress|confirmed|received|started|where|when|paid|release|released|setup|set up)\b/.test(t);
 }
 
