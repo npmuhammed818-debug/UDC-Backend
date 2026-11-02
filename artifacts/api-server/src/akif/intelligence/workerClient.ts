@@ -6,10 +6,27 @@ type WorkerRequestInit = {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
+// The worker token and chat content travel in request headers and bodies, so
+// the worker URL must be https. Plain http is allowed only for loopback
+// (local development); anything else is treated as not configured - fail closed.
+export function workerUrlAllowed(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol === "https:") return true;
+  return (
+    url.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
+  );
+}
+
 function workerConfig() {
   const rawUrl = process.env.AKIF_WORKER_URL?.trim();
   const token = process.env.AKIF_WORKER_TOKEN?.trim();
-  if (!rawUrl || !token) return null;
+  if (!rawUrl || !token || !workerUrlAllowed(rawUrl)) return null;
   return { baseUrl: rawUrl.replace(/\/$/, ""), token };
 }
 
