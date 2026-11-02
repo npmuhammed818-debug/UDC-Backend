@@ -1,3 +1,7 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { Menu, LogOut } from 'lucide-react';
+import { useReducedMotion } from 'framer-motion';
+import { TransitionPanel } from '@/components/motion-primitives/transition-panel';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation } from 'wouter';
 import { useGetCurrentUser, useLogoutUser } from '@workspace/api-client-react';
@@ -36,9 +40,13 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
   queueCount?: number;
   children: ReactNode;
 }) {
-  const logout = useLogoutUser();
+  const cache = useQueryClient();
+  const [, navigate] = useLocation();
+  const logout = useLogoutUser({ mutation: { onSuccess: () => { cache.clear(); navigate('/login'); } } });
+  const reduceMotion = useReducedMotion();
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => { window.scrollTo(0, 0); }, [active]);
+  useEffect(() => { const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenuOpen(false); }; document.addEventListener('keydown', close); return () => document.removeEventListener('keydown', close); }, []);
 
   const navLink = (id: string, href: string, label: string, opts: { count?: number; tag?: string } = {}) => (
     <Link key={id} href={href} className={active === id ? 'on' : ''} data-testid={`v2-nav-${label.toLowerCase().replaceAll(' ', '-')}`}
@@ -73,18 +81,21 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
       </nav>
       <div className="av2-me"><div className="av2-avatar">{initials(user.fullName)}</div>
         <div style={{ minWidth: 0 }}>{user.fullName || 'Admin'}<small>{user.email || 'Owner · admin'}</small></div>
-        <button className="av2-out" aria-label="Sign out" title="Sign out" data-testid="button-v2-logout" onClick={() => logout.mutate()}>⏻</button>
+        <button className="av2-out" aria-label="Sign out" title="Sign out" data-testid="button-v2-logout" onClick={() => logout.mutate()}><LogOut size={18} aria-hidden="true" /></button>
       </div>
     </aside>
     <div className="av2-main">
       <div className="av2-top">
-        <button className="av2-burger" aria-label="Open menu" data-testid="button-v2-menu" onClick={() => setMenuOpen(true)}>☰</button>
+        <button className="av2-burger" aria-label="Open menu" data-testid="button-v2-menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu size={20} aria-hidden="true" /></button>
         <div><div className="ttl">{title}</div><div className="sub">{sub ?? ''}</div></div>
         <div className="av2-right">
 
         </div>
       </div>
-      <div className="av2-body">{children}</div>
+      <TransitionPanel className="av2-body" key={active} activeIndex={0}
+        initial={reduceMotion ? false : 'enter'}
+        variants={{ enter: { opacity: 0 }, center: { opacity: 1 }, exit: { opacity: 0 } }}
+        transition={{ duration: reduceMotion ? 0 : 0.14 }} children={[children]} />
       <div className="av2-foot">UDC admin desk</div>
     </div>
   </div></div>;

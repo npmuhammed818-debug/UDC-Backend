@@ -1,3 +1,4 @@
+import { useActionLock } from '@/hooks/use-action-lock';
 import {DraftControls} from './admin-v2-draft-controls';
 import {DocumentControls} from './admin-v2-document-controls';
 import { useState } from 'react';
@@ -10,12 +11,14 @@ import {PeopleControls} from './admin-v2-people-controls';
 function useQueuePage() {
   const data = useAdminV2Data();
   const [busy, setBusy] = useState('');
+  const actionLock = useActionLock();
   const [error, setError] = useState('');
   const run = async (key: string, fn: () => Promise<void>) => {
+    if (!actionLock.acquire()) return;
     setBusy(key); setError('');
     try { await fn(); await data.refreshAll(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Review failed'); }
-    finally { setBusy(''); }
+    finally { actionLock.release(); setBusy(''); }
   };
   return { data, busy, error, setError, run };
 }

@@ -1,3 +1,4 @@
+import {useActionLock} from '@/hooks/use-action-lock';
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { loadJson, fmtStatus, type AnyRecord } from './admin-v2-data';
@@ -5,15 +6,16 @@ import { loadJson, fmtStatus, type AnyRecord } from './admin-v2-data';
 const instrumentStatuses=['not_started','requested','pending','received','confirmed','rejected','cancelled'];
 function Field({label,children}:{label:string;children:ReactNode}) { return <label className="field"><span>{label}</span>{children}</label>; }
 async function save(path:string,method:string,data:AnyRecord) {
-  const response=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+ const response=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
   const result=await response.json();
-  if(!response.ok) throw Error(String(result.error || 'Save failed').replaceAll('_',' '));
+  if(!response.ok) throw Error('The record could not be saved. Check the details and try again.');
 }
 function MoneyForm({title,children,onSave}:{title:string;children:ReactNode;onSave:()=>Promise<void>}) {
+  const actionLock=useActionLock();
   const [confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
-  const submit=async(event:FormEvent)=>{event.preventDefault();if(!confirmed)return;setBusy(true);setMessage('');try{await onSave();setMessage('Saved. The audit log records this change.');setConfirmed(false);}catch(e){setMessage(e instanceof Error?e.message:'Save failed');}finally{setBusy(false);}};
+  const submit=async(event:FormEvent)=>{event.preventDefault();if(!confirmed)return;if(!actionLock.acquire())return;setBusy(true);setMessage('');try{await onSave();setMessage('Saved. The audit log records this change.');setConfirmed(false);}catch(e){setMessage(e instanceof Error?e.message:'Save failed');}finally{actionLock.release();setBusy(false);}};
   return <form onSubmit={submit} className="av2-panel" style={{padding:18}}><h2>{title}</h2><div className="form-two" style={{marginTop:12}}>{children}</div>
-    <label style={{marginTop:14,marginBottom:14,display:'flex',alignItems:'flex-start',gap:10,fontSize:12}}><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} required style={{width:16,height:16,flexShrink:0,marginTop:2}} /><span>I checked the evidence and approve this record change. This does not move money. A status change may notify the deal parties or beneficiary.</span></label>
+    <label style={{marginTop:14,marginBottom:14,display:'flex',alignItems:'flex-start',gap:10,fontSize:'.75rem'}}><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)} required style={{width:16,height:16,flexShrink:0,marginTop:2}} /><span>I checked the evidence and approve this record change. This does not move money. A status change may notify the deal parties or beneficiary.</span></label>
     <button className="av2-btn orange sm" disabled={busy || !confirmed}>{busy?'Saving…':'Save reviewed record'}</button><p role="status" className="av2-d">{message}</p></form>;
 }
 

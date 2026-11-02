@@ -52,16 +52,16 @@ export function pillFor(status?: string) {
 export function useAdminV2Data() {
   const qc = useQueryClient();
 
-  const users = useQuery({ queryKey: ['v2-users'], queryFn: () => loadJson<{ users: AnyRecord[] }>('/api/admin/users/pending-verification') });
-  const companies = useQuery({ queryKey: ['v2-companies'], queryFn: () => loadJson<{ companies: AnyRecord[] }>('/api/admin/companies/pending-verification') });
-  const companyDocs = useQuery({ queryKey: ['v2-company-docs'], queryFn: () => loadJson<{ documents: AnyRecord[] }>('/api/admin/company-verification-documents') });
-  const dealDocs = useQuery({ queryKey: ['v2-deal-docs'], queryFn: () => loadJson<{ documents: AnyRecord[] }>('/api/admin/documents') });
-  const buyers = useQuery({ queryKey: ['v2-buyers'], queryFn: () => loadJson<{ requirements: AnyRecord[] }>('/api/admin/buyer-requests') });
-  const sellers = useQuery({ queryKey: ['v2-sellers'], queryFn: () => loadJson<{ offers: AnyRecord[] }>('/api/admin/seller-offers') });
-  const allUsers = useQuery({ queryKey: ['v2-all-users'], queryFn: () => loadJson<{ users: AnyRecord[] }>('/api/admin/users') });
-  const allDeals = useQuery({ queryKey: ['v2-all-deals'], queryFn: () => loadJson<{ deals: AnyRecord[] }>('/api/admin/deals') });
-  const audit = useQuery({ queryKey: ['v2-audit'], queryFn: () => loadJson<{ logs: AnyRecord[] }>('/api/admin/audit-log?limit=6&offset=0') });
-  const analytics = useQuery({ queryKey: ['v2-analytics'], queryFn: () => loadJson<{ commissionPerformance: AnyRecord[]; stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[]; buyerCountries: AnyRecord[]; sellerCountries: AnyRecord[] }>('/api/admin/analytics') });
+  const users = useQuery({ staleTime: 15_000, queryKey: ['v2-users'], queryFn: () => loadJson<{ users: AnyRecord[] }>('/api/admin/users/pending-verification') });
+  const companies = useQuery({ staleTime: 15_000, queryKey: ['v2-companies'], queryFn: () => loadJson<{ companies: AnyRecord[] }>('/api/admin/companies/pending-verification') });
+  const companyDocs = useQuery({ staleTime: 15_000, queryKey: ['v2-company-docs'], queryFn: () => loadJson<{ documents: AnyRecord[] }>('/api/admin/company-verification-documents') });
+  const dealDocs = useQuery({ staleTime: 15_000, queryKey: ['v2-deal-docs'], queryFn: () => loadJson<{ documents: AnyRecord[] }>('/api/admin/documents') });
+  const buyers = useQuery({ staleTime: 15_000, queryKey: ['v2-buyers'], queryFn: () => loadJson<{ requirements: AnyRecord[] }>('/api/admin/buyer-requests') });
+  const sellers = useQuery({ staleTime: 15_000, queryKey: ['v2-sellers'], queryFn: () => loadJson<{ offers: AnyRecord[] }>('/api/admin/seller-offers') });
+  const allUsers = useQuery({ staleTime: 15_000, queryKey: ['v2-all-users'], queryFn: () => loadJson<{ users: AnyRecord[] }>('/api/admin/users') });
+  const allDeals = useQuery({ staleTime: 15_000, queryKey: ['v2-all-deals'], queryFn: () => loadJson<{ deals: AnyRecord[] }>('/api/admin/deals') });
+  const audit = useQuery({ staleTime: 15_000, queryKey: ['v2-audit'], queryFn: () => loadJson<{ logs: AnyRecord[] }>('/api/admin/audit-log?limit=6&offset=0') });
+  const analytics = useQuery({ staleTime: 15_000, queryKey: ['v2-analytics'], queryFn: () => loadJson<{ commissionPerformance: AnyRecord[]; stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[]; buyerCountries: AnyRecord[]; sellerCountries: AnyRecord[] }>('/api/admin/analytics') });
 
   const patch = async (path: string, body: Record<string, unknown>) => {
     const response = await fetch(path, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

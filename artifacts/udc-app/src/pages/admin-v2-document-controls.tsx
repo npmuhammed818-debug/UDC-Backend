@@ -1,9 +1,11 @@
+import {useActionLock} from '@/hooks/use-action-lock';
 import {useState} from 'react';import {useQuery,useQueryClient} from '@tanstack/react-query';
 import {RecordForm} from '../components/deal-execution-controls';import {loadJson,type AnyRecord} from './admin-v2-data';
 export function DocumentControls(){
+ const actionLock=useActionLock();
  const qc=useQueryClient();const [selected,setSelected]=useState('');
  const [dealId,setDealId]=useState(''),[kind,setKind]=useState('trade_document'),[file,setFile]=useState<File|null>(null),[confirmed,setConfirmed]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
- async function upload(e:React.FormEvent){e.preventDefault();if(!file||!confirmed)return;setBusy(true);setMessage('');try{if(file.size>5*1024*1024||file.size<8||await file.slice(0,5).text()!=='%PDF-')throw Error('Choose a PDF up to 5 MB.');const response=await fetch(`/api/admin/deals/${dealId}/documents/upload?documentType=${encodeURIComponent(kind)}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/pdf'},body:file});if(!response.ok)throw Error('Upload could not be saved. Check the deal ID and file, then retry.');await refresh();setConfirmed(false);setMessage('Private upload saved for human review. It was not shared with the deal parties.');}catch(error){setMessage(error instanceof Error?error.message:'Upload failed.');}finally{setBusy(false);}}
+ async function upload(e:React.FormEvent){e.preventDefault();if(!file||!confirmed)return;if(!actionLock.acquire())return;setBusy(true);setMessage('');try{if(file.size>5*1024*1024||file.size<8||await file.slice(0,5).text()!=='%PDF-')throw Error('Choose a PDF up to 5 MB.');const response=await fetch(`/api/admin/deals/${dealId}/documents/upload?documentType=${encodeURIComponent(kind)}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/pdf'},body:file});if(!response.ok)throw Error('Upload could not be saved. Check the deal ID and file, then retry.');await refresh();setConfirmed(false);setMessage('Private upload saved for human review. It was not shared with the deal parties.');}catch(error){setMessage(error instanceof Error?error.message:'Upload failed.');}finally{actionLock.release();setBusy(false);}}
 
  const docs=useQuery({queryKey:['v2-full-documents'],queryFn:()=>loadJson<{documents:AnyRecord[]}>('/api/admin/documents')});
  const access=useQuery({queryKey:['v2-document-access',selected],enabled:!!selected,queryFn:()=>loadJson<{access:AnyRecord[]}>(`/api/admin/documents/${selected}/access`)});

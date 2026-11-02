@@ -1,3 +1,4 @@
+import { useActionLock } from '@/hooks/use-action-lock';
 import { useState } from 'react';
 import { Link } from 'wouter';
 import { fmtStatus, pillFor, timeAgo, useAdminV2Data, type AnyRecord } from './admin-v2-data';
@@ -12,13 +13,15 @@ function AdminV2({ user }: { user: AnyRecord }) {
   const data = useAdminV2Data();
   const { queue, queuesLoading, queuesFailed, pendingCount, running, allDeals, allUsers, audit, analytics, refreshAll } = data;
   const [busy, setBusy] = useState('');
+  const actionLock = useActionLock();
   const [error, setError] = useState('');
 
   const run = async (key: string, fn: () => Promise<void>) => {
+    if (!actionLock.acquire()) return;
     setBusy(key); setError('');
     try { await fn(); await refreshAll(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Review failed'); }
-    finally { setBusy(''); }
+    finally { actionLock.release(); setBusy(''); }
   };
 
   const commission = analytics.data?.commissionPerformance ?? [];

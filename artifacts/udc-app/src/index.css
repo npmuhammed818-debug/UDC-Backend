@@ -560,3 +560,10 @@ button, input, select, textarea { font: inherit; }
 .auth-quote { border-top: 1px solid #b5b5b5; }
 .auth-card { background: #fff; border: 1px solid #c4c4c4; border-radius: 18px; padding: clamp(1.4rem,3vw,2.2rem); }
 .auth-page button[type="submit"] { background: linear-gradient(#ff9a55,#f26a1b); color: #fff; border: 1px solid #d4560e; border-radius: 14px; text-transform: uppercase; letter-spacing: .1em; font-size: 12px; font-weight: 500; box-shadow: 0 1px 0 rgba(255,255,255,.4) inset,0 -2px 0 rgba(0,0,0,.08) inset,0 6px 12px rgba(0,0,0,.12); }
+
+/* Consent choices stay large enough to tap without crowding mobile content. */
+.policy-footer nav a,.policy-footer nav button { display:inline-flex; align-items:center; min-height:44px; }
+@media(max-width:820px) {
+ button:not([role=switch]),a.button-link { min-height:44px; }
+ input:not([type=checkbox]):not([type=radio]),textarea,select { scroll-margin-block:96px; }
+}
