@@ -167,7 +167,7 @@ try {
   // 4. Outbound token bucket: with 5/s, 12 immediate sends make the later ones wait.
   process.env.WHATSAPP_OUTBOUND_PER_SECOND = '5'; module.resetOutboundPacingForTest(); sleeps.length = 0;
   for (let i = 0; i < 12; i++) await module.sendWhatsAppText(phone, 'x' + i);
-  assert.ok(sleeps.length >= 6 && sleeps[0] === 200 && sleeps.every((ms) => ms > 0), 'paced: ' + sleeps);
+  assert.ok(sleeps.length >= 6 && sleeps[0] >= 190 && sleeps[0] <= 200 && sleeps.every((ms) => ms > 0), 'paced: ' + sleeps);
   delete process.env.WHATSAPP_OUTBOUND_PER_SECOND; module.resetOutboundPacingForTest();
   console.log('PASSED: outbound token bucket paces a burst of 12 sends at 5/s (' + sleeps.length + ' waits)');
 

@@ -17,6 +17,7 @@ const cases = [
   ['delivery', 'UDC_DELIVERY_QA_DATABASE_URL', 'shipment-delivery'],
   ['registration', 'UDC_QA_DATABASE_URL', 'whatsapp-buyer'],
   ['retry', 'UDC_QA_DATABASE_URL', 'whatsapp-webhook-retry'],
+  ['meta_limits', 'UDC_QA_DATABASE_URL', 'whatsapp-meta-limits'],
   ['edge', 'UDC_QA_DATABASE_URL', 'whatsapp-edge-scenarios'],
   ['sweep', 'UDC_QA_DATABASE_URL', 'route-sweep'],
   ['sink', 'UDC_QA_DATABASE_URL', 'whatsapp-reply-sink'],

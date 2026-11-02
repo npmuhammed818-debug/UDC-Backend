@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fmtStatus, loadJson, pillFor, timeAgo, useAdminV2Data, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell } from './admin-v2-shell';
 import '../admin-v2.css';
+import {RecordForm} from '../components/deal-execution-controls';
 import { CaseControls } from './admin-v2-case-controls';
 import { FinanceControls } from './admin-v2-finance-controls';
 
@@ -141,9 +142,10 @@ function Chats({ user }: { user: AnyRecord }) {
         <CaseControls key={openDeal.id} dealId={openDeal.id} room={room.data}/><MeetingControls key={`meeting-${openDeal.id}`} dealId={openDeal.id} room={room.data}/>{(room.data.shipments||[]).map((shipment:AnyRecord)=><TrackingControls key={shipment.id} shipment={shipment}/>)}
       </>}
     </section>}
-  </AdminV2Shell>;
+  <AnnouncementControls/></AdminV2Shell>;
 }
 
+function AnnouncementControls(){return <section className="av2-panel" style={{padding:18,marginTop:20}}><p className="av2-d">In-app only. The selected role receives this only when its account is active and its announcement preference is on. Review the audience and wording first.</p><RecordForm title="Reviewed in-app announcement" path="/api/admin/announcements" fields={[{key:'audience',label:'Opted-in verified audience',options:['buyer','seller','agent']},{key:'title',label:'Exact title',required:true,minLength:3,maxLength:100},{key:'body',label:'Exact announcement',required:true,multiline:true,minLength:5,maxLength:1000}]} confirmation="I reviewed this audience and exact wording. I approve one in-app notice to opted-in active accounts, not WhatsApp or email. Submitting twice sends twice." onSaved={async()=>{}}/></section>;}
 export function AdminV2ChatsPage() {
   return <AdminV2Gate>{(user) => <Chats user={user} />}</AdminV2Gate>;
 }

@@ -68,3 +68,5 @@ test('new matching, document and saved market controls preserve human decisions'
  const draft=await page('admin-v2-draft-controls.tsx');assert.ok(draft.includes('humanReviewed:true'));assert.ok(draft.includes('nothing is sent'));assert.ok(draft.includes('preview.data.confirmation'));
  const market=await page('admin-v2-market-controls.tsx');assert.ok(market.includes('Read-only saved evidence'));assert.ok(!market.includes("method:'POST'"));
 });
+
+test('new chats announcement remains human-confirmed and in-app only',async()=>{const s=await page('admin-v2-more.tsx');for(const text of ['<AnnouncementControls/>','/api/admin/announcements','Exact announcement','not WhatsApp or email','Submitting twice sends twice'])assert.ok(s.includes(text),text);});
