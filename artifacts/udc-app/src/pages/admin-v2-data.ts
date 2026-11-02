@@ -61,7 +61,7 @@ export function useAdminV2Data() {
   const allUsers = useQuery({ queryKey: ['v2-all-users'], queryFn: () => loadJson<{ users: AnyRecord[] }>('/api/admin/users') });
   const allDeals = useQuery({ queryKey: ['v2-all-deals'], queryFn: () => loadJson<{ deals: AnyRecord[] }>('/api/admin/deals') });
   const audit = useQuery({ queryKey: ['v2-audit'], queryFn: () => loadJson<{ logs: AnyRecord[] }>('/api/admin/audit-log?limit=6&offset=0') });
-  const analytics = useQuery({ queryKey: ['v2-analytics'], queryFn: () => loadJson<{ commissionPerformance: AnyRecord[] }>('/api/admin/analytics') });
+  const analytics = useQuery({ queryKey: ['v2-analytics'], queryFn: () => loadJson<{ commissionPerformance: AnyRecord[]; stages: AnyRecord[]; completedValues: AnyRecord[]; products: AnyRecord[]; buyerCountries: AnyRecord[]; sellerCountries: AnyRecord[] }>('/api/admin/analytics') });
 
   const patch = async (path: string, body: Record<string, unknown>) => {
     const response = await fetch(path, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
