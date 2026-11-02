@@ -22,7 +22,8 @@ test("document mentions and scrubbing", () => {
 test("webhook refuses Aadhaar before any other processing; vault has no Aadhaar type", async () => {
   const wh = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   const loop = wh.indexOf("for (const message of value?.messages");
-  assert.ok(wh.slice(loop, loop + 400).includes("containsAadhaarNumber"));
+  const aadhaar = wh.indexOf("containsAadhaarNumber", loop);
+  assert.ok(aadhaar > loop && aadhaar < wh.indexOf("whatsappPrivacyGate(message.from", loop), "Aadhaar refusal must precede consent and trade processing");
   assert.ok(wh.indexOf("whatsappPrivacyGate(message.from") > loop + 400);
   const link = await readFile(new URL("../src/vault/uploadLink.ts", import.meta.url), "utf8");
   assert.ok(!/aadhaar|aadhar/i.test(link.slice(0, link.indexOf("CONFIDENTIAL_WORDS"))));

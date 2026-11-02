@@ -2,30 +2,19 @@ import { createHash } from "node:crypto";
 import { eq, inArray, lt, sql, and, isNull } from "drizzle-orm";
 import { db, whatsappInboundDedupTable } from "@workspace/db";
 
-// Claims a provider message id before it is processed. A second delivery of the same id (Meta retry, restart,
-// another instance) is refused. A claim that never completed becomes reclaimable after 2 minutes so a crash
-// cannot swallow a message. If the table does not exist yet (migration not approved/applied) the in-memory
-// guard below is used, so behaviour is never worse than before.
+// Durable claims are required before processing. Database errors (including a
+// missing table) fail closed so the webhook can return 503 and Meta can retry.
+// Never substitute a process-local cache for cross-instance replay protection.
 const STALE_CLAIM_MS = 2 * 60_000;
-const memory = new Map<string, number>();
 
 export const fingerprintProviderMessage = (id: string) => createHash("sha256").update("wa-inbound:" + id).digest("hex");
 
-function claimInMemory(hash: string, now = Date.now()) {
-  for (const [key, at] of memory) { if (now - at > 15 * 60_000) memory.delete(key); else break; }
-  if (memory.has(hash)) return false;
-  if (memory.size >= 5000) memory.delete(memory.keys().next().value as string);
-  memory.set(hash, now);
-  return true;
+export class InboundDedupUnavailable extends Error {
+  constructor() { super("inbound_dedup_unavailable"); this.name = "InboundDedupUnavailable"; }
 }
 
-const tableMissing = (error: unknown) => {
-  const e = error as { code?: string; cause?: { code?: string } };
-  return e?.code === "42P01" || e?.cause?.code === "42P01";
-};
-
 export async function claimInboundMessage(id: unknown): Promise<boolean> {
-  if (typeof id !== "string" || id.length < 6 || id.length > 200) return true;
+  if (typeof id !== "string" || id.length < 6 || id.length > 200) return false;
   const hash = fingerprintProviderMessage(id);
   try {
     const claimed = await db.insert(whatsappInboundDedupTable).values({ idHash: hash })
@@ -38,10 +27,8 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
       await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
     }
     return claimed.length === 1;
-  } catch (error) {
-    if (tableMissing(error)) return claimInMemory(hash);
-    // Unknown database trouble: do not drop the customer's message.
-    return true;
+  } catch {
+    throw new InboundDedupUnavailable();
   }
 }
 
@@ -56,8 +43,7 @@ export async function completeInboundMessages(ids: unknown[]) {
 // treated as done. Only unfinished claims are deleted.
 export async function releaseInboundMessages(ids: unknown[]) {
   const hashes = ids.filter((x): x is string => typeof x === "string" && x.length >= 6 && x.length <= 200).map(fingerprintProviderMessage);
-  for (const h of hashes) memory.delete(h);
   if (!hashes.length) return;
   try { await db.delete(whatsappInboundDedupTable).where(and(inArray(whatsappInboundDedupTable.idHash, hashes), isNull(whatsappInboundDedupTable.completedAt))); }
-  catch { /* table missing: in-memory release above already applied */ }
+  catch { /* An unfinished durable claim becomes retryable after the stale-claim window. */ }
 }

@@ -1376,7 +1376,21 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
     }
     dropMalformedInboundMessages(value);
     for (const message of value?.messages ?? []) {
-      if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
+      let claimed: boolean;
+      try { claimed = await claimInboundMessage(message.id); }
+      catch {
+        // No typing, consent, AI, trade writes or outbound sends for an unclaimed
+        // message. Finish earlier messages in this batch, then ask Meta to retry.
+        const failed = claimedInbound.filter((id) => {
+          const from = senderOf.get(id); return from !== undefined && failedReplies.has(from);
+        });
+        await releaseInboundMessages(failed);
+        await completeInboundMessages(claimedInbound.filter((id) => !failed.includes(id)));
+        req.log.error({ flow: "whatsapp_inbound", reason: "dedup_unavailable" }, "Durable inbound claim unavailable");
+        res.sendStatus(503);
+        return;
+      }
+      if (!claimed) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
       if (message.from) { senderOf.set(message.id, message.from); markReadAndTyping(message.from, message.id); }
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {

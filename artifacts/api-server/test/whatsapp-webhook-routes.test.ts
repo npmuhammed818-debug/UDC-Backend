@@ -81,7 +81,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
-    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
+    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');return true;};export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
     "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const sendWhatsAppImage=async(to,link,caption)=>{s.images=(s.images||[]).concat([{to,link,caption}]);return {delivered:true,messageId:'img-1'};};export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const markReadAndTyping=()=>{};export const trackReplyFailures=(fn)=>fn(new Set());export const sendWhatsAppVoiceNote=async(to)=>{s.voice=(s.voice||[]);s.voice.push(to);return s.voiceFail?{delivered:false,reason:'upload_failed'}:{delivered:true};};",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
     "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
@@ -120,7 +120,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.images = []; state.voice = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
-    state.receipts=[];state.failReceipt=false;
+    state.receipts=[];state.failReceipt=false;state.dedupFailure=false;
     state.windowEvidence=[];
     state.fromWabaPhoneId="qa-sender-number";
     state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
@@ -142,6 +142,13 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
+    await t.test('dedup outage returns retryable failure before any outbound or trade work', async () => {
+      reset();state.dedupFailure=true;
+      const response=await message({text:{body:'100 MT copper'}});
+      assert.equal(response.status,503);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);assert.deepEqual(state.intake,[]);
+      assert.equal(state.dealCalls,0);assert.equal(state.homeCalls,0);
+    });
     await t.test('unverified quoted learning questions bypass deal and intake; voice questions answer without execution',async()=>{
       reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
       state.guidanceReply='DLC means Documentary Letter of Credit.';
