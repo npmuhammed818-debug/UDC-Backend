@@ -65,7 +65,10 @@ export async function inspectMvpSchema(executor:Pick<typeof db,"execute">=db){
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relkind IN ('r','p')
-      AND c.relname = ANY(${[...requiredMvpTables]}::text[])
+      AND c.relname = ANY(ARRAY[${sql.join(
+        [...requiredMvpTables].map((table) => sql`${table}`),
+        sql`, `,
+      )}]::text[])
   `);
   const found=new Map(result.rows.map(r=>[String(r.table_name),
     r.rls_enabled===true]));
