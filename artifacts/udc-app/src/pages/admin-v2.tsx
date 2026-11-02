@@ -260,7 +260,7 @@ function AdminV2({ user }: { user: AnyRecord }) {
                 : <table className="av2-table"><tbody>
                   {running.slice(0, 5).map((deal) => <tr key={deal.id} data-testid={`v2-deal-${deal.id}`}>
                     <td><div className="av2-name">{deal.dealNumber || `Deal ${String(deal.id).slice(0, 8)}`}</div>
-                      <div className="av2-det">{deal.quantity ?? ''} {deal.unit || ''}{deal.destination ? ` · ${deal.destination}` : ''}{deal.agreedPrice ? ` · ${deal.currency || ''} ${deal.agreedPrice}` : ''}</div></td>
+                      <div className="av2-det">{deal.quantity !== undefined && deal.quantity !== null && deal.quantity !== '' ? Number(deal.quantity).toLocaleString('en-US', { maximumFractionDigits: 2 }) : ''} {deal.unit || ''}{deal.destination ? ` · ${deal.destination}` : ''}{deal.agreedPrice ? ` · ${deal.currency || ''} ${Number(deal.agreedPrice).toLocaleString('en-US', { maximumFractionDigits: 2 })}` : ''}</div></td>
                     <td style={{ textAlign: 'right' }}><span className={pillFor(deal.status)}>{fmtStatus(deal.status).toUpperCase()}</span></td>
                   </tr>)}
                 </tbody></table>}

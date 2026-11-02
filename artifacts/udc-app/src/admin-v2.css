@@ -15,7 +15,7 @@
 .av2-tag{margin-left:auto;font-size:9px;color:#6d6466;letter-spacing:1px;}
 .av2-me{display:flex;gap:10px;align-items:center;border-top:1px solid #3a3436;padding:14px 10px 4px;color:#c9c2c4;font-size:11.5px;}
 .av2-avatar{width:32px;height:32px;border-radius:8px;background:var(--orange);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;flex-shrink:0;}
-.av2-me small{color:#6d6466;font-size:10px;display:block;}
+.av2-me small{color:#6d6466;font-size:10px;display:block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .av2-out{background:none;border:none;color:#c9c2c4;cursor:pointer;margin-left:auto;padding:6px;}
 .av2-out:hover{color:#fff;}
 .av2-main{flex:1;min-width:0;}
