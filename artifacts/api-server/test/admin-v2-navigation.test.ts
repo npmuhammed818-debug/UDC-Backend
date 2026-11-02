@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const page = (name: string) => readFile(new URL(`../../udc-app/src/pages/${name}`, import.meta.url), 'utf8');
 test('overview activity opens Reports, never the classic desk', async () => {
   const overview = await page('admin-v2.tsx');
-  assert.ok(overview.includes('href="/admin/v2/reports#activity"'));
+  assert.ok(overview.includes('href="/admin/v2/reports"'));
   assert.ok(!overview.includes('/admin/classic'));
 });
 test('Reports contains paginated activity using the protected audit endpoint', async () => {

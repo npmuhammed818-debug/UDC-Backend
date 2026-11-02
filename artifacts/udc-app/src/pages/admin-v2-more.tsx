@@ -170,6 +170,7 @@ function Reports({ user }: { user: AnyRecord }) {
 
   return <AdminV2Shell user={user} active="reports" title="Reports" sub="How the platform is doing, in numbers">
     <h1 className="av2-h1" data-testid="v2-reports-headline">The numbers right now</h1>
+    <ActivityLog />
     <div className="av2-strip">
       <ReportRow label="Deals running" value={allDeals.isLoading ? '…' : String(running.length)} sub={`${deals.length} total`} />
       <ReportRow label="Deals completed" value={analytics.isLoading ? '…' : String(stageRows.find((s: AnyRecord) => s.status === 'completed')?.count ?? 0)} sub="all time" />
@@ -208,7 +209,6 @@ function Reports({ user }: { user: AnyRecord }) {
         </div>
       </div>
     </div>
-    <ActivityLog />
   </AdminV2Shell>;
 }
 

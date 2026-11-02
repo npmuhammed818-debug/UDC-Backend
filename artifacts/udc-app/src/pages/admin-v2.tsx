@@ -56,7 +56,7 @@ function AdminV2({ user }: { user: AnyRecord }) {
             </tbody></table>}
         </div>
         <div className="av2-panel" data-testid="v2-activity-panel">
-          <div className="av2-phead"><span className="av2-micro2">Latest activity</span><Link className="av2-more" href="/admin/v2/reports#activity">All ›</Link></div>
+          <div className="av2-phead"><span className="av2-micro2">Latest activity</span><Link className="av2-more" href="/admin/v2/reports">All ›</Link></div>
           {audit.isError ? <div className="av2-empty">Activity did not load.</div>
             : audit.isLoading ? <div style={{ padding: 16 }}><div className="av2-skel" /></div>
             : !(audit.data?.logs ?? []).length ? <div className="av2-empty" style={{ border: 'none', margin: 0 }}>No activity yet.</div>

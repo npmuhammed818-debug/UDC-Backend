@@ -38,14 +38,7 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
 }) {
   const logout = useLogoutUser();
   const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => {
-    const target = decodeURIComponent(window.location.hash.slice(1));
-    const frame = requestAnimationFrame(() => {
-      if (target && document.getElementById(target)) window.scrollTo({ top: Math.max(0, document.getElementById(target)!.getBoundingClientRect().top + window.scrollY - 80), behavior: 'instant' });
-      else window.scrollTo(0, 0);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [active]);
+  useEffect(() => { window.scrollTo(0, 0); }, [active]);
 
   const navLink = (id: string, href: string, label: string, opts: { count?: number; tag?: string } = {}) => (
     <Link key={id} href={href} className={active === id ? 'on' : ''} data-testid={`v2-nav-${label.toLowerCase().replaceAll(' ', '-')}`}
