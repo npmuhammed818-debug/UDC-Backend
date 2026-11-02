@@ -27,6 +27,7 @@ import { publicDocumentStatus, vaultRedirectReply } from '../vault/uploadLink';
 import { ADD_COMPANY_FIRST } from './uploadLinkIntent';
 import { documentsStatusText, documentStatusFor, requiredDocuments, documentLabel } from './documentChecklist';
 import { plainWordsAction } from './plainWordsIntent';
+import { interpretTrackingAsk } from '../akif/trackingIntent';
 import { liveTrackingReply } from './liveTracking';
 import { WATCH_MAX_PER_USER, WATCH_POLL_INTERVAL_MS } from '../tracking/shipmentWatch';
 import { CONTACTS_LOCKED_REPLY, contactShareReply, contactsUnlocked } from '../deals/contactSharing';
@@ -232,8 +233,15 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
       if(await handleDocumentPickText(phone,message.text?.body,Boolean(message.context?.id)))return true;
       // Plain-words menu: saying any menu item runs the same action as tapping it.
       const spoken=plainWordsAction(message.text?.body);
-      if(!spoken)return false;
-      action=spoken;
+      if(!spoken){
+        // Brain-led intent: any wording or language asking where a shipment
+        // is, with a number in it, reaches the same checked tracking lookup.
+        const askedNumber=await interpretTrackingAsk(message.text?.body).catch(()=>null);
+        if(!askedNumber)return false;
+        action='tracknum:'+askedNumber;
+      }else{
+        action=spoken;
+      }
     }else{
       await sendWhatsAppText(phone,'No active form to change. Send Menu only if you want your options.');return true;
     }
@@ -318,7 +326,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   }
 
   if(action.startsWith('tracknum:')){
-    if(user.status!=='verified'){
+    if(!user||user.status!=='verified'){
       await sendWhatsAppTextWithMenu(phone,'Your registration is pending UDC approval. Tracking opens after verification.');
       return true;
     }

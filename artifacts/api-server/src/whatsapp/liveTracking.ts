@@ -3,7 +3,8 @@
 // 17TRACK key is configured (SEVENTEEN_TRACK_API_KEY); without it the reply
 // says honestly that live tracking is off and points to UDC-recorded updates.
 // No status is ever invented: every line comes from the carrier feed.
-import { activeTracker, isSeventeenTrackConfigured, type ShipmentTracker } from '../tracking/seventeenTrack.ts';
+import { activeTracker, isSeventeenTrackConfigured, type ShipmentTracker, type ShipmentTrackEvent } from '../tracking/seventeenTrack.ts';
+import { brainTrackingReply } from '../akif/shipmentTrackingReply.ts';
 
 // One carrier check per number per 6 hours: the 17TRACK free tier has a small
 // quota, and carrier scans are not real-time anyway.
@@ -35,7 +36,14 @@ export function formatLiveStatus(number: string, events: { time: string; descrip
 
 export async function liveTrackingReply(
   rawNumber: string,
-  deps: { tracker?: ShipmentTracker; now?: number; configured?: boolean } = {},
+  deps: {
+    tracker?: ShipmentTracker;
+    now?: number;
+    configured?: boolean;
+    // brain: compose the answer in AKIF's own words from the carrier facts.
+    // undefined = the real brain when configured; null = fixed template only.
+    brain?: ((number: string, events: ShipmentTrackEvent[]) => Promise<string | null>) | null;
+  } = {},
 ): Promise<string> {
   const number = rawNumber.trim().toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9-]{3,48}[A-Z0-9]$/.test(number) || !/\d/.test(number)) {
@@ -51,7 +59,13 @@ export async function liveTrackingReply(
   const tracker = deps.tracker ?? activeTracker();
   let text: string;
   try {
-    text = formatLiveStatus(number, await tracker.fetchEvents(number));
+    const events = await tracker.fetchEvents(number);
+    const brain = deps.brain === undefined
+      ? (n: string, ev: ShipmentTrackEvent[]) => brainTrackingReply({ number: n, events: ev })
+      : deps.brain;
+    text = events.length && brain
+      ? (await brain(number, events).catch(() => null)) ?? formatLiveStatus(number, events)
+      : formatLiveStatus(number, events);
   } catch {
     // Never leak provider errors or configuration details into the chat.
     return 'The carrier tracking service is unreachable right now. Please try again in a little while.';
