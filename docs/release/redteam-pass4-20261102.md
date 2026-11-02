@@ -8,6 +8,8 @@ Scope: development release branch, synthetic local users and SQL, no real messag
 - Deal, company and admin upload quotas used an unlocked count before upload. Concurrent requests could consume the same last slot. Each path now takes a transaction-scoped, per-user advisory lock through the quota check and insert. Admin and trader deal upload paths share the same lock namespace.
 - Storage is external to PostgreSQL. Cleanup is attempted, not a distributed transaction guarantee. A cleanup failure emits a fixed, non-sensitive warning for operator review.
 
+- The short /u/<token> upload URL was not covered by the request-log redactor. Both short and long vault bearer paths are now redacted, including suffixes and query strings.
+
 ## Executed proof
 
 - Release verification: 618 API tests, repeated by the API build; typechecks, frontend build and API build pass.
