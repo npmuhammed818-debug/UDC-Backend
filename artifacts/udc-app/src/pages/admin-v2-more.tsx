@@ -104,9 +104,9 @@ function Chats({ user }: { user: AnyRecord }) {
           : <table className="av2-table"><tbody>
             {deals.map((deal: AnyRecord) => {
               const label = deal.dealNumber || `Deal ${String(deal.id).slice(0, 8)}`;
-              return <tr key={deal.id} data-testid={`v2-chat-deal-${deal.id}`} onClick={() => setOpenDeal({ id: deal.id, label })} style={{ cursor: 'pointer' }}>
+              return <tr key={deal.id} data-testid={`v2-chat-deal-${deal.id}`}>
                 <td><div className="av2-name">{label}</div><div className="av2-det">{fmtStatus(deal.status)}{deal.destination ? ` · ${deal.destination}` : ''}</div></td>
-                <td style={{ textAlign: 'right' }}><span className="av2-btn ghost sm">{openDeal?.id === deal.id ? 'Open' : 'Read'}</span></td>
+                <td style={{ textAlign: 'right' }}><button className="av2-btn ghost sm" data-testid={`button-v2-read-${deal.id}`} onClick={() => setOpenDeal({ id: deal.id, label })}>{openDeal?.id === deal.id ? 'Open' : 'Read'}</button></td>
               </tr>;
             })}
           </tbody></table>}
@@ -148,7 +148,7 @@ function Reports({ user }: { user: AnyRecord }) {
   const maxStage = Math.max(1, ...stageRows.map((s: AnyRecord) => s.count));
 
   return <AdminV2Shell user={user} active="reports" title="Reports" sub="How the platform is doing, in numbers">
-    <h1 className="av2-h1" data-testid="v2-reports-headline">The numbers this week</h1>
+    <h1 className="av2-h1" data-testid="v2-reports-headline">The numbers right now</h1>
     <div className="av2-strip">
       <ReportRow label="Deals running" value={allDeals.isLoading ? '…' : String(running.length)} sub={`${deals.length} total`} />
       <ReportRow label="Deals completed" value={analytics.isLoading ? '…' : String(stageRows.find((s: AnyRecord) => s.status === 'completed')?.count ?? 0)} sub="all time" />
