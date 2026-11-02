@@ -24,6 +24,7 @@ const cases = [
   ['email_auth', 'UDC_EMAIL_QA_DATABASE_URL', 'email-auth'],
   ['verification', 'UDC_VERIFICATION_QA_DATABASE_URL', 'company-verification'],
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'p0-gates'],
+  ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'redteam-pass4'],
   ['vault', 'UDC_VAULT_QA_DATABASE_URL', 'vault'],
   ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools'],
   ['journey', 'UDC_JOURNEY_QA_DATABASE_URL', 'trade-journey'],
