@@ -11,6 +11,7 @@ import { logger } from "./lib/logger";
 import { loadAuth } from "./auth/middleware";
 import { safeRequestLogPath } from "./lib/requestLog";
 import { corsOriginAllowed, parseAllowedOrigins } from "./lib/corsOrigins";
+import { errorHandler } from "./lib/errorHandler";
 
 import { policies, renderPolicy } from "./privacy/policies";
 
@@ -79,5 +80,8 @@ if (existsSync(webIndexPath)) {
     });
   });
 }
+
+// Last middleware: fixed generic answers for anything that reached next(err).
+app.use(errorHandler);
 
 export default app;
