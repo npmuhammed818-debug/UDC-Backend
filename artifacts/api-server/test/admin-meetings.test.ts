@@ -313,6 +313,18 @@ test('admin trade workflows preserve verification, ownership, review and payment
       records.dealsTable[0].unit='kg';assert.equal((await request('/admin/commissions',perMt)).status,400);
       records.dealsTable[0].unit='MT';assert.equal((await request('/admin/commissions',perMt)).data.commission.amount,'250.00');
     });
+    await t.test('case creation, review and evidence roll back when audit fails',async()=>{
+      const count=records.dealCasesTable.length;state.failAudit=true;
+      assert.equal((await request(`/admin/deals/${dealId}/cases`,{summary:'Synthetic case facts'})).status,500);
+      assert.equal(records.dealCasesTable.length,count);
+      const created=await request(`/admin/deals/${dealId}/cases`,{summary:'Synthetic case facts'});assert.equal(created.status,201);
+      const caseId=created.data.case.id;state.failAudit=true;
+      assert.equal((await request(`/admin/cases/${caseId}`,{status:'investigating'},'PATCH')).status,500);
+      assert.notEqual(records.dealCasesTable.find((r:any)=>r.id===caseId).status,'investigating');
+      state.failAudit=true;
+      assert.equal((await request(`/admin/cases/${caseId}/evidence`,{note:'Synthetic evidence'})).status,500);
+      assert.ok(!records.dealCasesTable.find((r:any)=>r.id===caseId).evidence?.length);
+    });
     await t.test('referral and assignment changes roll back if audit fails',async()=>{
       const agentId=randomUUID(),referredId=randomUUID();
       records.usersTable.push({id:agentId,role:'agent',status:'verified'},{id:referredId,role:'buyer',status:'verified'});

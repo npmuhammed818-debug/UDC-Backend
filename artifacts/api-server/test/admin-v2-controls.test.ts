@@ -33,3 +33,11 @@ test('agent actions do not create commissions or payments and require human appr
  for(const part of ['if(confirmed!==kind)return',"disabled={busy||confirmed!=='create'}",'No fee or commission is agreed','/api/admin/referrals','/api/admin/deals/','/admin/v2/finance'])assert.ok(source.includes(part),part);
  assert.ok(!source.includes("fetch('/api/admin/commissions'"));
 });
+test('chats show full text and separate direct messages, participants and case controls',async()=>{
+ const source=await page('admin-v2-more.tsx');
+ for(const part of ['v2-chat-room','/room','Saved direct messages','Participants','<CaseControls'])assert.ok(source.includes(part),part);
+ assert.ok(!source.includes("String(ev.originalText || '').slice"));
+ const controls=await page('admin-v2-case-controls.tsx');
+ assert.ok(controls.includes('Opening a case notifies the deal parties'));
+ assert.ok(controls.includes('/evidence'));
+});

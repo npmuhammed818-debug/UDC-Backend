@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fmtStatus, loadJson, pillFor, timeAgo, useAdminV2Data, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell } from './admin-v2-shell';
 import '../admin-v2.css';
+import { CaseControls } from './admin-v2-case-controls';
 import { FinanceControls } from './admin-v2-finance-controls';
 
 function money(amount: unknown, currency?: string) {
@@ -81,6 +82,7 @@ function Chats({ user }: { user: AnyRecord }) {
     queryFn: () => loadJson<{ events: AnyRecord[] }>(`/api/admin/deals/${openDeal!.id}/conversation`),
     enabled: !!openDeal,
   });
+  const room = useQuery({queryKey:['v2-chat-room',openDeal?.id],queryFn:()=>loadJson<AnyRecord>(`/api/admin/deals/${openDeal!.id}/room`),enabled:!!openDeal});
   const deals = allDeals.data?.deals ?? [];
   const requests = meetingRequests.data?.requests ?? [];
 
@@ -119,13 +121,21 @@ function Chats({ user }: { user: AnyRecord }) {
           : !(conversation.data?.events ?? []).length ? <div className="av2-empty" style={{ border: 'none', margin: 0 }}>Nothing said in this deal yet.</div>
           : <div className="av2-feed">
             {[...conversation.data!.events].reverse().map((ev: AnyRecord) => <div key={ev.id} data-testid={`v2-chat-ev-${ev.id}`}>
-              <strong>{fmtStatus(ev.participantRole)}</strong> · {String(ev.originalText || '').slice(0, 220)}
-              {ev.relayed && ev.relayText ? <><br />↪ passed on: “{String(ev.relayText).slice(0, 160)}”</> : null}
+              <strong>{fmtStatus(ev.participantRole)}</strong> · {String(ev.originalText || '')}
+              {ev.relayed && ev.relayText ? <><br />↪ passed on: “{String(ev.relayText)}”</> : null}
               <time>{ev.createdAt ? new Date(ev.createdAt).toLocaleString() : ''}</time>
             </div>)}
           </div>}
       </div>
     </div>
+    {openDeal && <section className="av2-panel" style={{padding:18}}><h2>Full deal room: {openDeal.label}</h2><p className="av2-d">Read-only records below. Up to 200 saved direct messages and 250 timeline events; the WhatsApp conversation above is separate.</p>
+      {room.isError ? <p role="alert">Room did not load. <button onClick={()=>void room.refetch()}>Retry</button></p> : room.isLoading ? <div className="av2-skel"/> : room.data && <>
+        <details><summary>Participants</summary><div className="av2-feed">{(room.data.participants || []).map((p:AnyRecord)=><div key={p.id}>{p.participantRole} · {p.userId} · {p.status}</div>)}</div></details>
+        <details open><summary>Saved direct messages</summary><div className="av2-feed">{!(room.data.messages || []).length?<p>No saved direct messages.</p>:[...room.data.messages].reverse().map((m:AnyRecord)=><div key={m.id} style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{m.message}<time>{new Date(m.createdAt).toLocaleString()}</time></div>)}</div></details>
+        <details><summary>Deal timeline</summary><div className="av2-feed">{(room.data.timeline || []).map((e:AnyRecord)=><div key={e.id}>{fmtStatus(e.action)}<time>{new Date(e.createdAt).toLocaleString()}</time></div>)}</div></details>
+        <CaseControls key={openDeal.id} dealId={openDeal.id} room={room.data}/>
+      </>}
+    </section>}
   </AdminV2Shell>;
 }
 

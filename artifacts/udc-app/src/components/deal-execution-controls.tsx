@@ -7,24 +7,25 @@ type Row = Record<string, any>;
 type Field = { key: string; label: string; required?: boolean; options?: string[]; multiline?: boolean; date?: boolean };
 const label = (value: string) => value.replaceAll('_', ' ');
 
-function RecordForm({ title, path, method = 'POST', fields, initial = {}, fixed = {}, onSaved }: {
-  title: string; path: string; method?: string; fields: Field[]; initial?: Row; fixed?: Row; onSaved: () => Promise<void>;
+export function RecordForm({ title, path, method = 'POST', fields, initial = {}, fixed = {}, onSaved, confirmation }: {
+  title: string; path: string; method?: string; fields: Field[]; initial?: Row; fixed?: Row; onSaved: () => Promise<void>; confirmation?: string;
 }) {
   const [values, setValues] = useState<Row>(() => Object.fromEntries(fields.map(f => [f.key, initial[f.key] ?? f.options?.[0] ?? ''])));
+  const [confirmed,setConfirmed]=useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [saved, setSaved] = useState(false);
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(''); setSaved(false);
+    event.preventDefault(); if(confirmation&&!confirmed)return; setBusy(true); setError(''); setSaved(false);
     try {
       const data: Row = { ...fixed };
       for (const field of fields) data[field.key] = field.date ? (values[field.key] ? new Date(values[field.key]).toISOString() : undefined) : String(values[field.key]).trim();
       const response = await fetch(path, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
       if (!response.ok) throw new Error('Check the details and your access, then try again.');
-      await onSaved(); setSaved(true);
+      await onSaved(); setSaved(true);setConfirmed(false);
       if (method === 'POST') setValues(Object.fromEntries(fields.map(f => [f.key, f.options?.[0] ?? ''])));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'This record could not be saved.'); }
     finally { setBusy(false); }
   };
-  return <form className="mt-4 border-t border-border pt-4" onSubmit={submit}><h3>{title}</h3><div className="form-two mt-3">{fields.map(field => <label className="block text-sm" key={field.key}><span className="mb-2 block font-medium">{field.label}</span>{field.options ? <select className="select" value={values[field.key]} onChange={e => setValues({ ...values, [field.key]: e.target.value })}>{field.options.map(option => <option key={option} value={option}>{label(option)}</option>)}</select> : field.multiline ? <textarea className="textarea" required={field.required} maxLength={2000} value={values[field.key]} onChange={e => setValues({ ...values, [field.key]: e.target.value })} /> : <Input required={field.required} type={field.date ? 'datetime-local' : 'text'} maxLength={150} value={values[field.key]} onChange={e => setValues({ ...values, [field.key]: e.target.value })} />}</label>)}</div><Button className="mt-3" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save record'}</Button>{error && <div className="error-banner mt-3" role="alert">{error}</div>}{saved && <p className="success-banner mt-3" role="status">Record saved.</p>}</form>;
+  return <form className="mt-4 border-t border-border pt-4" onSubmit={submit}><h3>{title}</h3><div className="form-two mt-3">{fields.map(field => <label className="block text-sm" key={field.key}><span className="mb-2 block font-medium">{field.label}</span>{field.options ? <select className="select" value={values[field.key]} onChange={e => setValues({ ...values, [field.key]: e.target.value })}>{field.options.map(option => <option key={option} value={option}>{label(option)}</option>)}</select> : field.multiline ? <textarea className="textarea" required={field.required} maxLength={2000} value={values[field.key]} onChange={e => setValues({ ...values, [field.key]: e.target.value })} /> : <Input required={field.required} type={field.date ? 'datetime-local' : 'text'} maxLength={150} value={values[field.key]} onChange={e => setValues({ ...values, [field.key]: e.target.value })} />}</label>)}</div>{confirmation&&<label style={{display:'flex',gap:10,fontSize:12,marginTop:16}}><input type="checkbox" required checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>{confirmation}</span></label>}<Button className="mt-3" type="submit" disabled={busy||Boolean(confirmation&&!confirmed)}>{busy ? 'Saving…' : 'Save record'}</Button>{error && <div className="error-banner mt-3" role="alert">{error}</div>}{saved && <p className="success-banner mt-3" role="status">Record saved.</p>}</form>;
 }
 
 export function DealExecutionControls({ dealId, room }: { dealId: string; room: Row }) {

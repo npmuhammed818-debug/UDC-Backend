@@ -1300,8 +1300,11 @@ router.post("/admin/deals/:dealId/cases", requireRole("admin"), async (req: Auth
   try {
     const input = caseInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1); if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
-    const [dealCase] = await db.insert(dealCasesTable).values({ dealId, openedBy: req.authUser.id, ...input }).returning();
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_opened", entityType: "deal", entityId: dealId, metadata: { caseId: dealCase.id, caseType: dealCase.caseType, priority: dealCase.priority } });
+    const dealCase=await db.transaction(async tx=>{
+    const [dealCase] = await tx.insert(dealCasesTable).values({ dealId, openedBy: req.authUser.id, ...input }).returning();
+    await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_opened", entityType: "deal", entityId: dealId, metadata: { caseId: dealCase.id, caseType: dealCase.caseType, priority: dealCase.priority } });
+      return dealCase;
+    });
     await notifyDealCounterparties(dealId, "deal_case_opened", "UDC case opened", "UDC has opened a case on this deal and will track it through resolution.", `/deals/${dealId}`);
     res.status(201).json({ case: dealCase });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "case_create_failed" }); }
@@ -1310,9 +1313,15 @@ router.patch("/admin/cases/:caseId", requireRole("admin"), async (req: Authentic
   try {
     const input = z.object({ status: z.enum(["open","investigating","waiting_party","resolved","closed"]), resolution: z.string().trim().max(3000).optional() }).parse(req.body);
     if (["resolved","closed"].includes(input.status) && !input.resolution) { res.status(400).json({ error: "resolution_required" }); return; }
-    const caseId=z.string().uuid().parse(req.params["caseId"]); const [existing]=await db.select().from(dealCasesTable).where(eq(dealCasesTable.id,caseId)).limit(1); if(!existing){res.status(404).json({error:"case_not_found"});return;}
-    const [dealCase]=await db.update(dealCasesTable).set({status:input.status,resolution:input.resolution??existing.resolution,resolvedAt:["resolved","closed"].includes(input.status)?new Date():null,updatedAt:new Date()}).where(eq(dealCasesTable.id,caseId)).returning();
-    await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_case_updated",entityType:"deal",entityId:dealCase.dealId,metadata:{caseId,previousStatus:existing.status,newStatus:dealCase.status}});
+    const caseId=z.string().uuid().parse(req.params["caseId"]);
+    const dealCase=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"case:"+caseId}))`);
+ const [existing]=await tx.select().from(dealCasesTable).where(eq(dealCasesTable.id,caseId)).limit(1); if(!existing)return null;
+    const [dealCase]=await tx.update(dealCasesTable).set({status:input.status,resolution:input.resolution??existing.resolution,resolvedAt:["resolved","closed"].includes(input.status)?new Date():null,updatedAt:new Date()}).where(eq(dealCasesTable.id,caseId)).returning();
+    await tx.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_case_updated",entityType:"deal",entityId:dealCase.dealId,metadata:{caseId,previousStatus:existing.status,newStatus:dealCase.status}});
+      return dealCase;
+    });
+    if(!dealCase){res.status(404).json({error:"case_not_found"});return;}
     res.json({case:dealCase});
   } catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"case_update_failed"});}
 });
@@ -1320,16 +1329,22 @@ router.post("/admin/cases/:caseId/evidence", requireRole("admin"), async (req: A
   try {
     const id = z.string().uuid().parse(req.params["caseId"]);
     const input = z.object({ documentId: z.string().uuid().optional(), note: z.string().trim().min(2).max(2000).optional() }).refine((v) => Boolean(v.documentId || v.note)).parse(req.body);
-    const [existing] = await db.select().from(dealCasesTable).where(eq(dealCasesTable.id, id)).limit(1);
-    if (!existing) { res.status(404).json({ error: "case_not_found" }); return; }
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"case:"+id}))`);
+    const [existing] = await tx.select().from(dealCasesTable).where(eq(dealCasesTable.id, id)).limit(1);
+    if (!existing) return {error:"case_not_found",status:404} as const;
     if (input.documentId) {
-      const [doc] = await db.select({ id: documentsTable.id }).from(documentsTable).where(and(eq(documentsTable.id, input.documentId), eq(documentsTable.dealId, existing.dealId))).limit(1);
-      if (!doc) { res.status(400).json({ error: "evidence_document_not_in_deal" }); return; }
+      const [doc] = await tx.select({ id: documentsTable.id }).from(documentsTable).where(and(eq(documentsTable.id, input.documentId), eq(documentsTable.dealId, existing.dealId))).limit(1);
+      if (!doc) return {error:"evidence_document_not_in_deal",status:400} as const;
     }
     const previous = Array.isArray(existing.evidence) ? existing.evidence : existing.evidence ? [existing.evidence] : [];
     const evidence = [...previous, { ...input, addedAt: new Date().toISOString(), addedBy: req.authUser.id }];
-    const [dealCase] = await db.update(dealCasesTable).set({ evidence, updatedAt: new Date() }).where(eq(dealCasesTable.id, id)).returning();
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_evidence_added", entityType: "deal", entityId: existing.dealId, metadata: { caseId: id, documentId: input.documentId ?? null } });
+    const [dealCase] = await tx.update(dealCasesTable).set({ evidence, updatedAt: new Date() }).where(eq(dealCasesTable.id, id)).returning();
+    await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_evidence_added", entityType: "deal", entityId: existing.dealId, metadata: { caseId: id, documentId: input.documentId ?? null } });
+      return {dealCase};
+    });
+    if("error" in result){res.status(result.status ?? 400).json({error:result.error});return;}
+    const {dealCase}=result;
     res.status(201).json({ case: dealCase });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "case_evidence_failed" }); }
 });
