@@ -15,7 +15,6 @@ import {
 import {
   PASSWORD_LOGIN_LIMIT,
   PASSWORD_LOGIN_WINDOW_MS,
-  windowLimitExceeded,
 } from "./loginBudget";
 import {
   sendAuthEmail,
@@ -136,33 +135,34 @@ export function createEmailAuthService(
     });
     if (!allowed) throw new EmailAuthError("rate_limited");
   }
-  // Read-only pre-check before password verification; failures are charged via
-  // recordPasswordLoginFailure. Both share the durable email_auth_limits table.
-  async function passwordLoginAllowed(email: string) {
-    const hash = digest(`pwd-login:${email.trim().toLowerCase()}`);
-    const { rows } = await database.execute(
-      sql`select count, window_start from email_auth_limits where key=${hash}`,
-    );
-    const row = rows[0] as
-      | { count: number; window_start: Date | string }
-      | undefined;
-    if (row && !Number.isFinite(epoch(row.window_start)))
-      throw new EmailAuthError("unavailable");
-    return !windowLimitExceeded(
-      row ? { count: row.count, windowStartMs: epoch(row.window_start) } : undefined,
-      now().getTime(),
-      PASSWORD_LOGIN_WINDOW_MS,
+  // Per-account password-login budget. The attempt is CHARGED atomically inside
+  // the caller's transaction (which holds the account row lock) before the
+  // password is verified, so parallel requests cannot slip past the cap and
+  // unknown emails never write budget rows. Success clears the row.
+  function chargePasswordLoginAttempt(tx: Executor, email: string) {
+    return charge(
+      tx,
+      `pwd-login:${email.trim().toLowerCase()}`,
       PASSWORD_LOGIN_LIMIT,
+      PASSWORD_LOGIN_WINDOW_MS,
     );
   }
-  async function recordPasswordLoginFailure(email: string) {
-    await database.transaction(async (tx) => {
-      await charge(
-        tx,
-        `pwd-login:${email.trim().toLowerCase()}`,
-        PASSWORD_LOGIN_LIMIT,
-        PASSWORD_LOGIN_WINDOW_MS,
+  async function clearPasswordLoginBudget(
+    email: string,
+    executor: Pick<typeof db, "execute"> = database,
+  ) {
+    await executor.execute(
+      sql`delete from email_auth_limits where key=${digest(`pwd-login:${email.trim().toLowerCase()}`)}`,
+    );
+  }
+  // Durable per-IP budget for the web auth endpoints (login, register, WhatsApp
+  // sign-in): survives restarts and multi-instance deploys, unlike a Map.
+  async function webAuthBudgetAllowed(ip: string, bucket: string) {
+    return database.transaction(async (tx) => {
+      await tx.execute(
+        sql`delete from email_auth_limits where window_start < ${new Date(now().getTime() - 2 * 86_400_000)}`,
       );
+      return charge(tx, `web:${bucket}:${ip}`, 12, 15 * 60_000);
     });
   }
   async function account(tx: Executor, userId: string) {
@@ -288,8 +288,9 @@ export function createEmailAuthService(
 
   return {
     ipBudget,
-    passwordLoginAllowed,
-    recordPasswordLoginFailure,
+    chargePasswordLoginAttempt,
+    clearPasswordLoginBudget,
+    webAuthBudgetAllowed,
     async status(userId: string) {
       const { rows } = await database.execute(
         sql`select email,verified_email,email_verified_at,password_recovery_enabled from users where id=${userId}`,

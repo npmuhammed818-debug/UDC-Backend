@@ -66,6 +66,11 @@ router.post("/deals/:dealId/documents/upload", requireAuth, requireNonAgentDealA
     if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.length > 5 * 1024 * 1024 || bytes.subarray(0, 5).toString() !== "%PDF-") {
       res.status(400).json({ error: "pdf_required_max_5mb" }); return;
     }
+    // Per-user daily upload quota: storage is not an unlimited free resource.
+    const [{ n: uploadsToday }] = (await db.execute(
+      sql`select count(*)::int as n from documents where uploaded_by=${req.authUser!.id} and created_at > ${new Date(Date.now() - 86_400_000)}`,
+    )).rows as Array<{ n: number }>;
+    if (uploadsToday >= 20) { res.status(429).json({ error: "upload_quota_exceeded" }); return; }
     const path = `deals/${deal.id}/${randomUUID()}.pdf`;
     const fileUrl = await uploadDocumentBytes(path, bytes, "application/pdf");
     const [document] = await db.insert(documentsTable).values({

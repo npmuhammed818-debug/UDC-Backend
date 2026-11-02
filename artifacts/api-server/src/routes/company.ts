@@ -1,6 +1,6 @@
 import { Router, raw, type IRouter, type Response } from "express";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, db, notificationsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
@@ -98,6 +98,11 @@ router.post("/company/documents/upload", requireAuth,
       if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.length > 5 * 1024 * 1024 || bytes.subarray(0, 5).toString() !== "%PDF-") {
         res.status(400).json({ error: "pdf_required_max_5mb" }); return;
       }
+      // Per-user daily upload quota: storage is not an unlimited free resource.
+      const [{ n: uploadsToday }] = (await db.execute(
+        sql`select count(*)::int as n from company_verification_documents where uploaded_by=${req.authUser!.id} and created_at > ${new Date(Date.now() - 86_400_000)}`,
+      )).rows as Array<{ n: number }>;
+      if (uploadsToday >= 10) { res.status(429).json({ error: "upload_quota_exceeded" }); return; }
       const fileUrl = await uploadDocumentBytes(`companies/${company.id}/${randomUUID()}.pdf`, bytes, "application/pdf");
       const [document] = await db.insert(companyVerificationDocumentsTable).values({
         companyId: company.id, uploadedBy: req.authUser!.id, documentType, fileUrl, status: "pending",
@@ -112,6 +117,8 @@ router.post("/company/documents/upload", requireAuth,
 
 router.post("/company", requireAuth, async (req, res) => {
   try {
+    // Companies belong to trading roles; agents introduce traders, they do not trade.
+    if (req.authUser!.role === "agent") { res.status(403).json({ error: "company_not_available_for_agents" }); return; }
     const input = companySchema.parse(req.body);
     const existing = await getCompanyForUser(req.authUser!.id);
     if (existing) {

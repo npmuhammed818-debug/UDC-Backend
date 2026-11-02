@@ -1,4 +1,5 @@
 import { verifyAgentInvitation, agentReferralCode } from "../referrals/invitation";
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -11,12 +12,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { emailAuth } from "../auth/emailAuth";
-import {
-  authRateLimitKey,
-  clearAuthFailures,
-  isAuthRateLimited,
-  recordAuthFailure,
-} from "../auth/rateLimit";
+import { authRateLimitKey } from "../auth/rateLimit";
 import { hashPassword, verifyPassword } from "../auth/passwords";
 import { createSession, revokeSession, SESSION_COOKIE } from "../auth/sessions";
 import { requireAuth } from "../auth/middleware";
@@ -47,6 +43,14 @@ function setSessionCookie(res: Response, token: string, expiresAt: Date) {
   });
 }
 
+// One cached scrypt hash of a random value; unknown-email logins verify
+// against it so their timing matches a real wrong-password attempt.
+let cachedDummyHash: string | undefined;
+async function dummyPasswordHash() {
+  if (!cachedDummyHash) cachedDummyHash = await hashPassword(randomUUID());
+  return cachedDummyHash;
+}
+
 function validationResponse(res: Response, error: unknown) {
   if (error instanceof z.ZodError) {
     res.status(400).json({
@@ -63,7 +67,7 @@ function validationResponse(res: Response, error: unknown) {
 
 router.post("/auth/register", async (req, res) => {
   const rateKey = authRateLimitKey(req);
-  if (isAuthRateLimited(rateKey)) {
+  if (!(await emailAuth.webAuthBudgetAllowed(rateKey, "register"))) {
     res.status(429).json({ error: "too_many_auth_attempts" });
     return;
   }
@@ -162,33 +166,41 @@ router.post("/auth/register", async (req, res) => {
 
 router.post("/auth/login", async (req, res) => {
   const rateKey = authRateLimitKey(req);
-  if (isAuthRateLimited(rateKey)) {
+  if (!(await emailAuth.webAuthBudgetAllowed(rateKey, "login"))) {
     res.status(429).json({ error: "too_many_auth_attempts" });
     return;
   }
 
   try {
     const input = loginSchema.parse(req.body);
-    // Per-account budget: caps total guesses against one email even from rotating IPs.
-    if (!(await emailAuth.passwordLoginAllowed(input.email))) {
-      res.status(429).json({ error: "too_many_auth_attempts" });
-      return;
-    }
     // Serialize password proof/session creation with password reset. Otherwise a
     // login verified against an old hash could create a session after revocation.
     const result = await db.transaction(async tx => {
       const [user] = await tx.select().from(usersTable)
         .where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1).for("update");
-      if (!user || !(await verifyPassword(input.password, user.passwordHash))) return { kind: "invalid" as const };
+      // Unknown email: run the same password work against a dummy hash so the
+      // response timing does not reveal which emails have accounts. No budget
+      // row is written for emails that do not exist.
+      if (!user) {
+        await verifyPassword(input.password, await dummyPasswordHash());
+        return { kind: "invalid" as const };
+      }
+      // Per-account budget: charged atomically inside the account row lock
+      // BEFORE verification, so parallel guesses cannot slip past the cap.
+      if (!(await emailAuth.chargePasswordLoginAttempt(tx, input.email))) return { kind: "limited" as const };
+      if (!(await verifyPassword(input.password, user.passwordHash))) return { kind: "invalid" as const };
       if (["suspended", "rejected"].includes(user.status)) return { kind: "blocked" as const };
       // Successful password proof safely identifies legacy password accounts;
       // random WhatsApp-only hashes are never inferred to be recovery credentials.
       await tx.update(usersTable).set({ passwordRecoveryEnabled: true }).where(eq(usersTable.id,user.id));
+      await emailAuth.clearPasswordLoginBudget(input.email, tx);
       return { kind: "authenticated" as const, userId: user.id, ...await createSession(user.id,tx) };
     });
+    if (result.kind === "limited") {
+      res.status(429).json({ error: "too_many_auth_attempts" });
+      return;
+    }
     if (result.kind === "invalid") {
-      recordAuthFailure(rateKey);
-      await emailAuth.recordPasswordLoginFailure(input.email);
       res.status(401).json({ error: "invalid_email_or_password" });
       return;
     }
@@ -196,7 +208,6 @@ router.post("/auth/login", async (req, res) => {
       res.status(403).json({ error: "account_suspended" });
       return;
     }
-    clearAuthFailures(rateKey);
     setSessionCookie(res, result.token, result.expiresAt);
     res.json({ user: await getSafeUserProfile(result.userId) });
   } catch (error) {

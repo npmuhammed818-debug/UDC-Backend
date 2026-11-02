@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 
 test('web registration keeps roles pending and accepts only authorized, consented agent invitations',async()=>{
   const state:any={users:[],audits:[],preferences:[],referrals:[],companies:[],sessions:0,user:null};
-  const previousSecret=process.env.WHATSAPP_APP_SECRET, previousOrigin=process.env.UDC_PUBLIC_APP_URL;
-  process.env.WHATSAPP_APP_SECRET="synthetic-referral-secret-long-enough";process.env.UDC_PUBLIC_APP_URL="https://udc.example.invalid";
+  const previousSecret=process.env.WHATSAPP_APP_SECRET, previousOrigin=process.env.UDC_PUBLIC_APP_URL, previousSession=process.env.SESSION_SECRET;
+  process.env.WHATSAPP_APP_SECRET="synthetic-referral-secret-long-enough";process.env.UDC_PUBLIC_APP_URL="https://udc.example.invalid";process.env.SESSION_SECRET="synthetic-session-secret-32-characters!!";
   const tables:any={users:{name:'users',...Object.fromEntries(['id','email','role','status'].map(column=>[column,{column}]))},audit:{name:'audits'},preferences:{name:'preferences'},referrals:{name:'referrals'},companies:{name:'companies'}};
   const value=(node:any,row:any)=>node?.column?row[node.column]:node;
   const evaluate=(node:any,row:any):any=>node.kind==='sql'?row.email===node.values.at(-1):node.kind==='eq'?value(node.a,row)===value(node.b,row):node.kind==='and'?node.args.every((part:any)=>evaluate(part,row)):node.kind==='in'?node.list.includes(value(node.a,row)):false;
-  state.db={transaction:async(f:any)=>f(state.db),select:()=>({from:(table:any)=>({where:(condition:any)=>({limit:async()=>state[table.name].filter((row:any)=>evaluate(condition,row))})})}),insert:(table:any)=>({values:(input:any)=>{let created:any;const run=()=>{if(!created){created={id:randomUUID(),...input};state[table.name].push(created);}return [created]};return {returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};}})};
+  state.db={transaction:async(f:any)=>f(state.db),execute:async()=>({rows:[]}),select:()=>({from:(table:any)=>({where:(condition:any)=>({limit:async()=>state[table.name].filter((row:any)=>evaluate(condition,row))})})}),insert:(table:any)=>({values:(input:any)=>{let created:any;const run=()=>{if(!created){created={id:randomUUID(),...input};state[table.name].push(created);}return [created]};return {returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};}})};
   (globalThis as any).__authRegistration=state;
   const output=fileURLToPath(new URL(`./auth-registration-${randomUUID()}.mjs`,import.meta.url));
   const result=await build({stdin:{contents:"import express from 'express';import auth from '../src/routes/auth';import referrals from '../src/routes/referrals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.__authRegistration.user;next()});app.use(auth);app.use(referrals);export default app;",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-registration',setup(b){
@@ -45,5 +45,5 @@ test('web registration keeps roles pending and accepts only authorized, consente
     invited=await post({...base,role:'seller',email:'tampered@example.invalid',referral_token:token+'x'});assert.equal(invited.status,400);
     agent.status='suspended';invited=await post({...base,role:'seller',email:'revoked@example.invalid',referral_token:token});assert.equal(invited.status,400);
     assert.equal((await getLink()).status,403);assert.equal(state.users.length,before);assert.equal(state.referrals.length,1);
-  } finally {if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));await unlink(output);delete (globalThis as any).__authRegistration;if(previousSecret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=previousSecret;if(previousOrigin===undefined)delete process.env.UDC_PUBLIC_APP_URL;else process.env.UDC_PUBLIC_APP_URL=previousOrigin;}
+  } finally {if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));await unlink(output);delete (globalThis as any).__authRegistration;if(previousSecret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=previousSecret;if(previousSession===undefined)delete process.env.SESSION_SECRET;else process.env.SESSION_SECRET=previousSession;if(previousOrigin===undefined)delete process.env.UDC_PUBLIC_APP_URL;else process.env.UDC_PUBLIC_APP_URL=previousOrigin;}
 });

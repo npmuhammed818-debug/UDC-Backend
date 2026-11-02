@@ -12,6 +12,7 @@ import { loadAuth } from "./auth/middleware";
 import { safeRequestLogPath } from "./lib/requestLog";
 import { corsOriginAllowed, parseAllowedOrigins } from "./lib/corsOrigins";
 import { errorHandler } from "./lib/errorHandler";
+import { SECURITY_HEADERS } from "./lib/securityHeaders";
 
 import { policies, renderPolicy } from "./privacy/policies";
 
@@ -22,6 +23,11 @@ const app: Express = express();
 // X-Forwarded-For entry, which a client cannot spoof - so the per-IP auth
 // budgets key per visitor instead of sharing one bucket for the whole site.
 app.set("trust proxy", 1);
+
+app.use((_req, res, next) => {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+  next();
+});
 
 app.use(
   pinoHttp({
