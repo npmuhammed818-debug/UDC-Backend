@@ -77,10 +77,18 @@ export async function inspectMvpSchema(executor:Pick<typeof db,"execute">=db){
   }));
   return {objects,allPresentWithRls:objects.every(o=>o.present&&o.rlsEnabled)};
 }
+// Uses the existing service connection, returns no keys, URLs or object names.
+export async function inspectStoragePrivacy(env:NodeJS.ProcessEnv=process.env,transport:typeof fetch=fetch):Promise<ReadinessCheck>{
+ const result:ReadinessCheck={id:'private_storage_bucket',label:'Document bucket privacy',state:'unavailable',detail:'The current document bucket privacy could not be verified.'};
+ if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY)return result;
+ try{const base=new URL(env.SUPABASE_URL);if(base.protocol!=='https:'||base.username||base.password)return result;const response=await transport(new URL('/storage/v1/bucket/udc-documents',base),{headers:{authorization:'Bearer '+env.SUPABASE_SERVICE_ROLE_KEY,apikey:env.SUPABASE_SERVICE_ROLE_KEY},signal:AbortSignal.timeout(5000),redirect:'error'});if(!response.ok){await response.body?.cancel();return result;}const body=await response.json() as {id?:unknown;public?:unknown};if(body.id!=='udc-documents'||typeof body.public!=='boolean')return result;
+ return {...result,state:body.public?'review_required':'configured',detail:body.public?'Document bucket is PUBLIC. Stop document uploads and review access before launch.':'Document bucket is private in the current storage service response. Object policies, backups and provider retention still need separate review.'};
+ }catch{return result;}
+}
 export async function buildMvpStagingReadiness(
   options:{env?:NodeJS.ProcessEnv;executor?:Pick<typeof db,"execute">}={}
 ){
-  const checks=evaluateMvpEnvironment(options.env??process.env);
+  const checks=[...evaluateMvpEnvironment(options.env??process.env),await inspectStoragePrivacy(options.env??process.env)];
   try{
     const schema=await inspectMvpSchema(options.executor??db);
     return {

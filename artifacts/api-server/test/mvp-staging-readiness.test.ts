@@ -10,7 +10,7 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
  globalThis.__mvpStageQa=s;
  const file=fileURLToPath(new URL(`./stage-qa-${randomUUID()}.mjs`,import.meta.url));
  const buildResult=await build({
-   stdin:{contents:"import express from 'express';import router from '../src/routes/stagingReadiness.ts';export {buildMvpStagingReadiness,evaluateMvpEnvironment,requiredMvpTables} from '../src/release/mvpStagingReadiness.ts';const app=express();app.use((req,res,next)=>{const s=globalThis.__mvpStageQa;if(s.role)req.authUser={id:'qa',role:s.role,status:s.status};next()});app.use(router);export default app;",
+   stdin:{contents:"import express from 'express';import router from '../src/routes/stagingReadiness.ts';export {buildMvpStagingReadiness,evaluateMvpEnvironment,requiredMvpTables,inspectStoragePrivacy} from '../src/release/mvpStagingReadiness.ts';const app=express();app.use((req,res,next)=>{const s=globalThis.__mvpStageQa;if(s.role)req.authUser={id:'qa',role:s.role,status:s.status};next()});app.use(router);export default app;",
      resolveDir:fileURLToPath(new URL(".",import.meta.url))},
    bundle:true,platform:"node",format:"esm",write:false,packages:"external",
    plugins:[{name:"readiness-fixture",setup(b){
@@ -28,6 +28,11 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
  let server;
  try{
    const lib=await import(file);
+   const storageEnv={SUPABASE_URL:'https://storage.example.invalid',SUPABASE_SERVICE_ROLE_KEY:'PRIVATE_STORAGE_KEY'};
+   let calls=0;const storageTransport=async(input,init)=>{calls++;assert.equal(String(input),'https://storage.example.invalid/storage/v1/bucket/udc-documents');assert.equal(init.redirect,'error');assert.equal(init.method,undefined);return Response.json({id:'udc-documents',public:false});};
+   assert.equal((await lib.inspectStoragePrivacy(storageEnv,storageTransport)).state,'configured');assert.equal(calls,1);
+   assert.equal((await lib.inspectStoragePrivacy(storageEnv,async()=>Response.json({id:'udc-documents',public:true}))).state,'review_required');
+   assert.equal((await lib.inspectStoragePrivacy(storageEnv,async()=>{throw Error('PRIVATE_STORAGE_KEY')})).state,'unavailable');assert.equal((await lib.inspectStoragePrivacy({...storageEnv,SUPABASE_URL:'http://storage.example.invalid'},storageTransport)).state,'unavailable');assert.equal(calls,1);
    const tables=lib.requiredMvpTables;
    assert.equal(tables.length,9);
    const allPresent=tables.map(table_name=>({table_name,rls_enabled:true}));
