@@ -83,7 +83,7 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
         </div>
       </div>
       <div className="av2-body">{children}</div>
-      <div className="av2-foot">UDC admin desk · new preview · classic desk stays available from the menu until you approve this one</div>
+      <div className="av2-foot">UDC admin desk · classic desk stays available from the menu</div>
     </div>
   </div></div>;
 }

@@ -25,7 +25,7 @@ function AdminV2({ user }: { user: AnyRecord }) {
   const firstCommission = commission[0];
 
   return <AdminV2Shell user={user} active="overview" title="Overview" queueCount={pendingCount || undefined}
-    sub={`${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })} · new admin desk preview`}>
+    sub={`${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })} · admin desk`}>
     <h1 className="av2-h1" data-testid="v2-headline">{queuesLoading ? 'Loading your desk…' : pendingCount === 0 ? 'All caught up. Nothing waiting.' : <><em>{pendingCount}</em> {pendingCount === 1 ? 'thing needs' : 'things need'} your OK</>}</h1>
     <div className="av2-strip">
       <div className={`av2-stat ${pendingCount ? 'hot' : ''}`} data-testid="v2-stat-pending"><div className="av2-micro2">Pending approvals</div><div className="v">{queuesLoading ? '…' : queuesFailed ? '!' : pendingCount}</div><div className="d">{queuesFailed ? 'a list did not load' : pendingCount ? 'oldest first below' : 'nothing waiting'}</div></div>
