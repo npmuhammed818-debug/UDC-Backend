@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 const url = new URL(process.env.UDC_DELIVERY_QA_DATABASE_URL ?? 'http://missing.invalid');
 assert.ok(['postgres:', 'postgresql:'].includes(url.protocol));
-assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.port, '5432');
+assert.equal(url.hostname, '127.0.0.1'); assert.ok(['5432','55433'].includes(url.port), 'dedicated local QA PostgreSQL only');
 assert.match(url.pathname, /^\/udc_qa_delivery_[a-z0-9_]+$/);
 assert.deepEqual([...url.searchParams.keys()], ['sslmode']); assert.equal(url.searchParams.get('sslmode'), 'disable');
 for (const key of Object.keys(process.env)) if (/^(SUPABASE_|WHATSAPP_|UDC_|AKIF_|NVIDIA_|OPENAI_|HERMES_|SESSION_SECRET)/.test(key)) delete process.env[key];

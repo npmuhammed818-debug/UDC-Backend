@@ -26,10 +26,10 @@ globalThis.fetch = async (input, init) => {
 try {
   await build({
     stdin: {
-      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import vault from './src/routes/vault';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(vault);app.use('/api',vault);export default app;`,
+      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import vault,{vaultShortRouter} from './src/routes/vault';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(vault);app.use(vaultShortRouter);app.use('/api',vault);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
-    plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function uploadDocumentBytes(path, bytes, type){ if(globalThis.__failStorage) throw new Error('down'); (globalThis.__stored ??= []).push({path,type,size:bytes.length}); return 'memory://'+path; }" })); } }],
+    plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path, bytes, type){ if(globalThis.__failStorage) throw new Error('down'); (globalThis.__stored ??= []).push({path,type,size:bytes.length}); return 'memory://'+path; }" })); } }],
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });

@@ -130,8 +130,9 @@ try {
   assert.ok(buyer);assert.equal(buyer.role, 'buyer');assert.equal(buyer.status, 'pending');assert.equal(buyer.email, email);
   const { rows: [company] } = await pool.query('select verification_status from companies where owner_user_id=$1', [buyer.id]);
   assert.equal(company.verification_status, 'pending');
+  assert.match(sent.at(-1).text.body, /6-digit code/, 'registration automatically sends the first code');
   await post('Verify email');
-  assert.match(sent.at(-1).text.body, /6-digit code/);
+  assert.match(sent.at(-1).text.body, /wait before trying again/, 'resend obeys one-minute cooldown');
   assert.equal(mail.outbox.length, 1);assert.equal(mail.outbox[0].to, email);
   const code = mail.outbox[0].code;
   await post('Email code ' + code);
@@ -148,7 +149,7 @@ try {
   console.log('PASSED combined signed WhatsApp + PostgreSQL: outage registration, mocked email code, ownership proof, replay rejection and unchanged role/company/passwordless permissions before trade intake.');
   await post({type:'list_reply',list_reply:{id:'udc:requirement'}});
   assert.match(sent.at(-1).text.body, /product/i);
-  for (const answer of ['Copper cathode', '100', 'Jebel Ali', 'CIF']) await post(answer);
+  for (const answer of ['Copper cathode', '100', 'Jebel Ali', 'CIF', 'Skip']) await post(answer);
   assert.equal(await count('select count(*) from buyer_requests where buyer_user_id=$1', [buyer.id]), 0);
   const submitId = randomUUID();
   await post({type:'button_reply',button_reply:{id:'udc:submit'}}, submitId);
@@ -186,12 +187,13 @@ try {
   for(const offer of offers){assert.equal(offer.unit,'kg');assert.equal(offer.currency,'AED');assert.equal(Number(offer.quantity),125);assert.equal(Number(offer.price),7);assert.equal(offer.status,'pending_admin_review');}
   assert.equal(providerCalls.length,calls,'seller and agent scalar flows should remain usable offline');
 
-  for(const text of ['Hello','AGREE','Buyer',`full_name: ${label} Retry; email: ${email}; company_name: QA Retry Imports Ltd; country: India`,'Submit'])await sendAs(conflictPhone,text);
-  assert.match(sent.at(-1).text.body,/already belongs/);
+  const conflictBefore=sent.length;
+  for(const text of ['Hello','AGREE','Buyer',`${label} Retry`,email])await sendAs(conflictPhone,text);
+  assert.ok(sent.slice(conflictBefore).some(m=>/already belongs/.test(m.text?.body??'')),'duplicate email refusal must be shown before the next question');
   assert.equal(await count('select count(*) from users where phone=$1',[conflictPhone]),0);
-  const {rows:drafts}=await pool.query("select data from whatsapp_chat_sessions where data->>'email'=$1 and purpose='profile_buyer'",[email]);
-  assert.equal(drafts.length,1);assert.equal(drafts[0].data.company_name,'QA Retry Imports Ltd');
-  for(const text of ['Edit',`email: retry-${randomUUID()}@example.invalid`,'Submit'])await sendAs(conflictPhone,text);
+  const {rows:drafts}=await pool.query("select data from whatsapp_chat_sessions where data->>'full_name'=$1 and purpose='profile_buyer'",[label+' Retry']);
+  assert.equal(drafts.length,1);assert.equal(drafts[0].data.email,undefined,'duplicate email is never added to the draft');
+  for(const text of [`retry-${randomUUID()}@example.invalid`,'QA Retry Imports Ltd','India','Submit'])await sendAs(conflictPhone,text);
   assert.equal(await count('select count(*) from users where phone=$1 and status=$2',[conflictPhone,'pending']),1);
   const {rows:[originalBuyer]}=await pool.query('select email,role,status from users where id=$1',[buyer.id]);
   assert.equal(originalBuyer.email,email);assert.equal(originalBuyer.role,'buyer');assert.equal(originalBuyer.status,'pending');

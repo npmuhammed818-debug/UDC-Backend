@@ -29,7 +29,7 @@ export async function dispatchShipmentNotifications(options: {
         JOIN public.notification_preferences p ON p.user_id=u.id
         WHERE u.id=${context.userId} AND u.phone=${phone} AND u.status='verified'
           AND p.optional_whatsapp=true AND p.reminders=true
-          AND (${context.dealId} IS NULL
+          AND (${context.dealId}::uuid IS NULL
             OR (u.role='buyer' AND d.buyer_user_id=u.id)
             OR (u.role='seller' AND d.seller_user_id=u.id)
             OR (u.role='agent' AND EXISTS(SELECT 1 FROM public.deal_participants dp

@@ -118,9 +118,9 @@ try {
 
   // 4 expiry: default 10 days, lazy, no accept after expiry
   const p4 = await mkPool(); const e1 = await invite(p4, b2, 100);
-  await pool.query("update buyer_pool_allocations set created_at = now() - interval '9 days 23 hours' where id=$1", [e1]);
+  await pool.query("update buyer_pool_allocations set created_at = now() - interval '239 hours' where id=$1", [e1]);
   assert.equal((await call("GET", "/buyer-pools/mine", undefined, b2.cookie)).body.allocations.find((a) => a.allocationId === e1).allocationStatus, "invited", "still open at 9d23h");
-  await pool.query("update buyer_pool_allocations set created_at = now() - interval '10 days 1 minute' where id=$1", [e1]);
+  await pool.query("update buyer_pool_allocations set created_at = now() - interval '14401 minutes' where id=$1", [e1]);
   assert.equal((await call("GET", "/buyer-pools/mine", undefined, b2.cookie)).body.allocations.find((a) => a.allocationId === e1).allocationStatus, "expired");
   const late = await call("POST", `/buyer-pools/invites/${e1}/accept`, {}, b2.cookie);
   assert.equal(late.status, 409); assert.equal(late.body.error, "invite_expired");
