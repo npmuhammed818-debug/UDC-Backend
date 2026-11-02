@@ -12,7 +12,7 @@ router.post('/auth/whatsapp-signin/request', async (req,res) => {
   const input = z.object({role:z.enum(['buyer','seller','agent']),linkAccount:z.boolean().optional()}).strict().safeParse(req.body);
   if(!input.success){res.status(400).json({error:'validation_error'});return;}
   if(input.data.linkAccount && (!req.authUser || !['buyer','seller','agent'].includes(req.authUser.role) || !['pending','under_review','active','verified'].includes(req.authUser.status))){res.status(403).json({error:'eligible_web_session_required'});return;}
-  try {res.set('Cache-Control','no-store').json(await requestWhatsAppSignin(input.data.role,input.data.linkAccount ? req.authUser!.id : undefined));}
+  try {res.set('Cache-Control','no-store').json(await requestWhatsAppSignin(input.data.role,input.data.linkAccount ? req.authUser!.id : undefined,authRateLimitKey(req)));}
   catch {res.status(503).json({error:'whatsapp_signin_unavailable'});}
 });
 router.post('/auth/whatsapp-signin/poll', async(req,res)=>{

@@ -55,7 +55,11 @@ test('WhatsApp web sign-in requires phone ownership, private browser proof and s
       const row=records.whatsappSigninChallengesTable.at(-1);assert.equal(row.code,undefined);assert.equal(row.browserToken,undefined);assert.notEqual(row.codeHash,c.code);assert.notEqual(row.browserTokenHash,c.browserToken);
       assert.match(await m.handleWhatsAppSignin('10000000001','CONFIRM LOGIN '+c.code),/first/);assert.equal(records.usersTable.length,0);
       assert.deepEqual(await (await poll(c.browserToken)).json(),{status:'pending'});
-      assert.match(await m.handleWhatsAppSignin('10000000001','LOGIN '+c.code),/Never approve/);
+      const warning=await m.handleWhatsAppSignin('10000000001','LOGIN '+c.code);
+      assert.match(warning,/Never approve/);
+      assert.match(warning,/internet address 127\.0\.0\.1 at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
+      assert.match(warning,/expires in 2 minutes/);
+      assert.ok(Math.abs(new Date(c.expiresAt).getTime()-(Date.now()+120_000))<20_000,'code lives about 2 minutes');
       assert.match(await m.handleWhatsAppSignin('10000000002','CONFIRM LOGIN '+c.code),/unavailable/);assert.equal(records.usersTable.length,0);
       assert.match(await m.handleWhatsAppSignin('10000000001','CONFIRM LOGIN '+c.code),/Approved/);
       assert.equal(records.usersTable[0].role,'seller');assert.equal(records.usersTable[0].status,'pending');
