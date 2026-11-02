@@ -6,8 +6,11 @@ chars); AKIF_VOICE_CONVERSATIONAL=off returns to fixed sentences only. Daily cap
 
 Provider-agnostic: AKIF_TTS_PROVIDER selects "elevenlabs" (default, needs ELEVENLABS_API_KEY;
 a missing key means voice is disabled) or "gemini" (free tier, explicit data opt-in). Whichever
-provider runs, only the exact fixed sentences in speakable_replies.json are ever sent to it, so
-no user, deal or account text can reach a speech provider. No automatic switch between providers.
+provider runs, only the exact fixed sentences in speakable_replies.json, or privacy-filtered
+conversational text, plus a fixed style instruction, are ever sent to it, so no user, deal or
+account text can reach a speech provider. When the provider is Gemini and its free quota or the
+provider itself fails, ElevenLabs is tried once as fallback; if both fail the caller gets an
+error and answers in text instead.
 """
 import base64
 import json
@@ -135,7 +138,9 @@ def _daily_cap_ok(chars: int = 0) -> bool:
 
 def speech_status() -> dict:
     provider = _provider()
-    base = {"provider": provider, "automatic_provider_fallback": False}
+    base = {"provider": provider,
+            "fallback": "elevenlabs" if provider == "gemini" and _elevenlabs_ready() else None,
+            "automatic_provider_fallback": provider == "gemini" and _elevenlabs_ready()}
     try:
         if provider == "elevenlabs":
             _, model, _voice = _elevenlabs_config()
@@ -151,7 +156,7 @@ def speech_status() -> dict:
 def wav_to_ogg_opus(wav: bytes) -> bytes:
     try:
         done = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-c:a", "libopus", "-b:a", "32k", "-f", "ogg", "pipe:1"],
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", "-f", "ogg", "pipe:1"],
             input=wav, capture_output=True, timeout=20, check=True)
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         raise HTTPException(status_code=503, detail="audio_conversion_unavailable") from exc
@@ -201,23 +206,42 @@ def synthesize(text: str, conversational: bool = False, language: str = "english
         if not (conversational and os.getenv("AKIF_VOICE_CONVERSATIONAL") != "off" and conversational_text_ok(text)):
             raise HTTPException(status_code=422, detail="text_not_allowed_for_speech")
     provider = _provider()
+    if provider == "gemini":
+        try:
+            return _synthesize_gemini(text, language)
+        except HTTPException as exc:
+            # Free-quota or provider failure: one ElevenLabs try, then the caller answers in text.
+            if exc.status_code in (429, 502) and _elevenlabs_ready():
+                return _synthesize_elevenlabs(text, language)
+            raise
     if provider == "elevenlabs":
         return _synthesize_elevenlabs(text, language)
-    if provider != "gemini":
-        raise HTTPException(status_code=503, detail="tts_provider_unknown")
-    if language != "english":
-        # The Gemini free-tier path is English-only; non-English speech fails closed.
-        raise HTTPException(status_code=503, detail="voice_language_not_allowed")
-    return _synthesize_gemini(text)
+    raise HTTPException(status_code=503, detail="tts_provider_unknown")
 
 
-def _synthesize_gemini(text: str) -> bytes:
+# Fixed warm-delivery style per language (owner pick, 2026-11-02). Static instruction text only;
+# the spoken sentence is appended after it, already allowlisted or privacy-filtered above.
+_GEMINI_STYLE = {
+    "english": "Speak as a warm, familiar friend sharing useful news: genuine audible smile, relaxed natural pace, gentle energy. Say only this: ",
+    "malayalam": "Speak as a warm trade-broker friend from Kerala: genuine audible smile, relaxed natural pace, gentle energy, native Malayalam speaker. Say only this in Malayalam: ",
+    "hindi": "Speak as a warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Hindi speaker. Say only this in Hindi: ",
+    "tamil": "Speak as a warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Tamil speaker. Say only this in Tamil: ",
+    "arabic": "Speak as a warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Arabic speaker. Say only this in Arabic: ",
+}
+
+
+def _elevenlabs_ready() -> bool:
+    return bool(os.getenv("ELEVENLABS_API_KEY", "").strip() and os.getenv("ELEVENLABS_VOICE_ID", "").strip())
+
+
+def _synthesize_gemini(text: str, language: str = "english") -> bytes:
     key, model, voice = _config()
     if not _daily_cap_ok(len(text.strip())):
         raise HTTPException(status_code=429, detail="tts_daily_cap_reached")
+    styled = _GEMINI_STYLE[language] + "\"" + text.strip() + "\""
     body = {
         "model": model,
-        "input": [{"type": "user_input", "content": [{"type": "text", "text": text.strip()}]}],
+        "input": [{"type": "user_input", "content": [{"type": "text", "text": styled}]}],
         "response_format": {"type": "audio"},
         "generation_config": {"speech_config": [{"voice": voice}]},
     }

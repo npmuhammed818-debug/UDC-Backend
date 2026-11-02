@@ -371,7 +371,7 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   const sent = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
     method: "POST", signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId } }),
+    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId, voice: true } }),
   });
   if(!sent)return unknownSubmission();
   if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}

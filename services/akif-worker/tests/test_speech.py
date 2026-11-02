@@ -74,7 +74,7 @@ def test_elevenlabs_disabled_without_key_or_switch(monkeypatch):
     assert speech.speech_status()["reason"] == "voice_replies_disabled"
     monkeypatch.setenv("AKIF_VOICE_REPLIES", "on")
     assert speech.speech_status() == {"provider": "elevenlabs", "automatic_provider_fallback": False,
-                                      "configured": True, "model": "eleven_flash_v2_5"}
+                                      "fallback": None, "configured": True, "model": "eleven_flash_v2_5"}
     monkeypatch.setenv("ELEVENLABS_MODEL_ID", "something-else")
     assert speech.speech_status()["reason"] == "tts_model_not_allowed"
 
@@ -258,14 +258,64 @@ def test_unknown_language_fails_closed(monkeypatch):
     assert not called
 
 
-def test_gemini_path_is_english_only(monkeypatch):
+def _gemini_env(monkeypatch):
     monkeypatch.setenv("AKIF_VOICE_REPLIES", "on")
     monkeypatch.setenv("AKIF_TTS_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setenv("AKIF_GEMINI_DATA_PROCESSING_ACCEPTED", "true")
-    called = []
-    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda *a, **k: called.append(1))
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    speech._calls.clear()
+
+
+def _gemini_ok_response():
+    import base64, json
+    return _Resp(json.dumps({"steps": [{"type": "model_output", "content": [{"type": "audio", "data": base64.b64encode(b"wav").decode()}]}]}).encode())
+
+
+def test_gemini_styles_text_and_supports_non_english(monkeypatch):
+    _gemini_env(monkeypatch)
+    seen = []
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _gemini_ok_response())[1])
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    text = next(iter(speech.ALLOWED_TEXTS))
+    assert speech.synthesize(text, language="malayalam") == b"ogg:wav"
+    import json
+    sent = json.loads(seen[0].data)["input"][0]["content"][0]["text"]
+    assert sent.startswith(speech._GEMINI_STYLE["malayalam"]), "fixed warm style prepended"
+    assert sent.endswith('"' + text + '"'), "spoken sentence unchanged inside the style"
+
+
+def test_gemini_quota_or_failure_falls_back_to_elevenlabs(monkeypatch):
+    _gemini_env(monkeypatch)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice123")
+    speech._calls.clear()
+    seen = []
+    def quota_then_ok(req, timeout=None):
+        if "generativelanguage" in req.full_url:
+            raise speech.urllib.error.HTTPError(req.full_url, 429, "quota", {}, None)
+        seen.append(req)
+        return _Resp(b"mp3-bytes")
+    monkeypatch.setattr(speech.urllib.request, "urlopen", quota_then_ok)
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    assert speech.synthesize(next(iter(speech.ALLOWED_TEXTS))) == b"ogg:mp3-bytes"
+    assert len(seen) == 1 and "elevenlabs" in seen[0].full_url, "Gemini cap -> single ElevenLabs fallback"
+
+
+def test_gemini_and_elevenlabs_both_down_raise_for_text_reply(monkeypatch):
+    _gemini_env(monkeypatch)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice123")
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
     with pytest.raises(HTTPException) as e:
-        speech.synthesize(next(iter(speech.ALLOWED_TEXTS)), language="hindi")
-    assert e.value.status_code == 503 and e.value.detail == "voice_language_not_allowed"
-    assert not called
+        speech.synthesize(next(iter(speech.ALLOWED_TEXTS)))
+    assert e.value.status_code == 502 and e.value.detail == "speech_synthesis_failed"
+
+
+def test_gemini_no_fallback_when_elevenlabs_not_configured(monkeypatch):
+    _gemini_env(monkeypatch)
+    monkeypatch.setattr(speech.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
+    with pytest.raises(HTTPException) as e:
+        speech.synthesize(next(iter(speech.ALLOWED_TEXTS)))
+    assert e.value.status_code == 502
