@@ -131,7 +131,8 @@ def test_elevenlabs_http_error_logs_status_and_provider_message(monkeypatch, cap
     record = next(r for r in caplog.records if "tts_provider_error" in r.getMessage())
     payload = json.loads(record.getMessage())
     assert payload["httpStatus"] == 429
-    assert payload["providerMessage"] == "quota exceeded"
+    assert payload["code"] == "provider_http_error"
+    assert "providerMessage" not in payload
     assert "test-key" not in record.getMessage()  # the API key never reaches logs
 
 
@@ -321,3 +322,18 @@ def test_gemini_no_fallback_when_elevenlabs_not_configured(monkeypatch):
     with pytest.raises(HTTPException) as e:
         speech.synthesize(next(iter(speech.ALLOWED_TEXTS)))
     assert e.value.status_code == 502
+
+
+def test_provider_error_body_never_logged(monkeypatch, caplog):
+    import io
+    monkeypatch.setenv('ELEVENLABS_API_KEY', 'test-key')
+    monkeypatch.setenv('ELEVENLABS_VOICE_ID', 'voice123')
+    monkeypatch.setenv('AKIF_VOICE_PROVIDER', 'elevenlabs')
+    speech._calls.clear()
+    def fail(req, timeout=None):
+        raise speech.urllib.error.HTTPError(req.full_url, 400, 'private echo', {}, io.BytesIO(b'{"detail":"PRIVATE_SYNTHETIC_CONTENT"}'))
+    monkeypatch.setattr(speech.urllib.request, 'urlopen', fail)
+    with pytest.raises(HTTPException):
+        speech.synthesize(next(iter(speech.ALLOWED_TEXTS)))
+    assert 'PRIVATE_SYNTHETIC_CONTENT' not in caplog.text
+    assert 'private echo' not in caplog.text

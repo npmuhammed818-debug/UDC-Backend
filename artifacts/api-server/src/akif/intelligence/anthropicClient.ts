@@ -1,3 +1,4 @@
+import {requirePrivateServiceUrl} from '../../privacy/serviceUrl.ts';
 // Anthropic (Claude) as the optional strong model for AKIF's profile brain and
 // hard turns. Fully inert unless AKIF_BRAIN_MODEL_PROVIDER=anthropic AND
 // ANTHROPIC_API_KEY are both set - no key, no traffic, no spend. Gemini stays
@@ -26,9 +27,9 @@ export async function runAnthropicChat(
 ): Promise<{ content: string }> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new Error('Anthropic strong model not configured');
-  const baseUrl = (process.env.ANTHROPIC_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, '');
+  const baseUrl = requirePrivateServiceUrl(process.env.ANTHROPIC_BASE_URL?.trim() || DEFAULT_BASE_URL);
   const response = await fetch(`${baseUrl}/v1/messages`, {
-    method: 'POST',
+    method: 'POST', redirect: 'error',
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
       'content-type': 'application/json',

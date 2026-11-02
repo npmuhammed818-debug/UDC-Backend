@@ -181,22 +181,13 @@ def _synthesize_elevenlabs(text: str, language: str = "english") -> bytes:
         if not audio:
             raise ValueError("no_audio")
     except urllib.error.HTTPError as exc:
-        # Name the provider's own answer so a bad key, bad voice, quota and outage can
-        # be told apart. Status and provider message only - never the request text,
-        # never any header (the API key rides in headers).
-        detail = ""
-        try:
-            payload = json.loads(exc.read() or b"{}")
-            raw = payload.get("detail")
-            detail = (raw.get("message") if isinstance(raw, dict) else str(raw or ""))[:200]
-        except Exception:
-            detail = ""
+        # Provider bodies are uncontrolled and may echo private submitted text.
         logger.warning(json.dumps({"event": "tts_provider_error", "provider": "elevenlabs",
-                                   "httpStatus": exc.code, "providerMessage": detail}))
+                                   "httpStatus": exc.code, "code": "provider_http_error"}))
         raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
     except Exception as exc:
         logger.warning(json.dumps({"event": "tts_provider_error", "provider": "elevenlabs",
-                                   "httpStatus": None, "providerMessage": ""}))
+                                   "httpStatus": None, "code": "provider_transport_error"}))
         raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
     return wav_to_ogg_opus(audio)  # ffmpeg detects the input format (mp3 here)
 
