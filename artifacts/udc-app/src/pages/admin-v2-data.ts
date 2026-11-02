@@ -100,14 +100,14 @@ export function useAdminV2Data() {
   for (const item of buyers.data?.requirements ?? []) queue.push({
     key: `buyer-${item.id}`, chip: 'BUYER NEED', chipClass: 'trade', title: `${item.quantity ?? ''} ${item.unit || ''} · ${item.destination || 'destination open'}`,
     detail: `Target ${item.currency || ''} ${item.targetPrice || 'not stated'}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: '',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: `/admin/v2/trades#buyer-${item.id}`,
     approve: () => patch(`/api/admin/buyer-requests/${item.id}/status`, { status: 'approved' }),
     decline: () => patch(`/api/admin/buyer-requests/${item.id}/status`, { status: 'rejected' }),
   });
   for (const item of sellers.data?.offers ?? []) queue.push({
     key: `seller-${item.id}`, chip: 'SELLER OFFER', chipClass: 'trade', title: `${item.quantity ?? ''} ${item.unit || ''} · ${item.originCountry || 'origin pending'}`,
     detail: `${item.currency || ''} ${item.price ?? ''}/${item.unit || ''}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: '',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: `/admin/v2/trades#seller-${item.id}`,
     approve: () => patch(`/api/admin/seller-offers/${item.id}/status`, { status: 'approved' }),
     decline: () => patch(`/api/admin/seller-offers/${item.id}/status`, { status: 'rejected' }),
   });

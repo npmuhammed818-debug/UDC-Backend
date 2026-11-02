@@ -313,6 +313,31 @@ test('admin trade workflows preserve verification, ownership, review and payment
       records.dealsTable[0].unit='kg';assert.equal((await request('/admin/commissions',perMt)).status,400);
       records.dealsTable[0].unit='MT';assert.equal((await request('/admin/commissions',perMt)).data.commission.amount,'250.00');
     });
+    await t.test('trade review rolls back when its audit fails',async()=>{
+      for(const [table,kind] of [['buyerRequestsTable','buyer-requests'],['sellerListingsTable','seller-offers']]){
+        const id=randomUUID();records[table].push({id,status:'pending_admin_review',buyerUserId:'buyer',sellerUserId:'seller'});
+        state.failAudit=true;
+        assert.equal((await request(`/admin/${kind}/${id}/status`,{status:'approved'},'PATCH')).status,500);
+        assert.equal(records[table].find((r:any)=>r.id===id).status,'pending_admin_review');
+      }
+    });
+    await t.test('finance changes roll back if their audit cannot be recorded',async()=>{
+      const initialInstruments=structuredClone(records.dealFinancialsTable);
+      state.failAudit=true;
+      assert.equal((await request('/admin/financial-instruments',{dealId,amount:'100',currency:'USD'})).status,500);
+      assert.deepEqual(records.dealFinancialsTable,initialInstruments);
+      const created=await request('/admin/financial-instruments',{dealId,amount:'100',currency:'USD'});
+      assert.equal(created.status,201);
+      const instrumentId=created.data.instrument.id;
+      state.failAudit=true;
+      assert.equal((await request(`/admin/financial-instruments/${instrumentId}`,{status:'confirmed'},'PATCH')).status,500);
+      assert.equal(records.dealFinancialsTable.find((x:any)=>x.id===instrumentId).status,'not_started');
+      const commissionId=randomUUID();
+      records.commissionsTable.push({id:commissionId,dealId,beneficiaryUserId:'agent',status:'pending',amount:'1',currency:'USD'});
+      state.failAudit=true;
+      assert.equal((await request(`/admin/commissions/${commissionId}/status`,{status:'cancelled'},'PATCH')).status,500);
+      assert.equal(records.commissionsTable.find((x:any)=>x.id===commissionId).status,'pending');
+    });
     await t.test('commission payout records require a completed deal',async()=>{
       const id=randomUUID();records.commissionsTable=[{id,dealId,beneficiaryUserId:'agent',currency:'USD',amount:'100',status:'pending'}];
       assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,409);

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fmtStatus, loadJson, pillFor, timeAgo, useAdminV2Data, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell } from './admin-v2-shell';
 import '../admin-v2.css';
+import { FinanceControls } from './admin-v2-finance-controls';
 
 function money(amount: unknown, currency?: string) {
   const n = Number(amount);
@@ -61,7 +62,7 @@ function Finance({ user }: { user: AnyRecord }) {
           </tbody></table>}
       </div>
     </div>
-    <p className="av2-d" style={{ marginTop: 14 }}>This page is read-only. Adding and editing payment instruments or commissions is not available in the new desk yet.</p>
+    <FinanceControls />
   </AdminV2Shell>;
 }
 
