@@ -369,6 +369,10 @@ test('admin trade workflows preserve verification, ownership, review and payment
       assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,200);assert.equal(records.commissionsTable.length,before+1);assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,409);
       records.commissionsTable=records.commissionsTable.filter((c:any)=>c.beneficiaryUserId!==beneficiary);records.dealsTable.find((r:any)=>r.id===dealId).status=old;
     });
+    await t.test('meeting representative is a human-attested private arrangement, never a booking',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};const id=randomUUID();records.dealMeetingsTable.push({id,dealId,status:'scheduled'});const input={name:'Synthetic Representative',role:'Observer',agreementReference:'Synthetic agreement from both parties and representative',partiesAgreed:true,representativeAgreed:true,noPaymentOrBooking:true};
+      assert.equal((await request(`/admin/meetings/${id}/representative`,{...input,representativeAgreed:false})).status,400);state.failAudit=true;assert.equal((await request(`/admin/meetings/${id}/representative`,input)).status,500);assert.equal((await request(`/admin/meetings/${id}/representative`,input)).status,201);const record=await request(`/admin/meetings/${id}/representative`,null,'GET');assert.equal(record.data.record.metadata.recordOnly,true);records.dealMeetingsTable.find((r:any)=>r.id===id).status='cancelled';assert.equal((await request(`/admin/meetings/${id}/representative`,input)).status,409);
+    });
     await t.test('company directory exposes full saved profiles to admins only',async()=>{
       state.user={id:'admin',role:'admin'};
       const response=await request('/admin/companies',undefined,'GET');assert.equal(response.status,200);assert.ok(Array.isArray(response.data.companies));

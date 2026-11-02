@@ -47,7 +47,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     const run = () => {
       if (inserted) return inserted;
       if (ignoreConflict && rows[table._tableName].some(r => r.providerMessageId === input.providerMessageId && input.providerMessageId)) return inserted = [];
-      const records = (Array.isArray(input) ? input : [input]).map(item => ({ id: randomUUID(), ...item }));
+      const records = (Array.isArray(input) ? input : [input]).map(item => ({ id: randomUUID(),createdAt:new Date(), ...item }));
       rows[table._tableName].push(...records);
       return inserted = records;
     };
@@ -57,7 +57,8 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       then(resolve: any, reject: any) { return Promise.resolve().then(run).then(resolve, reject); } };
     return q;
   }
-  const state: any = { tables, db: { select, insert }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
+  function update(table:any){let input:any,condition:any;const run=()=>{const values=rows[table._tableName].filter(r=>evaluate(condition,{[table._tableName]:r}));values.forEach(r=>Object.assign(r,input));return values;};const q:any={set(v:any){input=v;return q;},where(v:any){condition=v;return q;},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};return q;}
+  const state: any = { tables, db: { select, insert,update }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
     privacyReply: null, saved: null, decision: null, dealDecision: null, dealCalls: 0,
     send: async (to: string, body: any) => { state.sent.push({ to, body }); return { delivered: true, messageId: randomUUID() }; },
     sign: async (path: string) => { state.signed.push(path); return `https://signed.example/${path}`; },
@@ -569,6 +570,15 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ text: { body: "tell me about LOI" } });
       assert.equal(state.guidanceCalls.length, 1);
     });
+    await t.test('typed voice relay confirmation sends exact preview once and rejects cross-user or expired previews',async()=>{
+      reset();seedDeal();state.transcript='When can loading start?';state.dealDecision={intent:'question',replyToSender:'Noted',relay:true,relayToCounterparty:'When can loading start?'};
+      await message({audio:{id:'synthetic-safe-question'}});const preview=rows.dealConversationEventsTable.find(r=>r.intent==='voice_relay_preview');assert.ok(preview);assert.equal(state.sent.filter(r=>r.to==='10000000002').length,0);
+      const context=rows.whatsappMessageContextsTable.find(r=>r.kind===`voice_relay_preview:${preview.id}`);assert.ok(context);
+      await message({from:'10000000002',text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.equal(state.sent.filter(r=>r.to==='10000000001'&&r.body==='When can loading start?').length,0);
+      await message({text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.equal(state.sent.filter(r=>r.to==='10000000002'&&r.body==='When can loading start?').length,1);assert.equal(preview.relayed,true);
+      await message({text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.equal(state.sent.filter(r=>r.to==='10000000002'&&r.body==='When can loading start?').length,1);
+      preview.createdAt=new Date(Date.now()-16*60*1000);await message({text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.match(state.sent.at(-1).body,/unavailable/);delete state.transcript;
+    });
     await t.test("own company details are shown in the prompt; only LOI and ICPO hide the other side", async () => {
       reset(); seedDeal();
       rows.companiesTable = [{ ownerUserId: "buyer", companyName: "Acme Metals Ltd", address: "1 Test Road", registrationNumber: "REG-1" }];
@@ -608,7 +618,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.transcript = "I can offer 500 dollars per ton";
       state.dealDecision = { intent: "clarification", replyToSender: "Noted.", relay: true, relayToCounterparty: "Seller offers $500/MT." };
       await message({ audio: { id: "voice-deal-offer" } });
-      assert.match(state.sent.at(-1).body, /confirm what you want me to pass to the other side in text/);
+      assert.match(state.sent.at(-1).body, /confirm this clarification in text/);
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 2);
       assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
       // A pure question on a voice note still answers directly, no hold needed.

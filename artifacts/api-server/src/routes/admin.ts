@@ -1289,6 +1289,13 @@ router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, re
   const dealId = String(req.params["dealId"] ?? ""); const meetings = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)); res.json({ meetings });
 });
 
+router.post('/admin/meetings/:meetingId/representative',requireRole('admin'),async(req,res)=>{
+ try{const id=z.string().uuid().parse(req.params.meetingId);const input=z.object({name:z.string().trim().min(2).max(120),role:z.string().trim().min(2).max(120),agreementReference:z.string().trim().min(12).max(500),partiesAgreed:z.literal(true),representativeAgreed:z.literal(true),noPaymentOrBooking:z.literal(true)}).strict().parse(req.body);
+ await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'meeting:'+id}))`);const [meeting]=await tx.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.id,id)).limit(1);if(!meeting||meeting.status==='cancelled'||meeting.status==='completed')throw new AgreementError('active_meeting_required');await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'meeting_representative_confirmed',entityType:'meeting',entityId:id,metadata:{...input,dealId:meeting.dealId,recordOnly:true}});});res.status(201).json({recorded:true,attendanceNotGuaranteed:true});
+ }catch(error){res.status(error instanceof z.ZodError?400:error instanceof AgreementError?409:500).json({error:error instanceof AgreementError?error.message:'representative_record_failed'});}
+});
+router.get('/admin/meetings/:meetingId/representative',requireRole('admin'),async(req,res)=>{try{const id=z.string().uuid().parse(req.params.meetingId);const [record]=await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.action,'meeting_representative_confirmed'),eq(auditLogsTable.entityType,'meeting'),eq(auditLogsTable.entityId,id))).orderBy(desc(auditLogsTable.createdAt)).limit(1);res.setHeader('Cache-Control','no-store');res.json({record:record??null});}catch{res.status(400).json({error:'representative_record_unavailable'});}});
+
 router.patch("/admin/meetings/:meetingId", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const id = z.string().uuid().parse(req.params["meetingId"]);

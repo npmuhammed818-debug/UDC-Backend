@@ -1,3 +1,4 @@
+import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
@@ -14,7 +15,7 @@ import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap"
 import { trackReplyFailures, markReadAndTyping } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
 import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
@@ -890,6 +891,21 @@ async function handleDealWhatsAppMessage(
     return { reply: (pauseRequest.kind === "pause" ? pausedConfirmationToSender : closedConfirmationToSender)(deal.dealNumber, result.told), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
   }
 
+  const confirmedVoiceEvent=confirmedVoiceRelay(messageBody,options.voiceTranscript===true,replyContextKind);
+  if(confirmedVoiceEvent){
+    // Scope to this verified sender and already-authorized active deal. A reply
+    // cannot select another person's preview or authorize a commercial decision.
+    const [preview]=await db.select().from(dealConversationEventsTable).where(and(eq(dealConversationEventsTable.id,confirmedVoiceEvent),eq(dealConversationEventsTable.dealId,deal.id),eq(dealConversationEventsTable.userId,sender.id),eq(dealConversationEventsTable.intent,'voice_relay_preview'))).limit(1);
+    if(!preview?.relayText||!preview.createdAt||Date.now()-new Date(preview.createdAt).getTime()>15*60*1000||['completed','cancelled','rejected','on_hold','disputed'].includes(deal.status))return {reply:'That voice preview is unavailable. Please type your message again.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    // Atomic claim prevents replay. An uncertain delivery is never auto-retried.
+    const claimed=await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'voice_relay:'+preview.id}))`);const [activeDeal]=await tx.select({status:dealsTable.status}).from(dealsTable).where(eq(dealsTable.id,deal.id)).limit(1);const [activeReceiver]=await tx.select({id:dealParticipantsTable.id}).from(dealParticipantsTable).where(and(eq(dealParticipantsTable.dealId,deal.id),eq(dealParticipantsTable.userId,receiverUserId),eq(dealParticipantsTable.status,'active'))).limit(1);if(!activeDeal||!activeReceiver||['completed','cancelled','rejected','on_hold','disputed'].includes(activeDeal.status))return false;const [current]=await tx.select().from(dealConversationEventsTable).where(eq(dealConversationEventsTable.id,preview.id)).limit(1);if(!current||current.relayed)return false;const [attempt]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'voice_relay_send_claimed'),eq(auditLogsTable.entityId,preview.id))).limit(1);if(attempt)return false;await tx.insert(auditLogsTable).values({actorUserId:sender.id,action:'voice_relay_send_claimed',entityType:'deal_conversation_event',entityId:preview.id,metadata:{dealId:deal.id,typedConfirmation:true}});return true;});
+    if(!claimed)return {reply:'This voice preview was already sent or attempted. I will not send it twice. Please ask UDC if delivery is unclear.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    const [receiver]=await db.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,receiverUserId)).limit(1);
+    if(!receiver?.phone||receiver.status!=='verified')return {reply:'The other account needs review, so nothing was sent.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    const delivery=await deliverWhatsAppReply(receiver.phone,preview.relayText);if(delivery.delivered){await db.update(dealConversationEventsTable).set({relayed:true}).where(eq(dealConversationEventsTable.id,preview.id));if(delivery.messageId)await db.insert(whatsappMessageContextsTable).values({providerMessageId:delivery.messageId,dealId:deal.id,recipientUserId:receiverUserId,kind:`mediated_clarification:${preview.id}`}).onConflictDoNothing();}
+    return {reply:delivery.delivered?'Passed on the exact text you confirmed. Your audio was not shared.':'I could not confirm delivery. I will not resend automatically. Ask UDC to check before trying again.',deliveredToCounterparty:delivery.delivered,dealId:deal.id,recipientUserId:sender.id};
+  }
+
   const draftRequest = requestedWhatsAppDraft(messageBody);
   if (draftRequest) {
     if (!mayPrepareWhatsAppDraft(draftRequest.type, sender.id === deal.buyerUserId)) {
@@ -1185,31 +1201,12 @@ async function handleDealWhatsAppMessage(
     };
   }
 
-  // Voice notes inside a deal room flow through the same interpreter as typed
-  // messages, but a transcript can mis-hear numbers, so anything voice-derived
-  // that would commit commercially (accept / reject / counteroffer) or reach
-  // the counterparty (relay) is always held for a text confirmation first.
-  const voiceRelay = aiDecision.relay === true && typeof aiDecision.relayToCounterparty === "string" && aiDecision.relayToCounterparty.trim().length > 0;
-  if (options.voiceTranscript && (["acceptance", "rejection", "counteroffer"].includes(aiDecision.intent) || voiceRelay)) {
-    await db.insert(dealConversationEventsTable).values({
-      dealId: deal.id,
-      userId: sender.id,
-      participantRole: sender.role,
-      intent: "voice_transcript_unconfirmed",
-      originalText: messageBody,
-      relayText: null,
-      relayed: false,
-    });
-    const voiceAction = ["acceptance", "rejection", "counteroffer"].includes(aiDecision.intent)
-      ? `this ${aiDecision.intent}`
-      : "what you want me to pass to the other side";
-    return {
-      reply: `I heard: ${messageBody.slice(0, 2000)}. Voice notes can mis-hear numbers, so please confirm ${voiceAction} in text before I act on it.`,
-      deliveredToCounterparty: false,
-      dealId: deal.id,
-      recipientUserId: sender.id,
-      contextKind: "mediator_reply_voice_unconfirmed",
-    };
+  // Preserve the reviewed text. Never forward the speaker's raw audio or let
+  // a transcript approve an acceptance, rejection or counteroffer.
+  const voiceRelay = pendingVoiceRelay(aiDecision.intent,aiDecision.relay===true,aiDecision.relayToCounterparty);
+  if(options.voiceTranscript&&(aiDecision.relay===true||['acceptance','rejection','counteroffer'].includes(aiDecision.intent))){
+    const [preview]=await db.insert(dealConversationEventsTable).values({dealId:deal.id,userId:sender.id,participantRole:sender.role,intent:voiceRelay?'voice_relay_preview':'voice_transcript_unconfirmed',originalText:messageBody,relayText:voiceRelay?aiDecision.relayToCounterparty:null,relayed:false}).returning({id:dealConversationEventsTable.id});
+    return {reply:voiceRelay?`I can pass this text to the other side, not your audio:\n\n${aiDecision.relayToCounterparty}\n\nCheck it carefully. Reply to this message in text with ${voiceRelayConfirmation} to send exactly this. Nothing has been sent yet.`:`I heard: ${messageBody.slice(0,2000)}. Voice can mis-hear numbers. Please confirm this ${aiDecision.intent} in text by typing the exact trade instruction yourself before I act on it.`,deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id,contextKind:voiceRelay?`voice_relay_preview:${preview.id}`:'mediator_reply_voice_unconfirmed'};
   }
 
   const effectiveIntent = aiDecision.intent;
