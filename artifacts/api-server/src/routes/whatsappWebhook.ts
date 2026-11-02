@@ -14,7 +14,7 @@ import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap"
 import { trackReplyFailures, markReadAndTyping } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
 import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
 import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
@@ -586,6 +586,46 @@ async function handleWhatsAppDealDocument(
 
   await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "editor" });
 
+  // Deal-room photo relay: a plain photo in an active deal is shared with the other side
+  // as a viewable image (goods photos are the content itself - there is no "rewrite" for a
+  // picture). Captions naming a trade document stay on the document path above and are
+  // never auto-relayed. The sender is named by role only; numbers and names stay private.
+  let photoRelayedTo = 0;
+  if (documentType === "image") {
+    try {
+      const [dealRow] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+        .where(eq(dealsTable.id, dealId)).limit(1);
+      const counterparties = await db.select({
+        userId: dealParticipantsTable.userId,
+        phone: usersTable.phone,
+      }).from(dealParticipantsTable)
+        .innerJoin(usersTable, eq(usersTable.id, dealParticipantsTable.userId))
+        .where(and(eq(dealParticipantsTable.dealId, dealId), ne(dealParticipantsTable.userId, sender.id)));
+      const senderSide = sender.role === "buyer" ? "buyer" : sender.role === "seller" ? "seller" : "other side";
+      const caption = `Photo from the ${senderSide} in deal ${dealRow?.dealNumber ?? "your deal"}.${document.caption ? ` Note: ${document.caption.slice(0, 300)}` : ""}`;
+      for (const side of counterparties) {
+        if (!side.phone) continue;
+        try {
+          const signedUrl = await createSignedDownloadUrl(objectPath);
+          const delivery = await sendWhatsAppImage(side.phone, signedUrl, caption);
+          if (delivery.delivered) {
+            photoRelayedTo += 1;
+            await db.insert(documentAccessTable).values({
+              documentId: savedDocument.id, userId: side.userId, accessRole: "viewer",
+            }).onConflictDoNothing();
+            if ("messageId" in delivery && delivery.messageId) {
+              await db.insert(whatsappMessageContextsTable).values({
+                providerMessageId: delivery.messageId, dealId,
+                recipientUserId: side.userId, kind: "deal_image_relay",
+              }).onConflictDoNothing();
+            }
+          }
+        } catch { /* one failed recipient never blocks the others */ }
+      }
+    } catch { /* relay failure still leaves the photo stored in the deal */ }
+  }
+
+  if (documentType !== "image") {
   void processDocumentIntelligence({
     documentId: savedDocument.id,
     dealId,
@@ -613,6 +653,7 @@ async function handleWhatsAppDealDocument(
         `I attached the ${documentType} to the deal, but full extraction failed. UDC kept the original file for review and retry.`,
       ).catch(() => undefined);
     });
+  }
 
   await setActiveDealContext(sender.id, dealId);
   await db.insert(dealConversationEventsTable).values({
@@ -626,7 +667,11 @@ async function handleWhatsAppDealDocument(
   });
 
   return {
-    reply: `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
+    reply: documentType === "image"
+      ? photoRelayedTo > 0
+        ? `Got the photo and passed it to the other side in this deal.\n\n${SENSITIVE_UPLOAD_WARNING}`
+        : `Got the photo and kept it in this deal. I could not pass it to the other side just now - I’ll keep it here.\n\n${SENSITIVE_UPLOAD_WARNING}`
+      : `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
     dealId,
     recipientUserId: sender.id,
   };

@@ -18,6 +18,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const evaluate = (node: any, row: any): any => {
     if (node?.kind === "column") return row[node.table]?.[node.key];
     if (node?.kind === "eq") return evaluate(node.a, row) === evaluate(node.b, row);
+    if (node?.kind === "ne") return evaluate(node.a, row) !== evaluate(node.b, row);
     if (node?.kind === "and") return node.args.every((n: any) => evaluate(n, row));
     if (node?.kind === "or") return node.args.some((n: any) => evaluate(n, row));
     if (node?.kind === "in" && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
@@ -106,7 +107,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents:
         'const s=globalThis.__whatsappRoutes;' + (args.path === "db"
           ? 'export const db=s.db;' + names.map(n => `export const ${n}=s.tables.${n};`).join("")
-          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const desc=x=>x;'
+          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const desc=x=>x;'
           : fixtures[args.path]) }));
     } }],
   });
@@ -117,6 +118,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const reset = () => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
+    state.images = []; state.voice = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
     state.receipts=[];state.failReceipt=false;
     state.windowEvidence=[];
@@ -451,6 +453,41 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       rows.documentsTable = [{ id: "img", dealId: "deal-a", documentType: "image", uploadedBy: "seller", status: "approved", fileUrl: "storage://udc-documents/deals/deal-a/photo.jpg" }];
       await message({ text: { body: "send photo to me" } });
       assert.equal(state.images?.length ?? 0, 0);
+    });
+    await t.test("a plain photo in a deal room relays to the other side as a viewable image", async () => {
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-b", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-b" }, image: { id: "img-in", mime_type: "image/jpeg", caption: "goods ready at warehouse" } });
+      // The counterparty receives the photo as an image, attributed by role only.
+      assert.equal(state.images?.length, 1);
+      assert.equal(state.images[0].to, "10000000002");
+      assert.match(state.images[0].caption, /^Photo from the buyer in deal UDC-B\./);
+      assert.match(state.images[0].caption, /goods ready at warehouse/);
+      assert.ok(!/10000000001/.test(state.images[0].caption), "sender phone never appears in the caption");
+      assert.match(String(state.images[0].link), /signed\.example/);
+      // The sender hears it was passed on, and the other side holds a viewer grant.
+      assert.match(state.sent.at(-1).body, /passed it to the other side/);
+      assert.ok(state.sent.at(-1).body.includes("SENSITIVE") === false);
+      const newDoc = rows.documentsTable.at(-1);
+      assert.equal(newDoc.dealId, "deal-b");
+      assert.equal(newDoc.documentType, "image");
+      assert.ok(rows.documentAccessTable.some(r => r.documentId === newDoc.id && r.userId === "seller" && r.accessRole === "viewer"));
+      assert.ok(rows.whatsappMessageContextsTable.some(r => r.kind === "deal_image_relay" && r.dealId === "deal-b" && r.recipientUserId === "seller"));
+      // The sender is never relayed their own photo.
+      assert.ok(!state.images.some((i: any) => i.to === "10000000001"));
+      // A photo whose caption names a trade document stays on the document path.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-c", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-c" }, image: { id: "img-loi", mime_type: "image/jpeg", caption: "signed LOI" } });
+      assert.equal(state.images?.length ?? 0, 0, "a trade-document photo is never auto-relayed");
+      assert.match(state.sent.at(-1).body, /keep it here for review/);
+      // When the relay fails, the sender hears the photo was kept, not passed.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-d", dealId: "deal-b", recipientUserId: "buyer" }];
+      rows.dealParticipantsTable = rows.dealParticipantsTable.filter(r => !(r.dealId === "deal-b" && r.userId === "seller"));
+      await message({ context: { id: "quoted-d" }, image: { id: "img-solo", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0);
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
     });
     await t.test("media replies attach to the quoted deal, with an owner grant", async () => {
       reset(); seedDeal();
