@@ -30,7 +30,7 @@ export function AdminV2Gate({ children }: { children: (user: AnyRecord) => React
 /** The Style B frame every admin page shares: dark sidebar, topbar, sign-out. */
 export function AdminV2Shell({ user, active, title, sub, queueCount, children }: {
   user: AnyRecord;
-  active: 'overview' | 'people' | 'companies' | 'deals' | 'documents' | 'finance' | 'chats' | 'reports' | 'trades';
+  active: 'overview' | 'people' | 'companies' | 'deals' | 'documents' | 'finance' | 'chats' | 'reports' | 'trades' | 'support';
   title: string;
   sub?: string;
   queueCount?: number;
@@ -67,6 +67,7 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
         {navLink('documents', '/admin/v2/documents', 'Documents')}
         {navLink('finance', '/admin/v2/finance', 'Finance')}
         {navLink('chats', '/admin/v2/chats', 'Chats')}
+        {navLink('support', '/admin/v2/support', 'Privacy and support')}
         {navLink('reports', '/admin/v2/reports', 'Reports')}
       </nav>
       <div className="av2-me"><div className="av2-avatar">{initials(user.fullName)}</div>

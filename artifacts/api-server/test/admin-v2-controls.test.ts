@@ -15,3 +15,10 @@ test('trade detail page renders every returned field as escaped text and asks be
  assert.ok(app.includes('path="/admin/v2/trades"'));
  const shell=await page('admin-v2-shell.tsx');assert.ok(shell.includes("'/admin/v2/trades'"));
 });
+test('support tools keep privacy review separate from deletion and incident notices human-approved',async()=>{
+ const support=await page('admin-v2-support.tsx');
+ for(const text of ['AdminPrivacyRequests','/api/admin/grievances','/update','IncidentControls'])assert.ok(support.includes(text),text);
+ const incidents=await page('admin-v2-incidents.tsx');
+ for(const text of ['if(notify&&!confirmed)return','disabled={busy||!confirmed||!incidentId}','WhatsApp and email were not sent','affectedUserIds:affected','Sending again creates another notice'])assert.ok(incidents.includes(text),text);
+ assert.ok(!incidents.includes('dangerouslySetInnerHTML'));
+});
