@@ -1,5 +1,5 @@
-/* Admin desk v2 - style B: dark sidebar, mono, off-white, orange accent only */
-.av2-root{--ink:#251f21;--ink2:#3a3436;--mut:#8a8285;--hair:#eae9ea;--bg:#fbfaf9;--card:#fff;--orange:#f26a1b;
+/* Admin desk v2 - style B: dark sidebar, mono, off-white, calm deep-teal accent only (owner rejected orange, 2 Nov) */
+.av2-root{--ink:#251f21;--ink2:#3a3436;--mut:#8a8285;--hair:#eae9ea;--bg:#fbfaf9;--card:#fff;--orange:#0f6f5e;
   font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--ink);min-height:100vh;}
 .av2-root *{box-sizing:border-box;}
 .av2-wrap{display:flex;min-height:100vh;}
@@ -89,3 +89,8 @@
   .av2-body{padding:16px 14px;}
   .av2-top{padding:0 14px;}
 }
+
+/* Embedded classic components inside the Style B shell (Deals page): same
+   data and actions, re-skinned with the Style B palette via scoped vars. */
+.av2-embed{--background:42 20% 98%;--card:0 0% 100%;--card-foreground:330 8% 14%;--foreground:330 8% 14%;--muted-foreground:330 4% 42%;--border:330 6% 90%;--card-border:330 6% 90%;font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,monospace;color:#251f21;}
+.av2-embed .panel{box-shadow:none;}

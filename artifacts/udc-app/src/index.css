@@ -87,11 +87,11 @@
   --sidebar: 194 37% 17%;
   --sidebar-foreground: 42 42% 95%;
   --sidebar-border: 194 27% 26%;
-  --sidebar-primary: 42 82% 64%;
+  --sidebar-primary: 172 45% 55%;
   --sidebar-primary-foreground: 194 37% 17%;
   --sidebar-accent: 194 30% 24%;
   --sidebar-accent-foreground: 42 42% 95%;
-  --sidebar-ring: 42 82% 64%;
+  --sidebar-ring: 172 45% 55%;
   --popover: 43 48% 98%;
   --popover-foreground: 194 36% 15%;
   --popover-border: 41 24% 86%;
@@ -101,17 +101,17 @@
   --secondary-foreground: 194 36% 15%;
   --muted: 41 30% 91%;
   --muted-foreground: 194 15% 34%;
-  --accent: 42 82% 64%;
-  --accent-foreground: 194 37% 17%;
+  --accent: 172 66% 30%;
+  --accent-foreground: 42 42% 95%;
   --destructive: 4 63% 47%;
   --destructive-foreground: 42 42% 95%;
   --input: 41 21% 80%;
-  --ring: 42 82% 54%;
+  --ring: 172 66% 30%;
   --chart-1: 194 51% 28%;
-  --chart-2: 42 82% 54%;
+  --chart-2: 172 60% 40%;
   --chart-3: 157 35% 43%;
   --chart-4: 4 63% 47%;
-  --chart-5: 27 62% 54%;
+  --chart-5: 210 40% 55%;
   --app-font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: ui-monospace, monospace;
@@ -208,11 +208,11 @@
   --sidebar: 194 39% 9%;
   --sidebar-foreground: 42 42% 95%;
   --sidebar-border: 194 22% 21%;
-  --sidebar-primary: 42 82% 64%;
+  --sidebar-primary: 172 45% 55%;
   --sidebar-primary-foreground: 194 37% 17%;
   --sidebar-accent: 194 30% 19%;
   --sidebar-accent-foreground: 42 42% 95%;
-  --sidebar-ring: 42 82% 64%;
+  --sidebar-ring: 172 45% 55%;
   --popover: 194 31% 15%;
   --popover-foreground: 42 42% 95%;
   --popover-border: 194 22% 27%;
@@ -222,8 +222,8 @@
   --secondary-foreground: 42 42% 95%;
   --muted: 194 24% 20%;
   --muted-foreground: 42 20% 72%;
-  --accent: 42 82% 64%;
-  --accent-foreground: 194 37% 17%;
+  --accent: 172 66% 30%;
+  --accent-foreground: 42 42% 95%;
   --destructive: 4 63% 56%;
   --destructive-foreground: 42 42% 95%;
   --input: 194 22% 27%;
@@ -549,3 +549,9 @@ button, input, select, textarea { font: inherit; }
 .privacy-panel article { padding-block: 1rem; border-top: 1px solid hsl(var(--border)); overflow-wrap: anywhere; }
 .privacy-panel textarea { display: block; width: 100%; min-height: 6rem; border: 1px solid hsl(var(--border)); padding: .6rem; background: hsl(var(--background)); }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
+
+/* Style B login (owner, 2 Nov): mono, off-white, calm teal - no orange anywhere. */
+.auth-page { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; background: #fbfaf9; color: #251f21; }
+.auth-visual { background: #251f21; color: #fbfaf9; }
+.auth-visual-copy h1 em { color: #6fd3c0; }
+.auth-card { background: #fff; border: 1px solid #eae9ea; border-radius: 16px; padding: clamp(1.4rem,3vw,2.2rem); }

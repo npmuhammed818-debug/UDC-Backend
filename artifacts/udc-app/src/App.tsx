@@ -34,6 +34,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { CookieControls, PolicyFooter, PrivacySettings, AdminPrivacyRequests } from '@/components/privacy';
 import NotFound from '@/pages/not-found';
 import { AdminV2Page } from '@/pages/admin-v2';
+import { AdminV2PeoplePage, AdminV2CompaniesPage, AdminV2DocumentsPage } from '@/pages/admin-v2-pages';
+import { AdminV2Shell } from '@/pages/admin-v2-shell';
 import { communicationBoundary } from '@/lib/communication';
 import { Link, Route, Router as WouterRouter, Switch, useLocation, useParams } from 'wouter';
 
@@ -67,10 +69,6 @@ const adminNavGroups = [
   { title: 'OPERATIONS', items: [
     { href: '/admin/deals', label: 'Deals', icon: BriefcaseBusiness },
     { href: '/admin/agents', label: 'Agents', icon: CircleUserRound },
-    { href: '/admin/impexq', label: 'Test ImpexQ', icon: Sparkles },
-    { href: '/admin/whatsapp-readiness', label: 'WhatsApp readiness', icon: MessageSquare },
-    { href: '/admin/shipment-notifications', label: 'Shipment notifications', icon: ShieldCheck },
-    { href: '/admin/staging-readiness', label: 'Launch readiness', icon: ShieldCheck },
     { href: '/admin/classic#audit-log', label: 'Activity history', icon: ClipboardList },
   ] },
 ];
@@ -888,6 +886,6 @@ function FormCard({ title, onSubmit, onCancel, pending, children }: { title: str
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 
-function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/password-recovery"><PasswordRecovery /></Route><Route path="/admin/v2"><AdminV2Page /></Route><Route path="/admin/classic"><Protected>{() => <Admin />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin/impexq"><Protected>{() => <ImpexqTestPage />}</Protected></Route><Route path="/admin/whatsapp-readiness"><Protected>{() => <WhatsAppReadinessPage />}</Protected></Route><Route path="/admin/shipment-notifications"><Protected>{() => <ShipmentNotificationsPage />}</Protected></Route><Route path="/admin/staging-readiness"><Protected>{() => <MvpStagingReadinessPage />}</Protected></Route><Route><AdminV2Page /></Route></Switch></ErrorBoundary>; }
+function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/password-recovery"><PasswordRecovery /></Route><Route path="/admin/v2"><AdminV2Page /></Route><Route path="/admin/v2/people"><AdminV2PeoplePage /></Route><Route path="/admin/v2/companies"><AdminV2CompaniesPage /></Route><Route path="/admin/v2/documents"><AdminV2DocumentsPage /></Route><Route path="/admin/v2/deals"><Protected>{(u) => <AdminV2Shell user={u} active="deals" title="Deals" sub="Running deals: status, steps and problems"><div className="av2-embed"><DealOperations user={u} /></div></AdminV2Shell>}</Protected></Route><Route path="/admin/classic"><Protected>{() => <Admin />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin/impexq"><Protected>{() => <ImpexqTestPage />}</Protected></Route><Route path="/admin/whatsapp-readiness"><Protected>{() => <WhatsAppReadinessPage />}</Protected></Route><Route path="/admin/shipment-notifications"><Protected>{() => <ShipmentNotificationsPage />}</Protected></Route><Route path="/admin/staging-readiness"><Protected>{() => <MvpStagingReadinessPage />}</Protected></Route><Route><AdminV2Page /></Route></Switch></ErrorBoundary>; }
 
 export default function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><PolicyFooter /><CookieControls /><Toaster /></TooltipProvider></QueryClientProvider>; }
