@@ -38,7 +38,14 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
 }) {
   const logout = useLogoutUser();
   const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => { window.scrollTo(0, 0); }, [active]);
+  useEffect(() => {
+    const target = decodeURIComponent(window.location.hash.slice(1));
+    const frame = requestAnimationFrame(() => {
+      if (target && document.getElementById(target)) window.scrollTo({ top: Math.max(0, document.getElementById(target)!.getBoundingClientRect().top + window.scrollY - 80), behavior: 'instant' });
+      else window.scrollTo(0, 0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active]);
 
   const navLink = (id: string, href: string, label: string, opts: { count?: number; tag?: string } = {}) => (
     <Link key={id} href={href} className={active === id ? 'on' : ''} data-testid={`v2-nav-${label.toLowerCase().replaceAll(' ', '-')}`}
@@ -67,7 +74,6 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
         {navLink('finance', '/admin/v2/finance', 'Finance')}
         {navLink('chats', '/admin/v2/chats', 'Chats')}
         {navLink('reports', '/admin/v2/reports', 'Reports')}
-        {navLink('classic', '/admin/classic', 'Full desk', { tag: 'CLASSIC' })}
       </nav>
       <div className="av2-me"><div className="av2-avatar">{initials(user.fullName)}</div>
         <div style={{ minWidth: 0 }}>{user.fullName || 'Admin'}<small>{user.email || 'Owner · admin'}</small></div>
@@ -79,11 +85,11 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
         <button className="av2-burger" aria-label="Open menu" data-testid="button-v2-menu" onClick={() => setMenuOpen(true)}>☰</button>
         <div><div className="ttl">{title}</div><div className="sub">{sub ?? ''}</div></div>
         <div className="av2-right">
-          <Link href="/admin/classic" className="av2-btn ghost sm" data-testid="v2-open-classic">Classic desk</Link>
+
         </div>
       </div>
       <div className="av2-body">{children}</div>
-      <div className="av2-foot">UDC admin desk · classic desk stays available from the menu</div>
+      <div className="av2-foot">UDC admin desk</div>
     </div>
   </div></div>;
 }
@@ -109,7 +115,7 @@ export function QueueCards({ items, busy, error, setError, run, emptyText }: {
   };
 
   if (!items.length) return <div className="av2-empty" data-testid="v2-list-empty">{emptyText}</div>;
-  return <>{items.map((item) => <div className="av2-qcard" key={item.key} data-testid={`v2-card-${item.key}`}>
+  return <>{items.map((item) => <div className="av2-qcard" id={item.key} key={item.key} data-testid={`v2-card-${item.key}`}>
     <div className="av2-r1"><span className={`av2-chip ${item.chipClass}`}>{item.chip}</span><span className="av2-t">{item.title}</span>{item.time && <span className="av2-time">{item.time}</span>}</div>
     <div className="av2-d">{item.detail}{item.fileUrl && <> · <a href={item.fileUrl} target="_blank" rel="noreferrer">Open file</a></>}</div>
     <div className="av2-r2">
@@ -117,7 +123,7 @@ export function QueueCards({ items, busy, error, setError, run, emptyText }: {
       {item.declineNeedsNote
         ? <button className="av2-btn ghost sm" disabled={!!busy} data-testid={`button-v2-decline-${item.key}`} onClick={() => { setDeclineOpen(declineOpen === item.key ? '' : item.key); setDeclineNote(''); }}>{declineOpen === item.key ? 'Cancel' : 'Decline'}</button>
         : <button className="av2-btn ghost sm" disabled={!!busy} data-testid={`button-v2-decline-${item.key}`} onClick={() => void run(`decline-${item.key}`, () => item.decline!(''))}>{busy === `decline-${item.key}` ? 'Working…' : 'Decline'}</button>}
-      <Link href={item.legacyHref} className="av2-btn ghost sm" data-testid={`v2-details-${item.key}`}>See details</Link>
+      {item.detailsHref ? <Link href={item.detailsHref} className="av2-btn ghost sm" data-testid={`v2-details-${item.key}`}>See details</Link> : <span className="av2-d">Full submission details are not available in this desk yet.</span>}
     </div>
     {declineOpen === item.key && <form className="av2-note" onSubmit={(event) => submitDecline(event, item)}>
       <textarea aria-label="Reason for declining" placeholder="Reason for declining (at least 5 characters)" maxLength={1000} value={declineNote} onChange={(event) => setDeclineNote(event.target.value)} data-testid={`input-v2-decline-note-${item.key}`} />

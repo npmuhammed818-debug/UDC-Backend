@@ -40,7 +40,7 @@ export type QueueItem = {
   approve: () => Promise<void>;
   decline?: (note: string) => Promise<void>;
   declineNeedsNote: boolean;
-  legacyHref: string;
+  detailsHref: string;
 };
 
 export function pillFor(status?: string) {
@@ -86,42 +86,42 @@ export function useAdminV2Data() {
   for (const item of users.data?.users ?? []) queue.push({
     key: `user-${item.id}`, chip: 'PERSON', chipClass: '', title: item.fullName || 'Unnamed person',
     detail: `${item.email || 'no email'} · ${item.role || 'participant'}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#participant-review',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: `/admin/v2/people#user-${item.id}`,
     approve: () => patch(`/api/admin/users/${item.id}/verification`, { status: 'verified' }),
     decline: () => patch(`/api/admin/users/${item.id}/verification`, { status: 'rejected' }),
   });
   for (const item of companies.data?.companies ?? []) queue.push({
     key: `company-${item.id}`, chip: 'COMPANY', chipClass: 'co', title: item.companyName || 'Unnamed company',
     detail: [item.ownerName, item.ownerRole, item.country].filter(Boolean).join(' · ') || 'Registration details not provided',
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#company-review',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: `/admin/v2/companies#company-${item.id}`,
     approve: () => patch(`/api/admin/companies/${item.id}/verification`, { verification_status: 'verified' }),
     decline: () => patch(`/api/admin/companies/${item.id}/verification`, { verification_status: 'rejected' }),
   });
   for (const item of buyers.data?.requirements ?? []) queue.push({
     key: `buyer-${item.id}`, chip: 'BUYER NEED', chipClass: 'trade', title: `${item.quantity ?? ''} ${item.unit || ''} · ${item.destination || 'destination open'}`,
     detail: `Target ${item.currency || ''} ${item.targetPrice || 'not stated'}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#trade-submissions',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: '',
     approve: () => patch(`/api/admin/buyer-requests/${item.id}/status`, { status: 'approved' }),
     decline: () => patch(`/api/admin/buyer-requests/${item.id}/status`, { status: 'rejected' }),
   });
   for (const item of sellers.data?.offers ?? []) queue.push({
     key: `seller-${item.id}`, chip: 'SELLER OFFER', chipClass: 'trade', title: `${item.quantity ?? ''} ${item.unit || ''} · ${item.originCountry || 'origin pending'}`,
     detail: `${item.currency || ''} ${item.price ?? ''}/${item.unit || ''}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#trade-submissions',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, detailsHref: '',
     approve: () => patch(`/api/admin/seller-offers/${item.id}/status`, { status: 'approved' }),
     decline: () => patch(`/api/admin/seller-offers/${item.id}/status`, { status: 'rejected' }),
   });
   for (const item of (companyDocs.data?.documents ?? []).filter((doc) => doc.status === 'pending')) queue.push({
     key: `cdoc-${item.id}`, chip: 'DOC', chipClass: 'doc', title: `${fmtStatus(item.documentType)} · ${item.companyName || 'company'}`,
     detail: [item.ownerName, item.ownerEmail].filter(Boolean).join(' · ') || 'Company evidence',
-    fileUrl: item.fileUrl, time: timeAgo(item.createdAt), declineNeedsNote: true, legacyHref: '/admin/classic#company-evidence',
+    fileUrl: item.fileUrl, time: timeAgo(item.createdAt), declineNeedsNote: true, detailsHref: `/admin/v2/documents#cdoc-${item.id}`,
     approve: () => patch(`/api/admin/company-verification-documents/${item.id}/status`, { status: 'approved' }),
     decline: (note) => patch(`/api/admin/company-verification-documents/${item.id}/status`, { status: 'rejected', reviewNote: note }),
   });
   for (const item of (dealDocs.data?.documents ?? []).filter((doc) => doc.status === 'pending')) queue.push({
     key: `ddoc-${item.id}`, chip: 'DOC', chipClass: 'doc', title: fmtStatus(item.documentType),
     detail: `Deal ${item.dealId || ''}`, fileUrl: item.fileUrl, time: timeAgo(item.createdAt),
-    declineNeedsNote: true, legacyHref: '/admin/classic#deal-documents',
+    declineNeedsNote: true, detailsHref: `/admin/v2/documents#ddoc-${item.id}`,
     approve: () => patch(`/api/admin/documents/${item.id}/status`, { status: 'approved' }),
     decline: (note) => patch(`/api/admin/documents/${item.id}/status`, { status: 'rejected', reviewNote: note }),
   });

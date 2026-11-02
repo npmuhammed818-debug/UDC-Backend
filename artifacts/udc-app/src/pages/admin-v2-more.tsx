@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'wouter';
 import { fmtStatus, loadJson, pillFor, timeAgo, useAdminV2Data, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell } from './admin-v2-shell';
 import '../admin-v2.css';
@@ -36,7 +35,7 @@ function Finance({ user }: { user: AnyRecord }) {
     </div>
     <div className="av2-cols">
       <div className="av2-panel" data-testid="v2-fin-instruments">
-        <div className="av2-phead"><span className="av2-micro2">Payment instruments</span><Link className="av2-more" href="/admin/classic#deal-finance">Classic ›</Link></div>
+        <div className="av2-phead"><span className="av2-micro2">Payment instruments</span></div>
         {instruments.isError ? <div className="av2-empty">Instruments did not load.</div>
           : instruments.isLoading ? <div style={{ padding: 16 }}><div className="av2-skel" /></div>
           : !(instruments.data?.instruments ?? []).length ? <div className="av2-empty" style={{ border: 'none', margin: 0 }}>No payment instruments recorded yet. A DLC is recorded here when a deal reaches banking.</div>
@@ -49,7 +48,7 @@ function Finance({ user }: { user: AnyRecord }) {
           </tbody></table>}
       </div>
       <div className="av2-panel" data-testid="v2-fin-commissions">
-        <div className="av2-phead"><span className="av2-micro2">Commissions</span><Link className="av2-more" href="/admin/classic#commissions">Classic ›</Link></div>
+        <div className="av2-phead"><span className="av2-micro2">Commissions</span></div>
         {commissions.isError ? <div className="av2-empty">Commissions did not load.</div>
           : commissions.isLoading ? <div style={{ padding: 16 }}><div className="av2-skel" /></div>
           : !(commissions.data?.commissions ?? []).length ? <div className="av2-empty" style={{ border: 'none', margin: 0 }}>No commissions recorded yet.</div>
@@ -62,7 +61,7 @@ function Finance({ user }: { user: AnyRecord }) {
           </tbody></table>}
       </div>
     </div>
-    <p className="av2-d" style={{ marginTop: 14 }}>Recording and changing money records happens on the classic desk. This page is read-only.</p>
+    <p className="av2-d" style={{ marginTop: 14 }}>This page is read-only. Adding and editing payment instruments or commissions is not available in the new desk yet.</p>
   </AdminV2Shell>;
 }
 
@@ -139,6 +138,28 @@ function ReportRow({ label, value, sub }: { label: string; value: string; sub?: 
   return <div className="av2-stat"><div className="av2-micro2">{label}</div><div className="v">{value}</div><div className="d">{sub ?? ' '}</div></div>;
 }
 
+function ActivityLog() {
+  const [offset, setOffset] = useState(0);
+  const activity = useQuery({
+    queryKey: ['v2-activity-page', offset],
+    queryFn: () => loadJson<{ logs: AnyRecord[]; hasMore: boolean; nextOffset: number | null }>(`/api/admin/audit-log?limit=50&offset=${offset}`),
+  });
+  return <section id="activity" className="av2-panel" data-testid="v2-reports-activity" style={{ marginTop: 24, scrollMarginTop: 80 }}>
+    <div className="av2-phead"><h2 className="av2-micro2">Latest activity</h2></div>
+    {activity.isError ? <div className="av2-empty">Activity did not load. <button className="av2-btn ghost sm" onClick={() => void activity.refetch()}>Retry</button></div>
+      : activity.isLoading ? <div style={{ padding: 16 }}><div className="av2-skel" /></div>
+      : !activity.data?.logs.length ? <div className="av2-empty">No activity yet.</div>
+      : <div className="av2-feed">{activity.data.logs.map((item) => <div key={item.id}>
+        <strong>{fmtStatus(item.action)}</strong> · {item.actorName || 'System'} · {fmtStatus(item.entityType)}
+        <time>{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</time>
+      </div>)}</div>}
+    <div className="av2-r2" style={{ padding: 16 }}>
+      <button className="av2-btn ghost sm" disabled={!offset || activity.isFetching} onClick={() => setOffset(Math.max(0, offset - 50))}>Newer</button>
+      <button className="av2-btn ghost sm" disabled={!activity.data?.hasMore || activity.isFetching || offset >= 5000} onClick={() => setOffset(activity.data?.nextOffset ?? offset)}>Older</button>
+    </div>
+  </section>;
+}
+
 function Reports({ user }: { user: AnyRecord }) {
   const { analytics, allDeals, allUsers } = useAdminV2Data();
   const a = analytics.data;
@@ -187,6 +208,7 @@ function Reports({ user }: { user: AnyRecord }) {
         </div>
       </div>
     </div>
+    <ActivityLog />
   </AdminV2Shell>;
 }
 
