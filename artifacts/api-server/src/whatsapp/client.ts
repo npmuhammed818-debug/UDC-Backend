@@ -1,6 +1,7 @@
 import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
 import { AsyncLocalStorage } from "node:async_hooks";
 import { replySinkEnabled, recordSunkReply } from "./replySink.ts";
+import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
 // Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
@@ -293,6 +294,9 @@ export async function downloadWhatsAppMedia(mediaId: string) {
   const maximumBytes = 25 * 1024 * 1024;
   if (typeof metadata.file_size === "number" && metadata.file_size > maximumBytes) {
     throw new Error("whatsapp_media_too_large");
+  }
+  if (!isAllowedMediaDownloadUrl(metadata.url)) {
+    throw new Error("whatsapp_media_url_untrusted_host");
   }
   const fileResponse = await fetch(metadata.url, {
     headers: { authorization: `Bearer ${config.accessToken}` },
