@@ -144,7 +144,8 @@ export function createEmailAuthService(
   // CHARGED atomically inside the caller's transaction (which holds the
   // account row lock) before the password is verified, so parallel requests
   // cannot slip past the caps and unknown emails never write budget rows.
-  // Success clears both rows.
+  // Login success clears both rows. A successful email-code reset clears the
+  // daily row plus the pair row for the network that proved ownership.
   async function chargePasswordLoginAttempt(tx: Executor, email: string, ip: string) {
     const address = email.trim().toLowerCase();
     if (
@@ -351,7 +352,13 @@ export function createEmailAuthService(
       });
       if (!success) throw new EmailAuthError("invalid_code");
     },
-    async reset(email: string, id: string, code: string, password: string) {
+    async reset(
+      email: string,
+      id: string,
+      code: string,
+      password: string,
+      ip: string,
+    ) {
       const success = await database.transaction(async (tx) => {
         const { rows } = await tx.execute(
           sql`select id,email,verified_email,email_verified_at,password_recovery_enabled,status from users where lower(email)=${email} for update`,
@@ -372,6 +379,7 @@ export function createEmailAuthService(
         await tx.execute(
           sql`insert into audit_logs (actor_user_id,action,entity_type,entity_id,metadata) values (${user!.id},'password_recovered','user',${user!.id},'{}'::jsonb)`,
         );
+        await clearPasswordLoginBudget(email, ip, tx);
         return true;
       });
       if (!success) throw new EmailAuthError("invalid_code");

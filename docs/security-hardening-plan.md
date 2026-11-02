@@ -10,7 +10,7 @@
 
 ## Red-team report 1 fixes (commit 3ad8cf3, 560/560 green)
 7. Login budget race (MED): budget charged atomically inside the account row lock before verification; cleared on success.
-8. Lockout DoS (MED): OPEN - options sent to owner (A keep / B email+network pair + daily cap, recommended / C email-code unlock).
+8. Lockout DoS (MED): FIXED - option B live on staging (10/email+network/30min + 30/email/day for wrong passwords). Owner-approved recovery: an over-cap request still verifies once, so the correct password gets in; wrong ones stay 429 and do not charge past 30. A successful email-code reset clears the daily row plus the requester pair row. Behavioural route test + Postgres integration assertion.
 9. WhatsApp sign-in phishing (LOW-MED): OPEN - proposed confirm message shows requester IP + UTC time, 2-min code TTL; awaiting wording approval.
 10. Web auth IP budgets (LOW-MED): durable (email_auth_limits), IPv6 /64 keyed, expired rows purged; in-memory Map removed.
 11. Upload quotas (LOW): 20/day deal docs, 10/day company docs per user.
@@ -46,4 +46,5 @@
 ## Remaining / next
 - Red-team agent: independent adversarial verification of the above (request from parent).
 - Then: admin web pages (LAST item per owner).
+- Decisions still with owner: sign-in confirm wording (3), register 409 (7b, recommended keep), production tester-mode env check (10).
 - Kaggle v10 chain wake fires 2026-11-08 09:00 PST (separate workstream).

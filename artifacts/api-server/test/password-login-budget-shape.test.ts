@@ -32,3 +32,13 @@ test("the login route passes the client network into the budget", async () => {
   assert.ok(src.includes("clearPasswordLoginBudget(input.email, rateKey, tx)"),
     "the clear must target the same pair");
 });
+
+test("a successful email-code reset clears the login budget", async () => {
+  const src = await readFile(new URL("../src/auth/emailAuth.ts", import.meta.url), "utf8");
+  const reset = src.slice(src.indexOf("async reset("));
+  assert.ok(reset.includes("password_recovered"), "reset must remain audited");
+  assert.ok(reset.includes("clearPasswordLoginBudget(email, ip, tx)"),
+    "successful reset clears the daily row and the requester's pair row");
+  const route = await readFile(new URL("../src/routes/emailAuth.ts", import.meta.url), "utf8");
+  assert.ok(route.includes("authRateLimitKey(req)"), "reset passes its network to the budget clear");
+});

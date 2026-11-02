@@ -16,6 +16,18 @@ test("login route charges the per-account budget atomically before verifying", a
     "over-budget logins get 429");
 });
 
+
+test("an over-budget request still verifies once, so the correct password can recover", async () => {
+  const src = await readFile(new URL("../src/routes/auth.ts", import.meta.url), "utf8");
+  const login = src.slice(src.indexOf('router.post("/auth/login"'));
+  const charge = login.indexOf("const withinBudget = await emailAuth.chargePasswordLoginAttempt");
+  const verify = login.indexOf("verifyPassword(input.password, user.passwordHash)");
+  const refusal = login.indexOf('return withinBudget ? { kind: "invalid" as const } : { kind: "limited" as const }');
+  assert.ok(charge > -1 && verify > -1 && refusal > -1, "verify-on-refusal wiring must exist");
+  assert.ok(charge < verify && verify < refusal,
+    "wrong guesses stop at the cap, while a correct password can clear it");
+});
+
 test("login route clears the account budget on success only", async () => {
   const src = await readFile(new URL("../src/routes/auth.ts", import.meta.url), "utf8");
   const login = src.slice(src.indexOf('router.post("/auth/login"'));

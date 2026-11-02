@@ -186,9 +186,13 @@ router.post("/auth/login", async (req, res) => {
         return { kind: "invalid" as const };
       }
       // Per-account budget: charged atomically inside the account row lock
-      // BEFORE verification, so parallel guesses cannot slip past the cap.
-      if (!(await emailAuth.chargePasswordLoginAttempt(tx, input.email, rateKey))) return { kind: "limited" as const };
-      if (!(await verifyPassword(input.password, user.passwordHash))) return { kind: "invalid" as const };
+      // BEFORE verification, so parallel wrong guesses cannot slip past the cap.
+      // Even when the cap is already burned, verify once: the owner-approved
+      // recovery rule lets the correct password in, while wrong ones stay 429
+      // and are not charged beyond the cap.
+      const withinBudget = await emailAuth.chargePasswordLoginAttempt(tx, input.email, rateKey);
+      if (!(await verifyPassword(input.password, user.passwordHash)))
+        return withinBudget ? { kind: "invalid" as const } : { kind: "limited" as const };
       if (["suspended", "rejected"].includes(user.status)) return { kind: "blocked" as const };
       // Successful password proof safely identifies legacy password accounts;
       // random WhatsApp-only hashes are never inferred to be recovery credentials.

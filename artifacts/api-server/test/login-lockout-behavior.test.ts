@@ -5,10 +5,11 @@ import { writeFile, unlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { randomUUID, createHmac } from "node:crypto";
 import { hashPassword } from "../src/auth/passwords.ts";
+import { emailCodeHash } from "../src/auth/emailCodes.ts";
 
-// Behavioural proof for the owner question: when an attacker burns the
-// per-email daily password budget, can the real owner still log in with the
-// CORRECT password from a fresh network? Real route, real charge logic,
+// Behavioural proof for the owner-approved recovery rule: when an attacker
+// burns the per-email daily password budget, the real owner still logs in
+// with the CORRECT password from a fresh network. Real route, real charge logic,
 // fixture database. Email limits are seeded by the same HMAC construction
 // the service uses (same secret), never by reaching inside the service.
 test("burned daily cap vs the real owner with the correct password", async () => {
@@ -20,10 +21,26 @@ test("burned daily cap vs the real owner with the correct password", async () =>
   const user = {
     id: randomUUID(), email, passwordHash: await hashPassword(password),
     role: "buyer", status: "verified", passwordRecoveryEnabled: true,
+    password_recovery_enabled: true,
+    verified_email: email, email_verified_at: new Date(),
   };
+  const resetChallengeId = randomUUID();
+  const resetCode = "123456";
   const digest = (value: string) =>
     createHmac("sha256", secret).update("udc-email-limit-v1\0" + value).digest("hex");
-  const state: any = { sessions: 0, limits: {} as Record<string, any> };
+  const state: any = {
+    sessions: 0,
+    sessionsRevoked: 0,
+    limits: {} as Record<string, any>,
+    challenge: {
+      id: resetChallengeId,
+      email,
+      code_hash: emailCodeHash(secret, "reset_password", resetChallengeId, user.id, email, resetCode),
+      attempts: 0,
+      expires_at: new Date(Date.now() + 600_000),
+      consumed_at: null,
+    },
+  };
   const usersTable: any = { name: "users", id: { column: "id" }, email: { column: "email" }, passwordHash: { column: "passwordHash" }, role: { column: "role" }, status: { column: "status" }, passwordRecoveryEnabled: { column: "passwordRecoveryEnabled" } };
   state.db = {
     transaction: async (f: any) => f(state.db),
@@ -63,6 +80,30 @@ test("burned daily cap vs the real owner with the correct password", async () =>
         state.limits[v.values[0]] = { count: v.values[1], window_start: v.values[2], last_attempt_at: v.values[3] };
         return { rows: [] };
       }
+      if (text.startsWith("select id,email,verified_email,email_verified_at,password_recovery_enabled,status from users")) {
+        return { rows: String(v.values[0]).toLowerCase() === email ? [user] : [] };
+      }
+      if (text.startsWith("select id,email,code_hash,attempts,expires_at,consumed_at from email_auth_challenges")) {
+        return { rows: v.values[0] === resetChallengeId ? [state.challenge] : [] };
+      }
+      if (text.startsWith("update email_auth_challenges set attempts=attempts+1")) {
+        state.challenge.attempts++;
+        state.challenge.consumed_at = new Date();
+        return { rows: [] };
+      }
+      if (text.startsWith("update users set password_hash=")) {
+        user.passwordHash = v.values[0];
+        return { rows: [] };
+      }
+      if (text.startsWith("update auth_sessions set revoked_at=")) {
+        state.sessionsRevoked++;
+        return { rows: [] };
+      }
+      if (text.startsWith("update email_auth_challenges set consumed_at=coalesce")) {
+        state.challenge.consumed_at ??= new Date();
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into audit_logs")) return { rows: [] };
       return { rows: [] };
     },
   };
@@ -71,7 +112,7 @@ test("burned daily cap vs the real owner with the correct password", async () =>
   const result = await build({
     stdin: {
       contents:
-        "import express from 'express';import auth from '../src/routes/auth';const app=express();app.use(express.json());app.use(auth);export default app;",
+        "import express from 'express';import auth from '../src/routes/auth';import emailAuth from '../src/routes/emailAuth';const app=express();app.use(express.json());app.use(auth);app.use(emailAuth);export default app;",
       resolveDir: fileURLToPath(new URL(".", import.meta.url)),
     },
     bundle: true, platform: "node", format: "esm", packages: "external", write: false,
@@ -115,15 +156,41 @@ test("burned daily cap vs the real owner with the correct password", async () =>
       count: 30, window_start: new Date(), last_attempt_at: new Date(),
     };
 
-    // A fresh wrong guess is refused at the cap.
+    const dailyKey = digest(`pwd-login-day:${email}`);
+    const burnedCount = state.limits[dailyKey].count;
+
+    // A fresh wrong guess is refused at the cap and is not charged past it.
     response = await login("Wrong-Password9!");
     assert.equal(response.status, 429, "over-cap wrong guesses are refused");
+    assert.equal(state.limits[dailyKey].count, burnedCount);
 
-    // THE QUESTION: the real owner, fresh network, correct password.
+    // THE OWNER RULE: the real owner, fresh network, correct password.
     response = await login(password);
-    assert.equal(response.status, 429,
-      "CURRENT BEHAVIOUR: the owner is also refused until the daily window expires");
-    assert.equal(state.sessions, 1, "no new session for the locked-out owner");
+    assert.equal(response.status, 200,
+      "the correct password gets in even when the daily cap is burned");
+    assert.equal(state.sessions, 2, "the owner gets a new session");
+    assert.equal(state.limits[dailyKey], undefined, "success clears the daily budget");
+
+    // Owner rule, second half: a successful email-code reset also clears the
+    // budget. Seed both rows again, prove the emailed code, and land a new hash.
+    const pairKey = digest(`pwd-login:${email}:127.0.0.1`);
+    state.limits[dailyKey] = { count: 30, window_start: new Date(), last_attempt_at: new Date() };
+    state.limits[pairKey] = { count: 10, window_start: new Date(), last_attempt_at: new Date() };
+    const oldHash = user.passwordHash;
+    response = await fetch(`http://127.0.0.1:${server.address().port}/auth/password/recovery/confirm`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email,
+        challengeId: resetChallengeId,
+        code: resetCode,
+        password: "Fictional-Replacement9!",
+      }),
+    });
+    assert.equal(response.status, 200, "the valid email-code reset succeeds");
+    assert.equal(state.limits[dailyKey], undefined, "reset clears the daily budget");
+    assert.equal(state.limits[pairKey], undefined, "reset clears the requester pair budget");
+    assert.notEqual(user.passwordHash, oldHash, "reset stores the new password hash");
+    assert.equal(state.sessionsRevoked, 1, "reset still revokes existing sessions");
   } finally {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     await unlink(output);
