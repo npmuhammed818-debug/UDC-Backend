@@ -10,6 +10,7 @@ import { vaultShortRouter } from "./routes/vault";
 import { logger } from "./lib/logger";
 import { loadAuth } from "./auth/middleware";
 import { safeRequestLogPath } from "./lib/requestLog";
+import { corsOriginAllowed, parseAllowedOrigins } from "./lib/corsOrigins";
 
 import { policies, renderPolicy } from "./privacy/policies";
 
@@ -34,7 +35,14 @@ app.use(
     },
   }),
 );
-app.use(cors());
+const allowedOrigins = parseAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS);
+app.use(
+  cors({
+    origin(origin, callback) {
+      callback(null, corsOriginAllowed(origin, allowedOrigins));
+    },
+  }),
+);
 app.use(cookieParser());
 app.use(
   express.json({
