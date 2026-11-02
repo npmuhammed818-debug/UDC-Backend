@@ -17,6 +17,12 @@ import { policies, renderPolicy } from "./privacy/policies";
 
 const app: Express = express();
 
+// The app always runs behind one reverse proxy (Render). Trusting exactly one
+// hop makes req.ip the real client address - taken from the proxy-appended
+// X-Forwarded-For entry, which a client cannot spoof - so the per-IP auth
+// budgets key per visitor instead of sharing one bucket for the whole site.
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,
