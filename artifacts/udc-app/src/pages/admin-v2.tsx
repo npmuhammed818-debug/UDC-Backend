@@ -119,42 +119,42 @@ function AdminV2({ user }: { user: AnyRecord }) {
   for (const item of users.data?.users ?? []) queue.push({
     key: `user-${item.id}`, chip: 'PERSON', chipClass: '', title: item.fullName || 'Unnamed person',
     detail: `${item.email || 'no email'} · ${item.role || 'participant'}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin#participant-review',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#participant-review',
     approve: () => patch(`/api/admin/users/${item.id}/verification`, { status: 'verified' }),
     decline: () => patch(`/api/admin/users/${item.id}/verification`, { status: 'rejected' }),
   });
   for (const item of companies.data?.companies ?? []) queue.push({
     key: `company-${item.id}`, chip: 'COMPANY', chipClass: 'co', title: item.companyName || 'Unnamed company',
     detail: [item.ownerName, item.ownerRole, item.country].filter(Boolean).join(' · ') || 'Registration details not provided',
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin#company-review',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#company-review',
     approve: () => patch(`/api/admin/companies/${item.id}/verification`, { verification_status: 'verified' }),
     decline: () => patch(`/api/admin/companies/${item.id}/verification`, { verification_status: 'rejected' }),
   });
   for (const item of buyers.data?.requirements ?? []) queue.push({
     key: `buyer-${item.id}`, chip: 'BUYER NEED', chipClass: 'trade', title: `${item.quantity ?? ''} ${item.unit || ''} · ${item.destination || 'destination open'}`,
     detail: `Target ${item.currency || ''} ${item.targetPrice || 'not stated'}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin#trade-submissions',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#trade-submissions',
     approve: () => patch(`/api/admin/buyer-requests/${item.id}/status`, { status: 'approved' }),
     decline: () => patch(`/api/admin/buyer-requests/${item.id}/status`, { status: 'rejected' }),
   });
   for (const item of sellers.data?.offers ?? []) queue.push({
     key: `seller-${item.id}`, chip: 'SELLER OFFER', chipClass: 'trade', title: `${item.quantity ?? ''} ${item.unit || ''} · ${item.originCountry || 'origin pending'}`,
     detail: `${item.currency || ''} ${item.price ?? ''}/${item.unit || ''}`,
-    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin#trade-submissions',
+    time: timeAgo(item.createdAt), declineNeedsNote: false, legacyHref: '/admin/classic#trade-submissions',
     approve: () => patch(`/api/admin/seller-offers/${item.id}/status`, { status: 'approved' }),
     decline: () => patch(`/api/admin/seller-offers/${item.id}/status`, { status: 'rejected' }),
   });
   for (const item of (companyDocs.data?.documents ?? []).filter((doc) => doc.status === 'pending')) queue.push({
     key: `cdoc-${item.id}`, chip: 'DOC', chipClass: 'doc', title: `${fmtStatus(item.documentType)} · ${item.companyName || 'company'}`,
     detail: [item.ownerName, item.ownerEmail].filter(Boolean).join(' · ') || 'Company evidence',
-    fileUrl: item.fileUrl, time: timeAgo(item.createdAt), declineNeedsNote: true, legacyHref: '/admin#company-evidence',
+    fileUrl: item.fileUrl, time: timeAgo(item.createdAt), declineNeedsNote: true, legacyHref: '/admin/classic#company-evidence',
     approve: () => patch(`/api/admin/company-verification-documents/${item.id}/status`, { status: 'approved' }),
     decline: (note) => patch(`/api/admin/company-verification-documents/${item.id}/status`, { status: 'rejected', reviewNote: note }),
   });
   for (const item of (dealDocs.data?.documents ?? []).filter((doc) => doc.status === 'pending')) queue.push({
     key: `ddoc-${item.id}`, chip: 'DOC', chipClass: 'doc', title: fmtStatus(item.documentType),
     detail: `Deal ${item.dealId || ''}`, fileUrl: item.fileUrl, time: timeAgo(item.createdAt),
-    declineNeedsNote: true, legacyHref: '/admin#deal-documents',
+    declineNeedsNote: true, legacyHref: '/admin/classic#deal-documents',
     approve: () => patch(`/api/admin/documents/${item.id}/status`, { status: 'approved' }),
     decline: (note) => patch(`/api/admin/documents/${item.id}/status`, { status: 'rejected', reviewNote: note }),
   });
@@ -200,12 +200,12 @@ function AdminV2({ user }: { user: AnyRecord }) {
       <nav className="av2-nav" aria-label="Admin">
         {navLink('/admin/v2', 'Overview', { on: true })}
         {navLink('#queue', 'Review queue', { count: pendingCount })}
-        {navLink('/admin#participant-review', 'People')}
-        {navLink('/admin#company-review', 'Companies')}
+        {navLink('/admin/classic#participant-review', 'People')}
+        {navLink('/admin/classic#company-review', 'Companies')}
         {navLink('/admin/deals', 'Deals', { tag: running.length ? `${running.length} LIVE` : undefined })}
-        {navLink('/admin#deal-documents', 'Documents')}
+        {navLink('/admin/classic#deal-documents', 'Documents')}
         {navLink('/admin/whatsapp-readiness', 'WhatsApp')}
-        {navLink('/admin', 'Full desk', { tag: 'CLASSIC' })}
+        {navLink('/admin/classic', 'Full desk', { tag: 'CLASSIC' })}
       </nav>
       <div className="av2-me"><div className="av2-avatar">{initials(user.fullName)}</div>
         <div style={{ minWidth: 0 }}>{user.fullName || 'Admin'}<small>{user.email || 'Owner · admin'}</small></div>
@@ -217,7 +217,7 @@ function AdminV2({ user }: { user: AnyRecord }) {
         <button className="av2-burger" aria-label="Open menu" data-testid="button-v2-menu" onClick={() => setMenuOpen(true)}>☰</button>
         <div><div className="ttl">Overview</div><div className="sub">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })} · new admin desk preview</div></div>
         <div className="av2-right">
-          <Link href="/admin" className="av2-btn ghost sm" data-testid="v2-open-classic">Classic desk</Link>
+          <Link href="/admin/classic" className="av2-btn ghost sm" data-testid="v2-open-classic">Classic desk</Link>
         </div>
       </div>
       <div className="av2-body">
@@ -266,7 +266,7 @@ function AdminV2({ user }: { user: AnyRecord }) {
                 </tbody></table>}
             </div>
             <div className="av2-panel" data-testid="v2-activity-panel">
-              <div className="av2-phead"><span className="av2-micro2">Latest activity</span><Link className="av2-more" href="/admin#audit-log">All ›</Link></div>
+              <div className="av2-phead"><span className="av2-micro2">Latest activity</span><Link className="av2-more" href="/admin/classic#audit-log">All ›</Link></div>
               {audit.isError ? <div className="av2-empty">Activity did not load.</div>
                 : audit.isLoading ? <div style={{ padding: 16 }}><div className="av2-skel" /></div>
                 : !(audit.data?.logs ?? []).length ? <div className="av2-empty" style={{ border: 'none', margin: 0 }}>No activity yet.</div>

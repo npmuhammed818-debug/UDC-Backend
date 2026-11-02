@@ -56,13 +56,13 @@ const nav = [
 
 const adminNavGroups = [
   { title: 'WORKSPACE', items: [
-    { href: '/admin#review-queue', label: 'Overview', icon: LayoutDashboard },
+    { href: '/admin/classic#review-queue', label: 'Overview', icon: LayoutDashboard },
   ] },
   { title: 'REVIEW', items: [
-    { href: '/admin#company-review', label: 'Company verification', icon: ShieldCheck },
-    { href: '/admin#participant-review', label: 'People', icon: UserRound },
-    { href: '/admin#trade-submissions', label: 'Requirements & offers', icon: ClipboardList },
-    { href: '/admin#deal-documents', label: 'Deal documents', icon: FileText },
+    { href: '/admin/classic#company-review', label: 'Company verification', icon: ShieldCheck },
+    { href: '/admin/classic#participant-review', label: 'People', icon: UserRound },
+    { href: '/admin/classic#trade-submissions', label: 'Requirements & offers', icon: ClipboardList },
+    { href: '/admin/classic#deal-documents', label: 'Deal documents', icon: FileText },
   ] },
   { title: 'OPERATIONS', items: [
     { href: '/admin/deals', label: 'Deals', icon: BriefcaseBusiness },
@@ -71,7 +71,7 @@ const adminNavGroups = [
     { href: '/admin/whatsapp-readiness', label: 'WhatsApp readiness', icon: MessageSquare },
     { href: '/admin/shipment-notifications', label: 'Shipment notifications', icon: ShieldCheck },
     { href: '/admin/staging-readiness', label: 'Launch readiness', icon: ShieldCheck },
-    { href: '/admin#audit-log', label: 'Activity history', icon: ClipboardList },
+    { href: '/admin/classic#audit-log', label: 'Activity history', icon: ClipboardList },
   ] },
 ];
 
@@ -124,7 +124,7 @@ function Shell({ children, user }: { children: ReactNode; user: AnyRecord }) {
           <div className="admin-nav-heading">{group.title}</div>
           {group.items.map((item) => {
             const Icon = item.icon; const anchor = item.href.includes('#') ? item.href.split('#')[1] : '';
-            const active = anchor ? activePath === '/admin' && (location.endsWith(`#${anchor}`) || (!location.includes('#') && anchor === 'review-queue')) : activePath === item.href;
+            const active = anchor ? activePath === '/admin/classic' && (location.endsWith(`#${anchor}`) || (!location.includes('#') && anchor === 'review-queue')) : activePath === item.href;
             return <Link key={item.href} href={item.href} onClick={(event) => { close(); if (anchor) { event.preventDefault(); setLocation(item.href); window.setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40); } }} className={`nav-item ${active ? 'nav-active' : ''}`} data-testid={`link-nav-${item.label.toLowerCase().replaceAll(' ', '-')}`}><Icon size={17} /><span>{item.label}</span>{active && <span className="nav-arrow"><ChevronRight size={14} /></span>}</Link>;
           })}
         </div>)}
@@ -888,6 +888,6 @@ function FormCard({ title, onSubmit, onCancel, pending, children }: { title: str
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><strong>{value}</strong></div>; }
 
-function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/password-recovery"><PasswordRecovery /></Route><Route path="/admin/v2"><AdminV2Page /></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin/impexq"><Protected>{() => <ImpexqTestPage />}</Protected></Route><Route path="/admin/whatsapp-readiness"><Protected>{() => <WhatsAppReadinessPage />}</Protected></Route><Route path="/admin/shipment-notifications"><Protected>{() => <ShipmentNotificationsPage />}</Protected></Route><Route path="/admin/staging-readiness"><Protected>{() => <MvpStagingReadinessPage />}</Protected></Route><Route><Protected>{() => <Admin />}</Protected></Route></Switch></ErrorBoundary>; }
+function Router() { return <ErrorBoundary><Switch><Route path="/login"><Auth mode="login" /></Route><Route path="/password-recovery"><PasswordRecovery /></Route><Route path="/admin/v2"><AdminV2Page /></Route><Route path="/admin/classic"><Protected>{() => <Admin />}</Protected></Route><Route path="/admin/agents"><Protected>{(u) => <AgentAdmin user={u} />}</Protected></Route><Route path="/admin/deals"><Protected>{(u) => <DealOperations user={u} />}</Protected></Route><Route path="/admin/impexq"><Protected>{() => <ImpexqTestPage />}</Protected></Route><Route path="/admin/whatsapp-readiness"><Protected>{() => <WhatsAppReadinessPage />}</Protected></Route><Route path="/admin/shipment-notifications"><Protected>{() => <ShipmentNotificationsPage />}</Protected></Route><Route path="/admin/staging-readiness"><Protected>{() => <MvpStagingReadinessPage />}</Protected></Route><Route><AdminV2Page /></Route></Switch></ErrorBoundary>; }
 
 export default function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><PolicyFooter /><CookieControls /><Toaster /></TooltipProvider></QueryClientProvider>; }
