@@ -22,3 +22,14 @@ test('support tools keep privacy review separate from deletion and incident noti
  for(const text of ['if(notify&&!confirmed)return','disabled={busy||!confirmed||!incidentId}','WhatsApp and email were not sent','affectedUserIds:affected','Sending again creates another notice'])assert.ok(incidents.includes(text),text);
  assert.ok(!incidents.includes('dangerouslySetInnerHTML'));
 });
+test('people directory uses protected routes and does not silently activate a role',async()=>{
+ const source=await page('admin-v2-people-controls.tsx');
+ for(const part of ['/api/admin/users','/api/admin/role-change-requests','if(!roleId&&!confirmed)return','permissions unchanged','type="checkbox"'])assert.ok(source.includes(part),part);
+ assert.ok(!source.includes("value=\"activate\""));
+ assert.ok(!source.includes('dangerouslySetInnerHTML'));
+});
+test('agent actions do not create commissions or payments and require human approval',async()=>{
+ const source=await page('admin-v2-agents.tsx');
+ for(const part of ['if(confirmed!==kind)return',"disabled={busy||confirmed!=='create'}",'No fee or commission is agreed','/api/admin/referrals','/api/admin/deals/','/admin/v2/finance'])assert.ok(source.includes(part),part);
+ assert.ok(!source.includes("fetch('/api/admin/commissions'"));
+});

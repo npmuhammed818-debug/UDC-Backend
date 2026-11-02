@@ -1035,17 +1035,20 @@ router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedR
       db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
     ]);
     if (agent?.role !== "agent" || !referred || agent.id === referred.id) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
-    const [referral] = await db.insert(referralsTable).values({
+    const referral=await db.transaction(async tx=>{
+    const [referral] = await tx.insert(referralsTable).values({
       agentUserId: agent.id,
       referredUserId: referred.id,
       referralCode: input.referralCode,
       commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
       status: "pending",
     }).returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id, action: "referral_created",
       entityType: "referral", entityId: referral.id,
       metadata: { agentUserId: referral.agentUserId, referredUserId: referral.referredUserId },
+    });
+      return referral;
     });
     res.status(201).json({ referral });
   } catch (error) {
@@ -1062,18 +1065,19 @@ router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async 
       res.status(400).json({ error: "invalid_referral_id" });
       return;
     }
-    const [existing] = await db.select().from(referralsTable)
+    const referral=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"referral:"+referralId}))`);
+    const [existing] = await tx.select().from(referralsTable)
       .where(eq(referralsTable.id, referralId))
       .limit(1);
     if (!existing) {
-      res.status(404).json({ error: "referral_not_found" });
-      return;
+      return null;
     }
-    const [referral] = await db.update(referralsTable)
+    const [referral] = await tx.update(referralsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(referralsTable.id, referralId))
       .returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id,
       action: "referral_status_updated",
       entityType: "referral",
@@ -1081,7 +1085,7 @@ router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async 
       metadata: { previousStatus: existing.status, newStatus: referral.status },
     });
     if (existing.status !== referral.status) {
-      await db.insert(notificationsTable).values({
+      await tx.insert(notificationsTable).values({
         userId: referral.agentUserId,
         type: "referral_status_updated",
         title: "Referral status updated",
@@ -1089,6 +1093,9 @@ router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async 
         link: "/referrals",
       });
     }
+      return referral;
+    });
+    if(!referral){res.status(404).json({error:"referral_not_found"});return;}
     res.json({ referral });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -2354,10 +2361,12 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       res.status(400).json({ error: "invalid_deal_id" });
       return;
     }
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"deal-agent:"+dealId}))`);
     const [[deal], [agent], existingAgents] = await Promise.all([
-      db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
-      db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
-      db.select({
+      tx.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
+      tx.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
+      tx.select({
         userId: dealParticipantsTable.userId,
         referredByAgentUserId: dealParticipantsTable.referredByAgentUserId,
         referralPosition: dealParticipantsTable.referralPosition,
@@ -2369,22 +2378,18 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       )),
     ]);
     if (!deal) {
-      res.status(404).json({ error: "deal_not_found" });
-      return;
+      return {error:"deal_not_found",status:404} as const;
     }
     if (agent?.role !== "agent") {
-      res.status(409).json({ error: "user_is_not_agent" });
-      return;
+      return {error:"user_is_not_agent",status:409} as const;
     }
     if (input.referredByAgentUserId && !existingAgents.some((member) => member.userId === input.referredByAgentUserId)) {
-      res.status(409).json({ error: "referring_agent_not_on_deal" });
-      return;
+      return {error:"referring_agent_not_on_deal",status:409} as const;
     }
     if (!canAllocateCommissionShare(existingAgents, input.commissionSharePct)) {
-      res.status(409).json({ error: "agent_commission_pool_exceeds_100_percent" });
-      return;
+      return {error:"agent_commission_pool_exceeds_100_percent",status:409} as const;
     }
-    const [participant] = await db.insert(dealParticipantsTable).values({
+    const [participant] = await tx.insert(dealParticipantsTable).values({
       dealId: deal.id,
       userId: agent.id,
       participantRole: "agent",
@@ -2394,23 +2399,26 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       commissionSharePct: input.commissionSharePct === undefined ? undefined : String(input.commissionSharePct),
     }).onConflictDoNothing().returning();
     if (!participant) {
-      res.status(409).json({ error: "agent_already_assigned" });
-      return;
+      return {error:"agent_already_assigned",status:409} as const;
     }
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id,
       action: "deal_agent_assigned",
       entityType: "deal",
       entityId: deal.id,
       metadata: { agentUserId: agent.id, referredByAgentUserId: input.referredByAgentUserId ?? null, referralPosition: participant.referralPosition, commissionSharePct: participant.commissionSharePct },
     });
-    await db.insert(notificationsTable).values({
+    await tx.insert(notificationsTable).values({
       userId: agent.id,
       type: "deal_agent_assigned",
       title: "You were assigned to a deal",
       body: "UDC added you to a deal referral chain. You can follow the deal progress without seeing private counterparty details.",
       link: `/deals/${deal.id}`,
     });
+      return {participant};
+    });
+    if("error" in result){res.status(result.status ?? 409).json({error:result.error});return;}
+    const {participant}=result;
     res.status(201).json({ participant });
   } catch (error) {
     if (error instanceof z.ZodError) {

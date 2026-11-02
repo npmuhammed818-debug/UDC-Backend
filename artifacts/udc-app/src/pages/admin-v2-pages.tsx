@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAdminV2Data, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell, QueueCards } from './admin-v2-shell';
 import '../admin-v2.css';
+import {PeopleControls} from './admin-v2-people-controls';
 
 function useQueuePage() {
   const data = useAdminV2Data();
@@ -32,6 +33,7 @@ function QueuePage({ user, active, title, sub, chips, emptyText }: {
     {data.queuesFailed && <div className="av2-err">Some lists did not load. <button className="av2-btn ghost sm" onClick={() => void data.refreshAll()}>Retry</button></div>}
     {data.queuesLoading ? <><div className="av2-skel" /><div className="av2-skel" /></>
       : <QueueCards items={items} busy={busy} error={error} setError={setError} run={run} emptyText={emptyText} />}
+    {active === 'people' && <PeopleControls />}
   </AdminV2Shell>;
 }
 

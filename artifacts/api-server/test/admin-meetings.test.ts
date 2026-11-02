@@ -313,6 +313,22 @@ test('admin trade workflows preserve verification, ownership, review and payment
       records.dealsTable[0].unit='kg';assert.equal((await request('/admin/commissions',perMt)).status,400);
       records.dealsTable[0].unit='MT';assert.equal((await request('/admin/commissions',perMt)).data.commission.amount,'250.00');
     });
+    await t.test('referral and assignment changes roll back if audit fails',async()=>{
+      const agentId=randomUUID(),referredId=randomUUID();
+      records.usersTable.push({id:agentId,role:'agent',status:'verified'},{id:referredId,role:'buyer',status:'verified'});
+      const referralCount=records.referralsTable.length;
+      state.failAudit=true;
+      assert.equal((await request('/admin/referrals',{agentUserId:agentId,referredUserId:referredId,referralCode:'fixture-intro'})).status,500);
+      assert.equal(records.referralsTable.length,referralCount);
+      const created=await request('/admin/referrals',{agentUserId:agentId,referredUserId:referredId,referralCode:'fixture-intro'});assert.equal(created.status,201);
+      state.failAudit=true;
+      assert.equal((await request(`/admin/referrals/${created.data.referral.id}/status`,{status:'qualified'},'PATCH')).status,500);
+      assert.equal(records.referralsTable.find((r:any)=>r.id===created.data.referral.id).status,'pending');
+      const before=records.dealParticipantsTable.length;state.failAudit=true;
+      assert.equal((await request(`/admin/deals/${dealId}/agents`,{userId:agentId})).status,500);
+      assert.equal(records.dealParticipantsTable.length,before);
+      assert.ok(state.db.locks.includes(`deal-agent:${dealId}`));
+    });
     await t.test('trade review rolls back when its audit fails',async()=>{
       for(const [table,kind] of [['buyerRequestsTable','buyer-requests'],['sellerListingsTable','seller-offers']]){
         const id=randomUUID();records[table].push({id,status:'pending_admin_review',buyerUserId:'buyer',sellerUserId:'seller'});
