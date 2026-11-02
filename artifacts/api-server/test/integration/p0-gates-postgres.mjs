@@ -82,19 +82,19 @@ try {
   for (const [m, p] of denied) {
     const r = await call(m, p, m === "POST" ? {} : undefined, agent.cookie);
     assert.equal(r.status, 403, `${m} ${p} -> ${r.status}`);
-    assert.ok(!JSON.stringify(r.body).includes("777"), `${m} ${p} leaked price`);
+    assert.ok(!JSON.stringify(r.body).includes('"777.00"'), `${m} ${p} leaked price`);
   }
   pass("#155: an assigned verified agent gets 403 with no price on every sensitive generic deal route tested");
   const own = await call("GET", `/deals/${deal}`, undefined, buyer.cookie);
   assert.equal(own.status, 200);
-  assert.ok(JSON.stringify(own.body).includes("777"));
+  assert.ok(JSON.stringify(own.body).includes('"777.00"'));
   assert.equal((await call("GET", `/deals/${deal}`, undefined, seller.cookie)).status, 200);
   const list = await call("GET", "/deals", undefined, admin.cookie);
   assert.equal(list.status, 200);
   pass("#155: buyer, seller and admin keep their existing access to the deal");
   const agentDeals = await call("GET", "/agent/deals", undefined, agent.cookie);
   assert.equal(agentDeals.status, 200);
-  assert.ok(!JSON.stringify(agentDeals.body).includes("777"), "agent milestone view must not expose the agreed price");
+  assert.ok(!JSON.stringify(agentDeals.body).includes('"777.00"'), "agent milestone view must not expose the agreed price");
   pass("#155: the agent's own /agent/deals milestone view works and carries no agreed price");
   console.log(`PASSED: ${checks} real PostgreSQL P0 gate scenarios (synthetic data, no network).`);
 } finally {

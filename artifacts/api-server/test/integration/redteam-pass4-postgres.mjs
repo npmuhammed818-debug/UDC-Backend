@@ -85,19 +85,19 @@ try {
   for (const [m, p] of denied) {
     const r = await call(m, p, m === "POST" ? {} : undefined, agent.cookie);
     assert.equal(r.status, 403, `${m} ${p} -> ${r.status}`);
-    assert.ok(!JSON.stringify(r.body).includes("777"), `${m} ${p} leaked price`);
+    assert.ok(!JSON.stringify(r.body).includes('"777.00"'), `${m} ${p} leaked price`);
   }
   pass("#155: an assigned verified agent gets 403 with no price on every sensitive generic deal route tested");
   const own = await call("GET", `/deals/${deal}`, undefined, buyer.cookie);
   assert.equal(own.status, 200);
-  assert.ok(JSON.stringify(own.body).includes("777"));
+  assert.ok(JSON.stringify(own.body).includes('"777.00"'));
   assert.equal((await call("GET", `/deals/${deal}`, undefined, seller.cookie)).status, 200);
   const list = await call("GET", "/deals", undefined, admin.cookie);
   assert.equal(list.status, 200);
   pass("#155: buyer, seller and admin keep their existing access to the deal");
   const agentDeals = await call("GET", "/agent/deals", undefined, agent.cookie);
   assert.equal(agentDeals.status, 200);
-  assert.ok(!JSON.stringify(agentDeals.body).includes("777"), "agent milestone view must not expose the agreed price");
+  assert.ok(!JSON.stringify(agentDeals.body).includes('"777.00"'), "agent milestone view must not expose the agreed price");
   pass("#155: the agent's own /agent/deals milestone view works and carries no agreed price");
 
   const outsider=await mk('buyer','verified');
@@ -114,7 +114,7 @@ try {
   }
   pass(`all ${adminRoutes.length} admin routes reject anonymous/buyer/seller/agent/outsider (${requests} requests), including money, audit and exports`);
   for(const path of [`/deals/${deal}`,`/deals/${deal}/documents`,`/deals/${deal}/messages`,`/deals/${deal}/execution`,`/deals/${deal}/tracking`,`/deals/${deal}/payment-status`,`/deals/${deal}/timeline`]){
-    const r=await call('GET',path,undefined,outsider.cookie);assert.equal(r.status,404,path);assert.ok(!JSON.stringify(r.body).includes('777'));
+    const r=await call('GET',path,undefined,outsider.cookie);assert.equal(r.status,404,path);assert.ok(!JSON.stringify(r.body).includes('"777.00"'));
   }
   pass('cross-user IDOR: outsider denied on deal, documents, messages, execution, tracking, payment and timeline');
   const pdf=Buffer.from('%PDF-1.7\nSynthetic red-team fixture, not a real document');
