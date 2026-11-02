@@ -1,3 +1,4 @@
+import {useActionLock} from '@/hooks/use-action-lock';
 import {MatchControls} from './admin-v2-match-controls';
 import { useState } from 'react';
 import { useAdminV2Data, fmtStatus, type AnyRecord } from './admin-v2-data';
@@ -5,12 +6,13 @@ import { AdminV2Gate, AdminV2Shell } from './admin-v2-shell';
 
 const fields=['productId','quantity','unit','targetPrice','price','currency','destination','originCountry','incoterm','specification','deliveryTime','contractDuration','inspectionRequirements','paymentTerms','status','createdAt'];
 function TradeRecords({user}:{user:AnyRecord}) {
+ const actionLock=useActionLock();
  const data=useAdminV2Data(); const [busy,setBusy]=useState(''),[error,setError]=useState('');
  const [review,setReview]=useState<{kind:string;id:string;status:string}|null>(null);
- const submit=async()=>{if(!review)return;setBusy(review.id);setError('');try{
+ const submit=async()=>{if(!review)return;if(!actionLock.acquire())return;setBusy(review.id);setError('');try{
   const response=await fetch(`/api/admin/${review.kind}/${review.id}/status`,{method:'PATCH',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:review.status})});
   if(!response.ok)throw Error('Review could not be saved.');await data.refreshAll();setReview(null);
- }catch(e){setError(e instanceof Error?e.message:'Review failed');}finally{setBusy('');}};
+ }catch(e){setError(e instanceof Error?e.message:'Review failed');}finally{actionLock.release();setBusy('');}};
  return <AdminV2Shell user={user} active="trades" title="Trade submissions" sub="Full submitted buyer requirements and seller offers">
   <h1 className="av2-h1">Trade submissions waiting for review</h1><p className="av2-d">Read all submitted terms before approving. Approval does not create a deal or accept the other party's terms.</p>
   {error&&<p role="alert" className="av2-err">{error}</p>}

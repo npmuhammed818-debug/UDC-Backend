@@ -1,3 +1,4 @@
+import {useActionLock} from '@/hooks/use-action-lock';
 import {useState,type FormEvent} from 'react';
 import {useQuery} from '@tanstack/react-query';
 import {AdminV2Gate,AdminV2Shell} from './admin-v2-shell';
@@ -5,12 +6,13 @@ import {loadJson,fmtStatus,type AnyRecord} from './admin-v2-data';
 import {IncidentControls} from './admin-v2-incidents';
 import {AdminPrivacyRequests} from '../components/privacy';
 function Support({user}:{user:AnyRecord}){
+ const actionLock=useActionLock();
  const grievances=useQuery({queryKey:['v2-grievances'],queryFn:()=>loadJson<{grievances:AnyRecord[]}>('/api/admin/grievances')});
  const incidents=useQuery({queryKey:['v2-incidents'],queryFn:()=>loadJson<{incidents:AnyRecord[]}>('/api/admin/incidents')});
  const [notes,setNotes]=useState<Record<string,string>>({}),[busy,setBusy]=useState(''),[message,setMessage]=useState('');
- const review=async(event:FormEvent,id:string)=>{event.preventDefault();setBusy(id);setMessage('');const form=new FormData(event.currentTarget as HTMLFormElement);try{
+ const review=async(event:FormEvent,id:string)=>{event.preventDefault();if(!actionLock.acquire())return;setBusy(id);setMessage('');const form=new FormData(event.currentTarget as HTMLFormElement);try{
   const response=await fetch(`/api/admin/grievances/${id}/update`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:form.get('status'),note:notes[id]})});if(!response.ok)throw Error('Review could not be saved.');await grievances.refetch();setMessage('Review recorded in the audit log. No message was sent.');
- }catch(e){setMessage(e instanceof Error?e.message:'Review failed');}finally{setBusy('');}};
+ }catch(e){setMessage(e instanceof Error?e.message:'Review failed');}finally{actionLock.release();setBusy('');}};
  return <AdminV2Shell user={user} active="support" title="Privacy and support" sub="Privacy requests, complaints and recorded incidents">
   <h1 className="av2-h1">Requests that need a human</h1><div className="av2-embed" style={{marginTop:18}}><AdminPrivacyRequests/></div>
   <p role="status" className="av2-d">{message}</p>
