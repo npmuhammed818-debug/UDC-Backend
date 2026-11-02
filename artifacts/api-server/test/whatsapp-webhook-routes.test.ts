@@ -488,6 +488,20 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ context: { id: "quoted-d" }, image: { id: "img-solo", mime_type: "image/jpeg" } });
       assert.equal(state.images?.length ?? 0, 0);
       assert.match(state.sent.at(-1).body, /kept it in this deal/);
+      // A participant removed from the deal, or a suspended counterparty, must
+      // never receive a relayed photo.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-e", dealId: "deal-b", recipientUserId: "buyer" }];
+      rows.dealParticipantsTable.find(r => r.dealId === "deal-b" && r.userId === "seller").status = "removed";
+      await message({ context: { id: "quoted-e" }, image: { id: "img-removed", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0, "a removed participant receives no relay");
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-f", dealId: "deal-b", recipientUserId: "buyer" }];
+      rows.usersTable.find(r => r.id === "seller").status = "suspended";
+      await message({ context: { id: "quoted-f" }, image: { id: "img-susp", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0, "a suspended counterparty receives no relay");
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
     });
     await t.test("media replies attach to the quoted deal, with an owner grant", async () => {
       reset(); seedDeal();

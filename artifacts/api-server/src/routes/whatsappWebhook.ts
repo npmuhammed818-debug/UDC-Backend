@@ -600,7 +600,12 @@ async function handleWhatsAppDealDocument(
         phone: usersTable.phone,
       }).from(dealParticipantsTable)
         .innerJoin(usersTable, eq(usersTable.id, dealParticipantsTable.userId))
-        .where(and(eq(dealParticipantsTable.dealId, dealId), ne(dealParticipantsTable.userId, sender.id)));
+        .where(and(
+          eq(dealParticipantsTable.dealId, dealId),
+          eq(dealParticipantsTable.status, "active"),
+          eq(usersTable.status, "verified"),
+          ne(dealParticipantsTable.userId, sender.id),
+        ));
       const senderSide = sender.role === "buyer" ? "buyer" : sender.role === "seller" ? "seller" : "other side";
       const caption = `Photo from the ${senderSide} in deal ${dealRow?.dealNumber ?? "your deal"}.${document.caption ? ` Note: ${document.caption.slice(0, 300)}` : ""}`;
       for (const side of counterparties) {
