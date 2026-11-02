@@ -8,6 +8,18 @@
 5. 16d1a03 - trust proxy exactly 1 hop: per-IP auth budgets key on the real visitor (was the Render LB for everyone - site-wide lockout risk). +1 test.
 6. 4f3bec8 - AKIF worker URL must be https (loopback exempt): worker token + chat content never cleartext. +4 tests.
 
+## Red-team report 1 fixes (commit 3ad8cf3, 560/560 green)
+7. Login budget race (MED): budget charged atomically inside the account row lock before verification; cleared on success.
+8. Lockout DoS (MED): OPEN - options sent to owner (A keep / B email+network pair + daily cap, recommended / C email-code unlock).
+9. WhatsApp sign-in phishing (LOW-MED): OPEN - proposed confirm message shows requester IP + UTC time, 2-min code TTL; awaiting wording approval.
+10. Web auth IP budgets (LOW-MED): durable (email_auth_limits), IPv6 /64 keyed, expired rows purged; in-memory Map removed.
+11. Upload quotas (LOW): 20/day deal docs, 10/day company docs per user.
+12. Budget table fill (LOW): unknown emails write no rows; timing equalized with a dummy scrypt hash.
+13. Register 409 enumeration (LOW): OPEN - recommend keeping (standard UX); login/OTP already equalized.
+14. Agent company creation (LOW): POST /company rejects agents. Agent tracking access was a false positive (redacted by design, test-enforced).
+15. Security headers (INFO): nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer, HSTS. CSP deferred (SPA + vault page use inline script/style).
+16. Production tester-mode env check (INFO): relayed to owner; we never touch production env.
+
 ## Verified safe (deep sweep, no change needed)
 - Sessions: 32B random, HMAC-SHA256 at rest, 7d TTL, revocation; password reset revokes all sessions.
 - Registration: role enum buyer/seller/agent only; no admin self-assign; strict schema; phone never settable.
