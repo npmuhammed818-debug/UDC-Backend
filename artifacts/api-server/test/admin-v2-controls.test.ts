@@ -25,7 +25,9 @@ test('support tools keep privacy review separate from deletion and incident noti
 test('people directory uses protected routes and does not silently activate a role',async()=>{
  const source=await page('admin-v2-people-controls.tsx');
  for(const part of ['/api/admin/users','/api/admin/role-change-requests','if(!roleId&&!confirmed)return','permissions unchanged','type="checkbox"'])assert.ok(source.includes(part),part);
- assert.ok(!source.includes("value=\"activate\""));
+ assert.ok(source.includes("decision:'activate',verificationConfirmed:true"));
+ assert.ok(source.includes('revokes their sessions'));
+ assert.ok(source.includes('unfinished WhatsApp intake/chat state'));
  assert.ok(!source.includes('dangerouslySetInnerHTML'));
 });
 test('agent actions do not create commissions or payments and require human approval',async()=>{
@@ -45,4 +47,24 @@ test('chats show full text and separate direct messages, participants and case c
 test('commission correction UI names pending-only scope, human agreement and preserved history',async()=>{
  const source=await page('admin-v2-finance-controls.tsx');
  for(const part of ['Correct pending commission terms','expectedAmount:editCommission.amount','Evidence and reason for correction','Paid and cancelled records stay unchanged','confirmAgreedTerms:true'])assert.ok(source.includes(part),part);
+});
+
+test('company directory keeps screening advisory and all decisions human-confirmed',async()=>{
+ const source=await page('admin-v2-company-controls.tsx');
+ for(const part of ['/api/admin/companies','Open private evidence','cannot verify authenticity','Removing verification can restrict','configured paid AI service','I inspected this document myself'])assert.ok(source.includes(part),part);
+ assert.ok(!source.includes('dangerouslySetInnerHTML'));
+});
+
+test('meeting, tracking and feedback forms show human confirmation and exact source controls',async()=>{
+ const meeting=await page('admin-v2-meeting-controls.tsx');for(const p of ['representative','Both parties agreed','/api/admin/meetings/'])assert.ok(meeting.includes(p),p);
+ const tracking=await page('admin-v2-tracking-controls.tsx');for(const p of ['idempotencyKey:eventKey','carrier_reported','document_checked','Manual records, not live GPS','/cargo-units'])assert.ok(tracking.includes(p),p);
+ const feedback=await page('admin-v2-feedback-controls.tsx');assert.ok(feedback.includes('approve its publication or rejection'));
+ const source=await page('admin-v2-more.tsx');for(const p of ['<TrackingControls','<MeetingControls','<FeedbackControls'])assert.ok(source.includes(p),p);
+});
+
+test('new matching, document and saved market controls preserve human decisions',async()=>{
+ const match=await page('admin-v2-match-controls.tsx');assert.ok(match.includes('recorded accepted terms'));assert.ok(match.includes('/terms-review'));
+ const docs=await page('admin-v2-document-controls.tsx');assert.ok(docs.includes('5*1024*1024'));assert.ok(docs.includes('PDF-'));assert.ok(docs.includes('approve this review'));
+ const draft=await page('admin-v2-draft-controls.tsx');assert.ok(draft.includes('humanReviewed:true'));assert.ok(draft.includes('nothing is sent'));assert.ok(draft.includes('preview.data.confirmation'));
+ const market=await page('admin-v2-market-controls.tsx');assert.ok(market.includes('Read-only saved evidence'));assert.ok(!market.includes("method:'POST'"));
 });

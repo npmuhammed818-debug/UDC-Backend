@@ -91,3 +91,9 @@ export async function downloadDocumentBytes(path: string) {
   const bytes = new Uint8Array(await response.arrayBuffer());
   return { bytes, contentType };
 }
+
+/** Best-effort cleanup of an object created by the same failed upload operation. */
+export async function removeDocumentObject(path:string){
+ const {url,key}=config();const response=await fetch(`${url}/storage/v1/object/${bucket}`,{method:'DELETE',headers:{authorization:`Bearer ${key}`,'content-type':'application/json'},body:JSON.stringify({prefixes:[path]})});
+ if(!response.ok)throw new Error('document_cleanup_failed');
+}

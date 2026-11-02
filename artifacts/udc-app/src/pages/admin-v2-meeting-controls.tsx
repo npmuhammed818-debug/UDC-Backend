@@ -1,0 +1,12 @@
+import {useQueryClient} from '@tanstack/react-query';
+import {RecordForm} from '../components/deal-execution-controls';
+import {type AnyRecord} from './admin-v2-data';
+export function MeetingControls({dealId,room}:{dealId:string;room:AnyRecord}){
+ const qc=useQueryClient();const refresh=async()=>{await Promise.all([qc.invalidateQueries({queryKey:['v2-chat-room',dealId]}),qc.invalidateQueries({queryKey:['admin-deal-room',dealId]}),qc.invalidateQueries({queryKey:['v2-audit']})]);};
+ return <section style={{marginTop:24}} data-testid="v2-meeting-controls"><h2>Meeting review</h2><p className="av2-d">Confirm time, joining link or location with both parties. Dates use your local timezone. UDC cannot reserve a venue or guarantee a representative through this form. Record an optional representative's agreed name and role in the meeting's private admin notes; arranging their attendance stays human.</p>
+ {(room.meetings||[]).map((m:AnyRecord)=><article key={m.id} className="av2-embed" style={{padding:18,marginTop:12}}><h3>{m.provider==='in_person'?'Face-to-face':'Video'} meeting · {m.status}</h3><p>{m.scheduledAt?new Date(m.scheduledAt).toLocaleString():''} · {m.agenda}</p>
+ <RecordForm title="Review meeting status and private representative notes" path={`/api/admin/meetings/${m.id}`} method="PATCH" initial={m} fields={[{key:'status',label:'Reviewed status',options:['requested','scheduled','completed','cancelled']},{key:'adminNotes',label:'Private notes / agreed UDC representative and role',multiline:true}]} confirmation="I confirmed this meeting status and any representative's agreement. Saving does not book or pay for attendance." onSaved={refresh}/>
+ <RecordForm title="Change agreed time and meeting details" path={`/api/admin/meetings/${m.id}`} method="PATCH" initial={m} fields={[{key:'scheduledAt',label:'Agreed time (your local timezone)',date:true,required:true},{key:'provider',label:'Type',options:['video','in_person']},{key:'meetingUrl',label:'Video joining URL (leave blank for in person)',omitEmpty:true,maxLength:1000},{key:'agenda',label:'Agenda and confirmed in-person location',multiline:true}]} confirmation="Both parties agreed these meeting details. Verified accounts and valid joining details are still required." onSaved={refresh}/>
+ </article>)}{!(room.meetings||[]).length&&<p className="av2-d">No meeting recorded. Schedule one in Deals after confirming with both parties.</p>}
+ </section>;
+}

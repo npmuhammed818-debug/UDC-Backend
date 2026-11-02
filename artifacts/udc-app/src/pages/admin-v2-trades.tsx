@@ -1,3 +1,4 @@
+import {MatchControls} from './admin-v2-match-controls';
 import { useState } from 'react';
 import { useAdminV2Data, fmtStatus, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell } from './admin-v2-shell';
@@ -20,6 +21,6 @@ function TradeRecords({user}:{user:AnyRecord}) {
     <div className="av2-r2"><button className="av2-btn orange sm" disabled={!!busy} onClick={()=>setReview({kind,id:item.id,status:'approved'})}>Approve</button><button className="av2-btn ghost sm" disabled={!!busy} onClick={()=>setReview({kind,id:item.id,status:'rejected'})}>Reject</button></div>
    </article>)}
   </section>)}
- </AdminV2Shell>;
+ <MatchControls/></AdminV2Shell>;
 }
 export function AdminV2TradesPage(){return <AdminV2Gate>{user=><TradeRecords user={user}/>}</AdminV2Gate>;}

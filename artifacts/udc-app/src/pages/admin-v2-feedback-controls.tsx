@@ -1,0 +1,8 @@
+import {useQuery,useQueryClient} from '@tanstack/react-query';
+import {RecordForm} from '../components/deal-execution-controls';
+import {loadJson,type AnyRecord} from './admin-v2-data';
+export function FeedbackControls(){
+ const qc=useQueryClient();const data=useQuery({queryKey:['v2-feedback'],queryFn:()=>loadJson<{feedback:AnyRecord[]}>('/api/admin/feedback')});
+ const refresh=async()=>{await Promise.all([data.refetch(),qc.invalidateQueries({queryKey:['v2-audit']})]);};
+ return <section className="av2-panel" style={{padding:18,marginTop:24}} data-testid="v2-feedback-controls"><h2>Ratings and feedback review</h2><p className="av2-d">Only approved feedback is visible to authorized deal participants. Check the facts before publishing or rejecting it.</p>{data.isError?<p role="alert">Feedback did not load. <button onClick={()=>void data.refetch()}>Retry</button></p>:data.isLoading?<div className="av2-skel"/>:!data.data?.feedback.length?<p className="av2-d">No feedback to review.</p>:data.data.feedback.map(f=><article key={f.id} style={{borderTop:'1px solid #ddd',paddingTop:14}}><h3>Deal {f.dealId} · {f.rating}/5 · {f.status}</h3><p>{f.comment}</p><p className="av2-d">Author {f.authorUserId} · {f.createdAt?new Date(f.createdAt).toLocaleString():''}</p><RecordForm title="Human feedback decision" path={`/api/admin/feedback/${f.id}/status`} method="PATCH" initial={{status:f.status==='rejected'?'rejected':'approved'}} fields={[{key:'status',label:'Decision',options:['approved','rejected']}]} confirmation="I reviewed this feedback and approve its publication or rejection." onSaved={refresh}/></article>)}</section>;
+}

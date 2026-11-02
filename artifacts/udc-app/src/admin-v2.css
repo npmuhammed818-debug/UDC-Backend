@@ -96,3 +96,8 @@
    actions, re-skinned to the public palette via scoped vars. */
 .av2-embed{--background:0 0% 100%;--card:0 0% 100%;--card-foreground:0 0% 9%;--foreground:0 0% 9%;--muted-foreground:0 0% 42%;--border:0 0% 77%;--card-border:0 0% 77%;--accent:20 88% 53%;--accent-foreground:0 0% 100%;font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,monospace;color:#161616;letter-spacing:-.01em;}
 .av2-embed .panel{box-shadow:none;border-radius:18px;}
+
+/* Native controls in the new human-review tools. */
+.av2-panel form > label { display:block; margin:12px 0; font-size:12px; }
+.av2-panel input.input { display:block; width:100%; min-height:40px; padding:9px 12px; margin-top:6px; border:1px solid #d9d3c8; border-radius:10px; background:#fff; font:inherit; box-sizing:border-box; }
+.av2-panel input[type=file] { display:block; width:100%; margin:8px 0; font-size:12px; }

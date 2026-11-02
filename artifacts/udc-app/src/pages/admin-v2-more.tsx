@@ -1,3 +1,8 @@
+import {CommissionProposals} from './admin-v2-commission-proposals';
+import {MarketControls} from './admin-v2-market-controls';
+import {TrackingControls} from './admin-v2-tracking-controls';
+import {FeedbackControls} from './admin-v2-feedback-controls';
+import {MeetingControls} from './admin-v2-meeting-controls';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fmtStatus, loadJson, pillFor, timeAgo, useAdminV2Data, type AnyRecord } from './admin-v2-data';
@@ -63,7 +68,7 @@ function Finance({ user }: { user: AnyRecord }) {
           </tbody></table>}
       </div>
     </div>
-    <FinanceControls />
+    <FinanceControls /><CommissionProposals/>
   </AdminV2Shell>;
 }
 
@@ -133,7 +138,7 @@ function Chats({ user }: { user: AnyRecord }) {
         <details><summary>Participants</summary><div className="av2-feed">{(room.data.participants || []).map((p:AnyRecord)=><div key={p.id}>{p.participantRole} · {p.userId} · {p.status}</div>)}</div></details>
         <details open><summary>Saved direct messages</summary><div className="av2-feed">{!(room.data.messages || []).length?<p>No saved direct messages.</p>:[...room.data.messages].reverse().map((m:AnyRecord)=><div key={m.id} style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{m.message}<time>{new Date(m.createdAt).toLocaleString()}</time></div>)}</div></details>
         <details><summary>Deal timeline</summary><div className="av2-feed">{(room.data.timeline || []).map((e:AnyRecord)=><div key={e.id}>{fmtStatus(e.action)}<time>{new Date(e.createdAt).toLocaleString()}</time></div>)}</div></details>
-        <CaseControls key={openDeal.id} dealId={openDeal.id} room={room.data}/>
+        <CaseControls key={openDeal.id} dealId={openDeal.id} room={room.data}/><MeetingControls key={`meeting-${openDeal.id}`} dealId={openDeal.id} room={room.data}/>{(room.data.shipments||[]).map((shipment:AnyRecord)=><TrackingControls key={shipment.id} shipment={shipment}/>)}
       </>}
     </section>}
   </AdminV2Shell>;
@@ -220,7 +225,7 @@ function Reports({ user }: { user: AnyRecord }) {
         </div>
       </div>
     </div>
-  </AdminV2Shell>;
+  <FeedbackControls /><MarketControls /></AdminV2Shell>;
 }
 
 export function AdminV2ReportsPage() {

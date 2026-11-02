@@ -1,3 +1,4 @@
+import commissionProposalsRouter from './commissionProposals';
 import adminRouter from "./admin";
 import adminIncidentsRouter from "./adminIncidents";
 import adminGrievancesRouter from "./adminGrievances";
@@ -34,6 +35,7 @@ import vaultRouter from "./vault";
 
 const router: IRouter = Router();
 
+router.use(commissionProposalsRouter);
 router.use(healthRouter);
 router.use(databaseRouter);
 router.use(dashboardRouter);
