@@ -41,9 +41,13 @@ def _retry_wait(exc: Exception, remaining: float) -> float:
 
 
 def _models() -> list[str]:
-    """Primary model first, then the optional backup. Only these are ever called."""
+    """Primary model first, then the optional backups. Only these are ever called.
+
+    The third slot exists so the last backup can be a different provider: same-provider
+    backups share the account's rate limit, so a quota 429 takes the whole chain down.
+    """
     out: list[str] = []
-    for name in ("AKIF_LLM_MODEL", "AKIF_LLM_BACKUP_MODEL"):
+    for name in ("AKIF_LLM_MODEL", "AKIF_LLM_BACKUP_MODEL", "AKIF_LLM_BACKUP2_MODEL"):
         value = os.getenv(name, "").strip()
         if value and value not in out:
             out.append(value)

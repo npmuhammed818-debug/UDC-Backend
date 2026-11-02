@@ -162,3 +162,20 @@ def test_429_on_both_models_still_ends_after_one_retry_on_the_last(monkeypatch):
     with pytest.raises(_Err):
         llm_gateway.complete([])
     assert calls == ["gemini/flash", "groq/backup", "groq/backup"]
+
+
+def test_third_slot_serves_when_first_two_hit_quota(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv("AKIF_LLM_BACKUP2_MODEL", "gemini/last")
+    calls = _fake(monkeypatch, lambda m, n: _Err(429) if m != "gemini/last" else "ok")
+    assert llm_gateway.complete([]) == "ok"
+    assert calls[0] == "gemini/flash" and calls[-1] == "gemini/last"
+
+
+def test_third_slot_unset_keeps_two_model_chain(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.delenv("AKIF_LLM_BACKUP2_MODEL", raising=False)
+    calls = _fake(monkeypatch, lambda m, n: _Err(429))
+    with pytest.raises(_Err):
+        llm_gateway.complete([])
+    assert calls == ["gemini/flash", "groq/backup", "groq/backup"]
