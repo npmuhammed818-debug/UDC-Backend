@@ -408,7 +408,7 @@ button, input, select, textarea { font: inherit; }
 .auth-quote { max-width: 30rem; border-top: 1px solid hsl(var(--sidebar-border)); padding-top: 1.5rem; }
 .auth-quote > span { color: hsl(var(--accent)); font: 3rem/1 Georgia,serif; }
 .auth-quote small { display: block; margin-top: .75rem; opacity: .7; }
-.auth-panel { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1.5rem; padding: clamp(1.25rem,4vw,4rem); }
+.auth-panel { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1.5rem; padding: clamp(1.25rem,4vw,4rem); padding-bottom: 7rem; /* clears the fixed cookie bar */ }
 .auth-card { width: 100%; max-width: 29rem; }
 .auth-card h2 { margin-top: .75rem; font-size: clamp(1.7rem,2.5vw,2.25rem); line-height: 1.2; font-weight: 750; letter-spacing: -.04em; }
 .auth-sub { margin-block: .8rem 1.75rem; color: hsl(var(--muted-foreground)); line-height: 1.6; }
