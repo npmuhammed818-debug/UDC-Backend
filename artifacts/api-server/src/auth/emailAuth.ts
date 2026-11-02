@@ -13,6 +13,11 @@ import {
   type EmailPurpose,
 } from "./emailCodes";
 import {
+  PASSWORD_LOGIN_LIMIT,
+  PASSWORD_LOGIN_WINDOW_MS,
+  windowLimitExceeded,
+} from "./loginBudget";
+import {
   sendAuthEmail,
   type SendAuthEmail,
   type AuthEmail,
@@ -48,6 +53,9 @@ const ownsEmail = (u: Account) =>
   !!u.email_verified_at &&
   !!u.email &&
   u.verified_email === u.email.trim().toLowerCase();
+
+
+export { PASSWORD_LOGIN_LIMIT, PASSWORD_LOGIN_WINDOW_MS, windowLimitExceeded } from "./loginBudget";
 
 export function createEmailAuthService(
   options: {
@@ -127,6 +135,35 @@ export function createEmailAuthService(
       );
     });
     if (!allowed) throw new EmailAuthError("rate_limited");
+  }
+  // Read-only pre-check before password verification; failures are charged via
+  // recordPasswordLoginFailure. Both share the durable email_auth_limits table.
+  async function passwordLoginAllowed(email: string) {
+    const hash = digest(`pwd-login:${email.trim().toLowerCase()}`);
+    const { rows } = await database.execute(
+      sql`select count, window_start from email_auth_limits where key=${hash}`,
+    );
+    const row = rows[0] as
+      | { count: number; window_start: Date | string }
+      | undefined;
+    if (row && !Number.isFinite(epoch(row.window_start)))
+      throw new EmailAuthError("unavailable");
+    return !windowLimitExceeded(
+      row ? { count: row.count, windowStartMs: epoch(row.window_start) } : undefined,
+      now().getTime(),
+      PASSWORD_LOGIN_WINDOW_MS,
+      PASSWORD_LOGIN_LIMIT,
+    );
+  }
+  async function recordPasswordLoginFailure(email: string) {
+    await database.transaction(async (tx) => {
+      await charge(
+        tx,
+        `pwd-login:${email.trim().toLowerCase()}`,
+        PASSWORD_LOGIN_LIMIT,
+        PASSWORD_LOGIN_WINDOW_MS,
+      );
+    });
   }
   async function account(tx: Executor, userId: string) {
     const { rows } = await tx.execute(
@@ -251,6 +288,8 @@ export function createEmailAuthService(
 
   return {
     ipBudget,
+    passwordLoginAllowed,
+    recordPasswordLoginFailure,
     async status(userId: string) {
       const { rows } = await database.execute(
         sql`select email,verified_email,email_verified_at,password_recovery_enabled from users where id=${userId}`,

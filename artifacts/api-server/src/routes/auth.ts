@@ -10,6 +10,7 @@ import {
   notificationPreferencesTable,
   usersTable,
 } from "@workspace/db";
+import { emailAuth } from "../auth/emailAuth";
 import {
   authRateLimitKey,
   clearAuthFailures,
@@ -168,6 +169,11 @@ router.post("/auth/login", async (req, res) => {
 
   try {
     const input = loginSchema.parse(req.body);
+    // Per-account budget: caps total guesses against one email even from rotating IPs.
+    if (!(await emailAuth.passwordLoginAllowed(input.email))) {
+      res.status(429).json({ error: "too_many_auth_attempts" });
+      return;
+    }
     // Serialize password proof/session creation with password reset. Otherwise a
     // login verified against an old hash could create a session after revocation.
     const result = await db.transaction(async tx => {
@@ -182,6 +188,7 @@ router.post("/auth/login", async (req, res) => {
     });
     if (result.kind === "invalid") {
       recordAuthFailure(rateKey);
+      await emailAuth.recordPasswordLoginFailure(input.email);
       res.status(401).json({ error: "invalid_email_or_password" });
       return;
     }
