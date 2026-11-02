@@ -4,6 +4,8 @@ import { plainWordsAction } from '../src/whatsapp/plainWordsIntent.ts';
 
 test('watch and unwatch phrases resolve to tracking actions', () => {
   assert.equal(plainWordsAction('watch SYN123456'), 'watchnum:SYN123456');
+  assert.equal(plainWordsAction('track AB123'), 'tracknum:AB123');
+  assert.equal(plainWordsAction('watch A' + '1'.repeat(48) + 'B'), 'watchnum:A' + '1'.repeat(48) + 'B');
   assert.equal(plainWordsAction('watch my shipment syn123456'), 'watchnum:SYN123456');
   assert.equal(plainWordsAction('follow the package AB-98765'), 'watchnum:AB-98765');
   assert.equal(plainWordsAction('unwatch SYN123456'), 'unwatchnum:SYN123456');

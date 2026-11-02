@@ -38,7 +38,7 @@ export async function liveTrackingReply(
   deps: { tracker?: ShipmentTracker; now?: number; configured?: boolean } = {},
 ): Promise<string> {
   const number = rawNumber.trim().toUpperCase();
-  if (!/^[A-Z0-9][A-Z0-9-]{4,38}[A-Z0-9]$/.test(number) || !/\d/.test(number)) {
+  if (!/^[A-Z0-9][A-Z0-9-]{3,48}[A-Z0-9]$/.test(number) || !/\d/.test(number)) {
     return 'That does not look like a tracking number. Send Track followed by the number, for example: track 1Z999AA10123456784.';
   }
   const configured = deps.configured ?? isSeventeenTrackConfigured();

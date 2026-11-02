@@ -18,22 +18,51 @@ export function isSeventeenTrackConfigured(): boolean {
 }
 
 // Live client. Inert unless SEVENTEEN_TRACK_API_KEY is set; tests mock fetch.
+// 17TRACK v2.2 requires a number to be registered before it is tracked.
+// Registration consumes quota only for a new number; the provider's "already
+// registered" response is success for us and never blocks the lookup.
 export function createSeventeenTrackClient(): ShipmentTracker {
+  async function post<T>(path: 'register' | 'gettrackinfo', trackingNumber: string): Promise<{ code: number; data: T }> {
+    const apiKey = process.env.SEVENTEEN_TRACK_API_KEY?.trim();
+    if (!apiKey) throw new Error('17TRACK is not configured');
+    const baseUrl = (process.env.SEVENTEEN_TRACK_BASE_URL?.trim() || 'https://api.17track.net').replace(/\/$/, '');
+    const response = await fetch(`${baseUrl}/track/v2.2/${path}`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10_000),
+      headers: { 'content-type': 'application/json', '17token': apiKey },
+      body: JSON.stringify([{ number: trackingNumber }]),
+    });
+    if (!response.ok) throw new Error(`17TRACK returned HTTP ${response.status}`);
+    const raw = await response.json() as { code?: number; data?: T };
+    const alreadyRegistered = path === 'register' && raw.code === -18019901;
+    if (raw.code !== 0 && !alreadyRegistered) throw new Error('17TRACK request was rejected');
+    return { code: raw.code ?? -1, data: raw.data ?? {} as T };
+  }
+
+  async function register(trackingNumber: string): Promise<void> {
+    type RegisterData = {
+      accepted?: Array<{ number?: string }>;
+      rejected?: Array<{ number?: string; error?: { code?: number } }>;
+    };
+    const response = await post<RegisterData>('register', trackingNumber);
+    if (response.code === -18019901) return;
+    const data = response.data;
+    const wanted = trackingNumber.toLowerCase();
+    const accepted = data.accepted?.some((item) => item.number?.toLowerCase() === wanted) ?? false;
+    const alreadyRegistered = data.rejected?.some((item) =>
+      item.number?.toLowerCase() === wanted && item.error?.code === -18019901
+    ) ?? false;
+    if (!accepted && !alreadyRegistered) throw new Error('17TRACK registration failed');
+  }
+
   return {
     name: '17track',
     async fetchEvents(trackingNumber: string): Promise<ShipmentTrackEvent[]> {
-      const apiKey = process.env.SEVENTEEN_TRACK_API_KEY?.trim();
-      if (!apiKey) throw new Error('17TRACK is not configured');
-      const baseUrl = (process.env.SEVENTEEN_TRACK_BASE_URL?.trim() || 'https://api.17track.net').replace(/\/$/, '');
-      const response = await fetch(`${baseUrl}/track/v2.2/gettrackinfo`, {
-        method: 'POST',
-        signal: AbortSignal.timeout(10_000),
-        headers: { 'content-type': 'application/json', '17token': apiKey },
-        body: JSON.stringify([{ number: trackingNumber }]),
-      });
-      if (!response.ok) throw new Error(`17TRACK returned HTTP ${response.status}`);
-      const raw = await response.json() as { data?: { accepted?: Array<{ track_info?: { latest_event?: { time_iso?: string; description?: string; location?: string } } }> } };
-      const latest = raw.data?.accepted?.[0]?.track_info?.latest_event;
+      await register(trackingNumber);
+      const { data } = await post<{
+        accepted?: Array<{ track_info?: { latest_event?: { time_iso?: string; description?: string; location?: string } } }>;
+      }>('gettrackinfo', trackingNumber);
+      const latest = data.accepted?.[0]?.track_info?.latest_event;
       return latest?.time_iso && latest?.description
         ? [{ time: latest.time_iso, description: latest.description, ...(latest.location ? { location: latest.location } : {}) }]
         : [];

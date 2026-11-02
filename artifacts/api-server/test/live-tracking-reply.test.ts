@@ -15,6 +15,17 @@ test('invalid numbers get guidance and never reach the tracker', async () => {
   assert.deepEqual(tracker.calls, []);
 });
 
+test('provider-sized five and fifty character numbers are accepted', async () => {
+  clearLiveTrackingCache();
+  const tracker = trackerWith({
+    'AB123': [{ time: '2026-10-28T08:00:00Z', description: 'Departed' }],
+    ['A' + '1'.repeat(48) + 'B']: [{ time: '2026-10-28T08:05:00Z', description: 'Arrived' }],
+  });
+  assert.match(await liveTrackingReply('AB123', { tracker, configured: true }), /Latest carrier update/);
+  assert.match(await liveTrackingReply('A' + '1'.repeat(48) + 'B', { tracker, configured: true }), /Latest carrier update/);
+  assert.deepEqual(tracker.calls, ['AB123', 'A' + '1'.repeat(48) + 'B']);
+});
+
 test('without a configured key the reply says honestly that live tracking is off', async () => {
   const tracker = trackerWith({ SYN1: [{ time: '2026-10-28T08:00:00Z', description: 'Departed' }] });
   const reply = await liveTrackingReply('SYN1001', { tracker, configured: false });
