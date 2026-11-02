@@ -87,11 +87,11 @@
   --sidebar: 194 37% 17%;
   --sidebar-foreground: 42 42% 95%;
   --sidebar-border: 194 27% 26%;
-  --sidebar-primary: 172 45% 55%;
+  --sidebar-primary: 20 88% 53%;
   --sidebar-primary-foreground: 194 37% 17%;
   --sidebar-accent: 194 30% 24%;
   --sidebar-accent-foreground: 42 42% 95%;
-  --sidebar-ring: 172 45% 55%;
+  --sidebar-ring: 20 88% 53%;
   --popover: 43 48% 98%;
   --popover-foreground: 194 36% 15%;
   --popover-border: 41 24% 86%;
@@ -101,17 +101,17 @@
   --secondary-foreground: 194 36% 15%;
   --muted: 41 30% 91%;
   --muted-foreground: 194 15% 34%;
-  --accent: 172 66% 30%;
-  --accent-foreground: 42 42% 95%;
+  --accent: 20 88% 53%;
+  --accent-foreground: 0 0% 100%;
   --destructive: 4 63% 47%;
   --destructive-foreground: 42 42% 95%;
   --input: 41 21% 80%;
-  --ring: 172 66% 30%;
+  --ring: 20 88% 53%;
   --chart-1: 194 51% 28%;
-  --chart-2: 172 60% 40%;
+  --chart-2: 20 88% 53%;
   --chart-3: 157 35% 43%;
   --chart-4: 4 63% 47%;
-  --chart-5: 210 40% 55%;
+  --chart-5: 20 60% 45%;
   --app-font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: ui-monospace, monospace;
@@ -208,11 +208,11 @@
   --sidebar: 194 39% 9%;
   --sidebar-foreground: 42 42% 95%;
   --sidebar-border: 194 22% 21%;
-  --sidebar-primary: 172 45% 55%;
+  --sidebar-primary: 20 88% 53%;
   --sidebar-primary-foreground: 194 37% 17%;
   --sidebar-accent: 194 30% 19%;
   --sidebar-accent-foreground: 42 42% 95%;
-  --sidebar-ring: 172 45% 55%;
+  --sidebar-ring: 20 88% 53%;
   --popover: 194 31% 15%;
   --popover-foreground: 42 42% 95%;
   --popover-border: 194 22% 27%;
@@ -222,8 +222,8 @@
   --secondary-foreground: 42 42% 95%;
   --muted: 194 24% 20%;
   --muted-foreground: 42 20% 72%;
-  --accent: 172 66% 30%;
-  --accent-foreground: 42 42% 95%;
+  --accent: 20 88% 53%;
+  --accent-foreground: 0 0% 100%;
   --destructive: 4 63% 56%;
   --destructive-foreground: 42 42% 95%;
   --input: 194 22% 27%;
@@ -422,8 +422,9 @@ button, input, select, textarea { font: inherit; }
 .auth-footer { display: flex; align-items: center; justify-content: center; gap: .5rem; font-size: .75rem; color: hsl(var(--muted-foreground)); }
 .auth-loading { display: grid; min-height: 65vh; place-items: center; padding: 2rem; }
 .eyebrow { font-size: .7rem; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
-.brand-mark { width: 2rem; height: 2rem; display: inline-grid; place-items: center; border: 2px solid currentColor; border-radius: .6rem; transform: rotate(-8deg); }
-.brand-mark > span { width: .7rem; height: .7rem; background: currentColor; border-radius: .2rem; }
+.brand-mark { width: 2rem; height: 2rem; display: inline-grid; place-items: center; background: #000; border: none; border-radius: .45rem; }
+.brand-mark > span { width: auto; height: auto; background: none; }
+.brand-mark > span::after { content: 'U'; color: #fff; font-family: Georgia, serif; font-size: 1rem; line-height: 1; }
 .error-banner { display: flex; gap: .65rem; padding: .9rem; margin-bottom: 1rem; border: 1px solid hsl(var(--destructive)); border-radius: .65rem; color: hsl(var(--destructive)); background: hsl(var(--destructive) / .05); }
 .admin-review-overview { display: grid; grid-template-columns: minmax(12rem,.8fr) minmax(0,2fr); gap: 1rem; margin-top: 1.25rem; padding: 1rem; border: 1px solid hsl(var(--border)); border-radius: .9rem; background: hsl(var(--card)); }
 .admin-review-total { display: flex; flex-direction: column; justify-content: center; padding: .75rem 1rem; border-right: 1px solid hsl(var(--border)); }
@@ -550,8 +551,12 @@ button, input, select, textarea { font: inherit; }
 .privacy-panel textarea { display: block; width: 100%; min-height: 6rem; border: 1px solid hsl(var(--border)); padding: .6rem; background: hsl(var(--background)); }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
 
-/* Style B login (owner, 2 Nov): mono, off-white, calm teal - no orange anywhere. */
-.auth-page { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; background: #fbfaf9; color: #251f21; }
-.auth-visual { background: #251f21; color: #fbfaf9; }
-.auth-visual-copy h1 em { color: #6fd3c0; }
-.auth-card { background: #fff; border: 1px solid #eae9ea; border-radius: 16px; padding: clamp(1.4rem,3vw,2.2rem); }
+/* Public-site login (owner, 2 Nov): the updowncircle.site look - JetBrains
+   Mono, white + light grey, grey gradient buttons, orange primary action. */
+.auth-page { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; background: #fff; color: #161616; letter-spacing: -.01em; }
+.auth-visual { background: #d3d3d3; color: #161616; }
+.auth-visual .eyebrow { color: #6b6b6b !important; }
+.auth-visual-copy h1 em { color: #f26a1b; }
+.auth-quote { border-top: 1px solid #b5b5b5; }
+.auth-card { background: #fff; border: 1px solid #c4c4c4; border-radius: 18px; padding: clamp(1.4rem,3vw,2.2rem); }
+.auth-page button[type="submit"] { background: linear-gradient(#ff9a55,#f26a1b); color: #fff; border: 1px solid #d4560e; border-radius: 14px; text-transform: uppercase; letter-spacing: .1em; font-size: 12px; font-weight: 500; box-shadow: 0 1px 0 rgba(255,255,255,.4) inset,0 -2px 0 rgba(0,0,0,.08) inset,0 6px 12px rgba(0,0,0,.12); }

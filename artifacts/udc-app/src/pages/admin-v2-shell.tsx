@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation } from 'wouter';
 import { useGetCurrentUser, useLogoutUser } from '@workspace/api-client-react';
 import { initials, type AnyRecord, type QueueItem } from './admin-v2-data';
@@ -38,6 +38,7 @@ export function AdminV2Shell({ user, active, title, sub, queueCount, children }:
 }) {
   const logout = useLogoutUser();
   const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { window.scrollTo(0, 0); }, [active]);
 
   const navLink = (id: string, href: string, label: string, opts: { count?: number; tag?: string } = {}) => (
     <Link key={id} href={href} className={active === id ? 'on' : ''} data-testid={`v2-nav-${label.toLowerCase().replaceAll(' ', '-')}`}
