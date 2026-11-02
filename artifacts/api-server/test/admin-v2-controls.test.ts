@@ -41,3 +41,8 @@ test('chats show full text and separate direct messages, participants and case c
  assert.ok(controls.includes('Opening a case notifies the deal parties'));
  assert.ok(controls.includes('/evidence'));
 });
+
+test('commission correction UI names pending-only scope, human agreement and preserved history',async()=>{
+ const source=await page('admin-v2-finance-controls.tsx');
+ for(const part of ['Correct pending commission terms','expectedAmount:editCommission.amount','Evidence and reason for correction','Paid and cancelled records stay unchanged','confirmAgreedTerms:true'])assert.ok(source.includes(part),part);
+});

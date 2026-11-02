@@ -1482,6 +1482,33 @@ router.post("/admin/commissions", requireRole("admin"), async (req: Authenticate
   }
 });
 
+// Human-admin correction of pending records only. Never reassigns history or moves money.
+router.patch("/admin/commissions/:commissionId/terms", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const commissionId=z.string().uuid().parse(req.params["commissionId"]);
+    const input=z.object({commissionType:z.enum(["fixed_amount","percentage","fixed_per_mt"]),amount:z.string().max(40).optional(),commissionRate:z.string().max(40).optional(),expectedAmount:z.string().max(40),reason:z.string().trim().min(12).max(1000),confirmAgreedTerms:z.literal(true)}).strict().parse(req.body);
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"commission-status:"+commissionId}))`);
+      const [existing]=await tx.select().from(commissionsTable).where(eq(commissionsTable.id,commissionId)).limit(1);
+      if(!existing)return {error:"commission_not_found",status:404};
+      if(existing.status!=="pending")return {error:"only_pending_commission_can_be_corrected",status:409};
+      if(existing.amount!==input.expectedAmount)return {error:"commission_changed_reload_before_review",status:409};
+      const [deal]=await tx.select().from(dealsTable).where(eq(dealsTable.id,existing.dealId)).limit(1);
+      if(!deal)return {error:"deal_not_found",status:404};
+      if(input.commissionType!=="fixed_amount"&&existing.currency.toUpperCase()!==deal.currency.toUpperCase())return {error:"calculated_commission_uses_deal_currency",status:409};
+      const amount=calculateCommissionAmount({method:input.commissionType,quantity:deal.quantity,unit:deal.unit,agreedPrice:deal.agreedPrice,rate:input.commissionRate,amount:input.amount,currency:existing.currency});
+      if(!commissionAmountFitsStorage(amount))return {error:"commission_precision_exceeds_storage",status:409};
+      const rate=input.commissionType==="fixed_amount"?null:String(input.commissionRate);
+      const [commission]=await tx.update(commissionsTable).set({amount,commissionAmount:amount,commissionType:input.commissionType,commissionRate:rate,updatedAt:new Date()}).where(eq(commissionsTable.id,commissionId)).returning();
+      await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:"commission_terms_corrected",entityType:"commission",entityId:commissionId,metadata:{dealId:existing.dealId,beneficiaryUserId:existing.beneficiaryUserId,currency:existing.currency,previousAmount:existing.amount,newAmount:amount,previousMethod:existing.commissionType,previousRate:existing.commissionRate,newMethod:input.commissionType,newRate:rate,reason:input.reason,agreedTermsConfirmed:true}});
+      await tx.insert(notificationsTable).values({userId:existing.beneficiaryUserId,type:"commission_terms_corrected",title:"Commission record corrected",body:`The pending commission record was corrected from ${existing.currency} ${existing.amount} to ${existing.currency} ${amount} after human review. No payment was made.`,link:"/commissions"});
+      return {commission};
+    });
+    if("error" in result){res.status(result.status??409).json({error:result.error});return;}
+    res.json(result);
+  }catch(error){if(error instanceof z.ZodError||error instanceof CommissionCalculationError){res.status(400).json({error:error instanceof CommissionCalculationError?error.message:"validation_error"});return;}res.status(500).json({error:"commission_correction_failed"});}
+});
+
 router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), async (req, res) => {
   try {
     const input = commissionStatusSchema.parse(req.body);

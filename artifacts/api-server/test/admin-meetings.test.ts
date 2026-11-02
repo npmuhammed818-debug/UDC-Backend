@@ -313,6 +313,27 @@ test('admin trade workflows preserve verification, ownership, review and payment
       records.dealsTable[0].unit='kg';assert.equal((await request('/admin/commissions',perMt)).status,400);
       records.dealsTable[0].unit='MT';assert.equal((await request('/admin/commissions',perMt)).data.commission.amount,'250.00');
     });
+    await t.test('pending commission corrections require agreement, preserve attribution and roll back with audit',async()=>{
+      state.user={id:'admin',role:'admin'};
+      const id=randomUUID(),beneficiary=randomUUID();
+      records.dealsTable[0].currency='USD';records.dealsTable[0].quantity='100';records.dealsTable[0].unit='MT';records.dealsTable[0].agreedPrice='500';
+      records.commissionsTable.push({id,dealId,beneficiaryUserId:beneficiary,status:'pending',amount:'100.00',commissionAmount:'100.00',currency:'USD',commissionType:'fixed_amount'});
+      const path=`/admin/commissions/${id}/terms`,input={commissionType:'fixed_amount',amount:'125.00',expectedAmount:'100.00',reason:'Corrected per signed fee agreement',confirmAgreedTerms:true};
+      assert.equal((await request(path,{...input,confirmAgreedTerms:false},'PATCH')).status,400);
+      assert.equal((await request(path,{...input,expectedAmount:'99.00'},'PATCH')).status,409);
+      assert.equal((await request(path,{...input,beneficiaryUserId:'other'},'PATCH')).status,400);
+      state.failAudit=true;
+      assert.equal((await request(path,input,'PATCH')).status,500);
+      assert.equal(records.commissionsTable.find((x:any)=>x.id===id).amount,'100.00');
+      const response=await request(path,input,'PATCH');assert.equal(response.status,200);
+      assert.equal(response.data.commission.amount,'125.00');assert.equal(response.data.commission.commissionAmount,'125.00');
+      assert.equal(response.data.commission.beneficiaryUserId,beneficiary);assert.equal(response.data.commission.dealId,dealId);assert.equal(response.data.commission.currency,'USD');
+      const audit=records.auditLogsTable.find((x:any)=>x.action==='commission_terms_corrected'&&x.entityId===id);assert.equal(audit.metadata.previousAmount,'100.00');assert.equal(audit.metadata.newAmount,'125.00');assert.equal(audit.metadata.reason,input.reason);
+      assert.ok(state.db.locks.includes('commission-status:'+id));
+      assert.equal((await request(path,input,'PATCH')).status,409);
+      for(const status of ['paid','cancelled']){records.commissionsTable.find((x:any)=>x.id===id).status=status;assert.equal((await request(path,{...input,expectedAmount:'125.00'},'PATCH')).status,409);}
+      state.user={id:'agent',role:'agent'};assert.equal((await request(path,input,'PATCH')).status,403);state.user={id:'admin',role:'admin'};
+    });
     await t.test('case creation, review and evidence roll back when audit fails',async()=>{
       const count=records.dealCasesTable.length;state.failAudit=true;
       assert.equal((await request(`/admin/deals/${dealId}/cases`,{summary:'Synthetic case facts'})).status,500);
