@@ -13,6 +13,8 @@ import {
   type EmailPurpose,
 } from "./emailCodes";
 import {
+  PASSWORD_LOGIN_DAILY_LIMIT,
+  PASSWORD_LOGIN_DAILY_WINDOW_MS,
   PASSWORD_LOGIN_LIMIT,
   PASSWORD_LOGIN_WINDOW_MS,
 } from "./loginBudget";
@@ -135,24 +137,40 @@ export function createEmailAuthService(
     });
     if (!allowed) throw new EmailAuthError("rate_limited");
   }
-  // Per-account password-login budget. The attempt is CHARGED atomically inside
-  // the caller's transaction (which holds the account row lock) before the
-  // password is verified, so parallel requests cannot slip past the cap and
-  // unknown emails never write budget rows. Success clears the row.
-  function chargePasswordLoginAttempt(tx: Executor, email: string) {
+  // Per-account password-login budget, owner-approved shape: 10 tries per
+  // email+network pair per 30 minutes (an attacker locking one pair never
+  // locks out the real owner on their own network) PLUS a per-email daily
+  // safety net of 30, so rotating networks still hit a hard cap. Attempts are
+  // CHARGED atomically inside the caller's transaction (which holds the
+  // account row lock) before the password is verified, so parallel requests
+  // cannot slip past the caps and unknown emails never write budget rows.
+  // Success clears both rows.
+  async function chargePasswordLoginAttempt(tx: Executor, email: string, ip: string) {
+    const address = email.trim().toLowerCase();
+    if (
+      !(await charge(
+        tx,
+        `pwd-login:${address}:${ip}`,
+        PASSWORD_LOGIN_LIMIT,
+        PASSWORD_LOGIN_WINDOW_MS,
+      ))
+    )
+      return false;
     return charge(
       tx,
-      `pwd-login:${email.trim().toLowerCase()}`,
-      PASSWORD_LOGIN_LIMIT,
-      PASSWORD_LOGIN_WINDOW_MS,
+      `pwd-login-day:${address}`,
+      PASSWORD_LOGIN_DAILY_LIMIT,
+      PASSWORD_LOGIN_DAILY_WINDOW_MS,
     );
   }
   async function clearPasswordLoginBudget(
     email: string,
+    ip: string,
     executor: Pick<typeof db, "execute"> = database,
   ) {
+    const address = email.trim().toLowerCase();
     await executor.execute(
-      sql`delete from email_auth_limits where key=${digest(`pwd-login:${email.trim().toLowerCase()}`)}`,
+      sql`delete from email_auth_limits where key in (${digest(`pwd-login:${address}:${ip}`)},${digest(`pwd-login-day:${address}`)})`,
     );
   }
   // Durable per-IP budget for the web auth endpoints (login, register, WhatsApp

@@ -187,13 +187,13 @@ router.post("/auth/login", async (req, res) => {
       }
       // Per-account budget: charged atomically inside the account row lock
       // BEFORE verification, so parallel guesses cannot slip past the cap.
-      if (!(await emailAuth.chargePasswordLoginAttempt(tx, input.email))) return { kind: "limited" as const };
+      if (!(await emailAuth.chargePasswordLoginAttempt(tx, input.email, rateKey))) return { kind: "limited" as const };
       if (!(await verifyPassword(input.password, user.passwordHash))) return { kind: "invalid" as const };
       if (["suspended", "rejected"].includes(user.status)) return { kind: "blocked" as const };
       // Successful password proof safely identifies legacy password accounts;
       // random WhatsApp-only hashes are never inferred to be recovery credentials.
       await tx.update(usersTable).set({ passwordRecoveryEnabled: true }).where(eq(usersTable.id,user.id));
-      await emailAuth.clearPasswordLoginBudget(input.email, tx);
+      await emailAuth.clearPasswordLoginBudget(input.email, rateKey, tx);
       return { kind: "authenticated" as const, userId: user.id, ...await createSession(user.id,tx) };
     });
     if (result.kind === "limited") {
