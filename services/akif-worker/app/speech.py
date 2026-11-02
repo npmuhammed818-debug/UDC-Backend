@@ -153,10 +153,14 @@ def speech_status() -> dict:
         return {**base, "configured": False, "reason": exc.detail}
 
 
-def wav_to_ogg_opus(wav: bytes) -> bytes:
+def wav_to_ogg_opus(wav: bytes, mime: str = "") -> bytes:
     try:
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
+        pcm = re.search(r"audio/L16;.*?rate=(\d+)", mime)
+        if pcm:  # raw PCM has no header ffmpeg can sniff; state format, rate and channels
+            cmd += ["-f", "s16le", "-ar", pcm.group(1), "-ac", "1"]
         done = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", "-f", "ogg", "pipe:1"],
+            cmd + ["-i", "pipe:0", "-c:a", "libopus", "-b:a", "32k", "-ac", "1", "-ar", "48000", "-f", "ogg", "pipe:1"],
             input=wav, capture_output=True, timeout=20, check=True)
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         raise HTTPException(status_code=503, detail="audio_conversion_unavailable") from exc
@@ -221,12 +225,16 @@ def synthesize(text: str, conversational: bool = False, language: str = "english
 
 # Fixed warm-delivery style per language (owner pick, 2026-11-02). Static instruction text only;
 # the spoken sentence is appended after it, already allowlisted or privacy-filtered above.
+# Delivery style only - goes into speech_metadata.style, never into the spoken text. The text
+# field of the generateContent TTS API is a verbatim transcript, so anything placed there is read
+# aloud (the old "Say only this: ..." prompt-in-text was literally spoken). Language is carried by
+# the text itself: the API has already translated non-English replies into the target script.
 _GEMINI_STYLE = {
-    "english": "Speak as a warm, familiar friend sharing useful news: genuine audible smile, relaxed natural pace, gentle energy. Say only this: ",
-    "malayalam": "Speak as a warm trade-broker friend from Kerala: genuine audible smile, relaxed natural pace, gentle energy, native Malayalam speaker. Say only this in Malayalam: ",
-    "hindi": "Speak as a warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Hindi speaker. Say only this in Hindi: ",
-    "tamil": "Speak as a warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Tamil speaker. Say only this in Tamil: ",
-    "arabic": "Speak as a warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Arabic speaker. Say only this in Arabic: ",
+    "english": "warm, familiar friend sharing useful news: genuine audible smile, relaxed natural pace, gentle energy",
+    "malayalam": "warm trade-broker friend from Kerala: genuine audible smile, relaxed natural pace, gentle energy, native Malayalam speaker",
+    "hindi": "warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Hindi speaker",
+    "tamil": "warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Tamil speaker",
+    "arabic": "warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Arabic speaker",
 }
 
 
@@ -236,36 +244,43 @@ def _elevenlabs_ready() -> bool:
 
 def _synthesize_gemini(text: str, language: str = "english") -> bytes:
     key, model, voice = _config()
-    if not _daily_cap_ok(len(text.strip())):
+    spoken = text.strip()
+    if not _daily_cap_ok(len(spoken)):
         raise HTTPException(status_code=429, detail="tts_daily_cap_reached")
-    styled = _GEMINI_STYLE[language] + "\"" + text.strip() + "\""
     body = {
-        "model": model,
-        "input": [{"type": "user_input", "content": [{"type": "text", "text": styled}]}],
-        "response_format": {"type": "audio"},
-        "generation_config": {"speech_config": [{"voice": voice}]},
+        "contents": [{"role": "user", "parts": [{"text": spoken,
+                                                 "speech_metadata": {"style": _GEMINI_STYLE[language]}}]}],
+        "generationConfig": {"responseModalities": ["AUDIO"],
+                             "speechConfig": {"voiceConfig": {"voice": voice}}},
     }
     req = urllib.request.Request(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         data=json.dumps(body).encode(), method="POST",
         headers={"x-goog-api-key": key, "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:  # no retries
             payload = json.loads(resp.read())
         audio = None
-        for step in payload.get("steps", []):
-            if step.get("type") == "model_output":
-                for part in step.get("content", []):
-                    if part.get("type") == "audio":
-                        audio = part.get("data")
+        mime = ""
+        for cand in payload.get("candidates", []):
+            for part in (cand.get("content") or {}).get("parts", []):
+                inline = part.get("inlineData") or part.get("inline_data") or {}
+                if inline.get("data"):
+                    audio = inline["data"]
+                    mime = inline.get("mimeType") or inline.get("mime_type") or ""
+                    break
+            if audio:
+                break
         if not audio:
             raise ValueError("no_audio")
-        wav = base64.b64decode(audio)
+        raw = base64.b64decode(audio)
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning(json.dumps({"event": "tts_provider_error", "provider": "gemini",
+                                   "httpStatus": getattr(exc, "code", None), "providerMessage": ""}))
         raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
-    return wav_to_ogg_opus(wav)
+    return wav_to_ogg_opus(raw, mime)
 
 
 def audio_seconds(ogg: bytes) -> float | None:

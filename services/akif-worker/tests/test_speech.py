@@ -83,7 +83,7 @@ def test_elevenlabs_sends_only_allowlisted_text_with_key_header(monkeypatch):
     _eleven_env(monkeypatch)
     seen = []
     monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _Resp(b"mp3-bytes"))[1])
-    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b, mime="": b"ogg:" + b)
     text = next(iter(speech.ALLOWED_TEXTS))
     assert speech.synthesize(text) == b"ogg:mp3-bytes"
     req = seen[0]
@@ -228,7 +228,7 @@ def test_non_english_uses_multilingual_model_same_voice(monkeypatch):
     _eleven_env(monkeypatch)
     seen = []
     monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _Resp(b"mp3-bytes"))[1])
-    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b, mime="": b"ogg:" + b)
     text = next(iter(speech.ALLOWED_TEXTS))
     assert speech.synthesize(text, language="malayalam") == b"ogg:mp3-bytes"
     import json
@@ -241,7 +241,7 @@ def test_english_keeps_default_model(monkeypatch):
     _eleven_env(monkeypatch)
     seen = []
     monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _Resp(b"mp3-bytes"))[1])
-    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b, mime="": b"ogg:" + b)
     text = next(iter(speech.ALLOWED_TEXTS))
     speech.synthesize(text, language="english")
     import json
@@ -270,20 +270,22 @@ def _gemini_env(monkeypatch):
 
 def _gemini_ok_response():
     import base64, json
-    return _Resp(json.dumps({"steps": [{"type": "model_output", "content": [{"type": "audio", "data": base64.b64encode(b"wav").decode()}]}]}).encode())
+    return _Resp(json.dumps({"candidates": [{"content": {"parts": [
+        {"inlineData": {"mimeType": "audio/wav", "data": base64.b64encode(b"wav").decode()}}]}}]}).encode())
 
 
 def test_gemini_styles_text_and_supports_non_english(monkeypatch):
     _gemini_env(monkeypatch)
     seen = []
     monkeypatch.setattr(speech.urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _gemini_ok_response())[1])
-    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b, mime="": b"ogg:" + b)
     text = next(iter(speech.ALLOWED_TEXTS))
     assert speech.synthesize(text, language="malayalam") == b"ogg:wav"
     import json
-    sent = json.loads(seen[0].data)["input"][0]["content"][0]["text"]
-    assert sent.startswith(speech._GEMINI_STYLE["malayalam"]), "fixed warm style prepended"
-    assert sent.endswith('"' + text + '"'), "spoken sentence unchanged inside the style"
+    part = json.loads(seen[0].data)["contents"][0]["parts"][0]
+    assert part["text"] == text, "transcript is verbatim - no instruction text can be spoken"
+    assert part["speech_metadata"]["style"] == speech._GEMINI_STYLE["malayalam"], "warm style rides in metadata"
+    assert "generateContent" in seen[0].full_url
 
 
 def test_gemini_quota_or_failure_falls_back_to_elevenlabs(monkeypatch):
@@ -298,7 +300,7 @@ def test_gemini_quota_or_failure_falls_back_to_elevenlabs(monkeypatch):
         seen.append(req)
         return _Resp(b"mp3-bytes")
     monkeypatch.setattr(speech.urllib.request, "urlopen", quota_then_ok)
-    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b: b"ogg:" + b)
+    monkeypatch.setattr(speech, "wav_to_ogg_opus", lambda b, mime="": b"ogg:" + b)
     assert speech.synthesize(next(iter(speech.ALLOWED_TEXTS))) == b"ogg:mp3-bytes"
     assert len(seen) == 1 and "elevenlabs" in seen[0].full_url, "Gemini cap -> single ElevenLabs fallback"
 
