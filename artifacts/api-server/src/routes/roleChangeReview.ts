@@ -45,14 +45,27 @@ router.post("/admin/role-change-requests/:requestId/review",
       if(input.decision==="activate"){
         if(input.verificationConfirmed!==true||!input.note||input.note.length<12)
           return "verification_required" as const;
-        // Fail closed: do not reassign any existing trade obligation or referral.
-        // Historical ownership and commission attribution must not be rewritten.
+        // Block live obligations, not settled history. Never rewrite attribution.
+        // Terminal allowlists deliberately treat unknown/legacy states as active.
         const obligations=await tx.execute(sql`
           SELECT
-            EXISTS(SELECT 1 FROM public.deals WHERE buyer_user_id=${item.user_id} OR seller_user_id=${item.user_id}) AS has_deals,
-            EXISTS(SELECT 1 FROM public.referrals WHERE agent_user_id=${item.user_id} OR referred_user_id=${item.user_id}) AS has_referrals,
-            EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${item.user_id}) AS has_requests,
-            EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${item.user_id}) AS has_listings
+            EXISTS(SELECT 1 FROM public.deals d WHERE
+              (d.buyer_user_id=${item.user_id} OR d.seller_user_id=${item.user_id} OR d.agent_id=${item.user_id}
+               OR EXISTS(SELECT 1 FROM public.deal_participants p WHERE p.deal_id=d.id AND p.user_id=${item.user_id} AND p.status='active'))
+              AND d.status NOT IN ('completed','cancelled','rejected')) AS has_deals,
+            EXISTS(SELECT 1 FROM public.referrals WHERE
+              (agent_user_id=${item.user_id} OR referred_user_id=${item.user_id})
+              AND status NOT IN ('paid','cancelled')) AS has_referrals,
+            EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${item.user_id}
+              AND status NOT IN ('converted','cancelled','rejected')) AS has_requests,
+            EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${item.user_id}
+              AND status NOT IN ('sold','cancelled','rejected')) AS has_listings,
+            EXISTS(SELECT 1 FROM public.commissions c JOIN public.deals d ON d.id=c.deal_id
+              WHERE c.status NOT IN ('paid','cancelled') AND
+              (c.beneficiary_user_id=${item.user_id} OR c.agent_id=${item.user_id}
+               OR d.buyer_user_id=${item.user_id} OR d.seller_user_id=${item.user_id}
+               OR EXISTS(SELECT 1 FROM public.deal_participants p WHERE p.deal_id=d.id AND p.user_id=${item.user_id} AND p.status='active')))
+              AS has_unsettled_commissions
         `);
         const flags=obligations.rows[0] as Record<string,boolean>|undefined;
         if(!flags||Object.values(flags).some(Boolean))return "existing_obligations" as const;

@@ -269,8 +269,38 @@ try {
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},switchCandidate.cookie)).status,403);
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate'},admin.cookie)).status,409);
   await pool.query("insert into whatsapp_intake_drafts(phone,role,draft) values($1,'buyer','{}'::jsonb)",[switchPhone]);
+  // Settled history is not a lifetime role lock. All attribution remains byte-for-byte.
+  const historicalDeal=(await pool.query(`insert into deals(buyer_user_id,seller_user_id,product_id,quantity,unit,agreed_price,currency,status)
+    values($1,$2,$3,1,'MT',505,'USD','completed') returning id`,[switchCandidate.id,seller.id,product])).rows[0].id;
+  const historicalRequest=(await pool.query(`insert into buyer_requests(buyer_user_id,product_id,quantity,unit,destination,status)
+    values($1,$2,1,'MT','Fictional destination','converted') returning id`,[switchCandidate.id,product])).rows[0].id;
+  const historicalListing=(await pool.query(`insert into seller_listings(seller_user_id,product_id,quantity,unit,price,currency,status)
+    values($1,$2,1,'MT',505,'USD','sold') returning id`,[switchCandidate.id,product])).rows[0].id;
+  const historicalReferral=(await pool.query(`insert into referrals(agent_user_id,referred_user_id,referral_code,status)
+    values($1,$2,'QA-HISTORY','paid') returning id`,[agent.id,switchCandidate.id])).rows[0].id;
+  const historicalCommission=(await pool.query(`insert into commissions(deal_id,beneficiary_user_id,amount,currency,status)
+    values($1,$2,20,'USD','paid') returning id`,[historicalDeal,agent.id])).rows[0].id;
+  const history=async()=>JSON.stringify((await pool.query(`select row_to_json(d) d,row_to_json(r) r,row_to_json(l) l,row_to_json(f) f,row_to_json(c) c
+    from deals d,buyer_requests r,seller_listings l,referrals f,commissions c where d.id=$1 and r.id=$2 and l.id=$3 and f.id=$4 and c.id=$5`,
+    [historicalDeal,historicalRequest,historicalListing,historicalReferral,historicalCommission])).rows);
+  const beforeHistory=await history();
+  const attemptSwitch=()=>call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},admin.cookie);
+  for(const [table,id,column,active,settled] of [
+    ['deals',historicalDeal,'status','on_hold','completed'],
+    ['buyer_requests',historicalRequest,'status','open','converted'],
+    ['seller_listings',historicalListing,'status','paused','sold'],
+    ['referrals',historicalReferral,'status','pending','paid'],
+    ['referrals',historicalReferral,'status','qualified','paid'],
+    ['commissions',historicalCommission,'status','approved','paid']]){
+    await pool.query(`update ${table} set ${column}=$2 where id=$1`,[id,active]);
+    const blocked=await attemptSwitch();assert.equal(blocked.status,409,table+' active obligation blocks');
+    assert.equal(blocked.body.error,'existing_obligations');
+    assert.equal((await pool.query('select role from users where id=$1',[switchCandidate.id])).rows[0].role,'buyer');
+    await pool.query(`update ${table} set ${column}=$2 where id=$1`,[id,settled]);
+  }
   const activated=await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},admin.cookie);
   assert.equal(activated.status,200,JSON.stringify(activated.body));assert.equal(activated.body.roleChanged,true);
+  assert.equal(await history(),beforeHistory,'settled deals, requests, listings, referrals and commission attribution unchanged');
   assert.equal((await pool.query('select role from users where id=$1',[switchCandidate.id])).rows[0].role,'seller');
   assert.equal((await pool.query('select count(*)::int n from whatsapp_intake_drafts where phone=$1',[switchPhone])).rows[0].n,0,'half-finished buyer intake is dropped');
   const audited=(await pool.query("select metadata from audit_logs where action='role_change_activated' and entity_id=$1",[switchCandidate.id])).rows;
@@ -298,6 +328,21 @@ try {
     const agentBlocked=await activate(agentReq);assert.equal(agentBlocked.status,409);assert.equal(agentBlocked.body.error,'company_verification_required','an agent has no company, so buyer activation needs the company review first');
     assert.equal((await pool.query('select role from users where id=$1',[agentUser.id])).rows[0].role,'agent');
     assert.equal((await call('GET','/auth/me',undefined,agentUser.cookie)).status,200,'a blocked activation revokes nothing');
+    // Live assigned agent obligations were missed by the old buyer/seller-only deal query.
+    const assigned=await mk('buyer');const assignedReq=await reqFor(assigned,'10000007774','agent');
+    const assignmentDeal=(await pool.query(`insert into deals(buyer_user_id,seller_user_id,product_id,quantity,unit,agreed_price,status)
+      values($1,$2,$3,1,'MT',505,'initiated') returning id`,[buyer.id,seller.id,product])).rows[0].id;
+    await pool.query(`insert into deal_participants(deal_id,user_id,participant_role,status) values($1,$2,'agent','active')`,[assignmentDeal,assigned.id]);
+    const assignedBlock=await activate(assignedReq);assert.equal(assignedBlock.status,409);assert.equal(assignedBlock.body.error,'existing_obligations');
+    await pool.query("update deals set status='completed' where id=$1",[assignmentDeal]);
+    const switchedAgent=await activate(assignedReq);assert.equal(switchedAgent.status,200);assert.equal(switchedAgent.body.roleChanged,true);
+    const agentLogin=await call('POST','/auth/login',{email:assigned.email,password});assert.equal(agentLogin.status,200);
+    assert.equal((await call('GET',`/deals/${assignmentDeal}`,undefined,agentLogin.cookie)).status,403,'switching to agent cannot expose confidential deal detail');
+    assert.equal((await call('GET','/deals',undefined,agentLogin.cookie)).status,403,'new agent cannot list confidential deals');
+    const ownCommission=(await call('GET','/commissions',undefined,agentLogin.cookie));assert.equal(ownCommission.status,200);
+    assert.ok(!JSON.stringify(ownCommission.body).includes(historicalCommission),'new agent cannot see another person commission');
+    assert.equal((await pool.query('select user_id from deal_participants where deal_id=$1 and user_id=$2',[assignmentDeal,assigned.id])).rows[0].user_id,assigned.id,'agent attribution preserved');
+    pass('live assigned-agent deal blocks switching, settled assignment permits switching, new agent cannot access confidential trade routes or other commissions');
     pass('role switching gates: one winner under concurrency, buyer/seller targets need a verified company, a blocked activation changes and revokes nothing, every activation audited');
   }
   const transition=(status,extra={},cookie=admin.cookie)=>call('PATCH',`/admin/deals/${dealId}/status`,{status,...extra},cookie);
