@@ -1,3 +1,4 @@
+import documentReviewRouter from "./documentReview";
 import commissionProposalsRouter from './commissionProposals';
 import adminRouter from "./admin";
 import adminIncidentsRouter from "./adminIncidents";
@@ -50,6 +51,7 @@ router.use(referralRouter);
 router.use(commissionRouter);
 router.use(notificationRouter);
 router.use(documentRouter);
+router.use(documentReviewRouter);
 router.use(dealRouter);
 router.use(buyerPoolsRouter);
 router.use(companyRouter);
