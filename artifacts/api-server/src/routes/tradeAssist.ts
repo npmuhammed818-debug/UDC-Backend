@@ -1,8 +1,9 @@
+import {documentCheck} from '../deals/documentCheck';
 import {saveTradeAssistRequest} from '../deals/tradeAssistRepository';
 import {Router} from 'express';
 import {and,desc,eq,gte,lt,inArray} from 'drizzle-orm';
 import {z} from 'zod/v4';
-import {db,dealsTable,usersTable,documentsTable,documentAccessTable,auditLogsTable} from '@workspace/db';
+import {db,dealsTable,usersTable,documentsTable,documentExtractionsTable,documentAccessTable,auditLogsTable} from '@workspace/db';
 import {requireAuth,requireRole} from '../auth/middleware';
 import {requireNonAgentDealAccess} from '../auth/agentDealPrivacy';
 import {dealAccess} from '../deals/access';
@@ -32,6 +33,18 @@ router.get('/trade-assist/deals/:dealId',async(req,res)=>{
   const proofPack=await db.select({id:documentsTable.id,type:documentsTable.documentType,status:documentsTable.status,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(100);
   const requests=await db.select({id:auditLogsTable.id,action:auditLogsTable.action,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind)))).orderBy(desc(auditLogsTable.createdAt)).limit(30);
   res.json({dealNumber:deal.dealNumber,status:deal.status,asOf:deal.updatedAt,sellerReview:{status:seller?.status==='verified'?'verified':'not_currently_verified',notice:'Recorded account review only, not a guarantee of stock, performance or authenticity.'},proofPack:{documents:proofPack,notice:'Accessible approved records only. Approval is not an authenticity guarantee. No files have been shared.'},requests:requests.map(r=>({...r,status:'awaiting_human_review'})),actions:requestKinds.filter(kind=>requestAllowed(kind,u.role,deal.status)),notice:'Prior seller chats, documents and quotations stay on their original deal.'});
+ }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
+});
+router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,res)=>{
+ try{
+  const id=z.string().uuid().parse(req.params.dealId),docId=z.string().uuid().parse(req.params.documentId),u=req.authUser!;
+  const [deal]=await db.select({quantity:dealsTable.quantity,unit:dealsTable.unit,agreedPrice:dealsTable.agreedPrice,currency:dealsTable.currency,incoterm:dealsTable.incoterm,destination:dealsTable.destination}).from(dealsTable).where(and(eq(dealsTable.id,id),dealAccess(u.id,u.role))).limit(1);
+  if(!deal){res.sendStatus(404);return;}
+  const [document]=await db.select({id:documentsTable.id,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.id,docId),eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(1);
+  if(!document){res.sendStatus(404);return;}
+  const [extraction]=await db.select({structuredData:documentExtractionsTable.structuredData,status:documentExtractionsTable.status,updatedAt:documentExtractionsTable.updatedAt}).from(documentExtractionsTable).where(and(eq(documentExtractionsTable.documentId,docId),eq(documentExtractionsTable.dealId,id))).limit(1);
+  if(!extraction||!['completed','needs_review'].includes(extraction.status)||extraction.updatedAt<document.updatedAt){res.status(409).json({error:'current_extraction_required',needsHumanReview:true});return;}
+  res.json({documentId:docId,extractionAsOf:extraction.updatedAt,...documentCheck(deal,extraction.structuredData)});
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 router.get('/trade-assist/diary',async(req,res)=>{
