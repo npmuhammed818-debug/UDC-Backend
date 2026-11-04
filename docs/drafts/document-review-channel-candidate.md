@@ -33,3 +33,10 @@ Production auto-deploy decoupling approved by original owner12:07:20 “Fix and 
 Seller-switch read-only check: party pause/close preserves original deal and history. No direct seller replacement route found. Existing admin match-to-deal creates new deal with explicit approved match/terms and verified parties. Safe proposed feature is a new linked deal using buyer-owned requirements, not moving the old seller's chats/private documents/quotes. Implementation not started.
 
 Broad approved feature brainstorm requires feature-by-feature existing-path and evidence audit. This candidate does not implement34features and must not be reported as doing so. No reliable overall pilot percentage from this work alone.
+
+##12:23checkpoint
+Native PostgreSQL18 regression is now in test/integration/document-review-postgres.mjs and QA runner, restricted to explicitly named loopback-only disposable databases. Actually executed and passed, including independent-connection revoke-first and parallel receipt tests. Prior PGlite-only limit superseded for those specific cases. This does not prove every revocation interleaving or hosted runtime.
+
+Additional small feature foundation: staging-only authenticated status-picture/JSON route reads actual allowed deal stage. Deterministic UDC SVG has no invented payment/shipment facts. Unknown/paused/disputed stages show unconfirmed progress. Text explicitly disclaims independent payment/delivery proof. Local pixels inspected; not yet wired to WhatsApp sending or tested through real SQLHTTP. This is not feature1/28customer-complete.
+
+PR287created for review/CI, no merge yet. Initial64df940CI all7checks passed. Later SQL regression and status-picture additions need their own CI. Main-bound auto-deploy settings Off confirmed on5services; dev/rc services unchanged. Manual deploy remains gated.
