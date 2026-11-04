@@ -12,6 +12,7 @@ assert.match(container, /^[a-f0-9]{64}$/, 'identify the isolated PostgreSQL serv
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
   ['PATH', 'HOME', 'TMPDIR', 'DOCKER_HOST', 'DOCKER_CONFIG'].includes(k)));
 const cases = [
+  ['review', 'UDC_REVIEW_QA_DATABASE_URL', 'document-review'],
   ['lifecycle', 'UDC_LIFECYCLE_QA_DATABASE_URL', 'full-mvp-lifecycle'],
   ['onboarding', 'UDC_QA_DATABASE_URL', 'whatsapp-onboarding-ux'],
   ['delivery', 'UDC_DELIVERY_QA_DATABASE_URL', 'shipment-delivery'],
@@ -68,7 +69,7 @@ for (const [prefix, variable, file] of cases) {
     created = true;
     // Schema push is only fixture bootstrap in this empty disposable database.
     // Exact migration semantics are exercised by the migration/restore suites.
-    if (prefix !== 'commission') command('pnpm', ['--filter', '@workspace/db', 'run', 'push'], {
+    if (!['commission','review'].includes(prefix)) command('pnpm', ['--filter', '@workspace/db', 'run', 'push'], {
       SUPABASE_DATABASE_URL: url, SUPABASE_DIRECT_URL: url,
     });
     const output = command(process.execPath, [`artifacts/api-server/test/integration/${file}-postgres.mjs`], { [variable]: url });
