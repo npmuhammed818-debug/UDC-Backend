@@ -16,7 +16,7 @@ export function reviewRouter(p:ReviewHttpPorts){
  const validToken=(v:string)=>/^[A-Za-z0-9_-]{43}$/.test(v);
  router.use('/document-review',(_req,res,next)=>{
   if(!p.staging){res.sendStatus(404);return;}
-  res.set({'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"});next();
+  res.set({'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; script-src 'self'; worker-src 'self'; connect-src 'self'; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"});next();
  });
  router.use('/document-review',(req,res,next)=>{if(req.method==='POST'&&(!p.origin||req.header('origin')!==p.origin)){res.sendStatus(403);return;}next();});
  const cookieOptions={httpOnly:true,secure:p.secureCookies,sameSite:'strict' as const,path:'/api/document-review'};
@@ -63,6 +63,6 @@ export function reviewRouter(p:ReviewHttpPorts){
   if(await p.service.receipt(String(req.params.token),uid)==='unavailable'){res.sendStatus(409);return;}
   res.type('html').send(reviewPage({title:'Document',version:'reviewed',path:'',returnUrl:p.returnUrl,done:true}));
  }catch{res.sendStatus(503);}});
- router.post('/document-review/logout',(req,res)=>{res.clearCookie(sessionCookie,cookieOptions);res.clearCookie('udc_review_challenge',cookieOptions);res.status(200).type('text').send('This browser has been signed out of document review.');});
+ router.post('/document-review/logout',async(req,res)=>{try{await p.verification.logout(req.cookies?.[sessionCookie]);res.clearCookie(sessionCookie,cookieOptions);res.clearCookie('udc_review_challenge',cookieOptions);res.status(200).type('text').send('This browser has been signed out of document review.');}catch{res.sendStatus(503);}});
  return router;
 }

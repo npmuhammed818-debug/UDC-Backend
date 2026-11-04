@@ -59,5 +59,6 @@ export const reviewVerificationRepository:VerificationRepository={
   if(!ok)return false;
   await tx.insert(auditLogsTable).values({actorUserId:c.userId,action:'document_review_session',entityType:'document_review',metadata:{...session,userId:c.userId}});return true;
  });},
+ async revokeSession(hash){await db.delete(auditLogsTable).where(and(eq(auditLogsTable.action,'document_review_session'),sql`${auditLogsTable.metadata}->>'hash'=${hash}`));},
  async session(hash,now){const [row]=await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'document_review_session'),sql`${auditLogsTable.metadata}->>'hash'=${hash}`)).limit(1);const s=row?.metadata as unknown as {userId:string;expiresAt:number}|undefined;return s&&s.expiresAt>now?s.userId:null;},
 };

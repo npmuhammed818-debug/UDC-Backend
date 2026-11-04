@@ -8,6 +8,7 @@ export interface VerificationRepository {
  // Atomic attempts/consumption/session save. Max5 guesses, including concurrent.
  consume(id:string,browserHash:string,linkHash:string,codeHash:string,session:ReviewSession,now:number):Promise<boolean>;
  session(hash:string,now:number):Promise<string|null>;
+ revokeSession(hash:string):Promise<void>;
 }
 export function verificationService(repo:VerificationRepository,secret:string,clock=()=>Date.now()){
  if(secret.length<32)throw Error('review_verification_secret_required');
@@ -29,6 +30,7 @@ export function verificationService(repo:VerificationRepository,secret:string,cl
    const ok=await repo.consume(id,hash('browser',browser),linkHash,hash('code',id+'\0'+code),{userId:'',hash:hash('session',token),expiresAt},clock());
    return ok?{token,expiresAt}:null;
   },
+  async logout(token:string|undefined){if(token&&/^[A-Za-z0-9_-]{43}$/.test(token))await repo.revokeSession(hash('session',token));},
   async session(token:string|undefined){return token&&/^[A-Za-z0-9_-]{43}$/.test(token)?repo.session(hash('session',token),clock()):null;},
  };
 }
