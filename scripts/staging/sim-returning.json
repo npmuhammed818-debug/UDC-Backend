@@ -1,0 +1,15 @@
+{
+ "label": "D returning, same number as buyer",
+ "steps": [
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "Hi again"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "I want to register again"
+  }
+ ]
+}
