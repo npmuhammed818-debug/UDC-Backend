@@ -40,3 +40,13 @@ Native PostgreSQL18 regression is now in test/integration/document-review-postgr
 Additional small feature foundation: staging-only authenticated status-picture/JSON route reads actual allowed deal stage. Deterministic UDC SVG has no invented payment/shipment facts. Unknown/paused/disputed stages show unconfirmed progress. Text explicitly disclaims independent payment/delivery proof. Local pixels inspected; not yet wired to WhatsApp sending or tested through real SQLHTTP. This is not feature1/28customer-complete.
 
 PR287created for review/CI, no merge yet. Initial64df940CI all7checks passed. Later SQL regression and status-picture additions need their own CI. Main-bound auto-deploy settings Off confirmed on5services; dev/rc services unchanged. Manual deploy remains gated.
+
+## Trade help slice (synthetic tests only)
+- Staging-only explicit WhatsApp commands `repeat order`, `switch seller`, `backup seller`, `human help`, `dispute help` create an idempotent human-review request for the selected deal. API adds a structured private exit reason. No real sends were used in testing.
+- Repeat requires a completed deal. Switching requires held/cancelled/rejected state. Buyer-owned source requirement fields are copied only into a private review draft. No original deal changes, no replacement contract, no seller/private documents or messages copied.
+- Admin v2 Support shows the private queue with a read-only buyer draft. There is no automatic approval or rematch; a new proposal and buyer agreement still need the existing matching workflow. No new fee or payment rule.
+- Private deal-assist read returns current seller review state with a no-guarantee warning, approved document metadata only where the requester has a grant, and own requests. Proof pack is an index, not a signed package or automatic share.
+- Diary is a truthful UTC-month current-state count based on updated_at, not a historical completion report. No invented savings or seller ranking.
+- Executed actual native PostgreSQL and Express tests cover parallel dedup, unchanged seller/deal, buyer-only draft whitelist, outsider/agent/privacy denial, admin queue, diary and production off. WhatsApp handler executed with a synthetic sink and fake phone; no provider calls.
+- Actual frontend pixels inspected at 1280 and 390 widths with synthetic fixture data. Six-stage status picture inspected after settlement phase fix.
+- Remaining: human review resolution workflow, customer menu/buttons and guided reason, new linked-deal execution, fuller evidence/scorecard and month history. These request paths do not mean all brainstorm features are complete.

@@ -29,7 +29,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     },
   };
   const names = [
-    "usersTable",
+    "usersTable", "buyerRequestsTable",
     "notificationsTable", "auditLogsTable",
     "notificationPreferencesTable",
     "akifSharedLessonsTable",

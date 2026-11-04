@@ -1,3 +1,4 @@
+import {handleTradeAssist} from '../whatsapp/tradeAssist';
 import { crisisSafetyReply } from "../akif/crisisSafety";
 import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
@@ -1459,6 +1460,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       if(message.from && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
+      }
+      if (message.from && message.text?.body) {
+        try { if (await handleTradeAssist(message.from,message.text.body)) continue; }
+        catch { await deliverWhatsAppReply(message.from,'I could not save that request. The deal is unchanged. Please try again.');continue; }
       }
       // Complaints are logged and acknowledged immediately, never answered by the model.
       if (message.from && message.text?.body && isGrievance(message.text.body)) {

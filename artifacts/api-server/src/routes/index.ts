@@ -1,3 +1,4 @@
+import tradeAssistRouter from './tradeAssist';
 import dealStatusPictureRouter from './dealStatusPicture';
 import documentReviewRouter from "./documentReview";
 import commissionProposalsRouter from './commissionProposals';
@@ -54,6 +55,7 @@ router.use(notificationRouter);
 router.use(documentRouter);
 router.use(documentReviewRouter);
 router.use(dealStatusPictureRouter);
+router.use(tradeAssistRouter);
 router.use(dealRouter);
 router.use(buyerPoolsRouter);
 router.use(companyRouter);
