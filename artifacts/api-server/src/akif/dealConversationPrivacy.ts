@@ -13,8 +13,10 @@ function numericValues(text: string) {
     .map(value => Number(value.replaceAll(',', ''))).filter(Number.isFinite);
 }
 
-export function violatesPrivateRelay(text: string, privateContext: string[], explicitMessage = "") {
-  if (containsContactDetails(text)) return true;
+export function violatesPrivateRelay(text: string, privateContext: string[], explicitMessage = "", options: { allowContactDetails?: boolean } = {}) {
+  // Contact details pass only when the deal stage unlocked them (SPA signed +
+  // UDC approval, see deals/contactSharing). Private numbers stay protected.
+  if (!options.allowContactDetails && containsContactDetails(text)) return true;
   const protectedValues = new Set(privateContext.flatMap(message => {
     const privateParts = message.split(/[!?;\n]+|\bbut\b/i)
       .filter(part => /\b(?:private|confidential|ceiling|margin|profit|maximum|my (?:limit|minimum)|minimum (?:price|acceptable)|floor)\b|don['’]?t (?:share|tell|disclose)/i.test(part));

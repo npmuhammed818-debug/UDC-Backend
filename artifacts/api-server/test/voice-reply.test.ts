@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { shouldSpeakReply, speechTextAllowed, voiceRepliesEnabled } from "../src/akif/voiceReply.ts";
+import { digitNearCriticalTerm, shouldSpeakReply, speechBlockReason, speechTextAllowed, voiceRepliesEnabled } from "../src/akif/voiceReply.ts";
 
 import { AI_FALLBACK_REPLY, HUMAN_HANDOFF_REPLY } from "../src/akif/conversationPolicy.ts";
 test("default-deny: only exact allowlisted fixed sentences may be spoken", () => {
@@ -15,17 +15,155 @@ test("off by default; needs a voice note from the user", () => {
   const reply = AI_FALLBACK_REPLY;
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply, enabled: false }), false);
   assert.equal(shouldSpeakReply({ userSentVoice: false, reply, enabled: true }), false);
-  assert.equal(shouldSpeakReply({ userSentVoice: true, reply: "Hello Rashid from Acme", enabled: true }), false);
+  assert.equal(shouldSpeakReply({ userSentVoice: true, reply: "Open https://udc.example/vault/x", enabled: true }), false);
   assert.equal(shouldSpeakReply({ userSentVoice: true, reply, enabled: true }), true);
 });
-test("webhook speaks only the guidance path and falls back only for known failure", async () => {
+test("webhook speaks through one helper and falls back to text only for a known failure", async () => {
   const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
-  assert.equal((w.match(/trySpeakReply\(/g) || []).length, 1);
-  assert.ok(w.includes("if (spoken===false) await deliverWhatsAppReply(message.from, guidance)"));
+  assert.equal((w.match(/speakReply\(/g) || []).length, 1);
+  assert.ok(w.includes("if (spoken.status === false) {"), "known voice failure falls back to text");
+  assert.ok(w.includes("voice_reply_text_fallback"), "the fallback reason is logged without content");
+  assert.ok(w.includes('if (spoken.status === "uncertain")'));
+  assert.ok(w.includes("deliverAnswer(message.from, guidance, true,"));
 });
 
 test("API allowlist and worker allowlist are identical (cross-language parity)", async () => {
   const { SPEAKABLE_STATIC_REPLIES } = await import("../src/akif/voiceReply.ts");
   const worker = JSON.parse(await readFile(new URL("../../../services/akif-worker/app/speakable_replies.json", import.meta.url), "utf8")) as string[];
   assert.deepEqual([...SPEAKABLE_STATIC_REPLIES].sort(), [...worker].sort());
+});
+
+import { conversationalSpeechAllowed, speechKind, MAX_SPOKEN_CHARS } from "../src/akif/voiceReply.ts";
+import { reserveSpeech, reserveTranscription, resetVoiceLimitsForTests } from "../src/akif/voiceLimits.ts";
+
+test("conversational replies in many languages may be spoken; sensitive ones stay text", () => {
+  for (const ok of ["Sure. FOB means the seller loads the goods on the ship.", "The price is 450 USD per metric ton, minimum 25 tons.", "नमस्ते, मैं आपकी मदद कर सकता हूँ।", "Gracias, con gusto le ayudo con el arroz."]) assert.ok(conversationalSpeechAllowed(ok), ok);
+  for (const bad of ["Open https://udc.example/vault/x", "Write to buyer@acme.com", "Call +91 98765 43210", "Your OTP is 482913", "Bank account number is on file", "Reply YES to approve the deal", "Please confirm in text", "x ".repeat(MAX_SPOKEN_CHARS), "", undefined]) assert.ok(!conversationalSpeechAllowed(bad as string), String(bad));
+});
+
+test("kill switches: master off, conversational off", () => {
+  const reply = "Sure. FOB means the seller loads the goods on the ship.";
+  assert.equal(speechKind(reply, {}), "none");
+  assert.equal(speechKind(reply, { AKIF_VOICE_REPLIES: "on" }), "conversational");
+  assert.equal(speechKind(reply, { AKIF_VOICE_REPLIES: "on", AKIF_VOICE_CONVERSATIONAL: "off" }), "none");
+  assert.equal(speechKind(AI_FALLBACK_REPLY, { AKIF_VOICE_REPLIES: "on", AKIF_VOICE_CONVERSATIONAL: "off" }), "static");
+  assert.equal(shouldSpeakReply({ userSentVoice: false, reply, env: { AKIF_VOICE_REPLIES: "on" } }), false);
+});
+
+test("per-user daily voice limits, reset next day, hashed keys", () => {
+  resetVoiceLimitsForTests();
+  const env = { AKIF_VOICE_TTS_PER_USER_DAILY: "2", AKIF_VOICE_TTS_CHARS_PER_USER_DAILY: "100", AKIF_VOICE_STT_PER_USER_DAILY: "1" };
+  const day1 = new Date("2026-10-26T05:00:00Z"), day2 = new Date("2026-10-27T05:00:00Z");
+  assert.ok(reserveSpeech("+911", 40, env, day1)); assert.ok(reserveSpeech("+911", 40, env, day1));
+  assert.ok(!reserveSpeech("+911", 10, env, day1));
+  assert.ok(reserveSpeech("+912", 90, env, day1));
+  assert.ok(!reserveSpeech("+912", 20, env, day1));
+  assert.ok(reserveSpeech("+911", 40, env, day2));
+  assert.ok(reserveTranscription("+911", env, day1)); assert.ok(!reserveTranscription("+911", env, day1));
+});
+
+test("voice path never logs audio or transcripts and keys stay out of the API", async () => {
+  const files = ["../src/whatsapp/voiceSend.ts", "../src/akif/voiceLimits.ts", "../src/akif/voiceReply.ts"];
+  for (const f of files) {
+    const src = await readFile(new URL(f, import.meta.url), "utf8");
+    assert.ok(!/console\.|logger\.|\.log\(/.test(src.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")), f);
+    assert.ok(!/ELEVENLABS_API_KEY/.test(src), f);
+  }
+});
+
+import { parseVoiceCommand, VOICE_NOTICE, TEXT_ONLY_CONFIRMATION } from "../src/akif/voiceConsent.ts";
+test("'text only' and 'voice on' commands are exact, notice stays plain and mentions the opt-out", () => {
+  for (const t of ["text only", "Text only.", "stop voice", "No voice replies", "TEXT ONLY please", "\"text only\""]) assert.equal(parseVoiceCommand(t), "text_only", t);
+  for (const t of ["voice on", "Turn on voice replies"]) assert.equal(parseVoiceCommand(t), "voice_on", t);
+  for (const t of ["what does text only mean for FOB", "I want the text only version of the contract", "voice note about rice", "", undefined]) assert.equal(parseVoiceCommand(t as string), null, String(t));
+  assert.ok(VOICE_NOTICE.includes("ElevenLabs") && VOICE_NOTICE.includes("text only") && VOICE_NOTICE.length < 320);
+  assert.ok(TEXT_ONLY_CONFIRMATION.includes("text only"));
+});
+
+import { classifyReply } from "../src/akif/voiceReply.ts";
+import { VOICE_TEXT_OFFER, parseVoiceRequest, isOfferYes } from "../src/akif/voiceConsent.ts";
+import { armExplicitVoice, consumeExplicitVoice, resetVoiceSessionForTests, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../src/akif/voiceSession.ts";
+
+test("three reply classes: warm and mixed may be spoken, critical and unsure stay text", () => {
+  assert.equal(classifyReply("Happy to help. FOB means the seller loads the goods on the ship."), "warm");
+  assert.equal(classifyReply("Good news, your request is with the UDC team and I'll update you tomorrow."), "warm");
+  assert.equal(classifyReply("The shipment left on day 3 and should arrive soon."), "mixed");
+  for (const t of ["The price is 450 USD per metric ton.", "Payment terms are 30 days after delivery.", "Your invoice total is 12,500.", "Open https://udc.example/x", "Your OTP is 123456", "Bank account details are in the contract.", "Reply YES to approve", "- rice\n- wheat\n- sugar\n- tea", "", undefined]) assert.equal(classifyReply(t as string), "critical", String(t));
+  assert.equal(classifyReply("x".repeat(700)), "critical");
+});
+
+test("explicit voice request, offer yes and once-only offers", () => {
+  for (const t of ["send voice", "Reply in voice please", "voice please", "Send me a voice note!"]) assert.ok(parseVoiceRequest(t), t);
+  for (const t of ["what is a voice note", "I sent a voice note earlier", "voice", ""]) assert.ok(!parseVoiceRequest(t), t);
+  for (const t of ["yes", "Yes please", "sure", "ok"]) assert.ok(isOfferYes(t), t);
+  for (const t of ["yes the price is 40", "no", "maybe later"]) assert.ok(!isOfferYes(t), t);
+  assert.equal(VOICE_TEXT_OFFER, "Want this in text? Reply yes.");
+  resetVoiceSessionForTests();
+  const t0 = 1_000_000;
+  setVoiceOffer("+911", "full details", t0);
+  assert.equal(takeVoiceOffer("+911", t0 + 60_000), "full details");
+  assert.equal(takeVoiceOffer("+911", t0 + 61_000), null); // any next message clears it
+  setVoiceOffer("+911", "late", t0);
+  assert.equal(takeVoiceOffer("+911", t0 + 11 * 60_000), null); // expires after 10 minutes
+  armExplicitVoice("+912", t0);
+  assert.equal(consumeExplicitVoice("+912", t0 + 1000), true);
+  assert.equal(consumeExplicitVoice("+912", t0 + 2000), false);
+  assert.equal(textOfferSeconds({}), 30);
+  assert.equal(textOfferSeconds({ AKIF_VOICE_TEXT_OFFER_SECONDS: "20" }), 20);
+});
+
+test("speechBlockReason names the exact rule behind every unspeakable reply", () => {
+  const env = { AKIF_VOICE_REPLIES: "on" };
+  assert.equal(speechBlockReason("hello", { AKIF_VOICE_REPLIES: "off" }), "master_off");
+  assert.equal(speechBlockReason("your payout is ready", { AKIF_VOICE_REPLIES: "on", AKIF_VOICE_CONVERSATIONAL: "off" }), "conversational_off");
+  assert.equal(speechBlockReason("", env), "empty");
+  assert.equal(speechBlockReason(null, env), "empty");
+  assert.equal(speechBlockReason("x".repeat(601), env), "too_long");
+  assert.equal(speechBlockReason("call 9876543210", env), "long_number");
+  assert.equal(speechBlockReason("see https://example.com", env), "link_or_domain");
+  assert.equal(speechBlockReason("write to a@example.xyz", env), "email");
+  assert.equal(speechBlockReason("your IFSC is HDFC0001", env), "bank_or_id");
+  assert.equal(speechBlockReason("I saved it in the vault", env), "vault_word");
+  assert.equal(speechBlockReason("the price is 500000 INR", env), "money_or_terms");
+  assert.equal(speechBlockReason("here:\n- one\n- two", env), "list_shape");
+  assert.equal(speechBlockReason("hello, how can I help you today?", env), null);
+  assert.equal(speechBlockReason(HUMAN_HANDOFF_REPLY, env), null); // allowlisted fixed sentence stays speakable
+});
+
+test("money-or-terms gate only fires when a figure sits near the term", () => {
+  assert.equal(digitNearCriticalTerm("DLC of 500000 USD"), true);
+  assert.equal(digitNearCriticalTerm("the price is 500000 INR"), true);
+  assert.equal(digitNearCriticalTerm("DLC means a documentary letter of credit, used in 3 steps"), false);
+  assert.equal(digitNearCriticalTerm("we ship in 3 containers"), false);
+  const env = { AKIF_VOICE_REPLIES: "on" };
+  assert.equal(speechBlockReason("DLC of 500000 USD", env), "money_or_terms");
+  assert.equal(speechBlockReason("DLC means a documentary letter of credit, used in 3 steps", env), null);
+});
+
+test("voice flow: go-ahead phrases, explicit-flag peek and last-answer memory", async () => {
+  const { isVoiceGoAhead } = await import("../src/akif/voiceConsent.ts");
+  for (const yes of ["do it", "Do it!", "ok do it", "Okey then do it", "go ahead", "yes do it", "please do"]) assert.ok(isVoiceGoAhead(yes), yes);
+  for (const no of ["ok", "yes", "sure", "what is dlc", "do it now please send", ""]) assert.ok(!isVoiceGoAhead(no), no);
+  const { armExplicitVoice, hasExplicitVoice, consumeExplicitVoice, setLastAnswer, getLastAnswer, resetVoiceSessionForTests } = await import("../src/akif/voiceSession.ts");
+  resetVoiceSessionForTests();
+  assert.equal(hasExplicitVoice("+1000"), false);
+  armExplicitVoice("+1000");
+  assert.equal(hasExplicitVoice("+1000"), true); // peek does not consume
+  assert.equal(hasExplicitVoice("+1000"), true);
+  assert.equal(consumeExplicitVoice("+1000"), true);
+  assert.equal(hasExplicitVoice("+1000"), false);
+  setLastAnswer("+1000", "DLC means a documentary letter of credit.");
+  assert.equal(getLastAnswer("+1000"), "DLC means a documentary letter of credit.");
+  assert.equal(getLastAnswer("+2000"), null);
+  resetVoiceSessionForTests();
+});
+
+test("webhook: do-it after the promise re-speaks the last answer, and voice-note fallback is honest", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const w = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  assert.ok(w.includes("isVoiceGoAhead(message.text.body) && hasExplicitVoice(message.from)"), "go-ahead hook");
+  assert.ok(w.includes("getLastAnswer(message.from)"), "re-speaks the stored answer");
+  assert.ok(w.includes("setLastAnswer(to, reply)"), "deliverAnswer stores the answer");
+  assert.ok(w.includes("context.explicitVoice || context.voiceNote"), "mirrored voice notes get the honest line too");
+  assert.ok(w.includes("voiceNote: true"), "voice-note path marks itself");
 });

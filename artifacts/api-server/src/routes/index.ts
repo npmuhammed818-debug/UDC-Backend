@@ -1,3 +1,4 @@
+import commissionProposalsRouter from './commissionProposals';
 import adminRouter from "./admin";
 import adminIncidentsRouter from "./adminIncidents";
 import adminGrievancesRouter from "./adminGrievances";
@@ -8,6 +9,7 @@ import akifHermesRouter from "./akifHermes";
 import akifOfficialSourcesRouter from "./akifOfficialSources";
 import akifImpexqRouter from "./akifImpexq";
 import authRouter from "./auth";
+import emailAuthRouter from "./emailAuth";
 import whatsappSigninRouter from './whatsappSignin';
 import buyerPoolsRouter from "./buyerPools";
 import commissionRouter from "./commissions";
@@ -33,10 +35,12 @@ import vaultRouter from "./vault";
 
 const router: IRouter = Router();
 
+router.use(commissionProposalsRouter);
 router.use(healthRouter);
 router.use(databaseRouter);
 router.use(dashboardRouter);
 router.use(authRouter);
+router.use(emailAuthRouter);
 router.use(whatsappSigninRouter);
 router.use(profileRouter);
 router.use(privacyRouter);

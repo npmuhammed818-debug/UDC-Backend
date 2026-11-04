@@ -9,6 +9,7 @@ import { deliverAuthEmail } from "../auth/emailTransport";
 import { sendAuthEmail, type SendAuthEmail } from "../auth/emailDelivery";
 import { emailAuth } from "../auth/emailAuth";
 import { guidedChatPhoneHash } from "./phoneFingerprint";
+import { isTesterPhone } from "../auth/testerMode";
 
 // All entry points must be called only after Meta HMAC and WhatsApp consent validation.
 // An email alone is never proof of identity. Moving phones keeps the existing user ID.
@@ -46,7 +47,32 @@ export function createPhoneRecoveryService(options: {
   const secret = options.secret ?? (() => process.env.SESSION_SECRET ?? "");
   const budget = options.budget ?? emailAuth.ipBudget;
 
+  // Tester mode (staging only, owner's number only): sign in with no email code.
+  async function testerRequest(phone: string, rawEmail: string) {
+    const parsed = emailSchema.safeParse(rawEmail.trim().toLowerCase());
+    if (!parsed.success) return generic;
+    const email = parsed.data;
+    const linked = await database.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"tester_signin:" + phone}))`);
+      const {rows: bound} = await tx.execute(sql`select id from public.users where phone=${phone} limit 1`);
+      if (bound.length) return null; // Never merge two accounts, even in tester mode.
+      const {rows} = await tx.execute(
+        sql`select id,email,verified_email,email_verified_at,phone,status,role
+            from public.users where lower(email)=${email} order by id limit 2 for update`
+      );
+      if (rows.length !== 1) return null;
+      const user = rows[0] as UserRow;
+      if (!eligible(user.status, user.role)) return null;
+      await tx.execute(
+        sql`update public.users set phone=${phone}, email_verified_at=${now()}, verified_email=${email}, updated_at=${now()} where id=${user.id}`
+      );
+      return user;
+    });
+    return linked ? "Signed in (tester mode). Type Menu for your features." : generic;
+  }
+
   async function request(phone: string, rawEmail: string) {
+    if (isTesterPhone(phone)) return testerRequest(phone, rawEmail);
     await budget("phone-recovery:" + phone, "send");
     const parsed = emailSchema.safeParse(rawEmail.trim().toLowerCase());
     if (!parsed.success) return generic;

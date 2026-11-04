@@ -13,6 +13,12 @@ import {
   type EmailPurpose,
 } from "./emailCodes";
 import {
+  PASSWORD_LOGIN_DAILY_LIMIT,
+  PASSWORD_LOGIN_DAILY_WINDOW_MS,
+  PASSWORD_LOGIN_LIMIT,
+  PASSWORD_LOGIN_WINDOW_MS,
+} from "./loginBudget";
+import {
   sendAuthEmail,
   type SendAuthEmail,
   type AuthEmail,
@@ -48,6 +54,9 @@ const ownsEmail = (u: Account) =>
   !!u.email_verified_at &&
   !!u.email &&
   u.verified_email === u.email.trim().toLowerCase();
+
+
+export { PASSWORD_LOGIN_LIMIT, PASSWORD_LOGIN_WINDOW_MS, windowLimitExceeded } from "./loginBudget";
 
 export function createEmailAuthService(
   options: {
@@ -127,6 +136,53 @@ export function createEmailAuthService(
       );
     });
     if (!allowed) throw new EmailAuthError("rate_limited");
+  }
+  // Per-account password-login budget, owner-approved shape: 10 tries per
+  // email+network pair per 30 minutes (an attacker locking one pair never
+  // locks out the real owner on their own network) PLUS a per-email daily
+  // safety net of 30, so rotating networks still hit a hard cap. Attempts are
+  // CHARGED atomically inside the caller's transaction (which holds the
+  // account row lock) before the password is verified, so parallel requests
+  // cannot slip past the caps and unknown emails never write budget rows.
+  // Login success clears both rows. A successful email-code reset clears the
+  // daily row plus the pair row for the network that proved ownership.
+  async function chargePasswordLoginAttempt(tx: Executor, email: string, ip: string) {
+    const address = email.trim().toLowerCase();
+    if (
+      !(await charge(
+        tx,
+        `pwd-login:${address}:${ip}`,
+        PASSWORD_LOGIN_LIMIT,
+        PASSWORD_LOGIN_WINDOW_MS,
+      ))
+    )
+      return false;
+    return charge(
+      tx,
+      `pwd-login-day:${address}`,
+      PASSWORD_LOGIN_DAILY_LIMIT,
+      PASSWORD_LOGIN_DAILY_WINDOW_MS,
+    );
+  }
+  async function clearPasswordLoginBudget(
+    email: string,
+    ip: string,
+    executor: Pick<typeof db, "execute"> = database,
+  ) {
+    const address = email.trim().toLowerCase();
+    await executor.execute(
+      sql`delete from email_auth_limits where key in (${digest(`pwd-login:${address}:${ip}`)},${digest(`pwd-login-day:${address}`)})`,
+    );
+  }
+  // Durable per-IP budget for the web auth endpoints (login, register, WhatsApp
+  // sign-in): survives restarts and multi-instance deploys, unlike a Map.
+  async function webAuthBudgetAllowed(ip: string, bucket: string) {
+    return database.transaction(async (tx) => {
+      await tx.execute(
+        sql`delete from email_auth_limits where window_start < ${new Date(now().getTime() - 2 * 86_400_000)}`,
+      );
+      return charge(tx, `web:${bucket}:${ip}`, 12, 15 * 60_000);
+    });
   }
   async function account(tx: Executor, userId: string) {
     const { rows } = await tx.execute(
@@ -251,6 +307,9 @@ export function createEmailAuthService(
 
   return {
     ipBudget,
+    chargePasswordLoginAttempt,
+    clearPasswordLoginBudget,
+    webAuthBudgetAllowed,
     async status(userId: string) {
       const { rows } = await database.execute(
         sql`select email,verified_email,email_verified_at,password_recovery_enabled from users where id=${userId}`,
@@ -293,7 +352,13 @@ export function createEmailAuthService(
       });
       if (!success) throw new EmailAuthError("invalid_code");
     },
-    async reset(email: string, id: string, code: string, password: string) {
+    async reset(
+      email: string,
+      id: string,
+      code: string,
+      password: string,
+      ip: string,
+    ) {
       const success = await database.transaction(async (tx) => {
         const { rows } = await tx.execute(
           sql`select id,email,verified_email,email_verified_at,password_recovery_enabled,status from users where lower(email)=${email} for update`,
@@ -314,6 +379,7 @@ export function createEmailAuthService(
         await tx.execute(
           sql`insert into audit_logs (actor_user_id,action,entity_type,entity_id,metadata) values (${user!.id},'password_recovered','user',${user!.id},'{}'::jsonb)`,
         );
+        await clearPasswordLoginBudget(email, ip, tx);
         return true;
       });
       if (!success) throw new EmailAuthError("invalid_code");

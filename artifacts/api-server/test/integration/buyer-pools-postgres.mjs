@@ -28,7 +28,7 @@ try {
       contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import buyerPools from './src/routes/buyerPools';export {handleChatUi} from './src/whatsapp/chatUi';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(buyerPools);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
-    plugins: [{ name: "fake-whatsapp", setup(b) { b.onResolve({ filter: /^(\.\/|\.\.\/whatsapp\/)client$/ }, (a) => a.importer.includes("/api-server/src/") ? ({ path: "wa", namespace: "fake" }) : undefined); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "const g=globalThis; g.__wa=[]; const rec=async(k,to,b)=>{g.__wa.push({k,to,b});return {delivered:true,messageId:'m'}}; export const sendWhatsAppText=(to,b)=>rec('text',to,b); export const sendWhatsAppTextWithMenu=(to,b)=>rec('menu',to,b); export const sendWhatsAppInteractive=(to,b)=>rec('interactive',to,b); export const sendWhatsAppDocument=async()=>({}); export const downloadWhatsAppMedia=async()=>{throw new Error('no network')}; export const sendWhatsAppReaction=async()=>({}); export const sendWhatsAppVoiceNote=async()=>({}); export const checkWhatsAppConnection=async()=>({ok:false}); export const ensureWhatsAppWebhookSubscription=async()=>({});" })); } }],
+    plugins: [{ name: "fake-whatsapp", setup(b) { b.onResolve({ filter: /^(\.\/|\.\.\/whatsapp\/)client$/ }, (a) => a.importer.includes("/api-server/src/") ? ({ path: "wa", namespace: "fake" }) : undefined); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export const isWindowClosedError=()=>false; export const trackReplyFailures=(f)=>f(new Set()); const g=globalThis; g.__wa=[]; const rec=async(k,to,b)=>{g.__wa.push({k,to,b});return {delivered:true,messageId:'m'}}; export const sendWhatsAppText=(to,b)=>rec('text',to,b); export const sendWhatsAppTextWithMenu=(to,b)=>rec('menu',to,b); export const sendWhatsAppInteractive=(to,b)=>rec('interactive',to,b); export const sendWhatsAppDocument=async()=>({}); export const downloadWhatsAppMedia=async()=>{throw new Error('no network')}; export const sendWhatsAppReaction=async()=>({}); export const sendWhatsAppVoiceNote=async()=>({}); export const checkWhatsAppConnection=async()=>({ok:false}); export const ensureWhatsAppWebhookSubscription=async()=>({});" })); } }],
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
@@ -118,9 +118,9 @@ try {
 
   // 4 expiry: default 10 days, lazy, no accept after expiry
   const p4 = await mkPool(); const e1 = await invite(p4, b2, 100);
-  await pool.query("update buyer_pool_allocations set created_at = now() - interval '9 days 23 hours' where id=$1", [e1]);
+  await pool.query("update buyer_pool_allocations set created_at = now() - interval '239 hours' where id=$1", [e1]);
   assert.equal((await call("GET", "/buyer-pools/mine", undefined, b2.cookie)).body.allocations.find((a) => a.allocationId === e1).allocationStatus, "invited", "still open at 9d23h");
-  await pool.query("update buyer_pool_allocations set created_at = now() - interval '10 days 1 minute' where id=$1", [e1]);
+  await pool.query("update buyer_pool_allocations set created_at = now() - interval '14401 minutes' where id=$1", [e1]);
   assert.equal((await call("GET", "/buyer-pools/mine", undefined, b2.cookie)).body.allocations.find((a) => a.allocationId === e1).allocationStatus, "expired");
   const late = await call("POST", `/buyer-pools/invites/${e1}/accept`, {}, b2.cookie);
   assert.equal(late.status, 409); assert.equal(late.body.error, "invite_expired");

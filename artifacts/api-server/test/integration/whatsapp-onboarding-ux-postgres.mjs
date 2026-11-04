@@ -33,6 +33,7 @@ Object.assign(process.env, {
   SESSION_SECRET: secret,
   SUPABASE_DATABASE_URL: url.href,
   WHATSAPP_APP_SECRET: secret,
+  WHATSAPP_INBOUND_PER_MINUTE: '100000',
   WHATSAPP_ACCESS_TOKEN: 'synthetic-no-network-token',
   WHATSAPP_PHONE_NUMBER_ID: 'synthetic-phone-id',
   AKIF_WORKER_CONVERSATION_ENABLED: 'true',
@@ -126,7 +127,7 @@ try {
     return out;
   }
   const lastText = (out) => out.map(textOf).join('\n');
-  const SUPPORT = 'udc@updowncircle.site';
+  const SUPPORT = 'service@updowncircle.site';
   const roles = [
     ['buyer', phone + '10', [['Name', 'Asha Verma'], ['email', 'asha@verma-imports.example.invalid'], ['company', 'Verma Imports Pvt Ltd'], ['country', 'India']]],
     ['seller', phone + '11', [['Name', 'Omar Said'], ['email', 'omar@said-exports.example.invalid'], ['company', 'Said Exports LLC'], ['country', 'Oman']]],
@@ -142,7 +143,7 @@ try {
   assert.equal(out.length, 1, 'one first message');
   assert.ok(!first.includes('\\n'), 'no literal backslash-n in the welcome');
   assert.ok(first.includes('https://updowncircle.site/#/terms') && first.includes('https://updowncircle.site/#/privacy'), 'published Terms and Privacy links');
-  assert.ok(first.includes(SUPPORT) && !/gmail\.com/i.test(first), 'support email is udc@updowncircle.site');
+  assert.ok(first.includes(SUPPORT) && !/gmail\.com/i.test(first), 'support email is service@updowncircle.site');
   assert.match(first, /Reply "I agree"/);
   assert.match(first, /18\+/); assert.match(first, /withdraw consent/i);
   assert.ok(first.length <= 1700, 'first message stays readable');
@@ -157,7 +158,7 @@ try {
     assert.ok(lastText(out).length < 520, `reminder ${n} is short (${lastText(out).length})`);
   }
   out = await say(pB, 'User', 'show notice');
-  assert.match(lastText(out), /What we collect, and why/, 'the full notice can be shown again on request');
+  assert.match(lastText(out), /We collect your name/, 'the full notice can be shown again on request');
   assert.equal(await count('select count(*) from users where phone=$1', [pB]), 0);
   out = await say(pB, 'User', 'I agree');
   assert.equal(out.length, 1);

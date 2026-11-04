@@ -1,4 +1,6 @@
+import {requirePrivateServiceUrl} from '../../privacy/serviceUrl.ts';
 import { isAkifWorkerConversationEnabled, runAkifWorkerChat } from "./workerClient.ts";
+import { isGroqConfigured, runGroqChat } from "./groqClient.ts";
 
 type HermesChatResponse = {
   choices?: Array<{
@@ -27,7 +29,7 @@ function akifBrainConfig() {
   const rawUrl = process.env.AKIF_BRAIN_URL?.trim();
   if (!rawUrl) return null;
   return {
-    baseUrl: rawUrl.replace(/\/$/, ""),
+    baseUrl: requirePrivateServiceUrl(rawUrl),
     apiKey: process.env.AKIF_BRAIN_API_KEY?.trim() || null,
     model: process.env.AKIF_BRAIN_MODEL?.trim() || "qwen3:8b",
   };
@@ -50,7 +52,7 @@ export async function runAkifBrainChat(
 
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
+      method: "POST", redirect: "error",
       headers: {
         ...(config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}),
         "content-type": "application/json",
@@ -89,7 +91,7 @@ function nvidiaConfig() {
   return {
     apiKey,
     model: process.env.NVIDIA_MODEL?.trim() || "nvidia/nemotron-3.5-lightning-30b-a3b",
-    baseUrl: (process.env.NVIDIA_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1").replace(/\/$/, ""),
+    baseUrl: requirePrivateServiceUrl(process.env.NVIDIA_BASE_URL?.trim() || "https://integrate.api.nvidia.com/v1"),
   };
 }
 
@@ -110,7 +112,7 @@ export async function runNvidiaChat(
 
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
+      method: "POST", redirect: "error",
       headers: {
         authorization: `Bearer ${config.apiKey}`,
         "content-type": "application/json",
@@ -148,7 +150,7 @@ function openAIConfig() {
   return {
     apiKey,
     model: process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-6-luna",
-    baseUrl: (process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/$/, ""),
+    baseUrl: requirePrivateServiceUrl(process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1"),
   };
 }
 
@@ -169,7 +171,7 @@ export async function runOpenAIChat(
 
   try {
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
+      method: "POST", redirect: "error",
       headers: {
         authorization: `Bearer ${config.apiKey}`,
         "content-type": "application/json",
@@ -292,6 +294,25 @@ export async function runConversationChat(
     console.warn("Direct OpenAI conversation skipped", { reason: "not_configured" });
   }
 
+  if (isGroqConfigured()) {
+    try {
+      return await withinDeadline(async budget => { const r = await runGroqChat(message, system, budget); return { content: r.content, raw: r.raw as HermesChatResponse }; });
+    } catch (error) {
+      remaining();
+      const statusMatch = error instanceof Error
+        ? error.message.match(/Groq returned HTTP (\d{3})/)
+        : null;
+      console.warn("Groq backup conversation failed; falling back to Hermes", {
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : "provider_request_failed",
+        ...(statusMatch ? { httpStatus: Number(statusMatch[1]) } : {}),
+      });
+    }
+  } else {
+    console.warn("Groq backup conversation skipped", { reason: "not_configured" });
+  }
+
   return withinDeadline(budget => runHermesChat(message, system, budget));
 }
 
@@ -300,7 +321,7 @@ function hermesConfig() {
   const apiKey = process.env.HERMES_AKIF_API_KEY?.trim();
   if (!rawUrl || !apiKey) return null;
   return {
-    baseUrl: rawUrl.replace(/\/$/, ""),
+    baseUrl: requirePrivateServiceUrl(rawUrl),
     apiKey,
   };
 }
@@ -364,7 +385,7 @@ export async function runHermesChat(
   const raw = await hermesFetch<HermesChatResponse>(
     "/v1/chat/completions",
     {
-      method: "POST",
+      method: "POST", redirect: "error",
       body: JSON.stringify(payload),
     },
     timeoutMs,
@@ -455,7 +476,7 @@ export async function runHermesMultimodal(
   const raw = await hermesFetch<HermesChatResponse>(
     "/v1/chat/completions",
     {
-      method: "POST",
+      method: "POST", redirect: "error",
       body: JSON.stringify(payload),
     },
     timeoutMs,

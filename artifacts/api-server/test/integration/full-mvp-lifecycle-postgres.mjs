@@ -31,10 +31,10 @@ globalThis.fetch = async (input, init) => {
 try {
   await build({
     stdin: {
-      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import marketplace from './src/routes/marketplace';import deals from './src/routes/deals';import documents from './src/routes/documents';import referrals from './src/routes/referrals';import admin from './src/routes/admin';import email from './src/routes/emailAuth';import vault from './src/routes/vault';import commissions from './src/routes/commissions';import notifications from './src/routes/notifications';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';export {interpretActiveDealConversation} from './src/akif/dealConversationAgent';export {requestRoleChange} from './src/accounts/roleChangeRequest';import roleReview from './src/routes/roleChangeReview';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(email);app.use(vault);app.use('/api',vault);app.use(marketplace);app.use(deals);app.use(documents);app.use(referrals);app.use(admin);app.use(commissions);app.use(notifications);app.use(roleReview);export default app;`,
+      contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import marketplace from './src/routes/marketplace';import deals from './src/routes/deals';import documents from './src/routes/documents';import referrals from './src/routes/referrals';import admin from './src/routes/admin';import email from './src/routes/emailAuth';import vault,{vaultShortRouter} from './src/routes/vault';import commissions from './src/routes/commissions';import notifications from './src/routes/notifications';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';export {interpretActiveDealConversation} from './src/akif/dealConversationAgent';export {requestRoleChange} from './src/accounts/roleChangeRequest';import roleReview from './src/routes/roleChangeReview';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(email);app.use(vault);app.use(vaultShortRouter);app.use('/api',vault);app.use(marketplace);app.use(deals);app.use(documents);app.use(referrals);app.use(admin);app.use(commissions);app.use(notifications);app.use(roleReview);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
-    plugins: [{name:"fictional-mail",setup(b){b.onResolve({filter:/\/emailDelivery$/},()=>({path:"mail",namespace:"mail"}));b.onLoad({filter:/.*/,namespace:"mail"},()=>({contents:"export const sendAuthEmail=async value=>{globalThis.__lifecycleMail.push(value);};"}));}}, { name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
+    plugins: [{name:"fictional-mail",setup(b){b.onResolve({filter:/\/emailDelivery$/},()=>({path:"mail",namespace:"mail"}));b.onLoad({filter:/.*/,namespace:"mail"},()=>({contents:"export const sendAuthEmail=async value=>{globalThis.__lifecycleMail.push(value);};"}));}}, { name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
@@ -150,7 +150,7 @@ try {
   assert.equal((await call("POST", `/admin/deals/${dealId}/agents`, { userId: agent.id, commissionSharePct: 50 }, admin.cookie)).status, 201);
   assert.equal((await call("GET", `/deals/${dealId}`, undefined, agent.cookie)).status, 403);
   const ad = await call("GET", "/agent/deals", undefined, agent.cookie);
-  assert.equal(ad.status, 200); assert.ok(!JSON.stringify(ad.body).includes("505"));
+  assert.equal(ad.status, 200); assert.ok(!/(?<![0-9a-f-])505(?![0-9a-f-])/i.test(JSON.stringify(ad.body)));
   const ref = await call("POST", "/admin/referrals", { agentUserId: agent.id, referredUserId: buyer.id, referralCode: "QA-REF-1" }, admin.cookie);
   assert.equal(ref.status, 201, JSON.stringify(ref.body));
   assert.equal(ref.body.referral.status, "pending");
@@ -179,7 +179,7 @@ try {
   assert.equal((await call("GET", `/deals/${dealId}/tracking`, undefined, seller.cookie)).status, 200);
   assert.equal((await call("PATCH", `/admin/shipments/${shId}`, { status: "in_transit" }, admin.cookie)).status, 200);
   const agentTr = await call("GET", `/deals/${dealId}/tracking`, undefined, agent.cookie);
-  assert.ok(!JSON.stringify(agentTr.body).includes("505"), "tracking shows the agent no price");
+  assert.ok(!/(?<![0-9a-f-])505(?![0-9a-f-])/i.test(JSON.stringify(agentTr.body)), "tracking shows the agent no price");
   pass("shipment created, milestone replay-safe and conflict-checked, future/unsourced milestones refused, tracking visible to the deal's buyer and seller only, no price to the agent");
 
   // 6 commission recorded by admin for the agent; each user sees only their own
@@ -268,14 +268,83 @@ try {
   const freshRequest=(await pool.query("select id from user_role_change_requests where user_id=$1 and status='pending'",[switchCandidate.id])).rows[0].id;
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},switchCandidate.cookie)).status,403);
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate'},admin.cookie)).status,409);
+  await pool.query("insert into whatsapp_intake_drafts(phone,role,draft) values($1,'buyer','{}'::jsonb)",[switchPhone]);
+  // Settled history is not a lifetime role lock. All attribution remains byte-for-byte.
+  const historicalDeal=(await pool.query(`insert into deals(buyer_user_id,seller_user_id,product_id,quantity,unit,agreed_price,currency,status)
+    values($1,$2,$3,1,'MT',505,'USD','completed') returning id`,[switchCandidate.id,seller.id,product])).rows[0].id;
+  const historicalRequest=(await pool.query(`insert into buyer_requests(buyer_user_id,product_id,quantity,unit,destination,status)
+    values($1,$2,1,'MT','Fictional destination','converted') returning id`,[switchCandidate.id,product])).rows[0].id;
+  const historicalListing=(await pool.query(`insert into seller_listings(seller_user_id,product_id,quantity,unit,price,currency,status)
+    values($1,$2,1,'MT',505,'USD','sold') returning id`,[switchCandidate.id,product])).rows[0].id;
+  const historicalReferral=(await pool.query(`insert into referrals(agent_user_id,referred_user_id,referral_code,status)
+    values($1,$2,'QA-HISTORY','paid') returning id`,[agent.id,switchCandidate.id])).rows[0].id;
+  const historicalCommission=(await pool.query(`insert into commissions(deal_id,beneficiary_user_id,amount,currency,status)
+    values($1,$2,20,'USD','paid') returning id`,[historicalDeal,agent.id])).rows[0].id;
+  const history=async()=>JSON.stringify((await pool.query(`select row_to_json(d) d,row_to_json(r) r,row_to_json(l) l,row_to_json(f) f,row_to_json(c) c
+    from deals d,buyer_requests r,seller_listings l,referrals f,commissions c where d.id=$1 and r.id=$2 and l.id=$3 and f.id=$4 and c.id=$5`,
+    [historicalDeal,historicalRequest,historicalListing,historicalReferral,historicalCommission])).rows);
+  const beforeHistory=await history();
+  const attemptSwitch=()=>call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},admin.cookie);
+  for(const [table,id,column,active,settled] of [
+    ['deals',historicalDeal,'status','on_hold','completed'],
+    ['buyer_requests',historicalRequest,'status','open','converted'],
+    ['seller_listings',historicalListing,'status','paused','sold'],
+    ['referrals',historicalReferral,'status','pending','paid'],
+    ['referrals',historicalReferral,'status','qualified','paid'],
+    ['commissions',historicalCommission,'status','approved','paid']]){
+    await pool.query(`update ${table} set ${column}=$2 where id=$1`,[id,active]);
+    const blocked=await attemptSwitch();assert.equal(blocked.status,409,table+' active obligation blocks');
+    assert.equal(blocked.body.error,'existing_obligations');
+    assert.equal((await pool.query('select role from users where id=$1',[switchCandidate.id])).rows[0].role,'buyer');
+    await pool.query(`update ${table} set ${column}=$2 where id=$1`,[id,settled]);
+  }
   const activated=await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified seller KYC and permission scope'},admin.cookie);
   assert.equal(activated.status,200,JSON.stringify(activated.body));assert.equal(activated.body.roleChanged,true);
+  assert.equal(await history(),beforeHistory,'settled deals, requests, listings, referrals and commission attribution unchanged');
   assert.equal((await pool.query('select role from users where id=$1',[switchCandidate.id])).rows[0].role,'seller');
+  assert.equal((await pool.query('select count(*)::int n from whatsapp_intake_drafts where phone=$1',[switchPhone])).rows[0].n,0,'half-finished buyer intake is dropped');
+  const audited=(await pool.query("select metadata from audit_logs where action='role_change_activated' and entity_id=$1",[switchCandidate.id])).rows;
+  assert.equal(audited.length,1);assert.equal(audited[0].metadata.fromRole,'buyer');assert.equal(audited[0].metadata.toRole,'seller');assert.equal(audited[0].metadata.historyPreserved,true);
+  assert.equal((await pool.query("select status from user_role_change_requests where id=$1",[freshRequest])).rows[0].status,'activated');
   assert.equal((await call('GET','/auth/me',undefined,switchCandidate.cookie)).status,401,'old role session revoked');
   assert.equal((await call('POST',`/admin/role-change-requests/${freshRequest}/review`,{decision:'activate',verificationConfirmed:true,note:'Duplicate should fail closed'},admin.cookie)).status,409);
   const relogin=await call('POST','/auth/login',{email:switchCandidate.email,password});assert.equal(relogin.status,200);
   assert.equal((await call('POST','/buyer-requests',{product_id:product,quantity:1,unit:'MT'},relogin.cookie)).status,403,'former buyer cannot create buyer request');
   pass('role activation requires admin and evidence, revokes prior sessions, blocks replay and removes former role permissions');
+  // More role-switch gates: concurrency, company verification, agent isolation.
+  {
+    const activate=(rid,cookie=admin.cookie)=>call('POST',`/admin/role-change-requests/${rid}/review`,{decision:'activate',verificationConfirmed:true,note:'Verified target role KYC and scope'},cookie);
+    const reqFor=async(user,phone,role)=>{await pool.query('update users set phone=$2 where id=$1',[user.id,phone]);assert.equal((await app.requestRoleChange(phone,role)).status,'pending');return (await pool.query("select id from user_role_change_requests where user_id=$1 and status='pending'",[user.id])).rows[0].id;};
+    const racer=await mk('buyer');const racerReq=await reqFor(racer,'10000007771','seller');
+    const results=await Promise.all([activate(racerReq),activate(racerReq),activate(racerReq)]);
+    const codes=results.map(r=>r.status).sort();
+    assert.deepEqual(codes,[200,409,409],'concurrent activations: exactly one wins '+codes);
+    assert.equal((await pool.query("select count(*)::int n from audit_logs where action='role_change_activated' and entity_id=$1",[racer.id])).rows[0].n,1);
+    const unverified=await mk('buyer');await pool.query("update companies set verification_status='pending' where owner_user_id=$1",[unverified.id]);
+    const unverifiedReq=await reqFor(unverified,'10000007772','seller');
+    const blocked=await activate(unverifiedReq);assert.equal(blocked.status,409);assert.equal(blocked.body.error,'company_verification_required');
+    assert.equal((await pool.query('select role from users where id=$1',[unverified.id])).rows[0].role,'buyer');
+    const agentUser=await mk('agent');const agentReq=await reqFor(agentUser,'10000007773','buyer');
+    const agentBlocked=await activate(agentReq);assert.equal(agentBlocked.status,409);assert.equal(agentBlocked.body.error,'company_verification_required','an agent has no company, so buyer activation needs the company review first');
+    assert.equal((await pool.query('select role from users where id=$1',[agentUser.id])).rows[0].role,'agent');
+    assert.equal((await call('GET','/auth/me',undefined,agentUser.cookie)).status,200,'a blocked activation revokes nothing');
+    // Live assigned agent obligations were missed by the old buyer/seller-only deal query.
+    const assigned=await mk('buyer');const assignedReq=await reqFor(assigned,'10000007774','agent');
+    const assignmentDeal=(await pool.query(`insert into deals(buyer_user_id,seller_user_id,product_id,quantity,unit,agreed_price,status)
+      values($1,$2,$3,1,'MT',505,'initiated') returning id`,[buyer.id,seller.id,product])).rows[0].id;
+    await pool.query(`insert into deal_participants(deal_id,user_id,participant_role,status) values($1,$2,'agent','active')`,[assignmentDeal,assigned.id]);
+    const assignedBlock=await activate(assignedReq);assert.equal(assignedBlock.status,409);assert.equal(assignedBlock.body.error,'existing_obligations');
+    await pool.query("update deals set status='completed' where id=$1",[assignmentDeal]);
+    const switchedAgent=await activate(assignedReq);assert.equal(switchedAgent.status,200);assert.equal(switchedAgent.body.roleChanged,true);
+    const agentLogin=await call('POST','/auth/login',{email:assigned.email,password});assert.equal(agentLogin.status,200);
+    assert.equal((await call('GET',`/deals/${assignmentDeal}`,undefined,agentLogin.cookie)).status,403,'switching to agent cannot expose confidential deal detail');
+    assert.equal((await call('GET','/deals',undefined,agentLogin.cookie)).status,403,'new agent cannot list confidential deals');
+    const ownCommission=(await call('GET','/commissions',undefined,agentLogin.cookie));assert.equal(ownCommission.status,200);
+    assert.ok(!JSON.stringify(ownCommission.body).includes(historicalCommission),'new agent cannot see another person commission');
+    assert.equal((await pool.query('select user_id from deal_participants where deal_id=$1 and user_id=$2',[assignmentDeal,assigned.id])).rows[0].user_id,assigned.id,'agent attribution preserved');
+    pass('live assigned-agent deal blocks switching, settled assignment permits switching, new agent cannot access confidential trade routes or other commissions');
+    pass('role switching gates: one winner under concurrency, buyer/seller targets need a verified company, a blocked activation changes and revokes nothing, every activation audited');
+  }
   const transition=(status,extra={},cookie=admin.cookie)=>call('PATCH',`/admin/deals/${dealId}/status`,{status,...extra},cookie);
   assert.equal((await transition('payment',{confirmDestinationSgs:true},buyer.cookie)).status,403);
   assert.equal((await transition('payment',{confirmDestinationSgs:true})).status,409);

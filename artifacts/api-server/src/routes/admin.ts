@@ -1,3 +1,5 @@
+import {prepareCommissionProposals} from '../referrals/commissionProposal';
+import {generateWhatsAppDraftPdf,whatsappDraftConfirmation} from '../deals/whatsappDraft';
 import { screenCompanyEvidence, companyProfileFingerprint } from '../akif/companyScreening';
 import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/verifiedCounterparties';
 import { recordedDealTerms } from '../deals/recordedTerms';
@@ -6,7 +8,7 @@ import { udcPaymentTerms } from '../marketplace/paymentPolicy';
 import { buildDefaultCommissionPreview } from "../referrals/defaultCommissionRule";
 import { commissionAmountFitsStorage } from "../referrals/currencyPrecision";
 import { calculateCommissionAmount, CommissionCalculationError } from "../referrals/commissionAmount";
-import { Router, type IRouter } from "express";
+import { raw, Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -20,8 +22,12 @@ import {notificationText} from "../notifications/deliveryContent";
 import {dispatchShipmentNotifications} from "../notifications/shipmentDispatcher";
 import { reconcileStoredShipmentReceipts } from "../whatsapp/shipmentDeliveryReceipts";
 import { runEtaFollowups } from "../tracking/etaFollowups";
+import { runShipmentWatchPoll } from "../tracking/shipmentWatch";
+import { schedulerKeyAllowed, stagingFakeTracker } from "../tracking/shipmentWatchScheduler";
+import { fetchAkifSpeechStatus, isAkifWorkerConfigured } from "../akif/intelligence/workerClient";
+import { learnFromDealOutcome } from "../akif/dealOutcomeLessons";
 import { scoreTradeMatch } from "../marketplace/matchScoring";
-import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, parseStoragePath, storagePath } from "../supabase/storage";
+import { createSignedDownloadUrl, createSignedUploadUrl, downloadDocumentBytes, uploadDocumentBytes, removeDocumentObject, parseStoragePath, storagePath } from "../supabase/storage";
 import { managedDealDocumentPath, managedCompanyDocumentPath } from "../supabase/documentAccessPath";
 import { processDocumentIntelligence, refreshDealIntelligenceSnapshot } from "../akif/documentIntelligence";
 import { canAllocateCommissionShare, nextReferralPosition } from "../referrals/agentChain";
@@ -156,6 +162,11 @@ router.get("/admin/audit-log", requireRole("admin"), async (req, res) => {
 
 const verificationSchema = z.object({
   verification_status: z.enum(["pending", "under_review", "verified", "rejected"]),
+});
+
+router.get("/admin/companies",requireRole("admin"),async(_req,res)=>{
+  try{const companies=await db.select({id:companiesTable.id,ownerUserId:companiesTable.ownerUserId,companyName:companiesTable.companyName,registrationNumber:companiesTable.registrationNumber,country:companiesTable.country,address:companiesTable.address,website:companiesTable.website,verificationStatus:companiesTable.verificationStatus,createdAt:companiesTable.createdAt,updatedAt:companiesTable.updatedAt,ownerName:usersTable.fullName,ownerEmail:usersTable.email,ownerRole:usersTable.role}).from(companiesTable).innerJoin(usersTable,eq(companiesTable.ownerUserId,usersTable.id)).orderBy(desc(companiesTable.updatedAt)).limit(500);res.set("Cache-Control","no-store").json({companies});}
+  catch{res.status(500).json({error:"companies_fetch_failed"});}
 });
 
 router.get("/admin/companies/pending-verification", requireRole("admin"), async (_req, res) => {
@@ -521,7 +532,7 @@ async function notifyDealCounterparties(
     return;
   }
 
-  await db.insert(notificationsTable).values([
+  await executor.insert(notificationsTable).values([
     { userId: deal.buyerUserId, type, title, body, link },
     { userId: deal.sellerUserId, type, title, body, link },
   ]);
@@ -624,6 +635,55 @@ router.post("/admin/tracking/eta-followups/run",requireRole("admin"),async(req:A
   }
 });
 
+// Voice diagnostics for operators: which gates are open, never any key, voice ID or content.
+router.get("/admin/voice/status",requireRole("admin"),async(_req,res)=>{
+  try{
+    let preferencesTable=false;
+    try{
+      await db.execute(sql`SELECT 1 FROM public.whatsapp_voice_preferences LIMIT 0`);
+      preferencesTable=true;
+    }catch{preferencesTable=false;}
+    const worker=await fetchAkifSpeechStatus();
+    res.json({
+      masterSwitch:process.env.AKIF_VOICE_REPLIES==="on",
+      conversational:process.env.AKIF_VOICE_REPLIES==="on"&&process.env.AKIF_VOICE_CONVERSATIONAL!=="off",
+      autopick:process.env.AKIF_VOICE_AUTOPICK==="on",
+      preferencesTable,
+      workerConfigured:isAkifWorkerConfigured(),
+      workerReachable:worker!==null,
+      workerSpeech:worker??undefined,
+    });
+  }catch{
+    res.status(500).json({error:"voice_status_unavailable"});
+  }
+});
+
+// Operator-triggered shipment watch poll (external schedulers wake the service with
+// this call; the in-process runner stays as a fallback). On staging only, a fake
+// 17TRACK response can be supplied through UDC_SHIPMENT_WATCH_FAKE_EVENTS (JSON
+// array of {time,description,location}) so the full delivery chain is testable
+// without spending real 17TRACK quota. The flag is ignored outside staging.
+// Admin session OR the scheduler-scoped key (x-scheduler-key header). The key
+// opens this one route only and is revocable by rotating the env value.
+const adminOrSchedulerKey=(req:Request,res:Response,next:NextFunction)=>{
+  if(schedulerKeyAllowed(req.get("x-scheduler-key"))){next();return;}
+  requireRole("admin")(req,res,next);
+};
+
+router.post("/admin/tracking/shipment-watch/run",adminOrSchedulerKey,async(_req,res)=>{
+  try{
+    const fake=stagingFakeTracker();
+    if(fake&&"error" in fake){
+      res.status(400).json({error:fake.error});
+      return;
+    }
+    const result=await runShipmentWatchPoll(fake?{tracker:fake.tracker}:{});
+    res.json(result);
+  }catch{
+    res.status(500).json({error:"shipment_watch_run_failed"});
+  }
+});
+
 router.post("/admin/deal-escalations/run", requireRole("admin"), async (req, res) => {
   try {
     const now = new Date();
@@ -681,19 +741,20 @@ router.patch(
         res.status(400).json({ error: "invalid_requirement_id" });
         return;
       }
-      const [existing] = await db.select().from(buyerRequestsTable)
+      const requirement = await db.transaction(async tx => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"buyer_request:" + requirementId}))`);
+      const [existing] = await tx.select().from(buyerRequestsTable)
         .where(eq(buyerRequestsTable.id, requirementId))
         .limit(1);
       if (!existing) {
-        res.status(404).json({ error: "buyer_request_not_found" });
-        return;
+        return null;
       }
-      const [requirement] = await db
+      const [requirement] = await tx
         .update(buyerRequestsTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(buyerRequestsTable.id, requirementId))
         .returning();
-      await db.insert(auditLogsTable).values({
+      await tx.insert(auditLogsTable).values({
         actorUserId: req.authUser!.id,
         action: "buyer_requirement_reviewed",
         entityType: "buyer_request",
@@ -701,7 +762,7 @@ router.patch(
         metadata: { previousStatus: existing.status, newStatus: requirement.status },
       });
       if (existing.status !== requirement.status) {
-        await db.insert(notificationsTable).values({
+        await tx.insert(notificationsTable).values({
           userId: requirement.buyerUserId,
           type: "buyer_requirement_reviewed",
           title: "Requirement review completed",
@@ -709,6 +770,9 @@ router.patch(
           link: "/notifications",
         });
       }
+        return requirement;
+      });
+      if (!requirement) { res.status(404).json({error:"buyer_request_not_found"}); return; }
       res.json({ requirement });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -740,19 +804,20 @@ router.patch(
         res.status(400).json({ error: "invalid_offer_id" });
         return;
       }
-      const [existing] = await db.select().from(sellerListingsTable)
+      const offer = await db.transaction(async tx => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"seller_listing:" + offerId}))`);
+      const [existing] = await tx.select().from(sellerListingsTable)
         .where(eq(sellerListingsTable.id, offerId))
         .limit(1);
       if (!existing) {
-        res.status(404).json({ error: "seller_offer_not_found" });
-        return;
+        return null;
       }
-      const [offer] = await db
+      const [offer] = await tx
         .update(sellerListingsTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(sellerListingsTable.id, offerId))
         .returning();
-      await db.insert(auditLogsTable).values({
+      await tx.insert(auditLogsTable).values({
         actorUserId: req.authUser!.id,
         action: "seller_offer_reviewed",
         entityType: "seller_listing",
@@ -760,7 +825,7 @@ router.patch(
         metadata: { previousStatus: existing.status, newStatus: offer.status },
       });
       if (existing.status !== offer.status) {
-        await db.insert(notificationsTable).values({
+        await tx.insert(notificationsTable).values({
           userId: offer.sellerUserId,
           type: "seller_offer_reviewed",
           title: "Offer review completed",
@@ -768,6 +833,9 @@ router.patch(
           link: "/notifications",
         });
       }
+        return offer;
+      });
+      if (!offer) { res.status(404).json({error:"seller_offer_not_found"}); return; }
       res.json({ offer });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -795,49 +863,46 @@ router.get("/admin/matches", requireRole("admin"), async (_req, res) => {
 router.post("/admin/matches", requireRole("admin"), async (req, res) => {
   try {
     const input = createMatchSchema.parse(req.body);
-    const [buyerRequest] = await db.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.id, input.buyerRequestId)).limit(1);
-    const [sellerOffer] = await db.select().from(sellerListingsTable).where(eq(sellerListingsTable.id, input.sellerListingId)).limit(1);
+    const match=await db.transaction(async tx=>{
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'match_pair:'+input.buyerRequestId+':'+input.sellerListingId}))`);
+    const [buyerRequest] = await tx.select().from(buyerRequestsTable).where(eq(buyerRequestsTable.id, input.buyerRequestId)).limit(1);
+    const [sellerOffer] = await tx.select().from(sellerListingsTable).where(eq(sellerListingsTable.id, input.sellerListingId)).limit(1);
 
     if (!buyerRequest || !sellerOffer) {
-      res.status(404).json({ error: "match_record_not_found" });
-      return;
+      throw new AgreementError("match_record_not_found");
     }
     if (buyerRequest.status !== "approved" || sellerOffer.status !== "approved") {
-      res.status(409).json({ error: "match_records_require_admin_approval" });
-      return;
+      throw new AgreementError("match_records_require_admin_approval");
     }
     if (buyerRequest.productId !== sellerOffer.productId) {
-      res.status(409).json({ error: "match_products_do_not_match" });
-      return;
+      throw new AgreementError("match_products_do_not_match");
     }
-    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, sellerOffer.sellerUserId)) {
-      res.status(409).json({ error: "match_requires_verified_counterparties" });
-      return;
+    if (!await hasVerifiedCounterparties(buyerRequest.buyerUserId, sellerOffer.sellerUserId,tx)) {
+      throw new AgreementError("match_requires_verified_counterparties");
     }
 
-    const [existingMatch] = await db.select({ id: matchesTable.id, status: matchesTable.status }).from(matchesTable).where(and(
+    const [existingMatch] = await tx.select({ id: matchesTable.id, status: matchesTable.status }).from(matchesTable).where(and(
       eq(matchesTable.buyerRequestId, buyerRequest.id),
       eq(matchesTable.sellerListingId, sellerOffer.id),
     )).limit(1);
     if (existingMatch && existingMatch.status !== "suggested") {
-      res.status(409).json({ error: "match_already_exists", matchId: existingMatch.id });
-      return;
+      throw new AgreementError("match_already_exists");
     }
 
-    const [match] = existingMatch ? await db.update(matchesTable).set({status:"approved",updatedAt:new Date()}).where(eq(matchesTable.id,existingMatch.id)).returning() : await db.insert(matchesTable).values({
+    const [match] = existingMatch ? await tx.update(matchesTable).set({status:"approved",updatedAt:new Date()}).where(eq(matchesTable.id,existingMatch.id)).returning() : await tx.insert(matchesTable).values({
       buyerRequestId: buyerRequest.id,
       sellerListingId: sellerOffer.id,
       matchScore: String(scoreTradeMatch(buyerRequest, sellerOffer).score),
       status: "approved",
     }).returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
       action: "match_created",
       entityType: "match",
       entityId: match.id,
       metadata: { buyerRequestId: match.buyerRequestId, sellerListingId: match.sellerListingId },
     });
-    await db.insert(notificationsTable).values([
+    await tx.insert(notificationsTable).values([
       {
         userId: buyerRequest.buyerUserId,
         type: "match_created",
@@ -853,12 +918,15 @@ router.post("/admin/matches", requireRole("admin"), async (req, res) => {
         link: "/notifications",
       },
     ]);
+    return match;
+    });
     res.status(201).json({ match });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "validation_error" });
       return;
     }
+    if(error instanceof AgreementError){res.status(error.message==='match_record_not_found'?404:409).json({error:error.message});return;}
     res.status(500).json({ error: "match_creation_failed" });
   }
 });
@@ -974,17 +1042,20 @@ router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedR
       db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
     ]);
     if (agent?.role !== "agent" || !referred || agent.id === referred.id) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
-    const [referral] = await db.insert(referralsTable).values({
+    const referral=await db.transaction(async tx=>{
+    const [referral] = await tx.insert(referralsTable).values({
       agentUserId: agent.id,
       referredUserId: referred.id,
       referralCode: input.referralCode,
       commissionRate: input.commissionRate === undefined ? undefined : String(input.commissionRate),
       status: "pending",
     }).returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id, action: "referral_created",
       entityType: "referral", entityId: referral.id,
       metadata: { agentUserId: referral.agentUserId, referredUserId: referral.referredUserId },
+    });
+      return referral;
     });
     res.status(201).json({ referral });
   } catch (error) {
@@ -1001,18 +1072,19 @@ router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async 
       res.status(400).json({ error: "invalid_referral_id" });
       return;
     }
-    const [existing] = await db.select().from(referralsTable)
+    const referral=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"referral:"+referralId}))`);
+    const [existing] = await tx.select().from(referralsTable)
       .where(eq(referralsTable.id, referralId))
       .limit(1);
     if (!existing) {
-      res.status(404).json({ error: "referral_not_found" });
-      return;
+      return null;
     }
-    const [referral] = await db.update(referralsTable)
+    const [referral] = await tx.update(referralsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(referralsTable.id, referralId))
       .returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id,
       action: "referral_status_updated",
       entityType: "referral",
@@ -1020,7 +1092,7 @@ router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async 
       metadata: { previousStatus: existing.status, newStatus: referral.status },
     });
     if (existing.status !== referral.status) {
-      await db.insert(notificationsTable).values({
+      await tx.insert(notificationsTable).values({
         userId: referral.agentUserId,
         type: "referral_status_updated",
         title: "Referral status updated",
@@ -1028,6 +1100,9 @@ router.patch("/admin/referrals/:referralId/status", requireRole("admin"), async 
         link: "/referrals",
       });
     }
+      return referral;
+    });
+    if(!referral){res.status(404).json({error:"referral_not_found"});return;}
     res.json({ referral });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1109,25 +1184,40 @@ router.patch("/admin/deals/:dealId/status", requireRole("admin"), async (req: Au
       paymentEvidence = { confirmedDlcId: dlc.id, passedInspectionId: inspection.id, approvedSgsDocumentId: sgsDocument.id };
       }
     }
-    const [deal] = await db.update(dealsTable)
+    const deal=await db.transaction(async tx=>{
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'deal_status:'+dealId}))`);
+    const [current]=await tx.select({status:dealsTable.status}).from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);if(current?.status!==existingDeal.status)throw new AgreementError('deal_status_changed_retry');
+    const [deal] = await tx.update(dealsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(dealsTable.id, dealId))
       .returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id,
       action: "deal_status_updated",
       entityType: "deal",
       entityId: deal.id,
       metadata: { previousStatus: existingDeal.status, newStatus: deal.status, ...(paymentEvidence ? { ...(alternative?{alternativePaymentReviewedByAdmin:true}:{destinationSgsConfirmedByAdmin:true}), paymentEvidence } : {}) },
     });
+    if(deal.status==='completed')await prepareCommissionProposals(tx,deal.id);return deal;});
     if (existingDeal.status !== deal.status) {
       await notifyDealCounterparties(
         deal.id,
         "deal_status_updated",
-        "Deal status updated",
-        `We’re at ${deal.status} now.`,
+        deal.status === "on_hold" ? "Deal paused" : deal.status === "cancelled" ? "Deal closed" : "Deal status updated",
+        deal.status === "on_hold" ? `Deal ${deal.dealNumber} is paused. No action is needed from you right now. UDC will message you if it restarts.`
+          : deal.status === "cancelled" ? `Deal ${deal.dealNumber} has been closed. Thank you for your time. You can post a new requirement or offer any time.`
+          : `We’re at ${deal.status} now.`,
         `/deals/${deal.id}`,
       );
+    }
+    // Phase 6: a terminal status reached through the admin console also
+    // teaches AKIF one structural outcome lesson. Never blocks the update.
+    if (existingDeal.status !== deal.status && ["completed", "cancelled"].includes(deal.status)) {
+      try {
+        await learnFromDealOutcome({ dealId: deal.id });
+      } catch {
+        console.warn("AKIF deal outcome learning unavailable", { reason: "learn_failed" });
+      }
     }
     res.json({ deal });
   } catch (error) {
@@ -1187,8 +1277,10 @@ router.post("/admin/deals/:dealId/meetings", requireRole("admin"), async (req: A
     if (!await hasVerifiedCounterparties(deal.buyerUserId, deal.sellerUserId)) {
       res.status(409).json({ error: "meeting_requires_verified_counterparties" }); return;
     }
-    const [meeting] = await db.insert(dealMeetingsTable).values({ dealId, requestedBy: req.authUser.id, scheduledBy: req.authUser.id, status: "scheduled", ...input }).returning();
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_scheduled", entityType: "deal", entityId: dealId, metadata: { meetingId: meeting.id, scheduledAt: meeting.scheduledAt, provider: meeting.provider } });
+    const meeting=await db.transaction(async tx=>{
+      const [meeting] = await tx.insert(dealMeetingsTable).values({ dealId, requestedBy: req.authUser.id, scheduledBy: req.authUser.id, status: "scheduled", ...input }).returning();
+      await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_scheduled", entityType: "deal", entityId: dealId, metadata: { meetingId: meeting.id, scheduledAt: meeting.scheduledAt, provider: meeting.provider } });return meeting;
+    });
     await notifyDealCounterparties(dealId, "deal_meeting_scheduled", "Deal meeting scheduled", "A UDC deal meeting has been scheduled. Open the deal for the confirmed time and joining details.", `/deals/${dealId}`);
     res.status(201).json({ meeting });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "meeting_schedule_failed" }); }
@@ -1197,22 +1289,33 @@ router.get("/admin/deals/:dealId/meetings", requireRole("admin"), async (req, re
   const dealId = String(req.params["dealId"] ?? ""); const meetings = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.dealId, dealId)).orderBy(desc(dealMeetingsTable.createdAt)); res.json({ meetings });
 });
 
+router.post('/admin/meetings/:meetingId/representative',requireRole('admin'),async(req,res)=>{
+ try{const id=z.string().uuid().parse(req.params.meetingId);const input=z.object({name:z.string().trim().min(2).max(120),role:z.string().trim().min(2).max(120),agreementReference:z.string().trim().min(12).max(500),partiesAgreed:z.literal(true),representativeAgreed:z.literal(true),noPaymentOrBooking:z.literal(true)}).strict().parse(req.body);
+ await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'meeting:'+id}))`);const [meeting]=await tx.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.id,id)).limit(1);if(!meeting||meeting.status==='cancelled'||meeting.status==='completed')throw new AgreementError('active_meeting_required');await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'meeting_representative_confirmed',entityType:'meeting',entityId:id,metadata:{...input,dealId:meeting.dealId,recordOnly:true}});});res.status(201).json({recorded:true,attendanceNotGuaranteed:true});
+ }catch(error){res.status(error instanceof z.ZodError?400:error instanceof AgreementError?409:500).json({error:error instanceof AgreementError?error.message:'representative_record_failed'});}
+});
+router.get('/admin/meetings/:meetingId/representative',requireRole('admin'),async(req,res)=>{try{const id=z.string().uuid().parse(req.params.meetingId);const [record]=await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.action,'meeting_representative_confirmed'),eq(auditLogsTable.entityType,'meeting'),eq(auditLogsTable.entityId,id))).orderBy(desc(auditLogsTable.createdAt)).limit(1);res.setHeader('Cache-Control','no-store');res.json({record:record??null});}catch{res.status(400).json({error:'representative_record_unavailable'});}});
+
 router.patch("/admin/meetings/:meetingId", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
   try {
     const id = z.string().uuid().parse(req.params["meetingId"]);
     const input = z.object({ status: z.enum(["requested","scheduled","completed","cancelled"]).optional(), scheduledAt: z.coerce.date().optional(), provider: z.string().trim().max(80).optional(), meetingUrl: meetingUrlSchema.optional(), agenda: z.string().trim().max(2000).optional(), adminNotes: z.string().trim().max(3000).optional() }).refine((v) => Object.keys(v).length > 0).parse(req.body);
-    const [existing] = await db.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.id, id)).limit(1);
-    if (!existing) { res.status(404).json({ error: "meeting_not_found" }); return; }
+    const result=await db.transaction(async tx=>{
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"meeting:"+id}))`);
+    const [existing] = await tx.select().from(dealMeetingsTable).where(eq(dealMeetingsTable.id, id)).limit(1);
+    if (!existing)return {error:"meeting_not_found",status:404};
     if (input.status === "scheduled" || input.scheduledAt || input.provider || input.meetingUrl) {
-      if (!meetingDetailsValid({ ...existing, ...input })) { res.status(400).json({ error: "meeting_details_required" }); return; }
-      const [deal] = await db.select().from(dealsTable).where(eq(dealsTable.id, existing.dealId)).limit(1);
-      if (!deal || !await hasVerifiedCounterparties(deal.buyerUserId, deal.sellerUserId)) {
-        res.status(409).json({ error: "meeting_requires_verified_counterparties" }); return;
+      if (!meetingDetailsValid({ ...existing, ...input })) { return {error:"meeting_details_required",status:400}; }
+      const [deal] = await tx.select().from(dealsTable).where(eq(dealsTable.id, existing.dealId)).limit(1);
+      if (!deal || !await hasVerifiedCounterparties(deal.buyerUserId, deal.sellerUserId,tx)) {
+        return {error:"meeting_requires_verified_counterparties",status:409};
       }
     }
-    const [meeting] = await db.update(dealMeetingsTable).set({ ...input, completedAt: input.status === "completed" ? new Date() : existing.completedAt, updatedAt: new Date() }).where(eq(dealMeetingsTable.id, id)).returning();
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_updated", entityType: "deal", entityId: meeting.dealId, metadata: { meetingId: id, previousStatus: existing.status, newStatus: meeting.status } });
-    res.json({ meeting });
+    const [meeting] = await tx.update(dealMeetingsTable).set({ ...input, completedAt: input.status === "completed" ? new Date() : existing.completedAt, updatedAt: new Date() }).where(eq(dealMeetingsTable.id, id)).returning();
+    await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_meeting_updated", entityType: "deal", entityId: meeting.dealId, metadata: { meetingId: id, previousStatus: existing.status, newStatus: meeting.status } });
+    return {meeting};});
+    if("error" in result){res.status(result.status??409).json({error:result.error});return;}
+    res.json(result);
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "meeting_update_failed" }); }
 });
 
@@ -1221,8 +1324,11 @@ router.post("/admin/deals/:dealId/cases", requireRole("admin"), async (req: Auth
   try {
     const input = caseInput.parse(req.body); const dealId = z.string().uuid().parse(req.params["dealId"]);
     const [deal] = await db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1); if (!deal) { res.status(404).json({ error: "deal_not_found" }); return; }
-    const [dealCase] = await db.insert(dealCasesTable).values({ dealId, openedBy: req.authUser.id, ...input }).returning();
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_opened", entityType: "deal", entityId: dealId, metadata: { caseId: dealCase.id, caseType: dealCase.caseType, priority: dealCase.priority } });
+    const dealCase=await db.transaction(async tx=>{
+    const [dealCase] = await tx.insert(dealCasesTable).values({ dealId, openedBy: req.authUser.id, ...input }).returning();
+    await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_opened", entityType: "deal", entityId: dealId, metadata: { caseId: dealCase.id, caseType: dealCase.caseType, priority: dealCase.priority } });
+      return dealCase;
+    });
     await notifyDealCounterparties(dealId, "deal_case_opened", "UDC case opened", "UDC has opened a case on this deal and will track it through resolution.", `/deals/${dealId}`);
     res.status(201).json({ case: dealCase });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "case_create_failed" }); }
@@ -1231,9 +1337,15 @@ router.patch("/admin/cases/:caseId", requireRole("admin"), async (req: Authentic
   try {
     const input = z.object({ status: z.enum(["open","investigating","waiting_party","resolved","closed"]), resolution: z.string().trim().max(3000).optional() }).parse(req.body);
     if (["resolved","closed"].includes(input.status) && !input.resolution) { res.status(400).json({ error: "resolution_required" }); return; }
-    const caseId=z.string().uuid().parse(req.params["caseId"]); const [existing]=await db.select().from(dealCasesTable).where(eq(dealCasesTable.id,caseId)).limit(1); if(!existing){res.status(404).json({error:"case_not_found"});return;}
-    const [dealCase]=await db.update(dealCasesTable).set({status:input.status,resolution:input.resolution??existing.resolution,resolvedAt:["resolved","closed"].includes(input.status)?new Date():null,updatedAt:new Date()}).where(eq(dealCasesTable.id,caseId)).returning();
-    await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_case_updated",entityType:"deal",entityId:dealCase.dealId,metadata:{caseId,previousStatus:existing.status,newStatus:dealCase.status}});
+    const caseId=z.string().uuid().parse(req.params["caseId"]);
+    const dealCase=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"case:"+caseId}))`);
+ const [existing]=await tx.select().from(dealCasesTable).where(eq(dealCasesTable.id,caseId)).limit(1); if(!existing)return null;
+    const [dealCase]=await tx.update(dealCasesTable).set({status:input.status,resolution:input.resolution??existing.resolution,resolvedAt:["resolved","closed"].includes(input.status)?new Date():null,updatedAt:new Date()}).where(eq(dealCasesTable.id,caseId)).returning();
+    await tx.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_case_updated",entityType:"deal",entityId:dealCase.dealId,metadata:{caseId,previousStatus:existing.status,newStatus:dealCase.status}});
+      return dealCase;
+    });
+    if(!dealCase){res.status(404).json({error:"case_not_found"});return;}
     res.json({case:dealCase});
   } catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"case_update_failed"});}
 });
@@ -1241,16 +1353,22 @@ router.post("/admin/cases/:caseId/evidence", requireRole("admin"), async (req: A
   try {
     const id = z.string().uuid().parse(req.params["caseId"]);
     const input = z.object({ documentId: z.string().uuid().optional(), note: z.string().trim().min(2).max(2000).optional() }).refine((v) => Boolean(v.documentId || v.note)).parse(req.body);
-    const [existing] = await db.select().from(dealCasesTable).where(eq(dealCasesTable.id, id)).limit(1);
-    if (!existing) { res.status(404).json({ error: "case_not_found" }); return; }
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"case:"+id}))`);
+    const [existing] = await tx.select().from(dealCasesTable).where(eq(dealCasesTable.id, id)).limit(1);
+    if (!existing) return {error:"case_not_found",status:404} as const;
     if (input.documentId) {
-      const [doc] = await db.select({ id: documentsTable.id }).from(documentsTable).where(and(eq(documentsTable.id, input.documentId), eq(documentsTable.dealId, existing.dealId))).limit(1);
-      if (!doc) { res.status(400).json({ error: "evidence_document_not_in_deal" }); return; }
+      const [doc] = await tx.select({ id: documentsTable.id }).from(documentsTable).where(and(eq(documentsTable.id, input.documentId), eq(documentsTable.dealId, existing.dealId))).limit(1);
+      if (!doc) return {error:"evidence_document_not_in_deal",status:400} as const;
     }
     const previous = Array.isArray(existing.evidence) ? existing.evidence : existing.evidence ? [existing.evidence] : [];
     const evidence = [...previous, { ...input, addedAt: new Date().toISOString(), addedBy: req.authUser.id }];
-    const [dealCase] = await db.update(dealCasesTable).set({ evidence, updatedAt: new Date() }).where(eq(dealCasesTable.id, id)).returning();
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_evidence_added", entityType: "deal", entityId: existing.dealId, metadata: { caseId: id, documentId: input.documentId ?? null } });
+    const [dealCase] = await tx.update(dealCasesTable).set({ evidence, updatedAt: new Date() }).where(eq(dealCasesTable.id, id)).returning();
+    await tx.insert(auditLogsTable).values({ actorUserId: req.authUser.id, action: "deal_case_evidence_added", entityType: "deal", entityId: existing.dealId, metadata: { caseId: id, documentId: input.documentId ?? null } });
+      return {dealCase};
+    });
+    if("error" in result){res.status(result.status ?? 400).json({error:result.error});return;}
+    const {dealCase}=result;
     res.status(201).json({ case: dealCase });
   } catch (error) { if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; } res.status(500).json({ error: "case_evidence_failed" }); }
 });
@@ -1258,11 +1376,20 @@ router.post("/admin/cases/:caseId/evidence", requireRole("admin"), async (req: A
 router.get("/admin/deals/:dealId/cases", requireRole("admin"), async(req,res)=>{const dealId=String(req.params["dealId"]??"");res.json({cases:await db.select().from(dealCasesTable).where(eq(dealCasesTable.dealId,dealId)).orderBy(desc(dealCasesTable.createdAt))});});
 
 const customsInput=z.object({status:z.enum(["not_started","documents_pending","submitted","inspection","duties_pending","cleared","held"]),country:z.string().trim().max(100).optional(),port:z.string().trim().max(150).optional(),brokerName:z.string().trim().max(200).optional(),reference:z.string().trim().max(200).optional(),notes:z.string().trim().max(2000).optional()});
-router.put("/admin/deals/:dealId/customs",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{try{const input=customsInput.parse(req.body);const dealId=z.string().uuid().parse(req.params["dealId"]);const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);if(!deal){res.status(404).json({error:"deal_not_found"});return;}const [row]=await db.insert(customsClearanceTable).values({dealId,...input,clearedAt:input.status==="cleared"?new Date():null}).onConflictDoUpdate({target:customsClearanceTable.dealId,set:{...input,clearedAt:input.status==="cleared"?new Date():null,updatedAt:new Date()}}).returning();await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"customs_status_updated",entityType:"deal",entityId:dealId,metadata:{customsId:row.id,status:row.status}});await notifyDealCounterparties(dealId,"customs_status_updated","Customs status updated",`Customs clearance is now ${row.status.replaceAll("_"," ")}.`,`/deals/${dealId}`);res.json({customs:row});}catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"customs_update_failed"});}});
+router.put("/admin/deals/:dealId/customs",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{try{const input=customsInput.parse(req.body);const dealId=z.string().uuid().parse(req.params["dealId"]);const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);if(!deal){res.status(404).json({error:"deal_not_found"});return;}const row=await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'customs:'+dealId}))`);const [row]=await tx.insert(customsClearanceTable).values({dealId,...input,clearedAt:input.status==="cleared"?new Date():null}).onConflictDoUpdate({target:customsClearanceTable.dealId,set:{...input,clearedAt:input.status==="cleared"?new Date():null,updatedAt:new Date()}}).returning();await tx.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"customs_status_updated",entityType:"deal",entityId:dealId,metadata:{customsId:row.id,status:row.status}});return row;});await notifyDealCounterparties(dealId,"customs_status_updated","Customs status updated",`Customs clearance is now ${row.status.replaceAll("_"," ")}.`,`/deals/${dealId}`);res.json({customs:row});}catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"customs_update_failed"});}});
 router.get("/admin/deals/:dealId/customs",requireRole("admin"),async(req,res)=>{const dealId=String(req.params["dealId"]??"");const [customs]=await db.select().from(customsClearanceTable).where(eq(customsClearanceTable.dealId,dealId)).limit(1);res.json({customs:customs??null});});
 
 router.get("/admin/feedback",requireRole("admin"),async(_req,res)=>{res.json({feedback:await db.select().from(dealFeedbackTable).orderBy(desc(dealFeedbackTable.createdAt))});});
-router.patch("/admin/feedback/:feedbackId/status",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{try{const input=z.object({status:z.enum(["approved","rejected"])}).parse(req.body);const id=z.string().uuid().parse(req.params["feedbackId"]);const [existing]=await db.select().from(dealFeedbackTable).where(eq(dealFeedbackTable.id,id)).limit(1);if(!existing){res.status(404).json({error:"feedback_not_found"});return;}const [feedback]=await db.update(dealFeedbackTable).set({status:input.status,updatedAt:new Date()}).where(eq(dealFeedbackTable.id,id)).returning();await db.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_feedback_reviewed",entityType:"deal",entityId:feedback.dealId,metadata:{feedbackId:id,previousStatus:existing.status,newStatus:feedback.status}});res.json({feedback});}catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"feedback_review_failed"});}});
+router.patch("/admin/feedback/:feedbackId/status",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+ try{const input=z.object({status:z.enum(["approved","rejected"])}).parse(req.body);const id=z.string().uuid().parse(req.params["feedbackId"]);
+ const feedback=await db.transaction(async tx=>{
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"feedback:"+id}))`);
+  const [existing]=await tx.select().from(dealFeedbackTable).where(eq(dealFeedbackTable.id,id)).limit(1);if(!existing)return null;
+  const [feedback]=await tx.update(dealFeedbackTable).set({status:input.status,updatedAt:new Date()}).where(eq(dealFeedbackTable.id,id)).returning();
+  await tx.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:"deal_feedback_reviewed",entityType:"deal",entityId:feedback.dealId,metadata:{feedbackId:id,previousStatus:existing.status,newStatus:feedback.status}});return feedback;
+ });if(!feedback){res.status(404).json({error:"feedback_not_found"});return;}res.json({feedback});
+ }catch(error){if(error instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}res.status(500).json({error:"feedback_review_failed"});}
+});
 
 router.get("/admin/deals/:dealId/audit-log", requireRole("admin"), async (req, res) => {
   const dealId = req.params["dealId"];
@@ -1388,6 +1515,33 @@ router.post("/admin/commissions", requireRole("admin"), async (req: Authenticate
   }
 });
 
+// Human-admin correction of pending records only. Never reassigns history or moves money.
+router.patch("/admin/commissions/:commissionId/terms", requireRole("admin"), async (req: AuthenticatedRequest, res) => {
+  try {
+    const commissionId=z.string().uuid().parse(req.params["commissionId"]);
+    const input=z.object({commissionType:z.enum(["fixed_amount","percentage","fixed_per_mt"]),amount:z.string().max(40).optional(),commissionRate:z.string().max(40).optional(),expectedAmount:z.string().max(40),reason:z.string().trim().min(12).max(1000),confirmAgreedTerms:z.literal(true)}).strict().parse(req.body);
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"commission-status:"+commissionId}))`);
+      const [existing]=await tx.select().from(commissionsTable).where(eq(commissionsTable.id,commissionId)).limit(1);
+      if(!existing)return {error:"commission_not_found",status:404};
+      if(existing.status!=="pending")return {error:"only_pending_commission_can_be_corrected",status:409};
+      if(existing.amount!==input.expectedAmount)return {error:"commission_changed_reload_before_review",status:409};
+      const [deal]=await tx.select().from(dealsTable).where(eq(dealsTable.id,existing.dealId)).limit(1);
+      if(!deal)return {error:"deal_not_found",status:404};
+      if(input.commissionType!=="fixed_amount"&&existing.currency.toUpperCase()!==deal.currency.toUpperCase())return {error:"calculated_commission_uses_deal_currency",status:409};
+      const amount=calculateCommissionAmount({method:input.commissionType,quantity:deal.quantity,unit:deal.unit,agreedPrice:deal.agreedPrice,rate:input.commissionRate,amount:input.amount,currency:existing.currency});
+      if(!commissionAmountFitsStorage(amount))return {error:"commission_precision_exceeds_storage",status:409};
+      const rate=input.commissionType==="fixed_amount"?null:String(input.commissionRate);
+      const [commission]=await tx.update(commissionsTable).set({amount,commissionAmount:amount,commissionType:input.commissionType,commissionRate:rate,updatedAt:new Date()}).where(eq(commissionsTable.id,commissionId)).returning();
+      await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:"commission_terms_corrected",entityType:"commission",entityId:commissionId,metadata:{dealId:existing.dealId,beneficiaryUserId:existing.beneficiaryUserId,currency:existing.currency,previousAmount:existing.amount,newAmount:amount,previousMethod:existing.commissionType,previousRate:existing.commissionRate,newMethod:input.commissionType,newRate:rate,reason:input.reason,agreedTermsConfirmed:true}});
+      await tx.insert(notificationsTable).values({userId:existing.beneficiaryUserId,type:"commission_terms_corrected",title:"Commission record corrected",body:`The pending commission record was corrected from ${existing.currency} ${existing.amount} to ${existing.currency} ${amount} after human review. No payment was made.`,link:"/commissions"});
+      return {commission};
+    });
+    if("error" in result){res.status(result.status??409).json({error:result.error});return;}
+    res.json(result);
+  }catch(error){if(error instanceof z.ZodError||error instanceof CommissionCalculationError){res.status(400).json({error:error instanceof CommissionCalculationError?error.message:"validation_error"});return;}res.status(500).json({error:"commission_correction_failed"});}
+});
+
 router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), async (req, res) => {
   try {
     const input = commissionStatusSchema.parse(req.body);
@@ -1396,26 +1550,26 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       res.status(400).json({ error: "invalid_commission_id" });
       return;
     }
-    const [existing] = await db.select().from(commissionsTable)
+    const result = await db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"commission-status:" + commissionId}))`);
+    const [existing] = await tx.select().from(commissionsTable)
       .where(eq(commissionsTable.id, commissionId))
       .limit(1);
     if (!existing) {
-      res.status(404).json({ error: "commission_not_found" });
-      return;
+      return {error:"commission_not_found" as const};
     }
     if (input.status === "paid" && existing.status !== "paid") {
-      const [deal] = await db.select({ status: dealsTable.status }).from(dealsTable)
+      const [deal] = await tx.select({ status: dealsTable.status }).from(dealsTable)
         .where(eq(dealsTable.id, existing.dealId)).limit(1);
       if (deal?.status !== "completed") {
-        res.status(409).json({ error: "commission_requires_completed_deal" });
-        return;
+        return {error:"commission_requires_completed_deal" as const};
       }
     }
-    const [commission] = await db.update(commissionsTable)
+    const [commission] = await tx.update(commissionsTable)
       .set({ status: input.status, paidAt: input.status === "paid" ? new Date() : null, updatedAt: new Date() })
       .where(eq(commissionsTable.id, commissionId))
       .returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
       action: "commission_status_updated",
       entityType: "commission",
@@ -1423,13 +1577,37 @@ router.patch("/admin/commissions/:commissionId/status", requireRole("admin"), as
       metadata: { dealId: commission.dealId, previousStatus: existing.status, newStatus: commission.status },
     });
     if (existing.status !== commission.status) {
-      await db.insert(notificationsTable).values({
+      await tx.insert(notificationsTable).values({
         userId: commission.beneficiaryUserId,
         type: "commission_status_updated",
         title: "Commission status updated",
         body: `Your commission is now ${commission.status}.`,
         link: "/commissions",
       });
+    }
+      return {existing, commission};
+    });
+    if ("error" in result) { res.status(result.error === "commission_not_found" ? 404 : 409).json({error:result.error}); return; }
+    const {existing, commission} = result;
+    if (existing.status !== commission.status) {
+      if (commission.status === "paid" || commission.status === "cancelled") {
+        const [beneficiary] = await db.select({ phone: usersTable.phone }).from(usersTable)
+          .where(eq(usersTable.id, commission.beneficiaryUserId)).limit(1);
+        const [deal] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+          .where(eq(dealsTable.id, commission.dealId)).limit(1);
+        if (beneficiary?.phone) {
+          const label = deal?.dealNumber ? ` on deal ${deal.dealNumber}` : "";
+          const body = commission.status === "paid"
+            ? `Your UDC commission of ${commission.currency} ${commission.amount}${label} has been marked paid.`
+            : `Your UDC commission of ${commission.currency} ${commission.amount}${label} has been cancelled. Reply here if you have questions.`;
+          try {
+            await sendWhatsAppText(beneficiary.phone, body);
+          } catch {
+            // WhatsApp delivery failure must not roll back the payout record;
+            // the in-app notification above remains the record of the change.
+          }
+        }
+      }
     }
     res.json({ commission });
   } catch (error) {
@@ -1465,6 +1643,39 @@ router.post("/admin/document-uploads", requireRole("admin"), async (req, res) =>
   }
 });
 
+async function adminDraftTerms(dealId:string){
+ const [deal]=await db.select().from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);if(!deal)return null;
+ const [product]=await db.select({name:productsTable.name}).from(productsTable).where(eq(productsTable.id,deal.productId)).limit(1);
+ const accepted=await recordedDealTerms(deal.id);
+ return {dealNumber:deal.dealNumber,date:new Intl.DateTimeFormat('en-GB',{dateStyle:'long',timeZone:'UTC'}).format(new Date()),productName:product?.name||'',quantity:deal.quantity,unit:deal.unit,agreedPrice:deal.agreedPrice,currency:deal.currency,incoterm:deal.incoterm,destination:deal.destination,paymentTerms:accepted?.paymentTerms,inspectionTerms:accepted?.inspectionTerms,hideBuyer:true,hideSeller:true};
+}
+router.get('/admin/deals/:dealId/draft-preview',requireRole('admin'),async(req,res)=>{
+ try{const id=z.string().uuid().parse(req.params.dealId);const type=z.enum(['LOI','ICPO','FCO','SPA','NCNDA','SELLER_CONTRACT']).parse(req.query.type);const terms=await adminDraftTerms(id);if(!terms){res.status(404).json({error:'deal_not_found'});return;}res.setHeader('Cache-Control','no-store');res.json({type,terms,confirmation:whatsappDraftConfirmation(type,terms)});}catch(error){res.status(error instanceof z.ZodError?400:500).json({error:'draft_preview_failed'});}
+});
+router.post('/admin/deals/:dealId/draft-download',requireRole('admin'),async(req,res)=>{
+ try{const id=z.string().uuid().parse(req.params.dealId);const input=z.object({type:z.enum(['LOI','ICPO','FCO','SPA','NCNDA','SELLER_CONTRACT']),confirmation:z.string().min(1),humanReviewed:z.literal(true)}).strict().parse(req.body);const terms=await adminDraftTerms(id);if(!terms){res.status(404).json({error:'deal_not_found'});return;}if(input.confirmation!==whatsappDraftConfirmation(input.type,terms)){res.status(409).json({error:'draft_terms_changed_review_again'});return;}
+ const bytes=await generateWhatsAppDraftPdf(input.type,terms);await db.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'admin_private_draft_downloaded',entityType:'deal',entityId:id,metadata:{type:input.type,termsFingerprint:input.confirmation,humanReviewed:true}});res.setHeader('Cache-Control','no-store');res.type('application/pdf');res.setHeader('Content-Disposition',`attachment; filename="${input.type}-DRAFT.pdf"`);res.send(Buffer.from(bytes));
+ }catch(error){res.status(error instanceof z.ZodError?400:500).json({error:'draft_download_failed'});}
+});
+
+router.post('/admin/deals/:dealId/documents/upload',requireRole('admin'),raw({type:'application/pdf',limit:'5mb'}),async(req,res)=>{
+ try{
+ const dealId=z.string().uuid().parse(req.params.dealId),documentType=z.string().trim().min(2).max(80).parse(req.query.documentType);
+ const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);
+ if(!deal){res.status(404).json({error:'deal_not_found'});return;}
+ const bytes=req.body as Buffer;if(!Buffer.isBuffer(bytes)||bytes.length<8||bytes.length>5*1024*1024||bytes.subarray(0,5).toString()!=='%PDF-'){res.status(400).json({error:'pdf_required_max_5mb'});return;}
+ let uploadedPath:string|undefined;let document;
+ try{document=await db.transaction(async tx=>{
+ await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'deal_upload:'+req.authUser!.id}))`);
+ const [{n:uploadsToday}]=(await tx.execute(sql`select count(*)::int as n from documents where uploaded_by=${req.authUser!.id} and created_at > ${new Date(Date.now()-86400000)}`)).rows as Array<{n:number}>;if(uploadsToday>=20)return null;
+ const path=`deals/${deal.id}/${randomUUID()}.pdf`;const fileUrl=await uploadDocumentBytes(path,bytes,'application/pdf');uploadedPath=path;
+ const [d]=await tx.insert(documentsTable).values({dealId:deal.id,uploadedBy:req.authUser!.id,documentType,fileUrl,status:'pending'}).returning();await tx.insert(documentAccessTable).values({documentId:d.id,userId:req.authUser!.id,accessRole:'editor'});await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'admin_document_uploaded',entityType:'document',entityId:d.id,metadata:{dealId:deal.id,documentType}});return d;
+ });}catch(error){if(uploadedPath)try{await removeDocumentObject(uploadedPath);}catch{console.warn('Admin upload cleanup needs review',{reason:'object_cleanup_failed'});}throw error;}
+ if(!document){res.status(429).json({error:'upload_quota_exceeded'});return;}
+ res.status(201).json({document:{id:document.id,dealId:deal.id,documentType,status:'pending'}});
+ }catch(error){res.status(error instanceof z.ZodError?400:500).json({error:error instanceof z.ZodError?'validation_error':'document_upload_failed'});}
+});
+
 router.get("/admin/documents", requireRole("admin"), async (req, res) => {
   const dealId = req.query.dealId;
   const documents = typeof dealId === "string"
@@ -1487,17 +1698,17 @@ router.post("/admin/documents", requireRole("admin"), async (req: AuthenticatedR
       return;
     }
 
-    const [document] = await db.insert(documentsTable).values({
+    const document=await db.transaction(async tx=>{
+    const [document] = await tx.insert(documentsTable).values({
       dealId: deal.id,
       uploadedBy: req.authUser.id,
       documentType: input.documentType,
       fileUrl: input.fileUrl,
       status: "pending",
     }).returning();
-    await db.insert(documentAccessTable).values([
-      { documentId: document.id, userId: deal.buyerUserId, accessRole: "viewer" },
-      { documentId: document.id, userId: deal.sellerUserId, accessRole: "viewer" },
-    ]);
+    await tx.insert(documentAccessTable).values({documentId:document.id,userId:req.authUser.id,accessRole:'editor'});
+    await tx.insert(auditLogsTable).values({actorUserId:req.authUser.id,action:'admin_document_registered',entityType:'document',entityId:document.id,metadata:{dealId:deal.id,documentType:input.documentType}});
+    return document;});
     res.status(201).json({ document });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1516,26 +1727,27 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       res.status(400).json({ error: "invalid_document_id" });
       return;
     }
-    const [existing] = await db.select().from(documentsTable)
+    const document=await db.transaction(async tx=>{
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'document:'+documentId}))`);
+    const [existing] = await tx.select().from(documentsTable)
       .where(eq(documentsTable.id, documentId))
       .limit(1);
     if (!existing) {
-      res.status(404).json({ error: "document_not_found" });
-      return;
+      throw new AgreementError("document_not_found");
     }
-    const [document] = await db.update(documentsTable)
+    const [document] = await tx.update(documentsTable)
       .set({ status: input.status, updatedAt: new Date() })
       .where(eq(documentsTable.id, documentId))
       .returning();
     if (input.status === "approved") {
-      const [deal] = await db.select({ buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
+      const [deal] = await tx.select({ buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
         .from(dealsTable).where(eq(dealsTable.id, document.dealId)).limit(1);
-      if (deal) await db.insert(documentAccessTable).values([
+      if (deal) await tx.insert(documentAccessTable).values([
         { documentId: document.id, userId: deal.buyerUserId, accessRole: "viewer" },
         { documentId: document.id, userId: deal.sellerUserId, accessRole: "viewer" },
       ]).onConflictDoNothing();
     }
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser!.id,
       action: "document_reviewed",
       entityType: "document",
@@ -1543,13 +1755,13 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
       metadata: { previousStatus: existing.status, newStatus: document.status, reviewNote: input.reviewNote ?? null },
     });
     if (document.status === "rejected" && existing.status !== "rejected") {
-      await db.transaction(async tx=>{
+      {
         const [notice]=await tx.insert(notificationsTable).values({
           userId:document.uploadedBy,type:"document_reviewed",title:"Document needs correction",
           body:`Your ${document.documentType} was rejected. Reason: ${input.reviewNote}`,link:"/documents",
         }).returning({id:notificationsTable.id});
         await enqueueShipmentWhatsApp(tx,{notificationId:notice.id,dealId:document.dealId,recipientUserId:document.uploadedBy});
-      });
+      }
     }
     if (document.status === "approved" && existing.status !== document.status) {
       await notifyDealCounterparties(
@@ -1557,15 +1769,17 @@ router.patch("/admin/documents/:documentId/status", requireRole("admin"), async 
         "document_reviewed",
         "Document review completed",
         `The document is ${document.status}.`,
-        "/documents",
+        "/documents",tx,
       );
     }
+    return document;});
     res.json({ document });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: "validation_error" });
       return;
     }
+    if(error instanceof AgreementError){res.status(404).json({error:error.message});return;}
     res.status(500).json({ error: "document_review_failed" });
   }
 });
@@ -2011,6 +2225,11 @@ async function notifyAssignedDealAgents(dealId:string,kind:"shipment_milestone"|
   if(executor===db)await db.transaction(queue);else await queue(executor as NotificationTransaction);
 }
 
+router.get("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req,res)=>{
+ try{const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);const [shipment]=await db.select({id:shipmentsTable.id}).from(shipmentsTable).where(eq(shipmentsTable.id,shipmentId)).limit(1);if(!shipment){res.status(404).json({error:"shipment_not_found"});return;}
+ const events=await db.select().from(shipmentTrackingEventsTable).where(eq(shipmentTrackingEventsTable.shipmentId,shipmentId)).orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(500);res.set("Cache-Control","no-store").json({events});}catch(error){res.status(error instanceof z.ZodError?400:500).json({error:"shipment_events_fetch_failed"});}
+});
+
 router.post("/admin/shipments/:shipmentId/events",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
   try{
     const shipmentId=z.string().uuid().parse(req.params["shipmentId"]);
@@ -2178,17 +2397,20 @@ router.post("/admin/financial-instruments", requireRole("admin"), async (req: Au
       res.status(404).json({ error: "deal_not_found" });
       return;
     }
-    const [instrument] = await db.insert(dealFinancialsTable).values({
+    const instrument = await db.transaction(async tx => {
+      const [instrument] = await tx.insert(dealFinancialsTable).values({
       dealId: deal.id, instrumentType: input.instrumentType, status: "not_started",
       amount: input.amount === undefined ? undefined : String(input.amount),
       currency: (input.currency ?? deal.currency).toUpperCase(),
       terms: "Release after SGS inspection at destination",
       reference: input.reference, provider: input.provider,
     }).returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id, action: "financial_instrument_created",
       entityType: "deal", entityId: deal.id,
-      metadata: { instrumentId: instrument.id, instrumentType: instrument.instrumentType, status: instrument.status },
+      metadata: { instrumentId: instrument.id, instrumentType: instrument.instrumentType, status: instrument.status, amount:instrument.amount, currency:instrument.currency, provider:instrument.provider, reference:instrument.reference },
+    });
+      return instrument;
     });
     res.status(201).json({ instrument });
   } catch (error) {
@@ -2208,21 +2430,26 @@ router.patch("/admin/financial-instruments/:instrumentId", requireRole("admin"),
       res.status(400).json({ error: "invalid_instrument_id" });
       return;
     }
-    const [existing] = await db.select().from(dealFinancialsTable).where(eq(dealFinancialsTable.id, instrumentId)).limit(1);
+    const result = await db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"instrument:" + instrumentId}))`);
+    const [existing] = await tx.select().from(dealFinancialsTable).where(eq(dealFinancialsTable.id, instrumentId)).limit(1);
     if (!existing) {
-      res.status(404).json({ error: "financial_instrument_not_found" });
-      return;
+      return null;
     }
-    const [instrument] = await db.update(dealFinancialsTable).set({
+    const [instrument] = await tx.update(dealFinancialsTable).set({
       status: input.status, ...(input.reference === undefined ? {} : { reference: input.reference }),
       ...(input.provider === undefined ? {} : { provider: input.provider }),
       updatedAt: new Date(),
     }).where(eq(dealFinancialsTable.id, instrumentId)).returning();
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id, action: "financial_instrument_status_updated",
       entityType: "deal", entityId: instrument.dealId,
-      metadata: { instrumentId: instrument.id, previousStatus: existing.status, newStatus: instrument.status },
+      metadata: { instrumentId: instrument.id, previousStatus: existing.status, newStatus: instrument.status, previousProvider:existing.provider, newProvider:instrument.provider, previousReference:existing.reference, newReference:instrument.reference },
     });
+      return {existing, instrument};
+    });
+    if (!result) { res.status(404).json({error:"financial_instrument_not_found"}); return; }
+    const {existing, instrument} = result;
     if (existing.status !== instrument.status) {
       await notifyDealCounterparties(
         instrument.dealId,
@@ -2250,10 +2477,12 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       res.status(400).json({ error: "invalid_deal_id" });
       return;
     }
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"deal-agent:"+dealId}))`);
     const [[deal], [agent], existingAgents] = await Promise.all([
-      db.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
-      db.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
-      db.select({
+      tx.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
+      tx.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
+      tx.select({
         userId: dealParticipantsTable.userId,
         referredByAgentUserId: dealParticipantsTable.referredByAgentUserId,
         referralPosition: dealParticipantsTable.referralPosition,
@@ -2265,22 +2494,18 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       )),
     ]);
     if (!deal) {
-      res.status(404).json({ error: "deal_not_found" });
-      return;
+      return {error:"deal_not_found",status:404} as const;
     }
     if (agent?.role !== "agent") {
-      res.status(409).json({ error: "user_is_not_agent" });
-      return;
+      return {error:"user_is_not_agent",status:409} as const;
     }
     if (input.referredByAgentUserId && !existingAgents.some((member) => member.userId === input.referredByAgentUserId)) {
-      res.status(409).json({ error: "referring_agent_not_on_deal" });
-      return;
+      return {error:"referring_agent_not_on_deal",status:409} as const;
     }
     if (!canAllocateCommissionShare(existingAgents, input.commissionSharePct)) {
-      res.status(409).json({ error: "agent_commission_pool_exceeds_100_percent" });
-      return;
+      return {error:"agent_commission_pool_exceeds_100_percent",status:409} as const;
     }
-    const [participant] = await db.insert(dealParticipantsTable).values({
+    const [participant] = await tx.insert(dealParticipantsTable).values({
       dealId: deal.id,
       userId: agent.id,
       participantRole: "agent",
@@ -2290,23 +2515,26 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
       commissionSharePct: input.commissionSharePct === undefined ? undefined : String(input.commissionSharePct),
     }).onConflictDoNothing().returning();
     if (!participant) {
-      res.status(409).json({ error: "agent_already_assigned" });
-      return;
+      return {error:"agent_already_assigned",status:409} as const;
     }
-    await db.insert(auditLogsTable).values({
+    await tx.insert(auditLogsTable).values({
       actorUserId: req.authUser.id,
       action: "deal_agent_assigned",
       entityType: "deal",
       entityId: deal.id,
       metadata: { agentUserId: agent.id, referredByAgentUserId: input.referredByAgentUserId ?? null, referralPosition: participant.referralPosition, commissionSharePct: participant.commissionSharePct },
     });
-    await db.insert(notificationsTable).values({
+    await tx.insert(notificationsTable).values({
       userId: agent.id,
       type: "deal_agent_assigned",
       title: "You were assigned to a deal",
       body: "UDC added you to a deal referral chain. You can follow the deal progress without seeing private counterparty details.",
       link: `/deals/${deal.id}`,
     });
+      return {participant};
+    });
+    if("error" in result){res.status(result.status ?? 409).json({error:result.error});return;}
+    const {participant}=result;
     res.status(201).json({ participant });
   } catch (error) {
     if (error instanceof z.ZodError) {

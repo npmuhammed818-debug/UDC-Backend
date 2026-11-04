@@ -38,7 +38,7 @@ test("greeting, one-time question, decline and privacy masking", () => {
 test("wiring: invite menu uses the join link, QR route is agent-only, my invites is agent-only", async () => {
   const ui = await readFile(new URL("../src/whatsapp/chatUi.ts", import.meta.url), "utf8");
   assert.ok(ui.includes("agentJoinLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER)"));
-  assert.ok(ui.includes("agent?.role==='agent'&&agent.status==='verified'"));
+  assert.ok(ui.includes("agent&&agentMenuOpen(agent)"));
   const route = await readFile(new URL("../src/routes/referrals.ts", import.meta.url), "utf8");
   const at = route.indexOf('router.get("/agent/invite"');
   assert.ok(at > 0 && route.slice(at, at + 300).includes('role !== "agent"'));

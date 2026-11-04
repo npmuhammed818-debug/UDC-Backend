@@ -1,5 +1,5 @@
 // Destructive operations here are restricted to TWO randomized fictional QA
-// databases on a loopback-only PostgreSQL service container. NEVER production.
+// databases on a loopback-only PostgreSQL service. NEVER production.
 import assert from "node:assert/strict";
 import {randomBytes,randomUUID,createHash} from "node:crypto";
 import {readFile} from "node:fs/promises";
@@ -15,11 +15,13 @@ assert.ok(["postgresql:","postgres:"].includes(url.protocol));
 assert.ok(["127.0.0.1","localhost"].includes(url.hostname),"never target external Postgres");
 assert.equal(url.username,"udc_migration_test");
 assert.equal(url.password,"");
-assert.ok(["","5432"].includes(url.port));
+assert.ok(["","5432","55433"].includes(url.port));
 assert.match(url.pathname,/^\/udc_qa_migration_[a-z0-9_]+$/);
 assert.ok(!url.searchParams.has("host"));
 const container=process.env.UDC_QA_POSTGRES_CONTAINER_ID??"";
-assert.match(container,/^[a-f0-9]{64}$/,"must explicitly identify the disposable CI service container");
+const local=process.env.UDC_QA_LOCAL_POSTGRES==='true';
+if(local)assert.equal(url.port,"55433","local rehearsal requires isolated QA port");
+if(!local)assert.match(container,/^[a-f0-9]{64}$/,"must explicitly identify the disposable CI service container");
 const migrationFiles=[
   "20261023_email_authentication.sql",
   "20261024_whatsapp_phone_recovery.sql",
@@ -47,7 +49,8 @@ const admin=new Pool({connectionString:url.href,max:2});
 let source,target,sourceCreated=false,targetCreated=false;
 const addedRoles=[];
 function dockerPostgres(args,input){
-  const result=spawnSync("docker",["exec",...(input?["-i"]:[]),container,...args],{
+  const program=local?args[0]:"docker";const invocation=local?["-h","127.0.0.1","-p","55433",...args.slice(1)]:["exec",...(input?["-i"]:[]),container,...args];
+  const result=spawnSync(program,invocation,{
     input,maxBuffer:12*1024*1024,timeout:60_000,encoding:null,
     env:{...process.env,DOCKER_CLI_HINTS:"false"},
   });
@@ -178,8 +181,8 @@ try{
   }
   await security(source);
 
-  // Real PostgreSQL custom-format dump from the exact pinned service-image
-  // client, rather than relying on Ubuntu's potentially mismatched pg_dump.
+  // Real PostgreSQL custom-format dump. Container mode uses its pinned client;
+  // explicit local mode uses the QA cluster's matching client.
   const archive=dockerPostgres(["pg_dump","-U","udc_migration_test","-Fc","--no-owner",beforeName]);
   assert.ok(archive.length>1024 && archive.subarray(0,5).toString()==="PGDMP",
     "backup archive must be a nonempty PostgreSQL custom-format dump");

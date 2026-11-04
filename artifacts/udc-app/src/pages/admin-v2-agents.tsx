@@ -1,0 +1,31 @@
+import {useActionLock} from '@/hooks/use-action-lock';
+import {useState,type FormEvent} from 'react';
+import {useQuery} from '@tanstack/react-query';
+import {Link} from 'wouter';
+import {AdminV2Gate,AdminV2Shell} from './admin-v2-shell';
+import {loadJson,fmtStatus,type AnyRecord} from './admin-v2-data';
+function Agents({user}:{user:AnyRecord}){
+ const actionLock=useActionLock();
+ const people=useQuery({queryKey:['v2-agent-users'],queryFn:()=>loadJson<{users:AnyRecord[]}>('/api/admin/users')});
+ const deals=useQuery({queryKey:['v2-agent-deals'],queryFn:()=>loadJson<{deals:AnyRecord[]}>('/api/admin/deals')});
+ const referrals=useQuery({queryKey:['v2-referrals'],queryFn:()=>loadJson<{referrals:AnyRecord[]}>('/api/admin/referrals')});
+ const [agent,setAgent]=useState(''),[referred,setReferred]=useState(''),[code,setCode]=useState(''),[deal,setDeal]=useState(''),[confirmed,setConfirmed]=useState(''),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ const [review,setReview]=useState<AnyRecord|null>(null);
+ const save=async(event:FormEvent,kind:string)=>{event.preventDefault();if(confirmed!==kind)return;if(!actionLock.acquire())return;setBusy(true);setMessage('');try{
+  const path=kind==='assign'?`/api/admin/deals/${deal}/agents`:kind==='review'?`/api/admin/referrals/${review!.id}/status`:'/api/admin/referrals';
+  const body=kind==='assign'?{userId:agent}:kind==='review'?{status:review!.status}:{agentUserId:agent,referredUserId:referred,referralCode:code};
+  const response=await fetch(path,{method:kind==='review'?'PATCH':'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await response.json();if(!response.ok)throw Error('The record could not be saved. Check the details and try again.');await referrals.refetch();setConfirmed('');setMessage('Recorded with an audit entry. No commission or payment was created.');
+ }catch(e){setMessage(e instanceof Error?e.message:'Save failed');}finally{actionLock.release();setBusy(false);}};
+ const agents=people.data?.users.filter(u=>u.role==='agent')||[];
+ const agentSelect=<label className="field"><span>Agent</span><select className="select" value={agent} required onChange={e=>{setAgent(e.target.value);setConfirmed('');}}><option value="">Choose agent</option>{agents.map(a=><option key={a.id} value={a.id}>{a.fullName || a.email}</option>)}</select></label>;
+ const confirm=(kind:string)=><label style={{display:'flex',gap:10,fontSize:'.75rem',margin:'16px 0'}}><input type="checkbox" required checked={confirmed===kind} onChange={e=>setConfirmed(e.target.checked?kind:'')}/><span>I checked these people, the introduction and any notice. No fee or commission is agreed by this action.</span></label>;
+ return <AdminV2Shell user={user} active="agents" title="Agents and referrals" sub="Human-reviewed introductions and deal assignments"><h1 className="av2-h1">Agent network</h1><p role="status" className="av2-d">{message}</p>
+ {(people.isError||deals.isError||referrals.isError)&&<p role="alert" className="av2-err">A list did not load. <button onClick={()=>{void people.refetch();void deals.refetch();void referrals.refetch();}}>Retry</button></p>}
+ <form className="av2-panel" style={{padding:18,marginTop:18}} onSubmit={e=>void save(e,'create')}><h2>Record an introduction</h2>{agentSelect}<label className="field"><span>Referred person</span><select className="select" required value={referred} onChange={e=>{setReferred(e.target.value);setConfirmed('');}}><option value="">Choose person</option>{people.data?.users.filter(u=>u.id!==agent).map(u=><option key={u.id} value={u.id}>{u.fullName || u.email} · {u.role}</option>)}</select></label><label className="field"><span>Agreed referral code</span><input className="select" required minLength={3} maxLength={80} value={code} onChange={e=>{setCode(e.target.value);setConfirmed('');}}/></label>{confirm('create')}<button className="av2-btn orange sm" disabled={busy||confirmed!=='create'}>Record introduction</button></form>
+ <form className="av2-panel" style={{padding:18}} onSubmit={e=>void save(e,'assign')}><h2>Assign agent to a deal</h2><p className="av2-d">Adds a deal participant and notifies the agent in-app. Private counterparty details remain restricted by the agent access rules.</p>{agentSelect}<label className="field"><span>Deal</span><select className="select" required value={deal} onChange={e=>{setDeal(e.target.value);setConfirmed('');}}><option value="">Choose deal</option>{deals.data?.deals.map(d=><option key={d.id} value={d.id}>{d.dealNumber || d.id}</option>)}</select></label>{confirm('assign')}<button className="av2-btn orange sm" disabled={busy||confirmed!=='assign'}>Assign reviewed agent</button></form>
+ <section className="av2-panel" style={{padding:18}}><h2>Referral records</h2>{referrals.isLoading?<div className="av2-skel"/>:!referrals.data?.referrals.length?<p className="av2-d">No referrals recorded.</p>:referrals.data.referrals.map(r=><div key={r.id} style={{borderTop:'1px solid #ddd',padding:'12px 0'}}>{people.data?.users.find(u=>u.id===r.agentUserId)?.fullName || r.agentUserId} introduced {people.data?.users.find(u=>u.id===r.referredUserId)?.fullName || r.referredUserId} · {fmtStatus(r.status)} · {r.referralCode}<button className="av2-btn ghost sm" onClick={()=>{setReview({...r});setConfirmed('');}}>Review status</button></div>)}</section>
+ {review&&<form className="av2-panel" style={{padding:18}} onSubmit={e=>void save(e,'review')}><h2>Review referral status</h2><p className="av2-d">Status changes create an in-app notice for the referring agent.</p><select className="select" value={review.status} onChange={e=>{setReview({...review,status:e.target.value});setConfirmed('');}}>{['pending','qualified','cancelled'].map(s=><option key={s}>{s}</option>)}</select>{confirm('review')}<button className="av2-btn orange sm" disabled={busy||confirmed!=='review'}>Record referral review</button></form>}
+ <p className="av2-d">Commission agreements and payout records are reviewed separately in <Link href="/admin/v2/finance">Finance</Link>. Assigning an agent never pays them.</p>
+ </AdminV2Shell>;
+}
+export function AdminV2AgentsPage(){return <AdminV2Gate>{user=><Agents user={user}/>}</AdminV2Gate>;}

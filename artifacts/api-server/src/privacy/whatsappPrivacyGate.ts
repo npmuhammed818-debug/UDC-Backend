@@ -18,6 +18,9 @@ import { POLICY_VERSION, SUPPORT_EMAIL } from "./policies";
 import { buildConsentNotice, buildConsentReminder, isShowNoticeRequest, consentVersion, isWithdrawConsent, noticeHash, PRIVACY_URL, TERMS_URL, WITHDRAWN_REPLY } from "./consentNotice";
 const CONSENT_VERSION = consentVersion(POLICY_VERSION);
 const consentNotice = buildConsentNotice(SUPPORT_EMAIL);
+// Owner-approved line, sent with the notice but outside the hashed notice text, so the consent fingerprint is unchanged.
+export const MENU_HINT = 'Send "Menu" anytime to see what I can do.';
+const consentNoticeWithHint = `${consentNotice}\n\n${MENU_HINT}`;
 const consentReminder = buildConsentReminder(SUPPORT_EMAIL);
 const noticeMeta = { noticeHash: noticeHash(consentNotice), noticeText: consentNotice };
 export async function whatsappPrivacyGate(
@@ -118,7 +121,7 @@ export async function whatsappPrivacyGate(
             entityType: "whatsapp_consent",
             metadata: { fingerprint, policyVersion: CONSENT_VERSION, ...noticeMeta, status: "notice_sent" },
           });
-          return consentNotice;
+          return consentNoticeWithHint;
         }
       }
     }
@@ -194,6 +197,6 @@ export async function whatsappPrivacyGate(
           },
         });
     }
-    return consentNotice;
+    return consentNoticeWithHint;
   });
 }

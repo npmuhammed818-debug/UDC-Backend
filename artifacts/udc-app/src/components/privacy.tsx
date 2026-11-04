@@ -151,7 +151,7 @@ export function PrivacySettings() {
       <p>
         For access, correction, consent withdrawal or a privacy grievance,
         contact{" "}
-        <a href="mailto:udc@updowncircle.site">udc@updowncircle.site</a>. Do
+        <a href="mailto:service@updowncircle.site">service@updowncircle.site</a>. Do
         not send passwords or banking credentials.
       </p>
       <Button variant="outline" disabled={busy} onClick={unsubscribe}>
@@ -205,6 +205,8 @@ export function AdminPrivacyRequests() {
     queryKey: ["admin-privacy-requests", offset],
     queryFn: () => readRequests(`/api/admin/privacy/requests?offset=${offset}`),
   });
+  const checks=['identity','database','messagesAndMemory','storage','providers','backups','retentionExplained'];
+  const [verified,setVerified]=useState<Record<string,Record<string,boolean>>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -216,7 +218,7 @@ export function AdminPrivacyRequests() {
         method: "PATCH",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, outcome: notes[id] }),
+        body: JSON.stringify({ status, outcome: notes[id],...(status==='resolved'?{verifiedChecklist:verified[id]}:{}) }),
       });
       if (!response.ok) throw new Error();
       await requests.refetch();
@@ -265,6 +267,7 @@ export function AdminPrivacyRequests() {
                     }
                   />
                 </label>
+                <fieldset><legend>Verified deletion or documented retention, not a deletion button</legend>{checks.map(check=><label key={check} style={{display:'flex',gap:10,margin:'8px 0'}}><input type="checkbox" checked={!!verified[row.entityId]?.[check]} onChange={e=>setVerified({...verified,[row.entityId]:{...verified[row.entityId],[check]:e.target.checked}})}/><span>{check.replace(/([A-Z])/g,' $1')}</span></label>)}</fieldset>
                 <div className="flex gap-3">
                   <Button
                     variant="outline"
@@ -278,7 +281,7 @@ export function AdminPrivacyRequests() {
                   <Button
                     variant="outline"
                     disabled={
-                      busy || (notes[row.entityId]?.trim().length || 0) < 10
+                      busy || (notes[row.entityId]?.trim().length || 0) < 10 || !checks.every(check=>verified[row.entityId]?.[check])
                     }
                     onClick={() => review(row.entityId, "resolved")}
                   >

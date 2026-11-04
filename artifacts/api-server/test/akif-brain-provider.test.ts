@@ -15,6 +15,9 @@ const keys = [
   "OPENAI_CHAT_MODEL",
   "HERMES_AKIF_URL",
   "HERMES_AKIF_API_KEY",
+  "GROQ_API_KEY",
+  "GROQ_BASE_URL",
+  "GROQ_MODEL",
 ];
 
 function snapshotEnv() {
@@ -35,7 +38,7 @@ test("self-hosted AKIF brain is the first conversation provider", async () => {
   const calls: string[] = [];
 
   Object.assign(process.env, {
-    AKIF_BRAIN_URL: "http://akif-brain.local/v1",
+    AKIF_BRAIN_URL: "https://akif-brain.local/v1",
     AKIF_BRAIN_MODEL: "qwen3:8b",
     NVIDIA_API_KEY: "nvidia-test",
     NVIDIA_BASE_URL: "https://nvidia.invalid/v1",
@@ -57,7 +60,7 @@ test("self-hosted AKIF brain is the first conversation provider", async () => {
   try {
     const result = await runConversationChat("hello", "system", 1000);
     assert.equal(result.content, "AKIF local response");
-    assert.deepEqual(calls, ["http://akif-brain.local/v1/chat/completions"]);
+    assert.deepEqual(calls, ["https://akif-brain.local/v1/chat/completions"]);
   } finally {
     globalThis.fetch = oldFetch;
     restoreEnv(oldEnv);
@@ -71,7 +74,7 @@ test("conversation falls back from AKIF brain to NVIDIA to OpenAI to Hermes", as
   const calls: string[] = [];
 
   Object.assign(process.env, {
-    AKIF_BRAIN_URL: "http://akif-brain.local/v1",
+    AKIF_BRAIN_URL: "https://akif-brain.local/v1",
     AKIF_BRAIN_MODEL: "qwen3:8b",
     NVIDIA_API_KEY: "nvidia-test",
     NVIDIA_BASE_URL: "https://nvidia.invalid/v1",
@@ -85,7 +88,7 @@ test("conversation falls back from AKIF brain to NVIDIA to OpenAI to Hermes", as
   globalThis.fetch = async (input) => {
     const url = String(input);
     calls.push(url);
-    if (url.startsWith("http://akif-brain.local")) {
+    if (url.startsWith("https://akif-brain.local")) {
       return new Response("down", { status: 503 });
     }
     if (url.startsWith("https://nvidia.invalid")) {
@@ -103,7 +106,7 @@ test("conversation falls back from AKIF brain to NVIDIA to OpenAI to Hermes", as
     const result = await runConversationChat("hello", "system", 1000);
     assert.equal(result.content, "Hermes response");
     assert.deepEqual(calls, [
-      "http://akif-brain.local/v1/chat/completions",
+      "https://akif-brain.local/v1/chat/completions",
       "https://nvidia.invalid/v1/chat/completions",
       "https://openai.invalid/v1/chat/completions",
       "https://hermes.invalid/v1/chat/completions",
@@ -122,7 +125,7 @@ test("NVIDIA is used before OpenAI when AKIF brain is unavailable", async () => 
   const calls: string[] = [];
 
   Object.assign(process.env, {
-    AKIF_BRAIN_URL: "http://akif-brain.local/v1",
+    AKIF_BRAIN_URL: "https://akif-brain.local/v1",
     NVIDIA_API_KEY: "nvidia-test",
     NVIDIA_BASE_URL: "https://nvidia.invalid/v1",
     NVIDIA_MODEL: "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -135,7 +138,7 @@ test("NVIDIA is used before OpenAI when AKIF brain is unavailable", async () => 
   globalThis.fetch = async (input) => {
     const url = String(input);
     calls.push(url);
-    if (url.startsWith("http://akif-brain.local")) {
+    if (url.startsWith("https://akif-brain.local")) {
       return new Response("down", { status: 503 });
     }
     if (url.startsWith("https://nvidia.invalid")) {
@@ -150,7 +153,7 @@ test("NVIDIA is used before OpenAI when AKIF brain is unavailable", async () => 
     const result = await runConversationChat("hello", "system", 1000);
     assert.equal(result.content, "NVIDIA response");
     assert.deepEqual(calls, [
-      "http://akif-brain.local/v1/chat/completions",
+      "https://akif-brain.local/v1/chat/completions",
       "https://nvidia.invalid/v1/chat/completions",
     ]);
   } finally {

@@ -17,13 +17,19 @@ const cases = [
   ['delivery', 'UDC_DELIVERY_QA_DATABASE_URL', 'shipment-delivery'],
   ['registration', 'UDC_QA_DATABASE_URL', 'whatsapp-buyer'],
   ['retry', 'UDC_QA_DATABASE_URL', 'whatsapp-webhook-retry'],
+  ['meta_limits', 'UDC_QA_DATABASE_URL', 'whatsapp-meta-limits'],
+  ['edge', 'UDC_QA_DATABASE_URL', 'whatsapp-edge-scenarios'],
+  ['sweep', 'UDC_QA_DATABASE_URL', 'route-sweep'],
+  ['sink', 'UDC_QA_DATABASE_URL', 'whatsapp-reply-sink'],
   ['email_auth', 'UDC_EMAIL_QA_DATABASE_URL', 'email-auth'],
   ['verification', 'UDC_VERIFICATION_QA_DATABASE_URL', 'company-verification'],
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'p0-gates'],
+  ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'redteam-pass4'],
   ['vault', 'UDC_VAULT_QA_DATABASE_URL', 'vault'],
   ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools'],
   ['journey', 'UDC_JOURNEY_QA_DATABASE_URL', 'trade-journey'],
   ['commroutes', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-routes'],
+  ['commproposals', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-proposals'],
   ['commission', 'UDC_COMMISSION_QA_DATABASE_URL', 'commission-migration'],
 ];
 const directory=path.resolve(root,process.argv.find(a=>a.startsWith('--output-dir='))?.slice(13)??'.acceptance-results');
@@ -54,7 +60,7 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
 for (const [prefix, variable, file] of cases) {
   if (selected && selected !== file) continue;
   if (process.argv.includes('--extended') && ['registration', 'email_auth'].includes(prefix)) continue;
-  const name = `udc_qa_${prefix}_${randomBytes(6).toString('hex')}`;
+  const name = `udc_qa_${prefix==='commproposals'?'commroutes':prefix}_${randomBytes(6).toString('hex')}`;
   const url = `postgresql://udc_dev@127.0.0.1:5432/${name}?sslmode=disable`;
   let created = false;
   try {

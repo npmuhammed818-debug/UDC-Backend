@@ -1,31 +1,44 @@
+import { crisisSafetyReply } from "../akif/crisisSafety";
+import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
-import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
+import { answerGuidance, guidanceMainLanguage, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
-import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
+import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { claimInboundMessage, completeInboundMessages } from "../whatsapp/inboundDedup";
-import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
+import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
+import { trackReplyFailures, markReadAndTyping } from "../whatsapp/client";
+import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
+import { Router, type IRouter, type Request, type Response } from "express";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
+import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
+import { dealPaymentStatusReply, paymentStatusQuestion } from "../whatsapp/dealPayments";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
-import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
+import { isAkifWorkerMediaEnabled, transcribeAkifAudioDetailed } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
 import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievance/grievance";
 import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
-import { react } from "../whatsapp/reactions";
-import { trySpeakReply } from "../whatsapp/voiceSend";
-import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
+import { react, reactByMeaning } from "../whatsapp/reactions";
+import { speakReply } from "../whatsapp/voiceSend";
+import { parseVoiceCommand, setTextOnly, getVoiceState, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
+import { isVoiceGoAhead, VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMATION, EXPLICIT_VOICE_TEXT_ONLY, parseVoiceRequest, isOfferYes } from "../akif/voiceConsent.ts";
+import { armExplicitVoice, consumeExplicitVoice, getLastAnswer, hasExplicitVoice, setLastAnswer, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../akif/voiceSession.ts";
+import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
+import { reserveTranscription } from "../akif/voiceLimits.ts";
+import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppImage, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
@@ -35,14 +48,23 @@ import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 import { looksLikeConfidentialDocumentTopic, SENSITIVE_UPLOAD_WARNING, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
 import { wantsHumanHelp, HUMAN_HANDOFF_REPLY } from "../akif/conversationPolicy";
-import { getVaultLinkIssuer } from "../vault/issuer";
+import { getVaultLinkIssuer, setVaultLinkIssuer } from "../vault/issuer";
+import { createVaultUploadLink } from "../vault/service";
+// The WhatsApp process must be able to issue vault links even when the vault
+// router (which also registers this) is not loaded in it.
+setVaultLinkIssuer(createVaultUploadLink);
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
-import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraft } from "../deals/whatsappDraft";
+import { asksForUploadLink } from "../whatsapp/uploadLinkIntent";
+import { askedAboutPausingDeal, dealPauseHowTo } from "../deals/dealPauseText";
+import { requestedDealPause, dealPauseContextKind, dealPausePrompt, applyDealPause, pausedConfirmationToSender, closedConfirmationToSender } from "../deals/dealPause";
+import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
+import { contactsUnlocked } from "../deals/contactSharing";
+import type { SpaDraftInput } from "../deals/spaDraft";
 
 const router: IRouter = Router();
 
@@ -68,13 +90,62 @@ function cleanHumanWhatsAppText(body: string) {
     .trim();
 }
 
+import { chooseChannel } from "../akif/voiceMoments.ts";
+import { guardOutboundText } from "../akif/outboundGuard.ts";
+import { pickVoiceLanguage } from "../akif/voiceLanguage.ts";
+
+const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "malayalam", tam: "tamil", hin: "hindi", ara: "arabic" };
+
+/**
+ * Reply the way a person would. Voice when the user used voice or asked for it; AKIF may also pick
+ * voice by itself for the Master Plan moments (calming an upset user, explaining something long)
+ * when AKIF_VOICE_AUTOPICK=on - never dates or money, never the welcome message (those paths do not
+ * pass a userText). Voice is spoken in the customer's main language or English (AKIF's per-customer
+ * pick); text is always English. A spoken reply is never also sent as text. If the voice cannot be
+ * sent, the same reply goes as text. After a long voice reply (over the threshold) a short text
+ * offer follows; the text itself is only sent after a yes.
+ */
+async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string; explicitVoice?: boolean; voiceNote?: boolean } = {}) {
+  setLastAnswer(to, reply);
+  const choice = chooseChannel({ wantsVoice, userText: context.userText, reply });
+  if (choice.channel === "text") return deliverWhatsAppReply(to, reply);
+  const mainLanguage = await guidanceMainLanguage(to);
+  const language = pickVoiceLanguage({ mainLanguage, heardLanguage: context.heardLanguage });
+  const spoken = await speakReply(to, reply, { language });
+  if (spoken.status === false) {
+    // Content-free diagnosis: which gate turned this voice reply into text.
+    console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown", rule: spoken.detail ?? null }));
+    // AKIF promised voice (explicit request) or mirrored a voice note: never go text silently.
+    if (context.explicitVoice || context.voiceNote) {
+      await deliverWhatsAppReply(to, spoken.reason === "not_speakable"
+        ? "This one has details that must stay in writing, so here it is in text."
+        : "Voice is not working just now, so here is your answer in text.");
+    }
+    return deliverWhatsAppReply(to, reply);
+  }
+  if (spoken.status === "uncertain") return { delivered: false as const, reason: "provider_outcome_unknown" as const };
+  if (spoken.noticeDue) await deliverWhatsAppReply(to, VOICE_NOTICE);
+  if (spoken.seconds !== null && spoken.seconds > textOfferSeconds()) {
+    setVoiceOffer(to, reply);
+    await deliverWhatsAppReply(to, VOICE_TEXT_OFFER);
+  }
+  return { delivered: true as const };
+}
+
 async function deliverWhatsAppReply(to: string | undefined, body: string, _withMenu = false) {
   if (!to) return { delivered: false as const, reason: "missing_sender" as const };
 
   try {
-    const cleaned = cleanHumanWhatsAppText(body);
+    const guarded = guardOutboundText(body);
+    if (guarded.replaced) console.warn(JSON.stringify({ event: "outbound_placeholder_blocked" }));
+    const cleaned = cleanHumanWhatsAppText(guarded.text);
     return await sendWhatsAppText(to, cleaned);
-  } catch {
+  } catch (error) {
+    // Safe fields only: never the message body, number, token or provider response text.
+    const e = error as { httpStatus?: unknown; code?: unknown; subcode?: unknown } | null;
+    const msg = error instanceof Error ? error.message : "";
+    const subcode = /subcode=(\d+)/.exec(msg)?.[1];
+    console.warn(JSON.stringify({ event: "whatsapp_reply_send_failed", httpStatus: typeof e?.httpStatus === "number" ? e.httpStatus : null, code: typeof e?.code === "number" ? e.code : null, subcode: subcode ?? null }));
     return {
       delivered: false as const,
       // Provider errors must not be copied into logs: they can contain user or
@@ -315,6 +386,7 @@ function inferDocumentType(filename?: string, caption?: string) {
   if (/bill of lading|\bbl\b/.test(value)) return "BL";
   if (/certificate of origin|\bco\b/.test(value)) return "CO";
   if (/coa|assay/.test(value)) return "COA";
+  if (/\.(jpe?g|png|webp)$/i.test(filename ?? "")) return "image";
   return "trade_document";
 }
 
@@ -331,6 +403,7 @@ function requestedStoredDocumentType(text: string, replyContextKind?: string) {
     ["BL", /bill of lading|\bbl\b/],
     ["COA", /\bcoa\b|assay/],
     ["CO", /certificate of origin/],
+    ["image", /\b(?:photo|photos|picture|pictures|image|images|img|pic)\b/],
   ] as const;
 
   const requested = explicit.find(([, pattern]) => pattern.test(normalized))?.[0];
@@ -427,6 +500,12 @@ async function resolveActiveDealForUser(userId: string, replyToProviderMessageId
   return deals.length === 1 ? deals[0]!.dealId : null;
 }
 
+export function noDealFileReply(role: string) {
+  return role === "agent"
+    ? "I got the file. Agents do not upload documents here, so I have not kept it."
+    : "I got the file, but you have no active deal yet. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF.";
+}
+
 async function handleWhatsAppDealDocument(
   from: string,
   document: { id: string; filename?: string; mime_type?: string; caption?: string },
@@ -434,7 +513,7 @@ async function handleWhatsAppDealDocument(
   replyToProviderMessageId?: string,
 ) {
   const [sender] = await db
-    .select({ id: usersTable.id, status: usersTable.status })
+    .select({ id: usersTable.id, status: usersTable.status, role: usersTable.role })
     .from(usersTable)
     .where(eq(usersTable.phone, from))
     .limit(1);
@@ -460,6 +539,9 @@ async function handleWhatsAppDealDocument(
 
   const dealId = await resolveActiveDealForUser(sender.id, replyToProviderMessageId);
   if (!dealId) {
+    const [anyDeal] = await db.select({ dealId: dealParticipantsTable.dealId }).from(dealParticipantsTable)
+      .where(eq(dealParticipantsTable.userId, sender.id)).limit(1);
+    if (!anyDeal) return { reply: noDealFileReply(sender.role) };
     return { reply: "I got the file, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
   }
 
@@ -504,8 +586,53 @@ async function handleWhatsAppDealDocument(
     throw new Error("document_record_not_created");
   }
 
-  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "owner" });
+  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "editor" });
 
+  // Deal-room photo relay: a plain photo in an active deal is shared with the other side
+  // as a viewable image (goods photos are the content itself - there is no "rewrite" for a
+  // picture). Captions naming a trade document stay on the document path above and are
+  // never auto-relayed. The sender is named by role only; numbers and names stay private.
+  let photoRelayedTo = 0;
+  if (documentType === "image") {
+    try {
+      const [dealRow] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+        .where(eq(dealsTable.id, dealId)).limit(1);
+      const counterparties = await db.select({
+        userId: dealParticipantsTable.userId,
+        phone: usersTable.phone,
+      }).from(dealParticipantsTable)
+        .innerJoin(usersTable, eq(usersTable.id, dealParticipantsTable.userId))
+        .where(and(
+          eq(dealParticipantsTable.dealId, dealId),
+          eq(dealParticipantsTable.status, "active"),
+          eq(usersTable.status, "verified"),
+          ne(dealParticipantsTable.userId, sender.id),
+        ));
+      const senderSide = sender.role === "buyer" ? "buyer" : sender.role === "seller" ? "seller" : "other side";
+      const caption = `Photo from the ${senderSide} in deal ${dealRow?.dealNumber ?? "your deal"}.${document.caption ? ` Note: ${document.caption.slice(0, 300)}` : ""}`;
+      for (const side of counterparties) {
+        if (!side.phone) continue;
+        try {
+          const signedUrl = await createSignedDownloadUrl(objectPath);
+          const delivery = await sendWhatsAppImage(side.phone, signedUrl, caption);
+          if (delivery.delivered) {
+            photoRelayedTo += 1;
+            await db.insert(documentAccessTable).values({
+              documentId: savedDocument.id, userId: side.userId, accessRole: "viewer",
+            }).onConflictDoNothing();
+            if ("messageId" in delivery && delivery.messageId) {
+              await db.insert(whatsappMessageContextsTable).values({
+                providerMessageId: delivery.messageId, dealId,
+                recipientUserId: side.userId, kind: "deal_image_relay",
+              }).onConflictDoNothing();
+            }
+          }
+        } catch { /* one failed recipient never blocks the others */ }
+      }
+    } catch { /* relay failure still leaves the photo stored in the deal */ }
+  }
+
+  if (documentType !== "image") {
   void processDocumentIntelligence({
     documentId: savedDocument.id,
     dealId,
@@ -519,9 +646,12 @@ async function handleWhatsAppDealDocument(
       const warning = result.status === "needs_review"
         ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
         : "";
+      const summaryOffer = ["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA"].includes(documentType.toUpperCase())
+        ? " Reply SUMMARY anytime for a plain-words summary."
+        : "";
       await sendWhatsAppTextWithMenu(
         from,
-        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}`,
+        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}${summaryOffer}`,
       ).catch(() => undefined);
     })
     .catch(async () => {
@@ -530,6 +660,7 @@ async function handleWhatsAppDealDocument(
         `I attached the ${documentType} to the deal, but full extraction failed. UDC kept the original file for review and retry.`,
       ).catch(() => undefined);
     });
+  }
 
   await setActiveDealContext(sender.id, dealId);
   await db.insert(dealConversationEventsTable).values({
@@ -543,10 +674,28 @@ async function handleWhatsAppDealDocument(
   });
 
   return {
-    reply: `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
+    reply: documentType === "image"
+      ? photoRelayedTo > 0
+        ? `Got the photo and passed it to the other side in this deal.\n\n${SENSITIVE_UPLOAD_WARNING}`
+        : `Got the photo and kept it in this deal. I could not pass it to the other side just now - I’ll keep it here.\n\n${SENSITIVE_UPLOAD_WARNING}`
+      : `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
     dealId,
     recipientUserId: sender.id,
   };
+}
+
+// Only the early non-binding drafts hide the other side. SPA and FCO need the real names to be signed.
+const PRE_NCNDA_DRAFTS = new Set(["LOI", "ICPO"]);
+
+async function isReplyToSavedDealMessage(from: string, contextId?: string) {
+  if (!contextId) return false;
+  const [row] = await db
+    .select({ id: whatsappMessageContextsTable.id })
+    .from(whatsappMessageContextsTable)
+    .innerJoin(usersTable, eq(usersTable.id, whatsappMessageContextsTable.recipientUserId))
+    .where(and(eq(whatsappMessageContextsTable.providerMessageId, contextId), eq(usersTable.phone, from)))
+    .limit(1);
+  return Boolean(row);
 }
 
 async function handleDealWhatsAppMessage(
@@ -554,6 +703,7 @@ async function handleDealWhatsAppMessage(
   text: string,
   replyToProviderMessageId?: string,
   inboundProviderMessageId?: string,
+  options: { voiceTranscript?: boolean } = {},
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
 
@@ -732,10 +882,45 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
+  const pauseRequest = requestedDealPause(messageBody);
+  if (pauseRequest) {
+    const ctxKind = dealPauseContextKind(pauseRequest.kind);
+    if (!pauseRequest.confirmed || replyContextKind !== ctxKind)
+      return { reply: dealPausePrompt(pauseRequest.kind, deal.dealNumber), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: ctxKind };
+    const result = await applyDealPause({ dealId: deal.id, dealNumber: deal.dealNumber, senderId: sender.id, receiverId: receiverUserId, kind: pauseRequest.kind });
+    if (!result.applied) return { reply: "This deal is already paused, closed or finished, so nothing changed.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    return { reply: (pauseRequest.kind === "pause" ? pausedConfirmationToSender : closedConfirmationToSender)(deal.dealNumber, result.told), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+  }
+
+  const confirmedVoiceEvent=confirmedVoiceRelay(messageBody,options.voiceTranscript===true,replyContextKind);
+  if(confirmedVoiceEvent){
+    // Scope to this verified sender and already-authorized active deal. A reply
+    // cannot select another person's preview or authorize a commercial decision.
+    const [preview]=await db.select().from(dealConversationEventsTable).where(and(eq(dealConversationEventsTable.id,confirmedVoiceEvent),eq(dealConversationEventsTable.dealId,deal.id),eq(dealConversationEventsTable.userId,sender.id),eq(dealConversationEventsTable.intent,'voice_relay_preview'))).limit(1);
+    if(!preview?.relayText||!preview.createdAt||Date.now()-new Date(preview.createdAt).getTime()>15*60*1000||['completed','cancelled','rejected','on_hold','disputed'].includes(deal.status))return {reply:'That voice preview is unavailable. Please type your message again.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    // Atomic claim prevents replay. An uncertain delivery is never auto-retried.
+    const claimed=await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'voice_relay:'+preview.id}))`);const [activeDeal]=await tx.select({status:dealsTable.status}).from(dealsTable).where(eq(dealsTable.id,deal.id)).limit(1);const [activeReceiver]=await tx.select({id:dealParticipantsTable.id}).from(dealParticipantsTable).where(and(eq(dealParticipantsTable.dealId,deal.id),eq(dealParticipantsTable.userId,receiverUserId),eq(dealParticipantsTable.status,'active'))).limit(1);if(!activeDeal||!activeReceiver||['completed','cancelled','rejected','on_hold','disputed'].includes(activeDeal.status))return false;const [current]=await tx.select().from(dealConversationEventsTable).where(eq(dealConversationEventsTable.id,preview.id)).limit(1);if(!current||current.relayed)return false;const [attempt]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'voice_relay_send_claimed'),eq(auditLogsTable.entityId,preview.id))).limit(1);if(attempt)return false;await tx.insert(auditLogsTable).values({actorUserId:sender.id,action:'voice_relay_send_claimed',entityType:'deal_conversation_event',entityId:preview.id,metadata:{dealId:deal.id,typedConfirmation:true}});return true;});
+    if(!claimed)return {reply:'This voice preview was already sent or attempted. I will not send it twice. Please ask UDC if delivery is unclear.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    const [receiver]=await db.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,receiverUserId)).limit(1);
+    if(!receiver?.phone||receiver.status!=='verified')return {reply:'The other account needs review, so nothing was sent.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    const delivery=await deliverWhatsAppReply(receiver.phone,preview.relayText);if(delivery.delivered){await db.update(dealConversationEventsTable).set({relayed:true}).where(eq(dealConversationEventsTable.id,preview.id));if(delivery.messageId)await db.insert(whatsappMessageContextsTable).values({providerMessageId:delivery.messageId,dealId:deal.id,recipientUserId:receiverUserId,kind:`mediated_clarification:${preview.id}`}).onConflictDoNothing();}
+    return {reply:delivery.delivered?'Passed on the exact text you confirmed. Your audio was not shared.':'I could not confirm delivery. I will not resend automatically. Ask UDC to check before trying again.',deliveredToCounterparty:delivery.delivered,dealId:deal.id,recipientUserId:sender.id};
+  }
+
   const draftRequest = requestedWhatsAppDraft(messageBody);
   if (draftRequest) {
     if (!mayPrepareWhatsAppDraft(draftRequest.type, sender.id === deal.buyerUserId)) {
       return { reply: "That draft needs to be requested by the authorized party for this deal.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
+    // Owner decision (28 Oct): agents sign their agreement only after the SPA
+    // for the deal is signed. The contract stage moves only by UDC's own ops.
+    if (draftRequest.type === "AGENT_AGREEMENT") {
+      if (sender.role !== "agent") {
+        return { reply: "Agent agreements are for UDC agents.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+      }
+      if (!contactsUnlocked(deal.status)) {
+        return { reply: "Your agent agreement is signed after the SPA for this deal is signed. UDC will share it with you then.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+      }
     }
     const [product] = await db.select({ name: productsTable.name }).from(productsTable)
       .where(eq(productsTable.id, deal.productId)).limit(1);
@@ -743,25 +928,43 @@ async function handleDealWhatsAppMessage(
     const terms = { paymentTerms:acceptedTerms?.paymentTerms, inspectionTerms:acceptedTerms?.inspectionTerms, dealNumber: deal.dealNumber,
       date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
       productName: product?.name ?? "", quantity: deal.quantity, unit: deal.unit,
-      agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination };
+      agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination } as SpaDraftInput;
+    // Only the requester's own profile details are filled. The other side stays hidden until the NCNDA stage.
+    const requesterIsBuyer = sender.id === deal.buyerUserId;
+    const [ownCompany] = draftRequest.type === "NCNDA" ? [] : await db
+      .select({ name: companiesTable.companyName, address: companiesTable.address, reg: companiesTable.registrationNumber })
+      .from(companiesTable).where(eq(companiesTable.ownerUserId, sender.id)).limit(1);
+    if (ownCompany && draftRequest.type !== "NCNDA") {
+      if (requesterIsBuyer) Object.assign(terms, { buyerName: ownCompany.name, buyerAddress: ownCompany.address, buyerRegistrationNo: ownCompany.reg, hideSeller: PRE_NCNDA_DRAFTS.has(draftRequest.type) });
+      else Object.assign(terms, { sellerName: ownCompany.name, sellerAddress: ownCompany.address, sellerRegistrationNo: ownCompany.reg, hideBuyer: PRE_NCNDA_DRAFTS.has(draftRequest.type) });
+    }
+    const ownDetailsLine = ownCompany && draftRequest.type !== "NCNDA"
+      ? `\n\nYour details from your UDC profile will be filled in: ${ownCompany.name}; ${ownCompany.address || "[address missing]"}; ${ownCompany.reg || "[registration no. missing]"}. ${PRE_NCNDA_DRAFTS.has(draftRequest.type) ? " The other side stays hidden until the NCNDA stage." : " The other side stays a placeholder."} Replying with the exact words below confirms these details.`
+      : "";
     const confirmationKind = whatsappDraftConfirmation(draftRequest.type, terms);
     if (!draftRequest.confirmed || replyContextKind !== confirmationKind) {
-      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
+      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. `+ownDetailsLine+"\n\nSend your own or use a UDC draft?\n1. Your own: send your "+draftRequest.type+" here as a file (put "+draftRequest.type+" in the file name or caption).\n2. UDC draft: reply to this message with CONFIRM DRAFT "+draftRequest.type+". Other legal details stay as placeholders.\n\nWarning: the UDC draft is a template only. It is not legal advice. Have your own lawyer review it before you use or sign it. UDC acts only as an introducing agent between buyer and seller.",
         deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: confirmationKind };
     }
-    const draft = generateWhatsAppDraft(draftRequest.type, terms);
-    const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.txt`;
-    const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft, "utf8"), "text/plain");
-    await db.transaction(async tx => {
-      const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
-        documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
-      await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "owner" });
-      await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
-        entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
-    });
-    return { reply: `Prepared the ${draftRequest.type} draft for your review.`, deliveredToCounterparty: false,
-      dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
-        storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.txt`, draft: true } };
+    try {
+      const draft = await generateWhatsAppDraftPdf(draftRequest.type, terms);
+      const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.pdf`;
+      const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft), "application/pdf");
+      await db.transaction(async tx => {
+        const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
+          documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
+        await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "editor" });
+        await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
+          entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
+      });
+      return { reply: `Prepared the ${draftRequest.type} draft for your review. It is a UDC template, not legal advice.`, deliveredToCounterparty: false,
+        dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
+          storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.pdf`, draft: true } };
+    } catch (error) {
+      // Never answer a draft request with a 500: Meta would retry and the user would hear nothing.
+      console.error(JSON.stringify({ event: "whatsapp_draft_failed", dealId: deal.id, draftType: draftRequest.type, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
+      return { reply: "I could not prepare that draft right now. Nothing was saved. Please try again in a moment.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
   }
 
   const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
@@ -796,12 +999,19 @@ async function handleDealWhatsAppMessage(
           let documentMessageId: string | undefined;
           try {
             const signedUrl = await createSignedDownloadUrl(storageObjectPath);
-            const documentDelivery = await sendWhatsAppDocument(
-              receiver.phone,
-              signedUrl,
-              `${storedDocument.documentType}.${extension}`,
-              `${storedDocument.documentType} for review. Let me know what you want to do next.`,
-            );
+            // Photos arrive as viewable images, not generic file documents.
+            const documentDelivery = /^(jpe?g|png|webp)$/i.test(extension)
+              ? await sendWhatsAppImage(
+                  receiver.phone,
+                  signedUrl,
+                  `${storedDocument.documentType} for review. Let me know what you want to do next.`,
+                )
+              : await sendWhatsAppDocument(
+                  receiver.phone,
+                  signedUrl,
+                  `${storedDocument.documentType}.${extension}`,
+                  `${storedDocument.documentType} for review. Let me know what you want to do next.`,
+                );
             documentDelivered = documentDelivery.delivered;
             documentMessageId = "messageId" in documentDelivery
               ? documentDelivery.messageId
@@ -861,6 +1071,104 @@ async function handleDealWhatsAppMessage(
     }
   }
 
+  // Contract summary (AI tools): a plain-words reading helper rendered
+  // deterministically from the structured extraction - no model writes the
+  // numbers. The same read rules as the document itself apply.
+  const summaryAsk = contractSummaryRequest(messageBody);
+  if (summaryAsk) {
+    const summaryAccess = inArray(documentsTable.id,
+      db.select({ documentId: documentAccessTable.documentId }).from(documentAccessTable)
+        .where(eq(documentAccessTable.userId, sender.id)));
+    const [extraction] = await db
+      .select({
+        documentType: documentsTable.documentType,
+        structuredData: documentExtractionsTable.structuredData,
+        warnings: documentExtractionsTable.warnings,
+        status: documentExtractionsTable.status,
+      })
+      .from(documentExtractionsTable)
+      .innerJoin(documentsTable, eq(documentsTable.id, documentExtractionsTable.documentId))
+      .where(and(
+        eq(documentExtractionsTable.dealId, deal.id),
+        inArray(documentExtractionsTable.status, ["completed", "needs_review"]),
+        summaryAsk.documentType
+          ? eq(documentsTable.documentType, summaryAsk.documentType)
+          : inArray(documentsTable.documentType, ["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA"]),
+        // A deal association alone is not permission to read another party's
+        // extraction; the same rules as the document apply.
+        or(eq(documentsTable.uploadedBy, sender.id),
+          and(eq(documentsTable.status, "approved"), summaryAccess)),
+      ))
+      .orderBy(desc(documentExtractionsTable.updatedAt))
+      .limit(1);
+    const summary = extraction?.structuredData
+      ? renderContractSummary({
+          documentType: extraction.documentType,
+          structured: extraction.structuredData,
+          warnings: extraction.warnings,
+          status: extraction.status,
+        })
+      : null;
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "contract_summary_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: summary ?? "I don't have a finished contract analysis to summarize yet. Upload the contract here and I will extract it first, then ask me again.",
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: summary ? "mediator_reply_contract_summary" : "mediator_reply_contract_summary_missing",
+    };
+  }
+
+  // Meeting details: confirmed times, providers and join links come straight
+  // from the meeting record UDC staff scheduled - never from the model.
+  if (meetingDetailsQuestion(messageBody)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "meeting_details_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: await upcomingDealMeetingsReply(deal.id),
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_meeting_details",
+    };
+  }
+
+  // Payment steps: the DLC status, amount and terms come straight from the
+  // financial-instrument record UDC staff maintain - never from the model.
+  if (paymentStatusQuestion(messageBody)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "payment_status_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: await dealPaymentStatusReply(deal.id),
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_payment_status",
+    };
+  }
+
   const aiDecision = await interpretActiveDealConversation({
     dealId: deal.id,
     participantRole: sender.role,
@@ -892,6 +1200,14 @@ async function handleDealWhatsAppMessage(
       recipientUserId: sender.id,
       contextKind: "mediator_reply_unprocessed",
     };
+  }
+
+  // Preserve the reviewed text. Never forward the speaker's raw audio or let
+  // a transcript approve an acceptance, rejection or counteroffer.
+  const voiceRelay = pendingVoiceRelay(aiDecision.intent,aiDecision.relay===true,aiDecision.relayToCounterparty);
+  if(options.voiceTranscript&&(aiDecision.relay===true||['acceptance','rejection','counteroffer'].includes(aiDecision.intent))){
+    const [preview]=await db.insert(dealConversationEventsTable).values({dealId:deal.id,userId:sender.id,participantRole:sender.role,intent:voiceRelay?'voice_relay_preview':'voice_transcript_unconfirmed',originalText:messageBody,relayText:voiceRelay?aiDecision.relayToCounterparty:null,relayed:false}).returning({id:dealConversationEventsTable.id});
+    return {reply:voiceRelay?`I can pass this text to the other side, not your audio:\n\n${aiDecision.relayToCounterparty}\n\nCheck it carefully. Reply to this message in text with ${voiceRelayConfirmation} to send exactly this. Nothing has been sent yet.`:`I heard: ${messageBody.slice(0,2000)}. Voice can mis-hear numbers. Please confirm this ${aiDecision.intent} in text by typing the exact trade instruction yourself before I act on it.`,deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id,contextKind:voiceRelay?`voice_relay_preview:${preview.id}`:'mediator_reply_voice_unconfirmed'};
   }
 
   const effectiveIntent = aiDecision.intent;
@@ -984,6 +1300,15 @@ router.get(
   },
 );
 
+// Real Meta messages always carry a string id (needed to answer each message once) and a string text
+// body. Anything else is dropped: no id means a retry would be answered again, and a non-string body
+// used to crash the handler with a 500, which makes Meta retry.
+function dropMalformedInboundMessages(value: { messages?: unknown } | undefined): void {
+  if (!value || !Array.isArray(value.messages)) { if (value && value.messages != null) value.messages = []; return; }
+  value.messages = value.messages.filter((m: any) => m && typeof m === "object" && typeof m.id === "string" && m.id &&
+    (m.text === undefined || (m.text && typeof m.text.body === "string")));
+}
+
 router.get("/webhooks/whatsapp", (req, res) => {
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -998,7 +1323,16 @@ router.get("/webhooks/whatsapp", (req, res) => {
   res.type("text/plain").send(challenge);
 });
 
-router.post("/webhooks/whatsapp", async (req, res) => {
+// Staging reply sink readout (only when AKIF_WHATSAPP_REPLY_SINK=store). Needs x-udc-sink-signature.
+router.get("/webhooks/whatsapp-sink", (req, res) => {
+  if (!replySinkEnabled() || !sinkReadAuthorized(req.header("x-udc-sink-signature"))) { res.sendStatus(404); return; }
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  const since = Number(req.query.since) || 0;
+  res.json({ replies: readSunkReplies(to, since) });
+});
+
+router.post("/webhooks/whatsapp", async (req, res) => { await trackReplyFailures((failed) => handleWhatsAppWebhook(req, res, failed)); });
+async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies: Set<string>) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.header("x-hub-signature-256");
   const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
@@ -1019,6 +1353,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     : [];
 
   const claimedInbound: unknown[] = [];
+  const senderOf = new Map<unknown, string>();
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
@@ -1037,12 +1372,39 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         res.sendStatus(503);return;
       }
     }
+    dropMalformedInboundMessages(value);
     for (const message of value?.messages ?? []) {
-      if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
+      let claimed: boolean;
+      try { claimed = await claimInboundMessage(message.id); }
+      catch {
+        // No typing, consent, AI, trade writes or outbound sends for an unclaimed
+        // message. Finish earlier messages in this batch, then ask Meta to retry.
+        const failed = claimedInbound.filter((id) => {
+          const from = senderOf.get(id); return from !== undefined && failedReplies.has(from);
+        });
+        await releaseInboundMessages(failed);
+        await completeInboundMessages(claimedInbound.filter((id) => !failed.includes(id)));
+        req.log.error({ flow: "whatsapp_inbound", reason: "dedup_unavailable" }, "Durable inbound claim unavailable");
+        res.sendStatus(503);
+        return;
+      }
+      if (!claimed) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
+      if (message.from) { senderOf.set(message.id, message.from); markReadAndTyping(message.from, message.id); }
+      // Minimal text-only crisis first response before consent, trade, reactions or AI.
+      // Captions are checked too, without downloading the attachment.
+      const crisis = crisisSafetyReply([message.text?.body, message.document?.caption, message.image?.caption].filter(Boolean).join(" "));
+      if (message.from && crisis) {
+        await deliverWhatsAppReply(message.from, crisis, false);
+        continue;
+      }
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
         try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
         continue;
+      }
+      if (message.from) {
+        const cap = checkInboundCap(message.from);
+        if (cap !== "ok") { if (cap === "notice") await deliverWhatsAppReply(message.from, INBOUND_CAP_NOTICE); continue; }
       }
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
@@ -1053,6 +1415,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             else if (privacyReply.kind === "consent_accepted") await sendChatHome(message.from);
             continue;
           }
+          if (typeof message.text?.body === "string") reactByMeaning(message.from, message.id, message.text.body); // only after consent; off unless both flags are on
           const [account] = await db.select({ status: usersTable.status }).from(usersTable)
             .where(eq(usersTable.phone, message.from)).limit(1);
           if (account?.status === "suspended" || account?.status === "rejected") {
@@ -1123,14 +1486,42 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         } catch { /* fall through to normal handling rather than dropping the message */ }
       }
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
-      if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
+      if (message.from && typeof message.text?.body === "string") {
+        const pendingOffer = takeVoiceOffer(message.from);
+        if (pendingOffer && isOfferYes(message.text.body)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
+        if (voiceRepliesEnabled() && parseVoiceRequest(message.text.body)) {
+          const wantsVoice = (await getVoiceState(message.from)) !== "text_only";
+          if (wantsVoice) armExplicitVoice(message.from);
+          await deliverWhatsAppReply(message.from, wantsVoice ? EXPLICIT_VOICE_CONFIRMATION : EXPLICIT_VOICE_TEXT_ONLY);
+          continue;
+        }
+        if (isVoiceGoAhead(message.text.body) && hasExplicitVoice(message.from)) {
+          // "do it" after the promise: say the last answer aloud now, don't wait for a new question.
+          consumeExplicitVoice(message.from);
+          const last = getLastAnswer(message.from);
+          if (last) await deliverAnswer(message.from, last, true, { userText: message.text.body, explicitVoice: true });
+          else await deliverWhatsAppReply(message.from, "Ask me your question and I'll answer it in voice.");
+          continue;
+        }
+        const voiceCommand = parseVoiceCommand(message.text.body);
+        if (voiceCommand) {
+          const saved = await setTextOnly(message.from, voiceCommand === "text_only");
+          await deliverWhatsAppReply(message.from, saved
+            ? (voiceCommand === "text_only" ? TEXT_ONLY_CONFIRMATION : VOICE_ON_CONFIRMATION)
+            : "I couldn’t save that voice setting just now. Please try again shortly.");
+          continue;
+        }
+      }
+      if (message.from && message.text?.body && asksForUploadLink(message.text.body) && await sendDocumentsLink(message.from)) continue;
+      if (message.from && message.text?.body && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
+      if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
         try {
           // UDC/AKIF can occur in a person's or company's name. Consume a
           // clear answer to the active form before keyword-based tutoring;
           // actual learning questions still bypass intake without a model call.
           if (await handleChatUi(message.from, message, true)) continue;
-          const reply = await answerGuidance(message.from, message.text.body, message.id);
-          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+          const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
+          if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
@@ -1145,20 +1536,40 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
           continue;
         }
+        if (!reserveTranscription(message.from)) {
+          await deliverWhatsAppReply(message.from, "You’ve reached today’s voice note limit. Please type your message and I’ll keep helping.");
+          continue;
+        }
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
-          react("ack", message.from, message.id);
           const media = await downloadWhatsAppMedia(message.audio.id);
+          req.log.info({ flow: "voice_message", stage: "download", outcome: "success", audioBytes: media.bytes.length, mimeType: media.mimeType }, "UDC voice input downloaded");
           voiceStage = 'transcription';
-          const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
+          const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
+          const transcript = heard.text;
+          const voiceCrisis = crisisSafetyReply(transcript);
+          if (voiceCrisis) {
+            await deliverWhatsAppReply(message.from, voiceCrisis, false);
+            continue;
+          }
+          req.log.info({ flow: "voice_message", stage: "transcription", outcome: "success", transcriptChars: transcript.length, languageDetected: Boolean(heard.language) }, "UDC voice input transcribed");
+          // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
+          // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.
+          reactByMeaning(message.from, message.id, transcript);
+          const pendingOffer = takeVoiceOffer(message.from);
+          if (pendingOffer && isOfferYes(transcript)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
+          // A voice note during an active form or registration is the same turn, spoken: the
+          // guided flow hears the transcript exactly like typed text, and the brain's
+          // conversational reply can come back as a voice note (voice MVP, Phase 9 item 5e).
+          // Structured content - fixed questions, review screens, notes - always stays text.
+          try {
+            const voiceLanguage = pickVoiceLanguage({ mainLanguage: await guidanceMainLanguage(message.from), heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined });
+            if (await handleChatUi(message.from, { id: message.id, text: { body: transcript } } as ChatMessage, false, { voiceNote: true, language: voiceLanguage })) continue;
+          } catch { /* fall through to guidance, same as before voice intake existed */ }
           voiceStage = 'answer';
-          const guidance = await answerGuidance(message.from, transcript, message.id, true);
+          const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
-            if (guidance) {
-              // Draft voice reply: generic text only, user spoke first, flag on. Any failure falls back to text.
-              const spoken = await trySpeakReply(message.from, guidance);
-              if (spoken===false) await deliverWhatsAppReply(message.from, guidance);
-            }
+            if (guidance) await deliverAnswer(message.from, guidance, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true });
             continue;
           }
           voiceStage = 'trade_context';
@@ -1166,21 +1577,31 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
           const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id, message.context?.id) : null;
           if (voiceDealId && speaker) {
-            await db.insert(dealConversationEventsTable).values({ dealId: voiceDealId, userId: speaker.id,
-              participantRole: speaker.role, intent: "voice_transcript_unconfirmed",
-              originalText: transcript, relayText: null, relayed: false });
+            // Voice inside a deal room: treat the transcript like a typed deal
+            // message and let the normal text pipeline below handle it
+            // (questions, clarifications, document requests, relay drafts).
+            // Commercial commitments (accept/reject/counteroffer) from voice
+            // still require a text confirmation inside handleDealWhatsAppMessage.
+            req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "routing_to_deal_conversation" }, "UDC deal voice note routed to deal conversation");
+            (message as { voiceTranscript?: boolean }).voiceTranscript = true;
+            message.text = { body: transcript };
+            message.audio = undefined;
+          } else {
+            req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "awaiting_text_confirmation" }, "UDC voice note needs text confirmation before trade action");
+            await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
+            continue;
           }
-          await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
-          continue;
-        } catch {
-          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed' }, 'UDC voice processing failed');
+        } catch (error) {
+          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed', errorType: error instanceof Error ? error.name : 'unknown' }, 'UDC voice processing failed');
           const reply = voiceStage === 'answer'
             ? "I read your voice note, but couldn’t prepare an answer just now. Please try your question again shortly."
             : voiceStage === 'trade_context'
               ? "I read your voice note, but couldn’t check the deal context. Please confirm any trade instructions in text."
               : voiceStage === 'download'
                 ? "I couldn’t download that voice note just now. Please resend it shortly."
-                : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
+                : error instanceof Error && error.message === "akif_audio_http_503"
+                  ? "Voice notes are still being set up on our side. Please type your message for now."
+                  : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
           await deliverWhatsAppReply(message.from, reply);
           continue;
         }
@@ -1310,12 +1731,20 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
 
+      // Draft commands and replies to a saved bot message are deal actions. They must not
+      // depend on the AI model choosing to hand them back, or a recent chat can swallow them.
+      const dealActionDirect = Boolean(message.from) && (
+        requestedWhatsAppDraft(message.text.body) !== null
+        || requestedDealPause(message.text.body) !== null
+        || await isReplyToSavedDealMessage(message.from, message.context?.id)
+      );
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
         // Short follow-ups such as “and FOB” remain in the tutoring conversation.
         // Explicit trade commands still return to the authorized deal workflow.
         try {
-          const reply = await answerGuidance(message.from, message.text.body, message.id, false, true);
-          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+          if (!dealActionDirect && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
+          const reply = dealActionDirect ? null : await answerGuidance(message.from, message.text.body, message.id, false, true);
+          if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
@@ -1325,6 +1754,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           message.text.body,
           message.context?.id,
           message.id,
+          { voiceTranscript: (message as { voiceTranscript?: boolean }).voiceTranscript },
         );
         if (dealMessage) {
           if ("duplicate" in dealMessage && dealMessage.duplicate) {
@@ -1341,12 +1771,20 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
             try {
               const signedUrl = await createSignedDownloadUrl(dealMessage.documentToSender.storageObjectPath);
-              const documentDelivery = await sendWhatsAppDocument(
-                message.from,
-                signedUrl,
-                dealMessage.documentToSender.fileName,
-                `UDC ${dealMessage.documentToSender.documentType} document`,
-              );
+              // Photos arrive as viewable images, not generic file documents.
+              const isImage = /\.(jpe?g|png|webp)$/i.test(dealMessage.documentToSender.fileName);
+              const documentDelivery = isImage
+                ? await sendWhatsAppImage(
+                    message.from,
+                    signedUrl,
+                    `UDC ${dealMessage.documentToSender.documentType} image`,
+                  )
+                : await sendWhatsAppDocument(
+                    message.from,
+                    signedUrl,
+                    dealMessage.documentToSender.fileName,
+                    `UDC ${dealMessage.documentToSender.documentType} document`,
+                  );
               documentDelivered = documentDelivery.delivered;
               documentMessageId = "messageId" in documentDelivery
                 ? documentDelivery.messageId
@@ -1356,9 +1794,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             }
 
             const replyBody = documentDelivered
-              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It’s a private draft for review. Complete the placeholders before sharing or signing." : ""}`
+              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It is a private UDC template, not legal advice. Complete the placeholders and have your lawyer review it before sharing or signing. UDC acts only as an introducing agent between buyer and seller." : ""}`
               : `I’ve got the ${dealMessage.documentToSender.documentType}, but it didn’t send. I’ll keep it here for now.`;
             const delivery = await deliverWhatsAppReply(message.from, replyBody);
+            if (documentDelivered) react("complete", message.from, message.id); // one ✅ on the user's request once the document went out
 
             if (documentDelivered && documentMessageId && dealMessage.dealId && dealMessage.recipientUserId) {
               await db.insert(whatsappMessageContextsTable)
@@ -1465,7 +1904,11 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         memory: hasSavedDraft && !sellerStartsAnotherProduct ? savedIntake!.draft : null,
       });
       if (!intakeDecision) {
-        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
+        // The model is slow or rate limited. Do not dead-end: the guided form needs no AI, so continue there.
+        const fallbackAction = isSellerOffer(message.text.body) || savedIntake?.role === "seller" ? "offer" : "requirement";
+        await deliverWhatsAppReply(message.from, "My assistant is busy right now, so I will take your details step by step instead.");
+        try { if (await handleChatUi(message.from, { id: message.id ? `${message.id}:ai-fallback` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${fallbackAction}` } } } as ChatMessage)) continue; } catch { /* fall through to the plain retry note */ }
+        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again in about a minute.");
         continue;
       }
       const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
@@ -1475,6 +1918,13 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         // Model extraction cannot authorize another account role. Apply the
         // same boundary as native forms before writes or intake-memory changes.
         if (account && account.role !== intakeRole) {
+          // A follow-up with no trade details (for example "Can u do that for me?") is a chat question, not a submission.
+          const noDetails = !intakeDecision.fields || Object.keys(intakeDecision.fields).length === 0;
+          if (noDetails && !hasSavedDraft) {
+            const chatReply = await answerGuidance(message.from, message.text.body, message.id).catch(() => null);
+            if (chatReply) { await deliverWhatsAppReply(message.from, chatReply); continue; }
+            if (chatReply === "") continue;
+          }
           await deliverWhatsAppReply(message.from,
             `Your account is registered as ${account.role}. UDC must review role changes before you submit as a ${intakeRole}.`);
           continue;
@@ -1611,8 +2061,18 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     }
   }
 
+  // A reply that Meta throttled (429 / rate-limit code) even after retries must not leave the claim completed:
+  // release it and answer non-2xx so Meta redelivers the message.
+  const lost = claimedInbound.filter((id) => { const from = senderOf.get(id); return from !== undefined && failedReplies.has(from); });
+  if (lost.length) {
+    await releaseInboundMessages(lost);
+    await completeInboundMessages(claimedInbound.filter((id) => !lost.includes(id)));
+    req.log.warn({ flow: "whatsapp_reply", reason: "rate_limited_reply_released", count: lost.length }, "WhatsApp reply could not be delivered; asking Meta to redeliver");
+    res.sendStatus(503);
+    return;
+  }
   await completeInboundMessages(claimedInbound);
   res.sendStatus(200);
-});
+}
 
 export default router;

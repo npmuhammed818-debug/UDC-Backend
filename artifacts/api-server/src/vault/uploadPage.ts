@@ -1,26 +1,110 @@
+import { parseMultiDocumentType } from "./uploadLink.ts";
+
 const LABELS: Record<string, string> = {
   passport: "passport", national_id: "national ID", bank_statement: "bank statement",
-  company_registration: "company registration", business_license: "business licence",
+  company_registration: "company registration or trade licence", business_license: "business licence",
   tax_certificate: "tax certificate", commercial_agreement: "commercial agreement", other: "document",
+  tax_id: "tax ID", import_licence: "import licence", export_licence: "export licence or exporter ID",
+  product_licence: "product licence", past_exports: "past export invoices or factory photos",
 };
+const cap = (v: string) => v.charAt(0).toUpperCase() + v.slice(1);
 const esc = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 
+const LOCK_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
+const TICK_SVG = `<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="#1a7f37"/><path d="m8 12.5 2.7 2.7L16 9.5"/></svg>`;
+
+const PAGE_CSS = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#faf9f7;color:#111;min-height:100vh;display:flex;justify-content:center;padding:3.5rem 1.25rem 2rem}
+  main{width:100%;max-width:22rem;text-align:center}
+  .logo{width:3.25rem;height:3.25rem;margin:0 auto 1.5rem;background:#f0efec;border-radius:.9rem;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.95rem;letter-spacing:.02em;color:#111}
+  h1{font-family:Georgia,'Times New Roman',serif;font-weight:500;font-size:1.65rem;line-height:1.25;margin-bottom:.5rem}
+  .sub{color:#6b6560;font-size:.95rem;margin-bottom:2rem}
+  .field{display:block;text-align:left;background:#f5f3f1;border:1px solid #eceae6;border-radius:.8rem;padding:.9rem 1rem;margin-bottom:1rem;cursor:pointer}
+  .field .lab{display:flex;align-items:center;gap:.5rem;color:#6b6560;font-size:.9rem}
+  .field .name{margin-top:.35rem;font-size:.95rem;word-break:break-all}
+  .field input{display:none}
+  .field.done{border-color:#cfe3d4;background:#f4f9f5}
+  .field .status{font-size:.85rem;margin-top:.35rem}
+  .field .status.ok{color:#1a7f37}
+  .field .status.err{color:#b3261e}
+  button{width:100%;border:0;border-radius:.8rem;background:#111;color:#fff;font-size:1rem;padding:.95rem;cursor:pointer}
+  .btn{display:block;width:100%;box-sizing:border-box;border-radius:.8rem;background:#111;color:#fff;font-size:1rem;padding:.95rem;margin-top:1.5rem;text-decoration:none;text-align:center}
+  button:disabled{opacity:.55;cursor:default}
+  .note{display:flex;gap:.45rem;align-items:flex-start;justify-content:center;color:#8a8580;font-size:.8rem;line-height:1.45;margin-top:1.5rem;text-align:center}
+  .note svg{flex:none;margin-top:.1rem}
+  .tick{margin:1rem auto 1.25rem;display:flex;justify-content:center}
+  .group{text-align:left;margin-bottom:.25rem}
+  .group .doc{font-weight:600;font-size:.95rem;margin:0 0 .4rem .1rem}
+`;
+
+function pageShell(title: string, inner: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>UDC secure upload</title><style>${PAGE_CSS}</style></head><body><main><div class="logo">UDC</div><h1>${esc(title)}</h1>${inner}</main></body></html>`;
+}
+
+// The UDC WhatsApp number customers return to; the deployed number wins, the
+// staging number is the fallback.
+function backToChatUrl(): string {
+  const num = (process.env.UDC_WHATSAPP_PUBLIC_NUMBER?.trim() || "918136942531").replace(/\D/g, "");
+  return `https://wa.me/${num}`;
+}
+const BACK_TO_CHAT = `<a class="btn" href="${backToChatUrl()}">Back to chat</a>`;
+
+const PRIVACY_NOTE = `<p class="note">${LOCK_SVG}<span>Stored privately. Only UDC's verification team can open it. This link works once and expires 15 minutes after it was sent.</span></p>`;
+
 export function uploadPageHtml(input: { state: "ready"; documentType: string } | { state: "closed" }) {
-  const head = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>UDC secure upload</title><style>body{font-family:system-ui,sans-serif;max-width:30rem;margin:2rem auto;padding:0 1rem;color:#111}button{padding:.7rem 1.2rem;font-size:1rem}.note{color:#555;font-size:.9rem}</style></head><body><h1>UDC secure upload</h1>`;
   if (input.state === "closed") {
-    return `${head}<p>This upload link has expired or was already used. Ask AKIF on WhatsApp for a new one.</p></body></html>`;
+    return pageShell("Link closed", `<p class="sub">This upload link has expired or was already used. Ask AKIF on WhatsApp for a new one.</p>`);
   }
-  const label = esc(LABELS[input.documentType] ?? "document");
-  return `${head}<p>Upload your <strong>${label}</strong> (PDF, PNG or JPG, up to 8 MB).</p>
-<input id="f" type="file" accept="application/pdf,image/png,image/jpeg"> <button id="b">Upload securely</button>
-<p id="m" role="status"></p>
-<p class="note">Encrypted in transit and stored privately. Only UDC's verification team can open it. This link works once and expires 15 minutes after it was sent.</p>
+  const multiKeys = parseMultiDocumentType(input.documentType);
+  if (multiKeys) {
+    const fields = multiKeys.map((k) => `
+  <div class="group"><p class="doc">${esc(cap(LABELS[k] ?? "document"))}</p>
+  <label class="field" data-field="${esc(k)}"><input type="file" accept="application/pdf,image/png,image/jpeg" data-doc="${esc(k)}">
+    <span class="lab">${LOCK_SVG}<span>Choose file</span></span><span class="name"></span><span class="status" data-msg="${esc(k)}"></span>
+  </label></div>`).join("");
+    return pageShell("Your documents", `<p class="sub">PDF, PNG or JPG, up to 8 MB each. Pick your files, then one tap uploads them all.</p>${fields}
+<button id="b" type="button">Upload all securely</button>
+<p class="note" id="m" role="status"></p>
+${PRIVACY_NOTE}
 <script>
-document.getElementById('b').onclick=async()=>{const m=document.getElementById('m'),f=document.getElementById('f').files[0];
-if(!f){m.textContent='Choose a file first.';return;}
+const inputs=[...document.querySelectorAll('input[type=file]')],btn=document.getElementById('b'),m=document.getElementById('m');
+inputs.forEach((inp)=>{inp.onchange=()=>{const f=inp.files[0];const field=inp.closest('.field');
+field.querySelector('.name').textContent=f?f.name:'';};});
+btn.onclick=async()=>{
+const chosen=inputs.filter((i)=>i.files[0]&&!i.disabled);
+if(!chosen.length){m.textContent='Choose at least one file first.';return;}
+btn.disabled=true;m.textContent='';
+await Promise.all(chosen.map(async(inp)=>{
+const f=inp.files[0],field=inp.closest('.field'),st=field.querySelector('.status');
+st.className='status';st.textContent='Uploading...';
+try{const r=await fetch(location.pathname+'?doc='+encodeURIComponent(inp.dataset.doc),{method:'POST',headers:{'content-type':f.type||'application/octet-stream'},body:f,credentials:'omit'});
+if(r.status===201||r.status===409){st.className='status ok';st.textContent='Received.';field.classList.add('done');inp.disabled=true;}
+else{st.className='status err';st.textContent=r.status===415?'Only PDF, PNG or JPG files are accepted.':r.status===410?'This link has expired. Ask AKIF for a new one.':'Upload failed. Please try again.';btn.disabled=false;}
+}catch(e){st.className='status err';st.textContent='Upload failed. Please try again.';btn.disabled=false;}
+}));
+if(inputs.every((i)=>i.disabled||!i.files[0])&&chosen.every((i)=>i.disabled)){
+document.querySelector('main').innerHTML='<div class="logo">UDC</div><div class="tick">${TICK_SVG}</div><h1>Received</h1><p class="sub">UDC will review your documents and update your status.</p>${BACK_TO_CHAT}';}
+};
+</script>`);
+  }
+  const label = esc(cap(LABELS[input.documentType] ?? "document"));
+  return pageShell(label, `<p class="sub">PDF, PNG or JPG, up to 8 MB.</p>
+<form id="up"><label class="field" id="field"><input id="f" type="file" accept="application/pdf,image/png,image/jpeg">
+  <span class="lab">${LOCK_SVG}<span>Choose file</span></span><span class="name" id="name"></span>
+</label>
+<button id="b" type="submit">Upload securely</button></form>
+<p class="note" id="m" role="status"></p>
+${PRIVACY_NOTE}
+<script>
+const f=document.getElementById('f'),nameEl=document.getElementById('name'),m=document.getElementById('m'),form=document.getElementById('up');
+f.onchange=()=>{nameEl.textContent=f.files[0]?f.files[0].name:'';};
+form.onsubmit=async(e)=>{e.preventDefault();const file=f.files[0];
+if(!file){m.textContent='Choose a file first.';return;}
 m.textContent='Uploading...';
-try{const r=await fetch(location.pathname,{method:'POST',headers:{'content-type':f.type||'application/octet-stream'},body:f,credentials:'omit'});
-m.textContent=r.status===201?'Received. UDC will review it and update your status. You can close this page.':r.status===415?'Only PDF, PNG or JPG files are accepted.':r.status===410?'This link has expired or was already used. Ask AKIF for a new one.':'Upload failed. Please try again.';
-}catch(e){m.textContent='Upload failed. Please try again.';}};
-</script></body></html>`;
+try{const r=await fetch(location.pathname,{method:'POST',headers:{'content-type':file.type||'application/octet-stream'},body:file,credentials:'omit'});
+if(r.status===201){document.querySelector('main').innerHTML='<div class="logo">UDC</div><div class="tick">${TICK_SVG}</div><h1>Received</h1><p class="sub">UDC will review it and update your status.</p>${BACK_TO_CHAT}';}
+else m.textContent=r.status===415?'Only PDF, PNG or JPG files are accepted.':r.status===410?'This link has expired or was already used. Ask AKIF for a new one.':'Upload failed. Please try again.';
+}catch(err){m.textContent='Upload failed. Please try again.';}};
+</script>`);
 }

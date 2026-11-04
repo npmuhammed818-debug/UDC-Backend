@@ -108,6 +108,7 @@ router.post("/auth/password/recovery/confirm", async (req, res) => {
       input.challengeId,
       input.code,
       input.password,
+      authRateLimitKey(req),
     );
     // No auto-login: all old sessions are revoked and the new password must be used.
     res.json({ success: true });
