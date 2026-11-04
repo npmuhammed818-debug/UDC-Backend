@@ -1,4 +1,4 @@
-import {and,eq,sql} from 'drizzle-orm';
+import {and,eq,sql,desc} from 'drizzle-orm';
 import {db,dealsTable,buyerRequestsTable,usersTable,auditLogsTable} from '@workspace/db';
 import {dealAccess} from './access';
 import {buyerContextDraft,requestAllowed,type AssistKind} from './tradeAssist';
@@ -13,7 +13,7 @@ export async function saveTradeAssistRequest(u:{id:string;role:string},id:string
    if(!requestAllowed(kind,u.role,deal.status))return {error:409};
    const action='trade_assist_'+kind;
    const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),eq(auditLogsTable.action,action))).limit(1);
-   if(prior)return {requestId:prior.id,repeated:true};
+   if(prior){const [review]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),sql`${auditLogsTable.metadata}->>'requestId'=${prior.id}`)).orderBy(desc(auditLogsTable.createdAt)).limit(1);return {requestId:prior.id,repeated:true,status:String(review?.metadata?.status||'awaiting_human_review')};}
    let buyerDraft;
    if(['repeat_order','switch_seller','backup_seller'].includes(kind)){
     if(!deal.buyerRequestId)return {error:409};
@@ -22,6 +22,6 @@ export async function saveTradeAssistRequest(u:{id:string;role:string},id:string
     buyerDraft=buyerContextDraft(request);
    }
    const [saved]=await tx.insert(auditLogsTable).values({actorUserId:u.id,action,entityType:'deal',entityId:id,metadata:{state:'awaiting_human_review',...(reason?{reason:reason}:{}),...(buyerDraft?{buyerDraft}:{}),noCounterpartyTransfer:true,noCommitment:true}}).returning({id:auditLogsTable.id});
-   return {requestId:saved.id,repeated:false};
+   return {requestId:saved.id,repeated:false,status:'awaiting_human_review'};
   });
 }

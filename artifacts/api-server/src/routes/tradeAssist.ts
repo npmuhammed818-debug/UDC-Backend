@@ -1,7 +1,7 @@
 import {documentCheck} from '../deals/documentCheck';
 import {saveTradeAssistRequest} from '../deals/tradeAssistRepository';
 import {Router} from 'express';
-import {and,desc,eq,gte,lt,inArray} from 'drizzle-orm';
+import {and,desc,eq,gte,lt,inArray,sql} from 'drizzle-orm';
 import {z} from 'zod/v4';
 import {db,dealsTable,usersTable,documentsTable,documentExtractionsTable,documentAccessTable,auditLogsTable} from '@workspace/db';
 import {requireAuth,requireRole} from '../auth/middleware';
@@ -11,7 +11,25 @@ import {requestAllowed,requestKinds,diarySummary} from '../deals/tradeAssist';
 const router=Router();
 router.get('/admin/trade-assist/requests',requireRole('admin'),async(_req,res)=>{
  res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
- try{const requests=await db.select({id:auditLogsTable.id,requester:auditLogsTable.actorUserId,dealId:auditLogsTable.entityId,action:auditLogsTable.action,details:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind))).orderBy(desc(auditLogsTable.createdAt)).limit(100);res.json({requests,notice:'Review queue only. This endpoint cannot change a deal, contact a party or approve terms.'});}catch{res.sendStatus(503);}
+ try{const requests=await db.select({id:auditLogsTable.id,requester:auditLogsTable.actorUserId,dealId:auditLogsTable.entityId,action:auditLogsTable.action,details:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind))).orderBy(desc(auditLogsTable.createdAt)).limit(100);const reviews=requests.length?await db.select({metadata:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),inArray(sql<string>`${auditLogsTable.metadata}->>'requestId'`,requests.map(r=>r.id)))).orderBy(desc(auditLogsTable.createdAt)):[];res.json({requests:requests.map(r=>{const review=reviews.find(v=>v.metadata?.requestId===r.id);return {...r,status:review?.metadata?.status||'awaiting_human_review',reviewNote:review?.metadata?.note||null};}),notice:'Review queue only. This endpoint cannot change a deal, contact a party or approve terms.'});}catch{res.sendStatus(503);}
+});
+const reviewSchema=z.object({status:z.enum(['triaged','resolved','declined']),note:z.string().trim().min(3).max(1000)}).strict();
+router.post('/admin/trade-assist/requests/:requestId/review',requireRole('admin'),async(req,res)=>{
+ res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
+ if(!req.is('application/json')||(req.header('origin')&&req.header('origin')!==process.env.UDC_TRADE_ASSIST_ORIGIN)){res.sendStatus(403);return;}
+ try{
+  const id=z.string().uuid().parse(req.params.requestId),input=reviewSchema.parse(req.body);
+  const result=await db.transaction(async tx=>{
+   const [request]=await tx.select().from(auditLogsTable).where(and(eq(auditLogsTable.id,id),inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind)))).limit(1).for('update');
+   if(!request)return null;
+   const [prior]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),sql`${auditLogsTable.metadata}->>'requestId'=${id}`)).orderBy(desc(auditLogsTable.createdAt)).limit(1);
+   if(['resolved','declined'].includes(String(prior?.metadata?.status)))return {conflict:true};
+   await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'trade_assist_review_recorded',entityType:'deal',entityId:request.entityId,metadata:{requestId:id,status:input.status,note:input.note}});
+   return {conflict:false};
+  });
+  if(!result){res.sendStatus(404);return;}if(result.conflict){res.sendStatus(409);return;}
+  res.json({status:input.status,notice:'Human review recorded. No message, order, seller change or payment was made.'});
+ }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 router.use('/trade-assist',(_req,res,next)=>{res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}next();},requireAuth,requireNonAgentDealAccess,(req,res,next)=>{if(req.authUser!.status!=='verified'||!['buyer','seller'].includes(req.authUser!.role)){res.sendStatus(403);return;}next();});
 const inputSchema=z.object({kind:z.enum(requestKinds),reason:z.enum(['price','delay','trust','quality','terms','other']).optional()}).strict();
@@ -21,7 +39,7 @@ router.post('/trade-assist/deals/:dealId/requests',async(req,res)=>{
   const id=z.string().uuid().parse(req.params.dealId),input=inputSchema.parse(req.body),u=req.authUser!;
   const out=await saveTradeAssistRequest(u,id,input.kind,input.reason);
   if('error' in out){res.sendStatus(out.error!);return;}
-  res.status(out.repeated?200:201).json({...out,status:'awaiting_human_review',notice:'Request saved for UDC review. No person was contacted, no seller changed, no order or obligation created. Old documents, messages and seller terms will not transfer.'});
+  res.status(out.repeated?200:201).json({...out,notice:'Request recorded for UDC review. This request action does not contact anyone, change a seller, create an order or create an obligation. Old documents, messages and seller terms will not transfer.'});
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 router.get('/trade-assist/deals/:dealId',async(req,res)=>{
@@ -31,8 +49,9 @@ router.get('/trade-assist/deals/:dealId',async(req,res)=>{
   if(!deal){res.sendStatus(404);return;}
   const [seller]=await db.select({status:usersTable.status}).from(usersTable).where(eq(usersTable.id,deal.sellerUserId)).limit(1);
   const proofPack=await db.select({id:documentsTable.id,type:documentsTable.documentType,status:documentsTable.status,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(100);
-  const requests=await db.select({id:auditLogsTable.id,action:auditLogsTable.action,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind)))).orderBy(desc(auditLogsTable.createdAt)).limit(30);
-  res.json({dealNumber:deal.dealNumber,status:deal.status,asOf:deal.updatedAt,sellerReview:{status:seller?.status==='verified'?'verified':'not_currently_verified',notice:'Recorded account review only, not a guarantee of stock, performance or authenticity.'},proofPack:{documents:proofPack,notice:'Accessible approved records only. Approval is not an authenticity guarantee. No files have been shared.'},requests:requests.map(r=>({...r,status:'awaiting_human_review'})),actions:requestKinds.filter(kind=>requestAllowed(kind,u.role,deal.status)),notice:'Prior seller chats, documents and quotations stay on their original deal.'});
+  const requests=await db.select({id:auditLogsTable.id,action:auditLogsTable.action,metadata:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind)))).orderBy(desc(auditLogsTable.createdAt)).limit(30);
+  const reviews=requests.length?await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),inArray(sql<string>`${auditLogsTable.metadata}->>'requestId'`,requests.map(r=>r.id)))).orderBy(desc(auditLogsTable.createdAt)):[];
+  res.json({dealNumber:deal.dealNumber,status:deal.status,asOf:deal.updatedAt,sellerReview:{status:seller?.status==='verified'?'verified':'not_currently_verified',notice:'Recorded account review only, not a guarantee of stock, performance or authenticity.'},proofPack:{documents:proofPack,notice:'Accessible approved records only. Approval is not an authenticity guarantee. No files have been shared.'},requests:requests.map(({metadata,...r})=>{const review=reviews.find(v=>v.metadata?.requestId===r.id);return {...r,status:review?.metadata?.status||'awaiting_human_review',reviewNote:review?.metadata?.note||null};}),actions:requestKinds.filter(kind=>requestAllowed(kind,u.role,deal.status)),notice:'Prior seller chats, documents and quotations stay on their original deal.'});
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,res)=>{

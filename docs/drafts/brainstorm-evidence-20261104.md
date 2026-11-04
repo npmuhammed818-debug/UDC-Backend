@@ -25,9 +25,9 @@ Source-only main moved to 9f176ea after all seven CI checks. Production remained
 |20 Festival timing|No dedicated implementation located|Country/product calendar sources and commercial opt-in|
 |22 Reminders|Existing task planner and shipment ETA follow-ups|Customer-owned general reminders and accurate delivery state|
 |23 Trader diary|UTC-month current-state counts SQL tested. Savings/ranking null|Historical completion ledger and evidenced savings|
-|24 Human help|Explicit request queue + existing handoff detection/grievance|Human assignment, response and closeout. No claim person contacted|
+|24 Human help|Explicit request queue + existing handoff detection/grievance|Human assignment and actual work. Review closeout/status now records admin attestation, no claim person contacted|
 |25 Backup seller;quick switch|Predeal reject/rematch exists; new private buyer-only review request|New linked deal workflow, fresh terms/acceptance, never transfer old seller records|
-|26 Exit reason|API structured private reason stored for admin|Guided WhatsApp reason/skip, don't relay private reason|
+|26 Exit reason|API structured private reason stored for admin|Explicit WhatsApp 'exit reason delay' now works; guided buttons/skip remain. Never relay private reason|
 |27 Language bridge|Existing multilingual comprehension/voice foundations; text currently English by policy|Translation relay with exact critical terms preserved and scope review|
 |29 Trial order|No dedicated implementation located|Explicit proposed reduced quantity, seller terms, no inferred commitment|
 |30 Agent leaderboard|No leaderboard located; agents have redacted own referral views|Permissioned publication, honest metrics, no prices/private identities|
