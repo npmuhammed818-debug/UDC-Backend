@@ -1,3 +1,4 @@
+import { crisisSafetyReply } from "../akif/crisisSafety";
 import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
@@ -1390,6 +1391,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       if (!claimed) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
       if (message.from) { senderOf.set(message.id, message.from); markReadAndTyping(message.from, message.id); }
+      // Minimal text-only crisis first response before consent, trade, reactions or AI.
+      // Captions are checked too, without downloading the attachment.
+      const crisis = crisisSafetyReply([message.text?.body, message.document?.caption, message.image?.caption].filter(Boolean).join(" "));
+      if (message.from && crisis) {
+        await deliverWhatsAppReply(message.from, crisis, false);
+        continue;
+      }
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
         try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
         continue;
@@ -1539,6 +1547,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           voiceStage = 'transcription';
           const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
           const transcript = heard.text;
+          const voiceCrisis = crisisSafetyReply(transcript);
+          if (voiceCrisis) {
+            await deliverWhatsAppReply(message.from, voiceCrisis, false);
+            continue;
+          }
           req.log.info({ flow: "voice_message", stage: "transcription", outcome: "success", transcriptChars: transcript.length, languageDetected: Boolean(heard.language) }, "UDC voice input transcribed");
           // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
           // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.

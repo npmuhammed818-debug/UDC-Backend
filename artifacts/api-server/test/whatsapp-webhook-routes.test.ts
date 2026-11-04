@@ -143,6 +143,22 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
+    await t.test('staging crisis text, captions and voice stop before trade and model calls', async () => {
+      const oldEnv=process.env.UDC_APP_ENV; process.env.UDC_APP_ENV='staging';
+      try {
+        for (const fields of [{text:{body:'I want to kill myself'}},{image:{id:'fake-image',caption:'എനിക്ക് മരിക്കണം'}}]) {
+          reset();state.privacyReply='Reply AGREE';
+          assert.equal((await message(fields)).status,200);
+          assert.equal(state.sent.length,1);assert.match(state.sent[0].body,/emergency|അടിയന്തര/);
+          assert.deepEqual(state.guidanceCalls,[]);assert.deepEqual(state.recorded,[]);assert.deepEqual(state.intake,[]);assert.deepEqual(state.uploaded,[]);assert.equal(state.voice.length,0);
+        }
+        reset();state.transcript='എനിക്ക് ജീവിക്കാൻ തോന്നുന്നില്ല';
+        assert.equal((await message({audio:{id:'fake-crisis-audio'}})).status,200);
+        assert.match(state.sent[0].body,/അടിയന്തര/);assert.deepEqual(state.guidanceCalls,[]);assert.deepEqual(state.recorded,[]);assert.equal(state.voice.length,0);
+        reset();state.transcript=undefined;
+        assert.equal((await message({text:{body:'I want to die'}},false)).status,401);assert.equal(state.sent.length,0);
+      } finally { if(oldEnv===undefined)delete process.env.UDC_APP_ENV;else process.env.UDC_APP_ENV=oldEnv;state.transcript=undefined; }
+    });
     await t.test('dedup outage returns retryable failure before any outbound or trade work', async () => {
       reset();state.dedupFailure=true;
       const response=await message({text:{body:'100 MT copper'}});
