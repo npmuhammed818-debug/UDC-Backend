@@ -9,3 +9,12 @@ test('a verified binding reuses internal identity across transports, dedup stays
  assert.equal(await processChannelMessage({...msg,channel:'telegram',externalSenderId:'unknown',text:'I am same-user'},ports),'identity_or_consent_required');
  assert.deepEqual(calls,['same-user','whatsapp','same-user','telegram']);
 });
+
+test('stable account history has one key across transports and separates accounts',async()=>{
+ const {accountHistoryKey,resolveHistoryIdentity}=await import('../src/channels/historyIdentity.ts');
+ const secret='synthetic-secret-long-enough';
+ const resolver=async(c:string,s:string)=>c==='whatsapp'&&s==='phone-a'||c==='telegram'&&s==='telegram-a'?'account-a':null;
+ const a=await resolveHistoryIdentity('whatsapp','phone-a',resolver,secret),b=await resolveHistoryIdentity('telegram','telegram-a',resolver,secret);
+ assert.ok(a);assert.ok(b);assert.equal(a.key,b.key);assert.notEqual(a.key,accountHistoryKey('account-b',secret));
+ assert.equal(await resolveHistoryIdentity('telegram','phone-a',resolver,secret),null);
+});

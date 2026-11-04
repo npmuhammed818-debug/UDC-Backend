@@ -2,7 +2,7 @@ import { isBareAcknowledgement } from './intentPhrases';
 import { isBrevityRequest, isDetailRequest, trimToBrief } from './brevity';
 import { handbookVersion, udcHandbookForRole, trustedGuidanceAnswer, validateGuidanceReply, scopeAnswer } from '../akif/udcHandbook';
 import { randomUUID } from 'node:crypto';
-import { guidanceKey } from './guidanceSession';
+import { guidanceKey,guidanceHistoryIdentity } from './guidanceSession';
 import { formatMemoriesForPrompt, recallCustomerMemories } from '../akif/customerMemory';
 import { formatSharedLessonsForPrompt, learnSharedLesson, recallSharedLessons, withdrawSharedLessons } from '../akif/sharedLessons';
 import { recordSelfLesson, reflectOnReply } from '../akif/reflexion';
@@ -43,7 +43,11 @@ function guidanceServiceFallback() {
 /** The customer's chosen main language, if they picked one (session notebook). "" when unknown. */
 export async function guidanceMainLanguage(phone: string): Promise<string> {
   try {
-    const [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash, guidanceKey(phone))).limit(1);
+    const identity=await guidanceHistoryIdentity(phone,async sender=>{
+      const [bound]=await db.select({id:usersTable.id}).from(usersTable).where(eq(usersTable.phone,sender)).limit(1);return bound?.id??null;
+    });
+    let [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash,identity.key)).limit(1);
+
     const language = saved && saved.expiresAt > new Date() ? saved.data.mainLanguage : undefined;
     return typeof language === "string" ? language : "";
   } catch { return ""; }
@@ -54,8 +58,14 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
   // Let trade intake handle it instead of turning it into an unsolicited lesson.
   if (/^(?:EXW|FCA|FAS|FOB|CFR|CIF|CPT|CIP|DAP|DPU|DDP)$/i.test(text.trim())) return null;
 
-  const phoneHash = guidanceKey(phone);
-  const [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash, phoneHash)).limit(1);
+  const identity=await guidanceHistoryIdentity(phone,async sender=>{
+    const [bound]=await db.select({id:usersTable.id}).from(usersTable).where(eq(usersTable.phone,sender)).limit(1);
+    return bound?.id??null;
+  });
+  const phoneHash=identity.key;
+  let [saved] = await db.select().from(sessions).where(eq(sessions.phoneHash, phoneHash)).limit(1);
+  // Old phone-keyed notebooks are kept, but not silently copied into an
+  // account key: those rows do not prove their original account owner.
   const fresh = saved && saved.expiresAt > new Date() ? saved : null;
   if (onlyWithHistory && !fresh) return null;
   if (messageId && fresh?.lastMessageId === messageId) return '';
