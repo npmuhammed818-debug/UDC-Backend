@@ -287,3 +287,7 @@ Extended actual isolated full-lifecycle fixture: parallel reduced draft -> pendi
 ### 2026-11-05 11:44LA repeat-order continuous native proof
 
 Same isolated lifecycle now also executes explicit repeat request -> parallel deduplicated pending requirement -> human review -> fresh seller listing proposal -> refusal without buyer acceptance -> buyer acceptance handler -> distinct new deal/no old files copied. Original deal remains separate. Same-seller existing fresh listing and direct acceptance-handler are explicit fixture limits; no signed customer acceptance/device/live proof.697APItests/types/build/all21native PostgreSQLHTTPsuites pass. Strict0/37complete remains.
+
+### 2026-11-05 11:47LA seller-switch continuous native proof
+
+Actual isolated lifecycle now also registers/verifies a distinct alternate seller, submits/approves a fresh offer, prepares own buyer switch request on held original deal, reviews pending new requirement, proposes exact alternate terms, refuses deal without buyer consent, records buyer acceptance via direct handler and creates separate alternate-seller deal. Sentinel old-seller document stays on original; alternate seller cannot read original deal and original seller cannot read new deal. No copied files.697APItests/types/build/all21native PostgreSQLHTTPsuites pass. Direct acceptance-handler/local sink and synthetic verification/storage are fixture limits, not provider/customer-device or full operational completion. Original status is restored only as test fixture cleanup.
