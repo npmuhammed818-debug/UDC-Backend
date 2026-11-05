@@ -253,3 +253,7 @@ Synthetic authenticated email accepts explicit `my diary YYYY-MM`, sharing Whats
 ### 2026-11-05 11:03LA shared private document comparison
 
 Document comparison now lives in one transactional current-user/current-role/current-deal/current-approved-grant/current-native-revision reader. Existing staging HTTP uses it; synthetic email `check document DEAL-ID DOCUMENT-ID` returns bounded field match/mismatch/not-comparable states only plus review caveats, not private values/file URLs. Native SQL/HTTP confirms stale refusal before extraction refresh, mismatch after refresh, wrong-deal and revoked-grant denial. First email fixture correctly refused because its prior extraction was intentionally stale; test now explicitly proves that refusal before refreshing the isolated fixture.693APItests/types/build and all21isolated PostgreSQL HTTP suites pass. No model approval, payment/terms effect, real inbox or send.
+
+### 2026-11-05 11:06LA WhatsApp private document checker
+
+Explicit synthetic WhatsApp `check document DOCUMENT-ID` now reads the selected own deal through the shared transactional checker, not the model. One formatter across WhatsApp/email returns field states and human-review/no-approval caveats only. Actual signed webhook/native SQL proves stale refusal, current quantity mismatch and unit-price match, revoked access and unknown-document refusal, no storage URL and no model/Meta invocation.693APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. No deployed/device/model proof or real send claimed.

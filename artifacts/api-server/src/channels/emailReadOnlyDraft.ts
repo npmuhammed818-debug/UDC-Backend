@@ -1,3 +1,4 @@
+import {documentCheckText} from '../deals/documentCheckText';
 import {documentCheckRead} from '../deals/documentCheckRead';
 import {traderCompletionDiary} from '../deals/traderDiary';
 import {traderDiaryText} from '../deals/traderDiaryText';
@@ -19,7 +20,7 @@ export async function emailReadOnlyDraft(address:string,text:string){
  if(check){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That document comparison is unavailable. No private record was returned.';
  const result=await documentCheckRead(principal.userId,check[1],check[2]),current=await account!.repository.resolve(address);
  if('error'in result||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That document comparison is unavailable. A current approved record, access and extraction are required. No private record was returned.';
- return ['Private extracted-field comparison as of '+result.extractionAsOf.toISOString()+'.',...result.checks.map(c=>c.field.replaceAll('_',' ')+': '+c.state.replaceAll('_',' ')+'.'),result.notice,'Check the original document with UDC. Staging email draft only. No approval, terms change or message sent.'].join('\n');}
+ return documentCheckText(result)+'\nStaging email draft only. No approval, terms change or message sent.';}
  const diary=/^my diary (\d{4}-(?:0[1-9]|1[0-2]))$/i.exec(input);
  if(diary){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'Your private diary is unavailable for this account. No private record was returned.';
  const result=await traderCompletionDiary(principal.userId,diary[1]),current=await account!.repository.resolve(address);
