@@ -335,3 +335,7 @@ Same continuous fixture now selects the actual deal via signed list callback and
 ### 2026-11-05 12:48LA forged acceptance signature refusal in each journey
 
 Every continuous trial/repeat/backup/switch acceptance now first posts the same buyer button with a forged synthetic HMAC, receives401 and leaves zero consent audits, then legitimate signed replay/duplicate proceeds once. Expected code corrected from403to actual401contract before full all12nativeSQLHTTP rerun pass. Test-only, no runtime/provider action.
+
+### 2026-11-05 12:51LA shared private same-party history email read
+
+Synthetic registered email `our deal history DEAL-ID` now uses the same transactional current-role/verified-same-pair history count as WhatsApp, with explicit deal binding rather than borrowing WhatsApp selection. Shared formatter preserves no-delivery/reliability/terms inference and missing-audit caveats. Native signed fixture HTTP+SQL proves prior same-pair count/completion, outsider/randomdeal refusal, suspended counterparty refusal and changed-role denial; no priorIDs/private content exposed.699APItests/types/API+frontend build and all21isolatednativeSQLHTTPsuites pass. Synthetic email drafts only, no real inbox connection/send or new grant.0/37fullycomplete remains.
