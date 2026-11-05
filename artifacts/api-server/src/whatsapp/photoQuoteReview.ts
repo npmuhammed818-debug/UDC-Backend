@@ -1,0 +1,6 @@
+import {eq} from 'drizzle-orm';import {db,usersTable,whatsappUserContextsTable} from '@workspace/db';import {photoQuoteReview} from '../deals/photoQuoteReview';import {sendWhatsAppText} from './client';
+export async function handlePhotoQuoteReview(phone:string,text:string){
+ const m=/^review photo quote ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(text.trim());if(!m||process.env.UDC_APP_ENV!=='staging'||process.env.AKIF_WHATSAPP_REPLY_SINK!=='store')return false;
+ const [u]=await db.select({id:usersTable.id}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);const [c]=u?await db.select({deal:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,u.id)).limit(1):[];const r=u&&c?await photoQuoteReview(u.id,c.deal,m[1]):{error:404};
+ await sendWhatsAppText(phone,'error'in r?'A current authorized price-list extraction is unavailable. No seller matched or requirement created.':`${r.dealNumber}: ${r.items.length} unverified extracted price-list rows.\n${r.items.slice(0,8).map((item,i)=>`${i+1}. ${item.product.slice(0,80)}: ${item.unitPrice} ${item.currency} per ${item.unit}`).join('\n')}\n${r.items.length>8?'Additional rows omitted from this message. Ask UDC for private review.\n':''}${r.notice}`);return true;
+}

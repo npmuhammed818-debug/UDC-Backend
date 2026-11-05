@@ -224,6 +224,7 @@ try {
   const metaBefore=sent.length,modelsBefore=providerCalls.length;module.clearSunkReplies();
   await post('deal status picture');assert.equal(module.readSunkReplies(phone).at(-1).kind,'image');assert.match(module.readSunkReplies(phone).at(-1).text,/not payment or delivery confirmation/);
   await post("explain my deal's incoterm");assert.match(module.readSunkReplies(phone).at(-1).text,/recorded Incoterm is FOB/);
+  await post('review photo quote '+randomUUID());assert.match(module.readSunkReplies(phone).at(-1).text,/unavailable/);
   await post('our deal history');assert.match(module.readSunkReplies(phone).at(-1).text,/0 prior recorded deals/);assert.match(module.readSunkReplies(phone).at(-1).text,/does not prove timely delivery/);
   await post('quality proof pack');assert.match(module.readSunkReplies(phone).at(-1).text,/0 accessible approved/);
   await post('freight estimate');assert.match(module.readSunkReplies(phone).at(-1).text,/current forwarder quote/);

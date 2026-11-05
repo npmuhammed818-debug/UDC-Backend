@@ -1,3 +1,4 @@
+import {photoQuoteReview} from '../deals/photoQuoteReview';
 import {backupSellerReview} from '../deals/backupSellerReview';
 import {traderCompletionDiary} from '../deals/traderDiary';
 import {disputeBrief} from '../deals/disputeBrief';
@@ -70,6 +71,7 @@ router.get('/trade-assist/deals/:dealId',async(req,res)=>{
   res.json({dealNumber:deal.dealNumber,status:deal.status,asOf:deal.updatedAt,sellerReview:{status:seller?.status==='verified'?'verified':'not_currently_verified',notice:'Recorded account review only, not a guarantee of stock, performance or authenticity.'},proofPack:{documents:proofPack,notice:'Accessible approved records only. Approval is not an authenticity guarantee. No files have been shared.'},requests:requests.map(({metadata,...r})=>{const review=reviews.find(v=>v.metadata?.requestId===r.id);return {...r,status:review?.metadata?.status||'awaiting_human_review',reviewNote:review?.metadata?.note||null};}),actions:requestKinds.filter(kind=>requestAllowed(kind,u.role,deal.status)),notice:'Prior seller chats, documents and quotations stay on their original deal.'});
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
+router.get('/trade-assist/deals/:dealId/photo-quote/:documentId',async(req,res)=>{try{const r=await photoQuoteReview(req.authUser!.id,z.string().uuid().parse(req.params.dealId),z.string().uuid().parse(req.params.documentId));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}});
 router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,res)=>{
  try{
   const id=z.string().uuid().parse(req.params.dealId),docId=z.string().uuid().parse(req.params.documentId),u=req.authUser!;
