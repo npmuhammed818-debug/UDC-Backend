@@ -197,6 +197,17 @@ test('admin trade workflows preserve verification, ownership, review and payment
         records.sellerListingsTable[0].price='495';await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);records.sellerListingsTable[0].price='490';
         const savedExpiry=records.auditLogsTable[0].metadata.expiresAt;records.auditLogsTable[0].metadata.expiresAt=new Date(0).toISOString();await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);for(const expiry of ['invalid',undefined]){records.auditLogsTable[0].metadata.expiresAt=expiry;await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0,'malformed expiry fails closed');}records.auditLogsTable[0].metadata.expiresAt=savedExpiry;
         await respondToTerms('10000000001',proposalId,true);await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,1);
+        const decisionAudit=records.auditLogsTable.find((r:any)=>r.action==='match_terms_accepted');
+        const presentedAudit=records.auditLogsTable.find((r:any)=>r.action==='match_terms_presented');
+        const proposalAudit=records.auditLogsTable.find((r:any)=>r.id===proposalId);
+        for (const [audit,key,invalid] of [[decisionAudit,'fingerprint','wrong'],[decisionAudit,'matchId',randomUUID()],[presentedAudit,'fingerprint','wrong'],[presentedAudit,'allTermsShown',false],[presentedAudit,'transportAccepted',false]] as any[]) {
+          const current=records.auditLogsTable.find((r:any)=>r.id===audit.id);const original=current.metadata[key];current.metadata[key]=invalid;
+          assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required','deal creation revalidates exact consent and presentation');
+          records.auditLogsTable.find((r:any)=>r.id===audit.id).metadata[key]=original;
+        }
+        records.auditLogsTable.find((r:any)=>r.id===proposalAudit.id).metadata.terms.price='489';
+        assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required','stored terms must match their own fingerprint');
+        records.auditLogsTable.find((r:any)=>r.id===proposalAudit.id).metadata.terms.price='490';
         assert.equal((await request('/admin/deals',{...terms,agreedPrice:489})).data.error,'deal_differs_from_buyer_accepted_terms');
         state.failAudit=true;assert.equal((await request('/admin/deals',terms)).status,500);assert.equal(records.dealsTable.length,0);
         const opened=await request('/admin/deals',terms);assert.equal(opened.status,201);const dealId=opened.data.deal.id;

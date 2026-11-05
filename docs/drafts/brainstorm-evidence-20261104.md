@@ -311,3 +311,7 @@ Mock transport separately accepts term text but fails button: no presentation au
 ### 2026-11-05 12:04LA seller-switch private chat retention
 
 Continuous alternate-seller fixture now places original seller private/relayed chat on original deal and proves no conversation event copies into new deal, while original chat remains. Existing original-file and opposite-seller404checks retained.699APItests/types/build/all21native PostgreSQLHTTPsuites pass. Synthetic local proof only.
+
+### 2026-11-05 12:12LA deal creation revalidates exact consent evidence
+
+Deal creation now checks accepted decision fingerprint/match and exact full presentation evidence again, plus stored proposal fields against current terms. A stale/incomplete consent audit cannot silently authorize a new deal even if its action name says accepted. Mock tests alter decision/presentation/terms independently; native lifecycle alters decision/presentation fingerprints and proves refusal then restores synthetic fixture evidence before legitimate creation.699APItests/types/API+frontend build and all21isolated native PostgreSQL HTTP suites pass. Initial mock restoration used stale references after transaction rollback; fixed fixture to restore current records and reran. No hosted DB, historical consent backfill, sends or financial policy changes. Existing incomplete evidence requires a fresh proposal/decision, not inference.

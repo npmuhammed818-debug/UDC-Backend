@@ -221,9 +221,11 @@ export async function acceptedMatchTerms(
     .orderBy(desc(auditLogsTable.createdAt))
     .limit(1);
   const metadata = proposal?.metadata as any;
+  const currentTerms = matchTerms(buyer, seller);
   if (
-    !metadata ||
-    metadata.fingerprint !== termsFingerprint(matchTerms(buyer, seller))
+    !metadata?.terms ||
+    metadata.fingerprint !== termsFingerprint(currentTerms) ||
+    Object.entries(currentTerms).some(([key, value]) => metadata.terms[key] !== value)
   )
     return null;
   const [decision] = await tx
@@ -237,7 +239,18 @@ export async function acceptedMatchTerms(
       ),
     )
     .limit(1);
-  return decision ? (metadata.terms as ReturnType<typeof matchTerms>) : null;
+  if (decision?.metadata?.fingerprint !== metadata.fingerprint ||
+      decision?.metadata?.matchId !== matchId) return null;
+  const [presented] = await tx.select({metadata: auditLogsTable.metadata})
+    .from(auditLogsTable).where(and(
+      eq(auditLogsTable.entityId, proposal.id),
+      eq(auditLogsTable.action, "match_terms_presented"),
+      eq(auditLogsTable.actorUserId, buyer.buyerUserId),
+    )).limit(1);
+  if (presented?.metadata?.allTermsShown !== true ||
+      presented.metadata.transportAccepted !== true ||
+      presented.metadata.fingerprint !== metadata.fingerprint) return null;
+  return metadata.terms as ReturnType<typeof matchTerms>;
 }
 export async function respondToTerms(
   phone: string,
