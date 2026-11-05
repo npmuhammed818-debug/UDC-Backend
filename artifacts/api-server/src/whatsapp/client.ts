@@ -46,6 +46,18 @@ export function trackReplyFailures<T>(fn: (failed: Set<string>) => Promise<T>): 
 // (timeout or 5xx: the message may have been accepted, so it is NEVER retried; callers quarantine it).
 // Returns the last non-ok response when Meta keeps throttling, so the caller raises its usual error.
 async function metaPost(to: string, url: string, init: RequestInit): Promise<Response | null> {
+  if(process.env.UDC_APP_ENV==='staging'&&url.endsWith('/messages')&&typeof init.body==='string'){
+    const payload=JSON.parse(init.body),target=payload.text??payload.interactive?.body??payload.document??payload.image;
+    const key=payload.text?'body':payload.interactive?'text':'caption';
+    if(target&&typeof target[key]==='string'){
+      const {priceReferenceForRecipient}=await import('./priceCurrency');
+      const enriched=await priceReferenceForRecipient(to,target[key]);
+      const limit=payload.type==='text'?4096:1024;
+      if(enriched.length<=limit)target[key]=enriched;
+      else if(target[key].length<limit-100)target[key]+='\n[Indicative FX] Reference omitted: message length limit. Original price unchanged.';
+      init={...init,body:JSON.stringify(payload)};
+    }
+  }
   if (replySinkEnabled() && url.endsWith("/messages")) { // staging reply sink: store, never send
     let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
     return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
