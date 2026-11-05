@@ -343,3 +343,7 @@ Synthetic registered email `our deal history DEAL-ID` now uses the same transact
 ### 2026-11-05 12:55LA email history selection isolation
 
 Native signed email fixture selects a different WhatsApp deal, then proves email exact-reference history still returns the requested same-pair count and leaves WhatsApp selection unchanged. Pure shared formatter moved to a dependency-free module with its own caveat/count test.700APItests/types/API+frontend build and all12remaining nativeSQLHTTP suites rerun pass; broader9native suites passed before formatter-only move. Initial direct formatter test imported SQL module with extensionless native imports, fixed by separating pure formatting rather than test stubbing. No live effect.
+
+### 2026-11-05 12:58LA shared contextual trade-term reader
+
+Synthetic registered email `explain deal incoterm DEAL-ID` now shares WhatsApp's exact recorded-rule/current verified role-matched direct-party reader. Reviewed source explanation and named-port/version/no-term-change boundaries retained, no new trade advice invented. Native signed email HTTP/SQL proves exact CIF sourced explanation, random-deal denial, changed-role denial and malformed CIF-maybe refusal.700APItests/types/API+frontend build and all21nativeSQLHTTP suites pass. Synthetic drafts only, no inbox/provider/send, payment or legal approval.

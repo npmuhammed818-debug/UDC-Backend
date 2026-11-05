@@ -1,3 +1,4 @@
+import {dealTermTip} from '../deals/dealTermTip';
 import {relationshipMemoryText} from '../deals/relationshipMemoryText';
 import {relationshipMemory} from '../deals/relationshipMemory';
 import {sellerReviewCard} from '../deals/sellerReviewCard';
@@ -35,13 +36,18 @@ export async function emailReadOnlyDraft(address:string,text:string){
  const review=await photoQuoteReview(principal.userId,photo[1],photo[2]),current=await account!.repository.resolve(address);
  if('error'in review||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That photo extraction is unavailable for this account. No private record was returned.';
  return photoQuoteText(review)+'\nStaging email draft only. Your review is not recorded by this email. No files opened or shared and no message sent.';}
+ const contextualTip=/^explain deal incoterm ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
+ if(contextualTip){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That private trade-term explanation is unavailable. No private term read.';
+ const tip=await dealTermTip(principal.userId,contextualTip[1]),current=await account!.repository.resolve(address);
+ if(!tip||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That private trade-term explanation is unavailable. No private term read.';
+ return tip+'\nStaging email draft only. No message sent.';}
  const samePair=/^our deal history ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
  if(samePair){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That private recorded history is unavailable. No private record was returned.';
  const result=await relationshipMemory(principal.userId,samePair[1]),current=await account!.repository.resolve(address);
  if('error'in result||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That private recorded history is unavailable. Current verified buyer and seller accounts are required. No private record was returned.';
  return relationshipMemoryText(result)+'\nStaging email draft only. No message sent or new terms proposed.';}
  const m=/^(history|deal status|deal terms|quality proof pack|seller review) ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
- if(!m)return 'Staging email draft only. Available read-only requests: check document DEAL-ID DOCUMENT-ID, my diary YYYY-MM, our deal history DEAL-ID, history DEAL-ID, deal status DEAL-ID, deal terms DEAL-ID, quality proof pack DEAL-ID, seller review DEAL-ID, review photo quote DEAL-ID DOCUMENT-ID, or explain FOB/CIF/CFR/FAS/LC. Use an exact deal reference. This is not full AKIF email conversation support. No order, deal or payment action was taken.';
+ if(!m)return 'Staging email draft only. Available read-only requests: check document DEAL-ID DOCUMENT-ID, my diary YYYY-MM, our deal history DEAL-ID, history DEAL-ID, deal status DEAL-ID, deal terms DEAL-ID, quality proof pack DEAL-ID, seller review DEAL-ID, review photo quote DEAL-ID DOCUMENT-ID, explain deal incoterm DEAL-ID, or explain FOB/CIF/CFR/FAS/LC. Use an exact deal reference. This is not full AKIF email conversation support. No order, deal or payment action was taken.';
  if(m[1].toLowerCase()==='seller review'){
  const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That seller review is unavailable for this account. No private record was returned.';
  const card=await sellerReviewCard(principal.userId,m[2]),current=await account!.repository.resolve(address);
