@@ -4,6 +4,7 @@ import {processChannelMessage,type ConversationPorts,type ConversationPrincipal}
 export type EmailEvidence={eventId:string;messageId:string;threadId:string;from:string;to:string[];cc:string[];replyTo?:string;subject:string;text:string;autoSubmitted:boolean;bulk:boolean;attachments:Array<{id:string;name:string;type:string;bytes:number}>};
 export interface EmailPilotPorts{
  verifyDelivery(event:EmailEvidence):Promise<{signatureValid:boolean;dmarcAligned:boolean;authenticatedFrom:string}|null>;
+ startAccountLink?(address:string):Promise<{status:string}>;
  resolveVerifiedAddress(address:string):Promise<ConversationPrincipal|null>;
  claim(messageId:string):Promise<boolean>;
  // Must be a read-only brain capability: no tool execution, deal mutation, mailbox access or sends.
@@ -22,6 +23,7 @@ export async function processEmailPilot(event:EmailEvidence,ports:EmailPilotPort
  if(!event.eventId||!event.messageId||!event.threadId||[event.messageId,event.threadId,event.subject].some(v=>/[\r\n]/.test(v))||event.subject.length>180||event.text.length>6000||!event.text.trim())return 'invalid';
  const auth=await ports.verifyDelivery(event);if(!auth?.signatureValid||!auth.dmarcAligned||canonicalEmail(auth.authenticatedFrom)!==from)return 'sender_authentication_required';
  if(event.attachments.length){if(event.attachments.length>5||event.attachments.some(a=>!safeEmailAttachment(a)))return 'unsafe_attachment';return 'private_attachment_review_required';}
+ if(/^link email[.!]?$/i.test(event.text.trim())&&ports.startAccountLink){if(!await ports.claim(event.messageId))return 'duplicate';const result=await ports.startAccountLink(from);return result.status==='synthetic_challenge_created'?'synthetic_link_code_created':'link_verification_unavailable';}
  let drafted=false;
  const adapted:ConversationPorts={
  resolveVerifiedBinding:async()=>{const p=await ports.resolveVerifiedAddress(from);return p?.status==='verified'?p:null;},claim:()=>ports.claim(event.messageId),

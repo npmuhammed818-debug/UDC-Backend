@@ -14,6 +14,7 @@ export async function receiveSyntheticEmail(raw:string,timestamp:string,signatur
  // Drafts contain only a bounded original-history read, no model or tool engine.
  return processEmailPilot(event,{
  verifyDelivery:async()=>({signatureValid:true,dmarcAligned:true,authenticatedFrom:event.from}),
+ startAccountLink:address=>account.service.startFromAuthenticatedEmail(address),
  resolveVerifiedAddress:address=>account.repository.resolve(address),
  claim:messageId=>db.transaction(async tx=>{const id=createHmac('sha256',secret).update(messageId).digest('hex');await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'email_fixture:'+id}))`);const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'email_synthetic_claim'),sql`${auditLogsTable.metadata}->>'messageHash'=${id}`)).limit(1);if(prior)return false;await tx.insert(auditLogsTable).values({action:'email_synthetic_claim',entityType:'email_fixture',metadata:{messageHash:id,state:'claimed_not_sent'}});return true;}),
  respondDraft:async()=>{const match=/^history ([a-f0-9-]{36})$/i.exec(event.text.trim());if(!match)return 'Staging email test only. No order, deal or payment action was taken. Shared history reads need an exact deal reference.';const history=await emailDealHistory(event.from,match[1]);return history?`Deal ${history.dealNumber}: ${history.status}.\n${history.events.map(e=>`${e.source==='your_message'?'You':'Shared with you'}: ${e.text}`).join('\n')}\n${history.notice}`:'That deal history is unavailable for this account.';},
