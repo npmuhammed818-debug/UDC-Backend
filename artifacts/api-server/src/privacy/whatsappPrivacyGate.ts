@@ -38,9 +38,10 @@ export async function whatsappPrivacyGate(
       .from(usersTable)
       .where(eq(usersTable.phone, phone))
       .limit(1);
-    if (user)
-      await db
-        .insert(notificationPreferencesTable)
+    if (user) await db.transaction(async tx => {
+      const stopFingerprint = createHmac('sha256', process.env.WHATSAPP_APP_SECRET!).update(phone).digest('hex');
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'whatsapp-consent:'+stopFingerprint}))`);
+      await tx.insert(notificationPreferencesTable)
         .values({
           userId: user.id,
           optionalInApp: false,
@@ -58,6 +59,7 @@ export async function whatsappPrivacyGate(
             updatedAt: new Date(),
           },
         });
+    });
     return `Optional notifications are off for your UDC account, if present. To withdraw consent, send "withdraw consent". To request deletion, send "delete my data".`;
   }
   // Pseudonymous lookup avoids putting phone numbers or message bodies into consent logs.
