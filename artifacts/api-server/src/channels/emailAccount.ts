@@ -5,11 +5,12 @@ import {POLICY_VERSION} from '../privacy/policies';
 import {consentVersion} from '../privacy/consentNotice';
 import {emailLinkRepository} from './emailBindingRepository';
 import {emailBindingService} from './emailBinding';
-export async function currentEmailAccountConsent(userId:string){
+export async function currentEmailAccountConsent(userId:string,executor:Pick<typeof db,'select'|'execute'>=db,lockConsent=false){
  const secret=process.env.WHATSAPP_APP_SECRET;if(!secret||secret.length<16)return null;
- const [u]=await db.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,userId)).limit(1);if(!u?.phone||u.status!=='verified')return null;
+ const [u]=await executor.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,userId)).limit(1);if(!u?.phone||u.status!=='verified')return null;
  const fingerprint=createHmac('sha256',secret).update(u.phone).digest('hex');
- const [r]=await db.select({m:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityType,'whatsapp_consent'),sql`${auditLogsTable.metadata}->>'fingerprint'=${fingerprint}`)).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1);
+ if(lockConsent)await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${'whatsapp-consent:'+fingerprint}))`);
+ const [r]=await executor.select({m:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityType,'whatsapp_consent'),sql`${auditLogsTable.metadata}->>'fingerprint'=${fingerprint}`)).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1);
  const version=consentVersion(POLICY_VERSION);return r?.m?.status==='accepted'&&r.m.policyVersion===version?version:null;
 }
 export function emailAccount(){const secret=process.env.UDC_EMAIL_BINDING_SECRET;if(!secret||secret.length<32)return null;const repository=emailLinkRepository(currentEmailAccountConsent,secret);return {repository,service:emailBindingService(repository.ports,secret)};}
