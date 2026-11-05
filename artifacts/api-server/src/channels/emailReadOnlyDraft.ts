@@ -1,3 +1,4 @@
+import {sellerScorecardBody} from '../deals/sellerScorecard';
 import {dealTermTip} from '../deals/dealTermTip';
 import {relationshipMemoryText} from '../deals/relationshipMemoryText';
 import {relationshipMemory} from '../deals/relationshipMemory';
@@ -36,6 +37,12 @@ export async function emailReadOnlyDraft(address:string,text:string){
  const review=await photoQuoteReview(principal.userId,photo[1],photo[2]),current=await account!.repository.resolve(address);
  if('error'in review||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That photo extraction is unavailable for this account. No private record was returned.';
  return photoQuoteText(review)+'\nStaging email draft only. Your review is not recorded by this email. No files opened or shared and no message sent.';}
+ const scorecard=/^my scorecard (\d{4}-(?:0[1-9]|1[0-2]))$/i.exec(input);
+ if(scorecard){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal||principal.role!=='seller')return 'Your private seller scorecard is unavailable. No private activity returned.';
+ const start=new Date(scorecard[1]+'-01T00:00:00Z'),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1);if(!Number.isFinite(start.getTime())||start.getTime()>Date.now())return 'Choose the current or a past UTC month. No future activity is reported.';
+ const result=await sellerScorecardBody(principal.userId,scorecard[1],start,end),current=await account!.repository.resolve(address);
+ if(!result||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'Your private seller scorecard is unavailable. No private activity returned.';
+ return result+'\nStaging email draft only. No message sent.';}
  const contextualTip=/^explain deal incoterm ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
  if(contextualTip){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That private trade-term explanation is unavailable. No private term read.';
  const tip=await dealTermTip(principal.userId,contextualTip[1]),current=await account!.repository.resolve(address);
@@ -47,7 +54,7 @@ export async function emailReadOnlyDraft(address:string,text:string){
  if('error'in result||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That private recorded history is unavailable. Current verified buyer and seller accounts are required. No private record was returned.';
  return relationshipMemoryText(result)+'\nStaging email draft only. No message sent or new terms proposed.';}
  const m=/^(history|deal status|deal terms|quality proof pack|seller review) ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
- if(!m)return 'Staging email draft only. Available read-only requests: check document DEAL-ID DOCUMENT-ID, my diary YYYY-MM, our deal history DEAL-ID, history DEAL-ID, deal status DEAL-ID, deal terms DEAL-ID, quality proof pack DEAL-ID, seller review DEAL-ID, review photo quote DEAL-ID DOCUMENT-ID, explain deal incoterm DEAL-ID, or explain FOB/CIF/CFR/FAS/LC. Use an exact deal reference. This is not full AKIF email conversation support. No order, deal or payment action was taken.';
+ if(!m)return 'Staging email draft only. Available read-only requests: check document DEAL-ID DOCUMENT-ID, my diary YYYY-MM, my scorecard YYYY-MM, our deal history DEAL-ID, history DEAL-ID, deal status DEAL-ID, deal terms DEAL-ID, quality proof pack DEAL-ID, seller review DEAL-ID, review photo quote DEAL-ID DOCUMENT-ID, explain deal incoterm DEAL-ID, or explain FOB/CIF/CFR/FAS/LC. Use an exact deal reference. This is not full AKIF email conversation support. No order, deal or payment action was taken.';
  if(m[1].toLowerCase()==='seller review'){
  const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That seller review is unavailable for this account. No private record was returned.';
  const card=await sellerReviewCard(principal.userId,m[2]),current=await account!.repository.resolve(address);
