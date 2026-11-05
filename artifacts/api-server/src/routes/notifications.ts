@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { and, desc, eq } from "drizzle-orm";
-import { db, notificationPreferencesTable, notificationsTable } from "@workspace/db";
+import { createHmac } from "node:crypto";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { db, usersTable, notificationPreferencesTable, notificationsTable } from "@workspace/db";
 import { z } from "zod/v4";
 import { requireAuth } from "../auth/middleware";
 
@@ -69,34 +70,46 @@ router.patch("/notifications/preferences", requireAuth, async (req, res) => {
 
   try {
     const userId = req.authUser!.id;
-    const [current] = await db
-      .select()
-      .from(notificationPreferencesTable)
-      .where(eq(notificationPreferencesTable.userId, userId))
-      .limit(1);
-
-    const next = { ...(current ?? defaultPreferences), ...parsed.data, updatedAt: new Date() };
-
-    const [preferences] = await db
-      .insert(notificationPreferencesTable)
-      .values({
-        userId,
-        optionalInApp: next.optionalInApp,
-        optionalWhatsApp: next.optionalWhatsApp,
-        reminders: next.reminders,
-        announcements: next.announcements,
-      })
-      .onConflictDoUpdate({
-        target: notificationPreferencesTable.userId,
-        set: {
+    const preferences = await db.transaction(async (tx) => {
+      // Serialize partial updates even before the first preference row exists.
+      const [account] = await tx.select({phone: usersTable.phone}).from(usersTable)
+        .where(eq(usersTable.id, userId)).limit(1).for("share");
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"notification-preferences:" + userId}))`);
+      const secret = process.env.WHATSAPP_APP_SECRET;
+      if (account?.phone && secret && secret.length >= 16) {
+        const fingerprint = createHmac("sha256", secret).update(account.phone).digest("hex");
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"whatsapp-consent:" + fingerprint}))`);
+      }
+      const [current] = await tx
+        .select()
+        .from(notificationPreferencesTable)
+        .where(eq(notificationPreferencesTable.userId, userId))
+        .limit(1).for("update");
+  
+      const next = { ...(current ?? defaultPreferences), ...parsed.data, updatedAt: new Date() };
+  
+      const [saved] = await tx
+        .insert(notificationPreferencesTable)
+        .values({
+          userId,
           optionalInApp: next.optionalInApp,
           optionalWhatsApp: next.optionalWhatsApp,
           reminders: next.reminders,
           announcements: next.announcements,
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
+        })
+        .onConflictDoUpdate({
+          target: notificationPreferencesTable.userId,
+          set: {
+            optionalInApp: next.optionalInApp,
+            optionalWhatsApp: next.optionalWhatsApp,
+            reminders: next.reminders,
+            announcements: next.announcements,
+            updatedAt: new Date(),
+          },
+        })
+        .returning();
+      return saved;
+    });
 
     res.json({
       preferences,
