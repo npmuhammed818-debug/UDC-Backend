@@ -1,3 +1,4 @@
+import {documentExtractionReview,parseDocumentExtractionObject} from './documentExtractionReview';
 import { eq } from "drizzle-orm";
 import {
   db,
@@ -8,16 +9,6 @@ import { extractDocumentBytes } from "./documentExtractorClient";
 import { getAkifDealContext } from "./intelligence/dealContext";
 import { isAkifWorkerMediaEnabled, transcribeAkifImage } from "./intelligence/workerClient";
 import { runConversationChat, runHermesMultimodal } from "./intelligence/hermesClient";
-
-function cleanJson(raw: string) {
-  const value = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  const start = value.indexOf("{");
-  const end = value.lastIndexOf("}");
-  return start >= 0 && end > start ? value.slice(start, end + 1) : null;
-}
 
 const extractionSchemaDescription = {
   documentType: "LOI, ICPO, FCO, SCO, SPA, NCNDA, SGS, BL, COA, CO, invoice, packing_list, banking, other",
@@ -80,9 +71,7 @@ async function extractChunkFacts(input: {
   });
 
   const { content } = await runConversationChat(prompt, system, 60_000);
-  const json = cleanJson(content);
-  if (!json) throw new Error("document_ai_invalid_json");
-  return JSON.parse(json) as Record<string, unknown>;
+  return parseDocumentExtractionObject(content);
 }
 
 async function mergeChunkFacts(
@@ -109,9 +98,7 @@ async function mergeChunkFacts(
   });
 
   const { content } = await runConversationChat(prompt, system, 60_000);
-  const json = cleanJson(content);
-  if (!json) throw new Error("document_ai_merge_invalid_json");
-  return JSON.parse(json) as Record<string, unknown>;
+  return parseDocumentExtractionObject(content);
 }
 
 async function transcribeVisionPage(input: {
@@ -332,18 +319,12 @@ export async function processDocumentIntelligence(input: {
       knownDeal,
     });
 
-    const warnings = [...new Set([
+    const review = documentExtractionReview(vision.text,[
       ...(extraction.warnings ?? []),
       ...vision.warnings,
       ...aiWarnings,
-    ])];
-    const status = warnings.some((warning) =>
-      warning.includes("_failed")
-      || warning === "vision_fallback_limited_to_20_pages"
-      || warning === "structured_analysis_truncated_after_24_chunks"
-    )
-      ? "needs_review"
-      : "completed";
+    ]);
+    const {status,warnings}=review;
     const rawConfidence = structured["confidence"];
     const confidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
       ? String(Math.max(0, Math.min(1, rawConfidence)))
