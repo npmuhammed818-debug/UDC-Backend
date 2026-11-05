@@ -197,6 +197,10 @@ export async function requestTermsReview(matchId: string, actorUserId: string, s
     },
   });
   if(!delivered.delivered)throw new AgreementError("proposal_delivery_unavailable");
+  // All exact-term chunks and the associated button must have been accepted by
+  // the transport before a callback can record consent. This is not a receipt
+  // or proof that a person read it, and does not authorize any payment.
+  await db.insert(auditLogsTable).values({actorUserId:proposal.buyerUser.id,action:'match_terms_presented',entityType:'match_terms',entityId:proposal.id,metadata:{fingerprint:termsFingerprint(proposal.terms),allTermsShown:true,transportAccepted:true}});
   return { proposalId: proposal.id };
 }
 export async function acceptedMatchTerms(
@@ -282,6 +286,8 @@ export async function respondToTerms(
         )
         .limit(1);
       if (prior) return "Your decision on this proposal is already recorded.";
+      const [presented]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,proposal.id),eq(auditLogsTable.action,'match_terms_presented'),eq(auditLogsTable.actorUserId,actor.id))).limit(1);
+      if(presented?.metadata?.allTermsShown!==true||presented.metadata.transportAccepted!==true||presented.metadata.fingerprint!==metadata?.fingerprint)return "That exact proposal has not been fully presented. Ask UDC to send it again before deciding.";
       const c = await context(tx, proposal.entityId);
       const [latest] = await tx
         .select()
