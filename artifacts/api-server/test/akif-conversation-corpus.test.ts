@@ -28,7 +28,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       destination: "Dubai",
     },
   };
-  const names = ["messagesTable",
+  const names = ["sellerListingsTable","companyVerificationDocumentsTable","messagesTable",
     "usersTable", "buyerRequestsTable",
     "notificationsTable", "auditLogsTable",
     "notificationPreferencesTable",
