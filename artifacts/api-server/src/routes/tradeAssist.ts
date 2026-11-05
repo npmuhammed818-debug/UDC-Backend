@@ -1,3 +1,4 @@
+import {traderCompletionDiary} from '../deals/traderDiary';
 import {disputeBrief} from '../deals/disputeBrief';
 import {prepareRestartRequest} from '../deals/restartRequest';
 import {documentCheck} from '../deals/documentCheck';
@@ -77,6 +78,7 @@ router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,re
   res.json({documentId:docId,extractionAsOf:extraction.updatedAt,...documentCheck(deal,extraction.structuredData)});
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
+router.get('/trade-assist/completion-diary',async(req,res)=>{try{const r=await traderCompletionDiary(req.authUser!.id,String(req.query.month||new Date().toISOString().slice(0,7)));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch{res.sendStatus(503);}});
 router.get('/trade-assist/diary',async(req,res)=>{
  try{
   const month=z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).parse(req.query.month),start=new Date(month+'-01T00:00:00Z'),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1);
