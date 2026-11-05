@@ -347,3 +347,7 @@ Native signed email fixture selects a different WhatsApp deal, then proves email
 ### 2026-11-05 12:58LA shared contextual trade-term reader
 
 Synthetic registered email `explain deal incoterm DEAL-ID` now shares WhatsApp's exact recorded-rule/current verified role-matched direct-party reader. Reviewed source explanation and named-port/version/no-term-change boundaries retained, no new trade advice invented. Native signed email HTTP/SQL proves exact CIF sourced explanation, random-deal denial, changed-role denial and malformed CIF-maybe refusal.700APItests/types/API+frontend build and all21nativeSQLHTTP suites pass. Synthetic drafts only, no inbox/provider/send, payment or legal approval.
+
+### 2026-11-05 13:04LA diary role-change read race
+
+Shared diary now reads current user and joined status history inside one transaction with share locks, rather than allowing a concurrent role edit between authorization and audit read. Native PostgreSQL regression holds an uncommitted buyer-to-seller change, proves diary waits, commits it, then proves old buyer completion count is excluded. Fixture restores role afterward.700APItests/types/API+frontend build and all21native SQLHTTP suites pass. Local synthetic DB only, no hosted migration or user-role change.
