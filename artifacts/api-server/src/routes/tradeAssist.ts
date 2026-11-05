@@ -1,3 +1,4 @@
+import {backupSellerReview} from '../deals/backupSellerReview';
 import {traderCompletionDiary} from '../deals/traderDiary';
 import {disputeBrief} from '../deals/disputeBrief';
 import {prepareRestartRequest} from '../deals/restartRequest';
@@ -19,6 +20,10 @@ router.get('/admin/trade-assist/requests',requireRole('admin'),async(_req,res)=>
 router.get('/admin/trade-assist/requests/:requestId/dispute-brief',requireRole('admin'),async(req,res)=>{
  res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
  try{const id=z.string().uuid().parse(req.params.requestId),r=await disputeBrief(id);if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}
+});
+router.get('/admin/trade-assist/requests/:requestId/backup-seller-review',requireRole('admin'),async(req,res)=>{
+ res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
+ try{const id=z.string().uuid().parse(req.params.requestId),r=await backupSellerReview(id);if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}
 });
 router.post('/admin/trade-assist/requests/:requestId/prepare-requirement',requireRole('admin'),async(req,res)=>{
  res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
