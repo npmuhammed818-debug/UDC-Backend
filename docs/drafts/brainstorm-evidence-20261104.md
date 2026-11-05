@@ -283,3 +283,7 @@ Carrier timestamp validation additionally rejects impossible calendar dates, inv
 ### 2026-11-05 11:41LA reduced-order continuous native proof
 
 Extended actual isolated full-lifecycle fixture: parallel reduced draft -> pending requirement/no copied target -> human approval -> fresh seller listing/match -> exact proposal -> wrong actor refusal -> changed-price refusal -> one buyer acceptance -> changed-price deal refusal -> distinct new deal. Original quantity unchanged and no old documents copied. Proposal transport is real outbound client through local sink; acceptance invokes exported handler directly, not signed webhook/device, and fixture uses the same seller with a fresh listing. Therefore this does not prove a full seller-switch or customer-device workflow.697APItests/types/build and all21native PostgreSQL HTTP suites pass. Existing financial route tests remain synthetic baseline only; no commission policy changed.
+
+### 2026-11-05 11:44LA repeat-order continuous native proof
+
+Same isolated lifecycle now also executes explicit repeat request -> parallel deduplicated pending requirement -> human review -> fresh seller listing proposal -> refusal without buyer acceptance -> buyer acceptance handler -> distinct new deal/no old files copied. Original deal remains separate. Same-seller existing fresh listing and direct acceptance-handler are explicit fixture limits; no signed customer acceptance/device/live proof.697APItests/types/build/all21native PostgreSQLHTTPsuites pass. Strict0/37complete remains.
