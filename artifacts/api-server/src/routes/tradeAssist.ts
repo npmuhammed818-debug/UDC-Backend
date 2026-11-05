@@ -1,3 +1,4 @@
+import {disputeBrief} from '../deals/disputeBrief';
 import {prepareRestartRequest} from '../deals/restartRequest';
 import {documentCheck} from '../deals/documentCheck';
 import {saveTradeAssistRequest} from '../deals/tradeAssistRepository';
@@ -13,6 +14,10 @@ const router=Router();
 router.get('/admin/trade-assist/requests',requireRole('admin'),async(_req,res)=>{
  res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
  try{const requests=await db.select({id:auditLogsTable.id,requester:auditLogsTable.actorUserId,dealId:auditLogsTable.entityId,action:auditLogsTable.action,details:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind))).orderBy(desc(auditLogsTable.createdAt)).limit(100);const reviews=requests.length?await db.select({metadata:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),inArray(sql<string>`${auditLogsTable.metadata}->>'requestId'`,requests.map(r=>r.id)))).orderBy(desc(auditLogsTable.createdAt)):[];res.json({requests:requests.map(r=>{const review=reviews.find(v=>v.metadata?.requestId===r.id);return {...r,status:review?.metadata?.status||'awaiting_human_review',reviewNote:review?.metadata?.note||null};}),notice:'Review queue only. This endpoint cannot change a deal, contact a party or approve terms.'});}catch{res.sendStatus(503);}
+});
+router.get('/admin/trade-assist/requests/:requestId/dispute-brief',requireRole('admin'),async(req,res)=>{
+ res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
+ try{const id=z.string().uuid().parse(req.params.requestId),r=await disputeBrief(id);if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}
 });
 router.post('/admin/trade-assist/requests/:requestId/prepare-requirement',requireRole('admin'),async(req,res)=>{
  res.set('cache-control','no-store');if(process.env.UDC_APP_ENV!=='staging'){res.sendStatus(404);return;}
