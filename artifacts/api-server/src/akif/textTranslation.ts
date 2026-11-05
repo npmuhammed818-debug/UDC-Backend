@@ -46,11 +46,24 @@ export function parseTranslateRequest(text: string): TranslateRequest | null {
   return { language: language as TranslatableLanguage, content };
 }
 
+// A model instruction is not evidence that figures or written trade tokens survived.
+// Compare the exact token sequence, including repeated tokens. This is a fail-closed lexical
+// guard, not a claim that the prose, identities or commercial meaning were verified.
+const EXACT_TRADE_TOKENS = /https?:\/\/[^\s]+|[^\s@]+@[^\s@]+\.[^\s@]+|[+-]?(?:[\p{N}]+(?:[.,:/-][\p{N}]+)*|[.,][\p{N}]+)|[$€£₹﷼%]|\b(?:USD|INR|EUR|AED|GBP|SAR|CNY|RMB|JPY|CHF|CAD|AUD|SGD|HKD|NZD|ZAR|BRL|MXN|TRY|IDR|MYR|THB|VND|KRW|PKR|BDT|LKR|QAR|KWD|BHD|OMR|FOB|CIF|CFR|FAS|EXW|FCA|CPT|CIP|DAP|DPU|DDP|LC|DLC|SBLC|MT|KG|KGS|G|LB|LBS|TON|TONS|TONNE|TONNES|LITRE|LITRES|LITER|LITERS|CBM)\b/giu;
+function exactTradeTokens(text: string): string[] {
+  return [...text.matchAll(EXACT_TRADE_TOKENS)].map(match => match[0]);
+}
+function tradeTokensPreserved(source: string, translated: string): boolean {
+  const original = exactTradeTokens(source), result = exactTradeTokens(translated);
+  return original.length === result.length && original.every((value, index) => value === result[index]);
+}
+
 /** Checks a translation before it can be shown. Any doubt: reject. */
 export function translatedTextOk(translated: string | null | undefined, source: string, language: TranslatableLanguage): boolean {
   if (typeof translated !== "string") return false;
   const trimmed = translated.trim();
   if (!trimmed || trimmed.length > MAX_TRANSLATED_CHARS) return false;
+  if (!tradeTokensPreserved(source, trimmed)) return false;
   // The model must not turn a translation into an action or a menu.
   if (/\bTRADE_ACTION\b/.test(trimmed)) return false;
   // An "english" translation that changes nothing is useless, and a

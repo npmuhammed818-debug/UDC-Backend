@@ -110,12 +110,28 @@ test('translation: request parsing, output checks, translate', async () => {
     assert.equal(mod.translatedTextOk('TRADE_ACTION', 'hello', 'malayalam'), false);
     assert.equal(mod.translatedTextOk('x'.repeat(4001), 'hello', 'malayalam'), false);
 
+    assert.equal(mod.translatedTextOk('വില 590 USD / MT CIF', 'Price 500 USD / MT CIF', 'malayalam'), false, 'changed amount');
+    assert.equal(mod.translatedTextOk('വില 500 EUR / MT CIF', 'Price 500 USD / MT CIF', 'malayalam'), false, 'changed currency');
+    assert.equal(mod.translatedTextOk('വില 500 USD / KG CIF', 'Price 500 USD / MT CIF', 'malayalam'), false, 'changed unit');
+    assert.equal(mod.translatedTextOk('വില 500 USD / MT FOB', 'Price 500 USD / MT CIF', 'malayalam'), false, 'changed Incoterm');
+    assert.equal(mod.translatedTextOk('വില 500 USD / MT CIF 10%', 'Price 500 USD / MT CIF', 'malayalam'), false, 'added percentage');
+    assert.equal(mod.translatedTextOk('വില 500 USD / MT CIF', 'Price 500 USD / MT CIF, quantity 500 MT', 'malayalam'), false, 'dropped repeated figure and unit');
+    assert.equal(mod.translatedTextOk('തീയതി 2026-11-08', 'Date 2026-11-09', 'malayalam'), false, 'changed date');
+    assert.equal(mod.translatedTextOk('വില ٥٠٠ USD / MT CIF', 'Price 500 USD / MT CIF', 'malayalam'), false, 'localized digits must not silently replace exact written figures');
+    assert.equal(mod.translatedTextOk('വില 500.00 USD / MT CIF', 'Price 500.00 USD / MT CIF', 'malayalam'), true, 'prose may change but exact critical token order survives');
+    assert.equal(mod.translatedTextOk('വില 100 USD 500 MT', 'Price 500 USD 100 MT', 'malayalam'), false, 'same figures must not swap price and quantity');
+    assert.equal(mod.translatedTextOk('വില 500 USD', 'Price -500 USD', 'malayalam'), false, 'lost negative sign');
+    assert.equal(mod.translatedTextOk('വില 5 USD', 'Price .5 USD', 'malayalam'), false, 'lost leading decimal point');
+    assert.equal(mod.translatedTextOk('വില 1.000 USD', 'Price 1,000 USD', 'malayalam'), false, 'changed decimal/thousands notation');
+    assert.equal(mod.translatedTextOk('കാണുക https://evil.example/500', 'See https://safe.example/500', 'malayalam'), false, 'changed URL');
     const st = (globalThis as any).__ct;
     st.reply = 'കൊച്ചി പോർട്ട് 500 MT';
     const out = await mod.translateTradeText({ language: 'malayalam', content: 'Kochi port 500 MT' });
     assert.equal(out, 'കൊച്ചി പോർട്ട് 500 MT');
     assert.match(st.calls.at(-1).system, /ONLY the translation/);
     assert.equal(st.calls.at(-1).message, 'Kochi port 500 MT');
+    st.reply = 'കൊച്ചി പോർട്ട് 590 MT';
+    assert.equal(await mod.translateTradeText({ language: 'malayalam', content: 'Kochi port 500 MT' }), null, 'unsafe model amount rejected by real translation entry point');
     st.reply = 'Kochi port 500 MT';
     assert.equal(await mod.translateTradeText({ language: 'malayalam', content: 'Kochi port 500 MT' }), null);
     st.fail = true;

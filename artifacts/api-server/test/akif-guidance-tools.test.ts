@@ -36,13 +36,17 @@ test('guidance AI tools: commodity reference answer and translation run determin
  const other=await answerGuidance('phone-tools','what is the cardamom price?','t2');
  assert.equal(other,'UDC will confirm current prices for that product.');
  // Translation: parsed request goes to the strict translator, not the tutor.
- state.reply='കൊച്ചി പോർട്ട് 500 MT';
+ state.reply='CIF കൊച്ചി പോർട്ട് 500 MT';
  const tr=await answerGuidance('phone-tools','translate CIF Kochi port 500 MT to malayalam','t3');
- assert.equal(tr,'കൊച്ചി പോർട്ട് 500 MT');
+ assert.equal(tr,'CIF കൊച്ചി പോർട്ട് 500 MT');
  assert.match(state.calls.at(-1).system,/ONLY the translation/);
- // A failed translator gives the honest busy line.
+ // Changed critical terms fail through the actual guidance adapter without a model fallback.
+ state.reply='FOB കൊച്ചി പോർട്ട് 500 MT';
+ const unsafe=await answerGuidance('phone-tools','translate CIF Kochi port 500 MT to malayalam','t-unsafe');
+ assert.match(unsafe??'',/could not safely verify/);assert.doesNotMatch(unsafe??'',/FOB/);
+ // Provider failure also gives the honest safe-verification line.
  const failState=state;failState.modelFailure=true;
  const busy=await answerGuidance('phone-tools','translate payment by DLC to tamil','t4');
- assert.match(busy??'',/translation service is busy/);
+ assert.match(busy??'',/could not safely verify/);
  }finally{if(savedSecret===undefined)delete process.env.WHATSAPP_APP_SECRET;else process.env.WHATSAPP_APP_SECRET=savedSecret;await unlink(path);}
 });

@@ -161,7 +161,7 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
     const translateRequest = parseTranslateRequest(text);
     if (translateRequest) {
       const translated = await translateTradeText(translateRequest);
-      toolReply = translated ?? 'Sorry, my translation service is busy right now. Please send the text again in a minute.';
+      toolReply = translated ?? 'I could not safely verify that translation. The original text and deal terms are unchanged. Ask UDC for a human translation before relying on it.';
     } else {
       const series = commodityReferenceQuery(text);
       if (series) {
