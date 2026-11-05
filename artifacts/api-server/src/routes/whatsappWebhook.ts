@@ -1,6 +1,6 @@
 import {handleDealReadSummary} from '../whatsapp/dealReadSummary';
 import {handleSellerReviewCard} from '../whatsapp/sellerReviewCard';
-import {handlePhotoQuoteReview} from '../whatsapp/photoQuoteReview';
+import {handlePhotoQuoteReview,handlePhotoReviewButton} from '../whatsapp/photoQuoteReview';
 import {handleRelationshipMemory} from '../whatsapp/relationshipMemory';
 import {handleDealTermTip} from '../whatsapp/dealTermTip';
 import {handleStatusPicture} from '../whatsapp/statusPicture';
@@ -1482,7 +1482,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // Explicit menu requests take precedence over AI guidance. Never open
       // the menu for ordinary greetings, consent, or unrelated chat messages.
       const exitId=message.interactive?.list_reply?.id??message.interactive?.button_reply?.id;
-      if(message.from&&exitId){try{if(await handleHumanHelpButton(message.from,exitId))continue;if(await handleExitReason(message.from,exitId))continue;}catch{await deliverWhatsAppReply(message.from,'Your private answer could not be saved. Please try again.');continue;}}
+      if(message.from&&exitId){try{if(await handlePhotoReviewButton(message.from,exitId))continue;if(await handleHumanHelpButton(message.from,exitId))continue;if(await handleExitReason(message.from,exitId))continue;}catch{await deliverWhatsAppReply(message.from,'Your private answer could not be saved. Please try again.');continue;}}
       if(message.from && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
