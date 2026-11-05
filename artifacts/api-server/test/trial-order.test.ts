@@ -1,0 +1,2 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {reducedQuantity,trialOrderCommand} from '../src/deals/trialOrderText.ts';
+test('trial quantities require positive reduction with exact decimals and explicit command',()=>{assert.equal(reducedQuantity('0.000001','1'),true);for(const q of ['0','-1','1','1.000001','NaN'])assert.equal(reducedQuantity(q,'1'),false);assert.deepEqual(trialOrderCommand('trial order 2 MT'),{quantity:'2',unit:'MT'});assert.equal(trialOrderCommand('maybe trial order 2 MT'),null);});

@@ -68,3 +68,6 @@ After a successful explicit confirmed deal closure, staging asks the closing par
 
 ## Synthetic document-code adapter candidate
 Document review now accepts the current verified recipient's code delivery through the staging local reply sink only. Live Meta code delivery remains impossible in this adapter. Current user role/status rechecked, failed delivery refused. Existing browser-bound OTP/session/receipt security stays intact. Native SQL adapter test confirms sink-only gate, correct recipient and suspension denial. This does not claim real WhatsApp template activation or customer-device delivery.
+
+## Small-first preparation candidate
+Explicit `trial order 2 MT` creates a reduced-quantity pending buyer requirement from the requester's own selected pre-contract deal. Exact positive quantity reduction and unit enforced with decimal arithmetic; fresh quote required, target/seller prices not copied. Parallel duplicate requests return one draft. Late-stage deals, seller/outsider, equal-or-higher quantity or wrong unit refused. Actual native SQL executed idempotence/privacy/late-stage guards; no order/deal or obligation created. Proactive suggestion and fresh seller acceptance workflow remain separate.
