@@ -29,8 +29,8 @@ export async function verifiedCounterparties(
   return true;
 }
 
-export async function approvedCompanyEvidence(userId:string,executor:Pick<typeof db,'select'>=db){
-  const companies=await executor.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.ownerUserId,userId),eq(companiesTable.verificationStatus,'verified')));
+export async function approvedCompanyEvidence(userId:string,executor:Pick<typeof db,'select'>=db,companyId?:string){
+  const companies=await executor.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.ownerUserId,userId),eq(companiesTable.verificationStatus,'verified'),...(companyId?[eq(companiesTable.id,companyId)]:[])));
   if(!companies.length)return false;
   const [evidence]=await executor.select({id:companyVerificationDocumentsTable.id}).from(companyVerificationDocumentsTable).where(and(inArray(companyVerificationDocumentsTable.companyId,companies.map(c=>c.id)),eq(companyVerificationDocumentsTable.status,'approved'))).limit(1);
   return Boolean(evidence);
