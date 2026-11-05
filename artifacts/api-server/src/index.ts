@@ -1,3 +1,4 @@
+import {startDealReminderRunner} from './whatsapp/dealReminders';
 import {startPriceWatchRunner} from './whatsapp/priceWatch';
 import { startAutomaticMatching } from './marketplace/automaticMatching';
 import { startGuidedDraftCleanup } from './whatsapp/guidedChat';
@@ -39,6 +40,7 @@ app.listen(port, (err) => {
   startGuidedDraftCleanup();
   startAutomaticMatching(logger);
   startPriceWatchRunner();
+  startDealReminderRunner();
   void startAcceptanceProbe();
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
