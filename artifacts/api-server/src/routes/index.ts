@@ -1,3 +1,4 @@
+import ideaReviewRouter from './ideaReview';
 import emailSyntheticRouter from './emailSynthetic';
 import currencyHelperRouter from './currencyHelper';
 import tradeAssistRouter from './tradeAssist';
@@ -40,6 +41,7 @@ import vaultRouter from "./vault";
 
 const router: IRouter = Router();
 
+router.use(ideaReviewRouter);
 router.use(emailSyntheticRouter);
 router.use(commissionProposalsRouter);
 router.use(healthRouter);
