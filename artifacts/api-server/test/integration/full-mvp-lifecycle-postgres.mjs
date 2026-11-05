@@ -35,7 +35,7 @@ try {
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     plugins: [{name:"fictional-mail",setup(b){b.onResolve({filter:/\/emailDelivery$/},()=>({path:"mail",namespace:"mail"}));b.onLoad({filter:/.*/,namespace:"mail"},()=>({contents:"export const sendAuthEmail=async value=>{globalThis.__lifecycleMail.push(value);};"}));}}, { name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
-    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
+    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
   const app = await import(directory + "/app.mjs");

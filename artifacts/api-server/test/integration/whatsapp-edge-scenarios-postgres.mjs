@@ -83,7 +83,7 @@ try {
       resolveDir: fileURLToPath(new URL('../../', import.meta.url)),
     },
     outfile: output, bundle: true, platform: 'node', format: 'esm',
-    external: ['pg-native'],
+    external: ['pg-native', '@resvg/resvg-js'],
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
     logLevel: 'silent',
     plugins: [{ name: 'fictional-email-provider', setup(b) {

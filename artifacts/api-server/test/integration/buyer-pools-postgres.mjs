@@ -29,7 +29,7 @@ try {
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     plugins: [{ name: "fake-whatsapp", setup(b) { b.onResolve({ filter: /^(\.\/|\.\.\/whatsapp\/)client$/ }, (a) => a.importer.includes("/api-server/src/") ? ({ path: "wa", namespace: "fake" }) : undefined); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export const isWindowClosedError=()=>false; export const trackReplyFailures=(f)=>f(new Set()); const g=globalThis; g.__wa=[]; const rec=async(k,to,b)=>{g.__wa.push({k,to,b});return {delivered:true,messageId:'m'}}; export const sendWhatsAppText=(to,b)=>rec('text',to,b); export const sendWhatsAppTextWithMenu=(to,b)=>rec('menu',to,b); export const sendWhatsAppInteractive=(to,b)=>rec('interactive',to,b); export const sendWhatsAppDocument=async()=>({}); export const downloadWhatsAppMedia=async()=>{throw new Error('no network')}; export const sendWhatsAppReaction=async()=>({}); export const sendWhatsAppVoiceNote=async()=>({}); export const checkWhatsAppConnection=async()=>({ok:false}); export const ensureWhatsAppWebhookSubscription=async()=>({});" })); } }],
-    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
+    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
   const app = await import(directory + "/app.mjs");

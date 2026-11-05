@@ -29,7 +29,7 @@ try {
       contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import marketplace from './src/routes/marketplace';import deals from './src/routes/deals';import documents from './src/routes/documents';import referrals from './src/routes/referrals';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(marketplace);app.use(deals);app.use(documents);app.use(referrals);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
-    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
+    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
   const app = await import(directory + "/app.mjs");

@@ -30,7 +30,7 @@ try {
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path, bytes, type){ if(globalThis.__failStorage) throw new Error('down'); (globalThis.__stored ??= []).push({path,type,size:bytes.length}); return 'memory://'+path; }" })); } }],
-    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
+    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
   const app = await import(directory + "/app.mjs");

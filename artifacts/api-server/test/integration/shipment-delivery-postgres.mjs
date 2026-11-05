@@ -57,7 +57,7 @@ try {
     const app=express();app.use(express.json({verify(req,res,buffer){req.rawBody=buffer;}}));app.use(cookieParser());
     app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(loadAuth);app.use(admin);app.use(webhook);export default app;
   `, resolveDir: fileURLToPath(new URL('../../', import.meta.url)) }, outfile: directory + '/app.mjs', bundle: true,
-    platform: 'node', format: 'esm', external: ['pg-native'], logLevel: 'silent',
+    platform: 'node', format: 'esm', external: ['pg-native', '@resvg/resvg-js'], logLevel: 'silent',
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" } });
   mod = await import(directory + '/app.mjs'); pool = mod.pool;
   for (const name of ['20261024_whatsapp_shipment_outbox.sql', '20261024_whatsapp_shipment_receipts.sql', '20261024_whatsapp_customer_windows.sql'])
