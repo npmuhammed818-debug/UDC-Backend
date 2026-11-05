@@ -91,3 +91,6 @@ Ideas19/30/34 now have preparation foundations, not completed estimates/leaderbo
 
 ## Quality pack follow-on, Nov5
 Explicit staging sink-only `quality proof pack` reads only the requesting verified buyer/seller's current approved quality-document grants on their selected direct-party deal. Returns a private metadata index without URLs/bytes, sharing or new grants; authenticity/quality guarantees remain false. Disposable SQL tests verify an ungranted photo is excluded, accessible certificate is included, storage URLs never returned, and revoked grant disappears on fresh read. This does not complete photo/certificate rendering or explicit sharing/customer-device delivery.655tests/typecheck/nativeSQLpass.
+
+## Private review UI follow-on, Nov5
+Admin v2 Support now shows private freight requests and a month/type form for provisional recognition counts. Exact UTC basis, missing quote inputs, tied counts, no winner/publication/reward/commission boundaries are visible; no mutation or sending control exists. Native authenticated HTTP verified buyer denial and admin freight read with estimate=null. Actual built UI synthetic fixtures rendered and pixels inspected at1280desktop and390phone: readable wrapping, fields/buttons and private notices, no horizontal clipping. UI does not validate freight prices or turn updated-at counts into historical performance.
