@@ -39,6 +39,11 @@ export async function getAkifDealContext(dealId: string, viewerUserId?: string) 
     .limit(1);
 
   if (!deal) return null;
+  if(viewerUserId){
+    const [viewer]=await db.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,viewerUserId)).limit(1);
+    if(viewer?.status!=='verified'||!((viewer.role==='buyer'&&deal.buyerUserId===viewerUserId)||(viewer.role==='seller'&&deal.sellerUserId===viewerUserId)))return null;
+  }
+
 
   const [
     product,
