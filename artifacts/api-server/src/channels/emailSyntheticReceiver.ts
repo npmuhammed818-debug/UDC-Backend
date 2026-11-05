@@ -1,8 +1,8 @@
 import {createHmac,timingSafeEqual,randomUUID} from 'node:crypto';
 import {and,eq,sql} from 'drizzle-orm';
 import {db,auditLogsTable} from '@workspace/db';
-import {emailAccount,emailDealHistory} from './emailAccount';
-import {emailHistoryDraft} from './emailHistoryDraft';
+import {emailAccount} from './emailAccount';
+import {emailReadOnlyDraft} from './emailReadOnlyDraft';
 import type {ConversationPrincipal} from './conversationPort';
 import {processEmailPilot,type EmailEvidence} from './emailPilot';
 /** A disposable synthetic fixture envelope, NOT Gmail, SMTP, SES, Mailgun or
@@ -26,7 +26,7 @@ export async function receiveSyntheticEmail(raw:string,timestamp:string,signatur
  if(prior&&(prior.m?.state==='completed'||Number(prior.m?.leaseUntil)>Date.now()))return false;
  const attempts=Number(prior?.m?.attempts||0);if(attempts>=3)return false;
  const metadata={messageHash,leaseId,state:'processing_not_sent',leaseUntil:Date.now()+120000,attempts:attempts+1};if(prior)await tx.update(auditLogsTable).set({metadata}).where(eq(auditLogsTable.id,prior.id));else await tx.insert(auditLogsTable).values({action:'email_synthetic_claim',entityType:'email_fixture',metadata});claimed=true;return true;}),
- respondDraft:async({principal})=>{draftPrincipal=principal;const match=/^history ([a-f0-9-]{36})$/i.exec(event.text.trim());if(!match)return 'Staging email test only. No order, deal or payment action was taken. Shared history reads need an exact deal reference.';const history=await emailDealHistory(event.from,match[1]);return history?emailHistoryDraft(history):'That deal history is unavailable for this account.';},
+ respondDraft:async({principal})=>{draftPrincipal=principal;return emailReadOnlyDraft(event.from,event.text);},
  saveDraft:async draft=>{if(!draftPrincipal)throw Error('email_draft_principal_missing');const expected=draftPrincipal;await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'email_link:'+expected.userId}))`);const current=await account.repository.resolve(event.from);if(!current||current.userId!==expected.userId||current.role!==expected.role||current.consentVersion!==expected.consentVersion)throw Error('email_binding_changed');await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'email_fixture:'+messageHash}))`);const [lease]=await tx.select({m:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'email_synthetic_claim'),sql`${auditLogsTable.metadata}->>'messageHash'=${messageHash}`)).limit(1).for('update');if(lease?.m?.leaseId!==leaseId||Number(lease.m.leaseUntil)<=Date.now())throw Error('email_processing_lease_lost');const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'email_synthetic_draft'),sql`${auditLogsTable.metadata}->>'messageHash'=${messageHash}`)).limit(1);if(!prior)await tx.insert(auditLogsTable).values({actorUserId:current.userId,action:'email_synthetic_draft',entityType:'email_fixture',metadata:{...draft,messageHash,state:'drafted_not_sent',synthetic:true}});});},
  });
  if(claimed)await finish('completed');return result;
