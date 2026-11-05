@@ -1,9 +1,9 @@
 import {and,eq,sql} from 'drizzle-orm';
 import {db,usersTable,dealsTable,buyerRequestsTable,auditLogsTable,whatsappUserContextsTable} from '@workspace/db';
 import {sendWhatsAppText} from '../whatsapp/client';
-import {trialOrderCommand,reducedQuantity} from './trialOrderText';
+import {trialOrderCommand,reducedQuantity,canonicalTrialQuantity} from './trialOrderText';
 export async function prepareTrialOrder(userId:string,dealId:string,quantity:string,unit:string){
- if(process.env.UDC_APP_ENV!=='staging')return {error:404};
+ if(process.env.UDC_APP_ENV!=='staging')return {error:404};const canonical=canonicalTrialQuantity(quantity);if(!canonical)return {error:409};quantity=canonical;
  return db.transaction(async tx=>{
  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'trial_order:'+userId+':'+dealId}))`);
  const [u]=await tx.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,userId)).limit(1).for('share');if(u?.role!=='buyer'||u.status!=='verified')return {error:403};
