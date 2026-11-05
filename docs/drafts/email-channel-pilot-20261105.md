@@ -18,3 +18,8 @@ The current source adapter is a synthetic seam, not a mailbox integration or wor
 Choose and verify mailbox-provider receive/send support and ownership. Build signed-event receiver, sender enrollment, read-only brain adapter, reply/outbox receipts, template/abuse/rate controls, unsubscribe/consent rules, private storage, malware/type checks and exact deal/attachment grants. Never share a trader's old seller records across a new deal. No public mailbox or send configuration changed in this work.
 
 Email parity is separate from the current 37 feature count. Foundation can proceed alongside staged work; real connection and sending need separate user authority and testing.
+
+## Existing WhatsApp trader continuity
+User clarified at 23:38 that the email must be the address registered on the existing WhatsApp account. The synthetic linking contract therefore looks up that current registration, creates a two-minute code challenge, and requires confirmation by the independently verified current WhatsApp account. New arbitrary email addresses cannot select a user ID or merge by name. Code is hashed, max-five/single-use and budgeted via atomic storage contract; production repository/receiver remains unimplemented and disabled. After a verified binding, the same account-keyed history is used, with existing deal and document permissions on every read. Phone/email changes and account revocation must invalidate bindings before launch.
+
+Unknown new buyers need separate email-code verification, consent/onboarding and human account approval. That workflow is not yet implemented and cannot read existing trader history.
