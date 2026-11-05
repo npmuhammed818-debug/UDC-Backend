@@ -239,3 +239,7 @@ The same exact-decimal check now covers marketplace ranking explanations, not ju
 ### 2026-11-05 10:48LA shared private quality-index draft
 
 Synthetic authenticated email now supports exact `quality proof pack DEAL-ID` through the same current-role/current-grant index as WhatsApp. Actual signed local fixture HTTP and native SQL prove accessible approved certificate metadata only, outsider refusal, revoked grant disappearance, no storage URL/photo leakage and visible authenticity/sharing caveats. Draft-only, no file contents/new grants/mailbox/send.691APItests/types/build and all21nativeSQL HTTP suites pass. Source ranking exact-decimal follow-on also included. Full37 strict count unchanged0complete/36partial/1blocked.
+
+### 2026-11-05 10:52LA shared extracted-photo text
+
+Private synthetic email can read exact `review photo quote DEAL-ID DOCUMENT-ID` through the same buyer/current-deal/current-grant/revision checks as WhatsApp. Both adapters now use one bounded exact-string formatter. Native signed fixture HTTP proves decimal precision, wrong-deal and revoked-grant refusal, no storage URL and no snapshot-review audit created by reading an email draft. No email review/acceptance/matching/send is inferred.691APItests/types/build and all21native SQL HTTP suites pass. Real model/photo/provider/device workflow remains incomplete.
