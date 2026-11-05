@@ -319,3 +319,11 @@ Deal creation now checks accepted decision fingerprint/match and exact full pres
 ### 2026-11-05 12:15LA backup-seller continuous native proof
 
 Continuous isolated lifecycle now executes buyer backup request while original deal remains active, parallel deduplicated pending requirement, human review, separately verified alternate seller/fresh offer, exact proposal, no deal before buyer acceptance, direct acceptance handler and distinct new deal. Original status/quantity/seller remain unchanged; no old files/chat copied. Same fixture separately proves explicit seller switch after original hold, including opposite-seller404. All21native SQL/HTTP suites and prior699API/types/API+frontend build pass; new increment is test/docs only. Header/table reconciled to current evidence rather than stale PR298. No automatically chosen seller, full signed continuous journey, customer-device/Meta or human operational completion claimed.0/37fullycomplete remains.
+
+### 2026-11-05 12:42LA continuous signed restart journeys
+
+PR303 source26f8882 moved to main12:29 with fresh five RenderOff/prod8743 checks before/after, postmain699API/type/API+frontend build and nativeHTTP pass. New-main all7green12:37 after artifact FinalizeArtifactECONNRESET cleared by retry, no code/gate change.
+
+Next test-only increment mounts actual signed webhook in continuous lifecycle. Explicit buyer privacy acceptance then signed accept buttons now connect each reduced trial/repeat/backup/switch proposal directly to its new-deal creation route in the same fixture. Same-message replay plus different-message duplicate leave one acceptance; no deal opens until human admin route. All12remaining nativeSQLHTTP suites rerun successfully; broader9native suites and699API/types/build unchanged/pass fromPR303 and build rerun12:40. Providers/storage/verification remain local synthetic, no Meta/customer-device or human operational readiness claimed.
+
+Run exposed another unreliable legacy whole-JSON price-digit assertion in full lifecycle: a harmless timestamp millisecond505 matched price505 despite boundary regex. Exact field allowlists now replace both agent-list/tracking digit checks. Deterministically seed .505Z updatedAt and verify safe list still passes while price/counterparty fields cannot be present. Runtime routes unchanged.0/37fullycomplete,36partial,1blocked.
