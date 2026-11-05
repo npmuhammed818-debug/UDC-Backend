@@ -279,3 +279,7 @@ Next synthetic slice: email `seller review DEAL-ID` shares the same current buye
 ### 2026-11-05 11:37LA carrier calendar validity
 
 Carrier timestamp validation additionally rejects impossible calendar dates, invalid leap days, midnight24, seconds60and offsets outside14hours. Explicit leap-year calendar arithmetic avoids Date.parse normalization; fractional seconds and supported offsets retained.697APItests/types/build/all21isolated native PostgreSQLHTTPsuites pass. Initial test run found missing.ts import in native Node path; fixed then reran complete build/suites. No live provider request.
+
+### 2026-11-05 11:41LA reduced-order continuous native proof
+
+Extended actual isolated full-lifecycle fixture: parallel reduced draft -> pending requirement/no copied target -> human approval -> fresh seller listing/match -> exact proposal -> wrong actor refusal -> changed-price refusal -> one buyer acceptance -> changed-price deal refusal -> distinct new deal. Original quantity unchanged and no old documents copied. Proposal transport is real outbound client through local sink; acceptance invokes exported handler directly, not signed webhook/device, and fixture uses the same seller with a fresh listing. Therefore this does not prove a full seller-switch or customer-device workflow.697APItests/types/build and all21native PostgreSQL HTTP suites pass. Existing financial route tests remain synthetic baseline only; no commission policy changed.
