@@ -1,5 +1,5 @@
 import {sellerReviewCard} from '../deals/sellerReviewCard';
-import {photoQuoteReview} from '../deals/photoQuoteReview';
+import {photoQuoteReview,confirmPhotoQuoteReview} from '../deals/photoQuoteReview';
 import {backupSellerReview} from '../deals/backupSellerReview';
 import {traderCompletionDiary} from '../deals/traderDiary';
 import {disputeBrief} from '../deals/disputeBrief';
@@ -73,6 +73,10 @@ router.get('/trade-assist/deals/:dealId',async(req,res)=>{
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 router.get('/trade-assist/deals/:dealId/seller-review',async(req,res)=>{try{const r=await sellerReviewCard(req.authUser!.id,z.string().uuid().parse(req.params.dealId));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}});
+router.post('/trade-assist/deals/:dealId/photo-quote/:documentId/reviewed',async(req,res)=>{
+ if(!req.is('application/json')||(req.header('origin')&&req.header('origin')!==process.env.UDC_TRADE_ASSIST_ORIGIN)){res.sendStatus(403);return;}
+ try{const input=z.object({reviewToken:z.string().regex(/^[a-f0-9]{64}$/),reviewedAgainstOriginal:z.literal(true)}).strict().parse(req.body);const r=await confirmPhotoQuoteReview(req.authUser!.id,z.string().uuid().parse(req.params.dealId),z.string().uuid().parse(req.params.documentId),input.reviewToken);if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}
+});
 router.get('/trade-assist/deals/:dealId/photo-quote/:documentId',async(req,res)=>{try{const r=await photoQuoteReview(req.authUser!.id,z.string().uuid().parse(req.params.dealId),z.string().uuid().parse(req.params.documentId));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}});
 router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,res)=>{
  try{
