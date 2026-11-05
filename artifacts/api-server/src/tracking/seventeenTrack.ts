@@ -1,3 +1,4 @@
+import {validCarrierTimestamp} from './carrierTimestamp.ts';
 // 17TRACK automatic shipment tracking (owner picked 17TRACK free tier, 28 Oct).
 // This build ships the client against a MOCK/STUB ONLY: no signup, no real API
 // key, no spend. A real key arrives later via a vault link, only after his
@@ -66,7 +67,7 @@ export function createSeventeenTrackClient(): ShipmentTracker {
       if(!accepted?.length)return [];
       if(accepted.length!==1)throw Error('17TRACK ambiguous tracking record');
       const latest = accepted[0]?.track_info?.latest_event;
-      return typeof latest?.time_iso==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(latest.time_iso)&&Number.isFinite(Date.parse(latest.time_iso))&&typeof latest.description==='string'&&latest.description.trim()
+      return validCarrierTimestamp(latest?.time_iso)&&typeof latest.description==='string'&&latest.description.trim()
         ? [{ time: latest.time_iso, description: latest.description, ...(latest.location ? { location: latest.location } : {}) }]
         : [];
     },

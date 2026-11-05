@@ -275,3 +275,7 @@ Next synthetic slice: email `seller review DEAL-ID` shares the same current buye
 ### 2026-11-05 11:31LA provider event timezone check
 
 17TRACK latest-event time must now be explicit offset/Z ISO timestamp, not date-only, browser-local timestamp or ambiguous locale date. Synthetic client tests refuse ambiguous examples and preserve an explicit+05:30event.696APItests/types/build/all21isolated native PostgreSQL HTTP suites pass. No live provider/key/registration/quota use.
+
+### 2026-11-05 11:37LA carrier calendar validity
+
+Carrier timestamp validation additionally rejects impossible calendar dates, invalid leap days, midnight24, seconds60and offsets outside14hours. Explicit leap-year calendar arithmetic avoids Date.parse normalization; fractional seconds and supported offsets retained.697APItests/types/build/all21isolated native PostgreSQLHTTPsuites pass. Initial test run found missing.ts import in native Node path; fixed then reran complete build/suites. No live provider request.
