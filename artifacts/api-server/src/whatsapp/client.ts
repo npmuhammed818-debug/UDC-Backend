@@ -406,3 +406,12 @@ export function markReadAndTyping(to: string, inboundMessageId: string | null | 
     body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: inboundMessageId, typing_indicator: { type: "text" } }),
   }).then(r => r.body?.cancel(), () => undefined).catch(() => undefined);
 }
+
+/** Private synthetic image sink only. Never uploads bytes to Meta or a public
+ * storage URL. A live image transport needs separate release/provider testing. */
+export async function sendSyntheticStatusImage(to:string,png:Uint8Array,caption:string){
+ if(process.env.UDC_APP_ENV!=='staging'||!replySinkEnabled())return {delivered:false as const,reason:'synthetic_only' as const};
+ if(png.length<8||png.length>2*1024*1024||Buffer.from(png).subarray(0,8).toString('hex')!=='89504e470d0a1a0a')return {delivered:false as const,reason:'invalid_png' as const};
+ const id=recordSunkReply(to,{type:'image',image:{caption},syntheticImage:{mimeType:'image/png',byteLength:png.length}}).id;
+ return readMessageAcknowledgement(Response.json({messages:[{id}]}));
+}

@@ -18,6 +18,7 @@ function describe(body: any): { kind: string; text: string } {
     const buttons = Array.isArray(i.action?.buttons) ? ` [buttons: ${i.action.buttons.map((b: any) => b?.reply?.title).join(" | ")}]` : "";
     return { kind: `interactive:${i.type ?? "?"}`, text: String(i.body?.text ?? "") + buttons };
   }
+  if (type === "image") return { kind: "image", text: String(body.image?.caption ?? "[image]") };
   if (type === "audio") return { kind: "voice", text: "[voice note]" };
   return { kind: type, text: `[${type}]` };
 }

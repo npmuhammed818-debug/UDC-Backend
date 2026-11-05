@@ -1,3 +1,4 @@
+import {statusPicturePng} from '../deals/statusPicturePng';
 import {Router} from 'express';
 import {and,eq} from 'drizzle-orm';
 import {db,dealsTable} from '@workspace/db';
@@ -15,6 +16,7 @@ router.get('/deals/:dealId/status-picture',requireAuth,requireNonAgentDealAccess
   if(!deal){res.sendStatus(404);return;}
   res.set({'cache-control':'no-store','content-security-policy':"default-src 'none'; sandbox",'x-content-type-options':'nosniff'});
   if(req.query.format==='json'){res.json({...dealProgress(deal.status),asOf:deal.updatedAt.toISOString(),notPaymentOrDeliveryEvidence:true});return;}
+  if(req.query.format==='png'){res.type('image/png').send(statusPicturePng({...deal,asOf:deal.updatedAt.toISOString()}));return;}
   res.type('image/svg+xml').send(statusPicture({...deal,asOf:deal.updatedAt.toISOString()}));
  }catch{res.sendStatus(503);}
 });
