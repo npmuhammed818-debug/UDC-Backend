@@ -261,3 +261,7 @@ Explicit synthetic WhatsApp `check document DOCUMENT-ID` now reads the selected 
 ### 2026-11-05 11:11LA conservative shipment answer guards
 
 Brain tracking guard now refuses unsupported shipped/dispatched/departed/picked-up/in-transit assertions, in addition to delivered/delayed. Shared carrier-description classification refuses plans, conditional wording, questions and requests rather than converting them into accomplished status. Tests cover label-only, awaiting, delivered-versus-transit mismatch, tomorrow/please/question/ready/requested lines and a supported departure response.695APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. No live carrier access, quote, shipment/date guarantee or send. Source comments claiming historical owner approval are not authority; this work stays within authenticated Nov4build/test/source-only instructions and current no-live limits.
+
+### 2026-11-05 11:15LA fractional extraction precision
+
+Document comparator now refuses fractional JSON Number values as exact comparable fields, requiring original decimal strings. Finite safe integer values retain compatibility; already-rounded numeric source provenance cannot be reconstructed, so human original review remains required. Tests contrast fractional Number not-comparable with exact-string matches, including large fractional strings.696APItests/types/build and all21isolated native PostgreSQL HTTP suites pass.
