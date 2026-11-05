@@ -1,3 +1,4 @@
+import {poolPilotEnabled,poolCountry} from './poolPilot';
 import { eq, sql } from "drizzle-orm";
 import { auditLogsTable, buyerPoolAllocationsTable, buyerPoolsTable, db, usersTable } from "@workspace/db";
 import { isWindowClosedError, sendWhatsAppInteractive } from "../whatsapp/client";
@@ -24,12 +25,14 @@ export function isInviteExpired(createdAt: Date, now = new Date(), days = poolIn
 
 export async function respondToPoolInvite(userId: string, allocationId: string, decision: "accepted" | "declined") {
     return await db.transaction(async (tx) => {
-      const [alloc] = await tx.select().from(buyerPoolAllocationsTable)
-        .where(eq(buyerPoolAllocationsTable.id, allocationId)).limit(1).for("update");
+      let [alloc] = await tx.select().from(buyerPoolAllocationsTable)
+        .where(eq(buyerPoolAllocationsTable.id, allocationId)).limit(1);
       // Another buyer's invite looks the same as a missing one.
       if (!alloc || alloc.buyerUserId !== userId) throw new PoolAllocationError(404, "invite_not_found");
       const [pool] = await tx.select().from(buyerPoolsTable).where(eq(buyerPoolsTable.id, alloc.poolId)).limit(1).for("update");
       if (!pool) throw new PoolAllocationError(404, "invite_not_found");
+      [alloc]=await tx.select().from(buyerPoolAllocationsTable).where(eq(buyerPoolAllocationsTable.id,allocationId)).limit(1).for("update");
+      if(!alloc||alloc.buyerUserId!==userId)throw new PoolAllocationError(404,"invite_not_found");
       if (alloc.status !== "invited") throw new PoolAllocationError(409, `invite_already_${alloc.status}`);
       if (isInviteExpired(alloc.createdAt)) {
         await tx.update(buyerPoolAllocationsTable).set({ status: "expired" }).where(eq(buyerPoolAllocationsTable.id, alloc.id));
@@ -38,6 +41,7 @@ export async function respondToPoolInvite(userId: string, allocationId: string, 
         return { expired: true as const };
       }
       if (pool.status !== "forming") throw new PoolAllocationError(409, "buyer_pool_not_forming");
+      if(poolPilotEnabled()&&decision==='accepted'){const policy=await poolCountry(tx,pool,userId);if(!policy.ok)throw new PoolAllocationError(409,policy.reason);}
       await tx.update(buyerPoolAllocationsTable).set({ status: decision }).where(eq(buyerPoolAllocationsTable.id, alloc.id));
       // Fully accepted = every live invite accepted and the accepted quantity exactly fills the target.
       const [roll] = await tx.select({
@@ -88,6 +92,7 @@ export async function sendPoolInviteMessage(buyerUserId: string, allocationId: s
 export function poolReplyText(result: { expired: boolean; fullyAccepted?: boolean }, decision: "accepted" | "declined") {
   if (result.expired) return "This pool invite has expired. UDC can send a new one if you are still interested.";
   if (decision === "declined") return "Done. You declined this pool invite. No cost, no obligation.";
+  if(poolPilotEnabled())return result.fullyAccepted?'Every buyer has accepted. The pool still needs UDC human review and bank review. No order or shared DLC has been created.':'Your interest is recorded. Every buyer must accept, then UDC and the bank review it. No order or shared DLC has been created.';
   return result.fullyAccepted
     ? "Accepted. Every buyer has now accepted, so the pool can go ahead. UDC will contact you about the next step."
     : "Accepted. The pool goes ahead only once every invited buyer accepts. UDC will update you.";

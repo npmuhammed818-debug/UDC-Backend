@@ -65,7 +65,9 @@ try {
   const listing = { product_id: product, quantity: 100, unit: "MT", origin: "Mumbai" };
 
 
+  const pilot=process.env.UDC_APP_ENV==='staging';
   const b1 = await mk("buyer", "verified"), b2 = await mk("buyer", "verified"), b3 = await mk("buyer", "verified");
+  if(pilot)await pool.query("update users set country='India' where role='buyer'");
   const mkPool = async () => {
     const d = (await pool.query("insert into deals(buyer_user_id,seller_user_id,product_id,quantity,unit,agreed_price,currency) values($1,$2,$3,'100','MT','500.00','USD') returning id", [b1.id, seller.id, product])).rows[0].id;
     const r = await call("POST", `/admin/deals/${d}/buyer-pool`, { targetQuantity: 100, unit: "MT" }, admin.cookie);
@@ -136,26 +138,43 @@ try {
   const w1 = await invite(p5, b1, 60); const w2 = await invite(p5, b2, 40);
   await new Promise((r) => setTimeout(r, 300));
   const sent = globalThis.__wa.filter((m) => m.k === "interactive");
-  assert.equal(sent.length, 2, "each invited buyer gets an invite message");
+  if(!pilot){assert.equal(sent.length, 2, "each invited buyer gets an invite message");
   assert.deepEqual(sent[0].b.action.buttons.map((x) => x.reply.id), [`udc:pool:accept:${w1}`, `udc:pool:decline:${w1}`]);
-  assert.match(sent[0].b.body.text, /10 days/);
+  assert.match(sent[0].b.body.text, /10 days/);}
+  if(pilot)assert.equal(sent.length,0,"staging never invokes provider delivery");
   const tap = (phone, id) => app.handleChatUi(phone, { id: "wamid." + id, from: phone.replace("+", ""), interactive: { type: "button_reply", button_reply: { id } } });
   const lastText = () => globalThis.__wa.filter((m) => m.k !== "interactive").at(-1)?.b;
   assert.equal(await tap("+910000000002", `udc:pool:accept:${w1}`), true);
   assert.match(lastText(), /not available/, "another buyer's button does nothing");
   assert.equal((await pool.query("select status from buyer_pool_allocations where id=$1", [w1])).rows[0].status, "invited");
   await tap("+910000000001", `udc:pool:accept:${w1}`);
-  assert.match(lastText(), /goes ahead only once every invited buyer accepts/);
+  assert.match(lastText(), pilot?/Every buyer must accept/:/goes ahead only once every invited buyer accepts/);
   await tap("+910000000001", `udc:pool:accept:${w1}`);
   assert.match(lastText(), /already answered/);
   await tap("+910000000002", `udc:pool:accept:${w2}`);
-  assert.match(lastText(), /Every buyer has now accepted/);
+  assert.match(lastText(), pilot?/Every buyer has accepted/:/Every buyer has now accepted/);
   assert.equal((await poolRow(p5)).status, "fully_accepted");
   const p6 = await mkPool(); const w3 = await invite(p6, b1, 100);
   await tap("+910000000001", `udc:pool:decline:${w3}`);
   assert.match(lastText(), /declined this pool invite\. No cost/);
   assert.equal((await pool.query("select status from buyer_pool_allocations where id=$1", [w3])).rows[0].status, "declined");
   pass("WhatsApp: invite message carries Accept/Decline buttons; only the invited buyer's tap counts; accept, repeat, full acceptance and decline replies (fake client)");
+  if(pilot){
+   const queue=await call('GET','/admin/buyer-pools/pilot',undefined,admin.cookie);assert.equal(queue.status,200);assert.ok(queue.body.pools.some(p=>p.id===p5));assert.equal((await call('GET','/admin/buyer-pools/pilot',undefined,b1.cookie)).status,403);
+   const reviewUrl='/admin/buyer-pools/'+p5+'/pilot-review';
+   assert.equal((await call('POST',reviewUrl,{note:'Synthetic same-country human review'},b1.cookie)).status,403);
+   const review=await call('POST',reviewUrl,{note:'Synthetic same-country human review'},admin.cookie);assert.equal(review.status,200);assert.match(review.body.notice,/No shared DLC/);
+   assert.equal((await call('POST',reviewUrl,{note:'Same review repeated'},admin.cookie)).body.repeated,true);
+   assert.equal((await call('POST','/admin/buyer-pools/'+p6+'/pilot-review',{note:'Missing accepts'},admin.cookie)).status,409);
+   const p7=await mkPool();await pool.query("update users set country='Kenya' where id=$1",[b2.id]);
+   assert.equal((await call('POST','/admin/buyer-pools/'+p7+'/allocations',{buyerUserId:b2.id,quantity:10},admin.cookie)).body.error,'same_country_verified_buyer_required');
+   await pool.query("update users set country='India' where id=$1",[b2.id]);const z1=await invite(p7,b2,100);
+   await pool.query("update users set country='Kenya' where id=$1",[b2.id]);assert.equal((await call('POST','/buyer-pools/invites/'+z1+'/accept',{},b2.cookie)).status,409);
+   await pool.query("update users set country='India' where id=$1",[b2.id]);
+   const p8=await mkPool();const z2=await invite(p8,b2,100);await pool.query("update users set country='Kenya' where id=$1",[b1.id]);assert.equal((await call('POST','/buyer-pools/invites/'+z2+'/accept',{},b2.cookie)).status,409);
+   await pool.query("update users set country='India' where id=$1",[b1.id]);
+   assert.equal((await poolRow(p5)).bank_approval_status,'not_reviewed');pass('staging country isolation/revalidation, human review, idempotence, no delivery or bank mutation');
+  }
   console.log(`PASSED: ${checks} real PostgreSQL buyer-pool scenarios (synthetic data, no network).`);
 } finally {
   globalThis.fetch = beforeFetch;

@@ -1,3 +1,4 @@
+import {PoolPilot} from './admin-v2-pool-pilot';
 import {TradeAssistQueue} from './admin-v2-trade-assist';
 import {useActionLock} from '@/hooks/use-action-lock';
 import {useState,type FormEvent} from 'react';
@@ -22,6 +23,7 @@ function Support({user}:{user:AnyRecord}){
   </section>
   <section className="av2-panel" style={{padding:18}}><h2>Incident register</h2><p className="av2-d">Review recorded incidents here. Creating an incident and sending an in-app notice are separate human actions below.</p>{incidents.isError?<p role="alert">Incidents did not load. <button onClick={()=>void incidents.refetch()}>Retry</button></p>:incidents.isLoading?<div className="av2-skel"/>:!incidents.data?.incidents.length?<p className="av2-d">No incidents recorded.</p>:incidents.data.incidents.map(i=><article key={i.id} style={{padding:'12px 0',borderTop:'1px solid #ddd'}}><h3>{i.title}</h3><p className="av2-d">{i.severity} · {i.affectedCount} affected · {i.notifiedCount} notices recorded</p><p>{(i.dataCategories || []).join(', ')}</p></article>)}</section>
  <TradeAssistQueue/>
+ <PoolPilot/>
  <IncidentControls/>
  </AdminV2Shell>;
 }

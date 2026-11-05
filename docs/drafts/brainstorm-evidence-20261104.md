@@ -37,3 +37,6 @@ Source-only main moved to 9f176ea after all seven CI checks. Production remained
 
 ## Safety/release gaps
 Live document OTP adapter is deliberately not configured, so no real code or message was sent. No hosted fixture/migration SQL was run. Review origins/environment and device/provider tests remain. Customer commands in the new slice are staging-only; admin queue is read-only. No commission, banking or payment rules changed. Existing handbook language is not proof of any financial protection or legal promise.
+
+## Nov 4 evening pool pilot increment
+Staging exact-country gates now check lead buyer and every active member before allocation and acceptance. Country is pinned in the pool creation audit; changed/missing/foreign labels fail closed, aliases are not guessed. Manual human review requires all accepted quantity to fill the pool and appends an audit event, with bank status unchanged. Staging allocations never invoke the real notification sender. Admin v2 Support has create, allocation and human-review forms plus readback. Native PostgreSQL/actual authenticated HTTP tests executed, including changed-country cases, outsider/admin access, idempotent review and no bank mutation. Desktop/390px actual form pixels inspected with synthetic fixtures. This does not create a shared DLC or execute a pooled purchase, so those promises are not marked complete.

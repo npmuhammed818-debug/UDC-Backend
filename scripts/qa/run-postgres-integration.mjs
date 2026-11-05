@@ -28,6 +28,7 @@ const cases = [
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'redteam-pass4'],
   ['vault', 'UDC_VAULT_QA_DATABASE_URL', 'vault'],
   ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools'],
+  ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools-pilot'],
   ['journey', 'UDC_JOURNEY_QA_DATABASE_URL', 'trade-journey'],
   ['commroutes', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-routes'],
   ['commproposals', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-proposals'],
