@@ -363,3 +363,7 @@ Continuous signed reject-all test reproduced seller bounce: after both sellers w
 ### 2026-11-05 13:13LA initial scanner respects rejected seller history
 
 Same reject-all native fixture reproduced the sibling initial-offer path reviving an earlier seller via another listing after all matches declined. Initial selection now excludes every seller behind attempted listings for that requirement too. Regression explicitly invokes initial-offer scan after signed exhaustion: false/no new match/proposal, prior two declined matches remain.700APItests/types/API+frontend build and all21nativeSQLHTTP suites pass. Source-only, no seller contacted or live scanner enabled; human review remains a separate path.
+
+### 2026-11-05 13:14LA signed wrong-actor refusal in each continuous acceptance
+
+Fixture now explicitly binds verified original seller's phone and obtains privacy consent through signed messages. Each continuous proposal receives its validly provider-signed seller callback and refuses buyer acceptance, before legitimate buyer callbacks proceed once. Complements forged-HMAC refusal rather than confusing transport authenticity with buyer consent. All12remaining nativeSQLHTTP rerun pass;700API/types/build and broader9native suites pass same runtime. Test-only.

@@ -74,6 +74,7 @@ try {
     const before=(await pool.query('select count(*)::int n from deals')).rows[0].n;
     await signedMessage('15550001111',button,randomUUID(),'wrong-synthetic-signature');
     assert.equal((await pool.query("select count(*)::int n from audit_logs where action='match_terms_accepted' and entity_id=$1",[proposalId])).rows[0].n,0,'forged signature cannot reach consent');
+    await signedMessage('15550002222',button);assert.equal((await pool.query("select count(*)::int n from audit_logs where action='match_terms_accepted' and entity_id=$1",[proposalId])).rows[0].n,0,'valid provider signature from seller still cannot accept buyer proposal');
     const id=randomUUID();await signedMessage('15550001111',button,id);await signedMessage('15550001111',button,id);await signedMessage('15550001111',button);
     assert.equal((await pool.query("select count(*)::int n from audit_logs where action='match_terms_accepted' and entity_id=$1",[proposalId])).rows[0].n,1,'signed buyer retry and new-message duplicate leave one acceptance');
     assert.equal((await pool.query('select count(*)::int n from deals')).rows[0].n,before,'signed consent cannot silently open a deal');
@@ -172,7 +173,7 @@ try {
 
   // Separate reduced buyer draft -> human review -> fresh seller terms -> exact
   // buyer agreement -> distinct deal. All transport stays in the local sink.
-  process.env.UDC_APP_ENV='staging';process.env.AKIF_WHATSAPP_REPLY_SINK='store';await pool.query("update deals set status='negotiation' where id=$1",[dealId]);await pool.query("update users set phone='15550001111' where id=$1",[buyer.id]);await signedMessage('15550001111','Hello');await signedMessage('15550001111','I agree');
+  process.env.UDC_APP_ENV='staging';process.env.AKIF_WHATSAPP_REPLY_SINK='store';await pool.query("update deals set status='negotiation' where id=$1",[dealId]);await pool.query("update users set phone='15550001111' where id=$1",[buyer.id]);await signedMessage('15550001111','Hello');await signedMessage('15550001111','I agree');await pool.query("update users set phone='15550002222' where id=$1",[seller.id]);await signedMessage('15550002222','Hello');await signedMessage('15550002222','I agree');
   const signedTrial=await signedRequest(buyer,dealId,'trial order 20 MT','trial_requirement_prepared');assert.ok(signedTrial.metadata.requirementId);
   const reduced=await Promise.all([app.prepareTrialOrder(buyer.id,dealId,'20','MT'),app.prepareTrialOrder(buyer.id,dealId,'20','MT')]);assert.equal(reduced[0].requirementId,reduced[1].requirementId);const reducedId=reduced[0].requirementId;assert.equal(reducedId,signedTrial.metadata.requirementId);assert.ok(reducedId);const reducedRow=(await pool.query('select * from buyer_requests where id=$1',[reducedId])).rows[0];assert.equal(reducedRow.status,'pending_admin_review');assert.equal(reducedRow.target_price,null);assert.equal(reducedRow.quantity,'20.000000');
   const fresh=await call('POST','/seller-listings',{product_id:product,quantity:100,unit:'MT',price:499,currency:'USD',origin_country:'India',incoterm:'CIF',destination:'Dubai'},seller.cookie);assert.equal(fresh.status,201,JSON.stringify(fresh.body));const freshId=fresh.body.listing.id;
