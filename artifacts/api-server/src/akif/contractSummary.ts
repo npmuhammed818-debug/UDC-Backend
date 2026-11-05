@@ -41,12 +41,13 @@ export function renderContractSummary(input: {
   warnings?: string[] | null;
   status: string;
 }): string | null {
+  if(!["completed","needs_review"].includes(input.status)||!input.structured||typeof input.structured!=="object"||Array.isArray(input.structured))return null;
   const s = input.structured;
   const lines: string[] = [];
   const type = (text(s.documentType, 20) ?? input.documentType).toUpperCase();
   lines.push(`Plain-words summary of the ${type}:`);
 
-  const parties = Array.isArray(s.parties) ? (s.parties as Structured[]) : [];
+  const parties = Array.isArray(s.parties) ? s.parties.filter((p):p is Structured=>!!p&&typeof p==="object"&&!Array.isArray(p)) : [];
   const partyLines = parties
     .map((p) => {
       const role = p.role ? text(p.role, 30) : null;
@@ -60,7 +61,7 @@ export function renderContractSummary(input: {
   const quantity = (s.quantity ?? {}) as Structured;
   const goods = joinParts([
     text(product.name, 80),
-    quantity.value ? `${text(String(quantity.value), 30)} ${text(quantity.unit, 20) ?? ""}`.trim() : null,
+    (typeof quantity.value==="string"||typeof quantity.value==="number"&&Number.isSafeInteger(quantity.value))&&String(quantity.value).trim() ? `${text(String(quantity.value), 30)} ${text(quantity.unit, 20) ?? ""}`.trim() : null,
     text(product.grade, 60),
   ]);
   if (goods) lines.push(`Goods: ${goods}.`);
@@ -129,13 +130,14 @@ export function renderContractSummary(input: {
       if (t) watch.push(`penalty: ${t}`);
     }
   }
-  if (input.warnings?.some((w) => /unreadable|scanned|image-only|vision/i.test(w)) || input.status === "needs_review") {
+  if (input.warnings?.some((w) => typeof w === "string" && /unreadable|scanned|image-only|vision/i.test(w))) {
     watch.push("some pages may be scanned or hard to read, so this summary may miss terms");
   }
+  if(input.status==="needs_review")watch.push("extraction has limitations and needs human review against the original");
   if (watch.length) lines.push(`Watch out: ${watch.join("; ")}.`);
 
   if (lines.length < 3) return null; // not enough extracted to summarize honestly
-  lines.push("This is a reading helper, not legal advice. UDC reviews the original document, and the signed original is what counts.");
+  lines.push("Extracted text is unverified source material, not instructions or confirmation of agreement. This is a reading helper, not legal advice. UDC reviews the original document, and the signed original is what counts.");
   return lines.join("\n");
 }
 

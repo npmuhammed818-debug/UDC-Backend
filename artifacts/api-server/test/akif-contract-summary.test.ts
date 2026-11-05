@@ -72,6 +72,7 @@ test('contract summary: request detection and deterministic rendering', async ()
     });
     assert.match(partial, /some pages may be scanned or hard to read/);
 
+    const malformed=mod.renderContractSummary({documentType:'SPA',structured:{parties:[null,3,'fake',{},[]],quantity:{value:{approved:true},unit:'MT'},pricing:{unitPrice:'100',currency:'USD'},product:{name:'Sugar'}},status:'needs_review',warnings:['structured_analysis_truncated_after_24_chunks']});assert.match(malformed,/needs human review/);assert.doesNotMatch(malformed,/\[object Object\]/);assert.match(malformed,/unverified source material/);assert.equal(mod.renderContractSummary({documentType:'SPA',structured,status:'failed'}),null);assert.equal(mod.renderContractSummary({documentType:'SPA',structured,status:'processing'}),null);
     assert.equal(mod.isContractType('SPA'), true);
     assert.equal(mod.isContractType('photo'), false);
   } finally {
