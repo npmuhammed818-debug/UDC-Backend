@@ -43,7 +43,7 @@ test('easy turn with a bad draft: deep writes a lesson, fast retries once with i
 });
 
 test('easy turn with a bad draft and a bad retry: the deep brain answers', async () => {
-  const out = await runDualBrainReply('m', 's', { hardTurn: false, timeoutMs: 5000, validate: () => false }, {
+  const out = await runDualBrainReply('m', 's', { hardTurn: false, timeoutMs: 5000, validate: r => r==='deep answer' }, {
     fast: async () => ({ content: 'bad' }),
     deep: async () => ({ content: 'deep answer' }),
   });
@@ -117,4 +117,18 @@ test('Gemini request shape: generateContent with api-key header (mocked fetch)',
       assert.equal(body.contents[0].parts[0].text, 'hello');
     });
   } finally { globalThis.fetch = original; }
+});
+
+
+test('easy turn recovers a fast provider failure with a validated deep answer',async()=>{
+ const out=await runDualBrainReply('m','s',{hardTurn:false,timeoutMs:50,validate:r=>r==='safe'},{fast:async()=>{throw Error('fast unavailable');},deep:async()=>({content:'safe'})});assert.equal(out.brain,'deep');assert.equal(out.content,'safe');
+});
+test('deep final answers and hard fast fallbacks cannot bypass the validator',async()=>{
+ for(const hardTurn of [true,false])await assert.rejects(runDualBrainReply('m','s',{hardTurn,timeoutMs:50,validate:()=>false},{fast:async()=>({content:'unsafe fast'}),deep:async()=>({content:'unsafe deep'})}),/rejected/);
+});
+test('hard turn rejects an invalid deep output and uses only a valid fast fallback',async()=>{
+ const out=await runDualBrainReply('m','s',{hardTurn:true,timeoutMs:50,validate:r=>r==='safe'},{fast:async()=>({content:'safe'}),deep:async()=>({content:'unsafe'})});assert.equal(out.brain,'fast');assert.equal(out.deepChecked,false);
+});
+test('failed fast retry still reaches a checked deep answer',async()=>{
+ let n=0,calls=0;const out=await runDualBrainReply('m','s',{hardTurn:false,timeoutMs:50,validate:r=>r==='safe'},{fast:async()=>{if(++n===1)return {content:'bad'};throw Error('retry unavailable');},deep:async()=>({content:++calls===1?'{{bad-check}}':'safe'})});assert.equal(out.brain,'deep');assert.equal(out.content,'safe');assert.equal(n,2);
 });

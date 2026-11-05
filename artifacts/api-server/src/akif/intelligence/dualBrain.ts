@@ -51,6 +51,9 @@ export async function runDualBrainReply(
   const deep = slots.deep ?? runStrongModelChat;
   const validate = options.validate ?? ((reply: string) => Boolean(reply.trim()));
 
+  const checked=(result:ChatResult)=>{const content=result.content.trim();if(!content||!validate(content))throw Error('dual_brain_response_rejected');return content;};
+  const deepAnswer=async(lesson:string|null=null):Promise<DualBrainOutcome>=>({content:checked(await deep(message,system,options.timeoutMs)),brain:'deep',deepChecked:true,lesson});
+
   // Hard turns: both brains run from the same moment; the deep brain's answer
   // is the one the customer gets. The fast draft still runs so its latency and
   // content can be compared in staging telemetry.
@@ -59,18 +62,18 @@ export async function runDualBrainReply(
       fast(message, system, options.timeoutMs),
       deep(message, system, options.timeoutMs),
     ]);
-    if (deepResult.status === 'fulfilled') {
-      return { content: deepResult.value.content, brain: 'deep', deepChecked: true, lesson: null };
+    if (deepResult.status === 'fulfilled' && deepResult.value.content.trim() && validate(deepResult.value.content.trim())) {
+      return { content: deepResult.value.content.trim(), brain: 'deep', deepChecked: true, lesson: null };
     }
-    if (fastResult.status === 'fulfilled') {
-      return { content: fastResult.value.content, brain: 'fast', deepChecked: false, lesson: null };
+    if (fastResult.status === 'fulfilled' && fastResult.value.content.trim() && validate(fastResult.value.content.trim())) {
+      return { content: fastResult.value.content.trim(), brain: 'fast', deepChecked: false, lesson: null };
     }
-    throw deepResult.reason;
+    throw deepResult.status==='rejected'?deepResult.reason:Error('dual_brain_response_rejected');
   }
 
   // Easy turns: the fast draft goes out when it passes the code validator.
-  const draft = (await fast(message, system, options.timeoutMs)).content.trim();
-  if (validate(draft)) {
+  let draft:string;try{draft=(await fast(message,system,options.timeoutMs)).content.trim();}catch{return deepAnswer();}
+  if (draft && validate(draft)) {
     return { content: draft, brain: 'fast', deepChecked: false, lesson: null };
   }
 
@@ -89,11 +92,10 @@ export async function runDualBrainReply(
     lesson = null;
   }
   const retrySystem = (system ?? '') + (lesson ? ` Your previous draft was rejected. Lesson: ${lesson}` : ' Your previous draft was rejected: be warm, honest and concise.');
-  const retry = (await fast(message, retrySystem, options.timeoutMs)).content.trim();
-  if (validate(retry)) {
+  let retry:string;try{retry=(await fast(message,retrySystem,options.timeoutMs)).content.trim();}catch{return deepAnswer(lesson);}
+  if (retry && validate(retry)) {
     return { content: retry, brain: 'fast-retry', deepChecked: true, lesson };
   }
 
-  const answer = await deep(message, system, options.timeoutMs);
-  return { content: answer.content, brain: 'deep', deepChecked: true, lesson };
+  return deepAnswer(lesson);
 }

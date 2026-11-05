@@ -191,3 +191,7 @@ Transport-neutral processing now requires verified principals, checks supported 
 ### 2026-11-05 08:52LA exact-company evidence for review leads
 
 Price watches and private alternate-seller review now require approved evidence on the exact company named by the buyer requirement and seller listing, owned by that exact participant. Previously evidence on any other company owned by the person could qualify an unrelated listing. Missing company IDs fail closed. Native SQL tests prove different-company evidence, foreign company ownership and wrong alternate-listing company cannot qualify.680APItests/type/build/native review pass. This tightens review leads only; no agreement, commission or financial policy changed.
+
+### 2026-11-05 08:56LA dual-response failure paths
+
+A failed easy fast provider now reaches the deep provider rather than immediately falling offline; failed fast retry does likewise. Final deep replies and hard-turn fast fallbacks must pass the same supplied code validator; blank responses refuse. Previously final deep/hard fallback could bypass that validator. Four synthetic-port regressions cover these paths.684APItests/types pass. No provider request or routing flag changed, and this is not live model-quality validation.
