@@ -42,6 +42,7 @@ const extractionSchemaDescription = {
   discrepanciesOrConflicts: "array of facts in this document that may conflict with known deal terms",
   otherTerms: "array of material terms not captured above",
   confidence: "number from 0 to 1",
+  items: "For price_list, product_photo or image only: array of {product, unitPrice, currency, unit}. Copy exact visible product text. unitPrice must be a positive plain decimal STRING with no separators or exponent, never a JSON number. currency must be an explicitly visible three-letter uppercase code; never infer a code from a symbol. unit must be explicitly visible MT, kg, tonne, piece, carton or container; do not convert, infer pack quantities or normalize ambiguous box/bag. Omit the whole row if any required value is absent or ambiguous. Never infer seller identity, availability, shipping, taxes, agreement, quotation or a match.",
 };
 
 async function extractChunkFacts(input: {
@@ -327,6 +328,7 @@ export async function processDocumentIntelligence(input: {
     });
 
     const review = documentExtractionReview(vision.text,[
+      ...(['price_list','product_photo','image'].includes(input.documentType)?['photo_price_list_requires_human_review']:[]),
       ...(extraction.warnings ?? []),
       ...vision.warnings,
       ...aiWarnings,
