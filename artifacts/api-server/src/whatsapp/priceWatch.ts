@@ -1,5 +1,6 @@
+import {currentEmailAccountConsent} from '../channels/emailAccount';
 import {and,desc,eq,sql} from 'drizzle-orm';
-import {db,usersTable,whatsappUserContextsTable,dealsTable,buyerRequestsTable,auditLogsTable,sellerListingsTable} from '@workspace/db';
+import {db,usersTable,whatsappUserContextsTable,dealsTable,buyerRequestsTable,auditLogsTable,sellerListingsTable,notificationPreferencesTable} from '@workspace/db';
 import {priceWatchCommand,priceBelow} from '../marketData/priceWatch';
 import {minorUnitDigits} from '../referrals/currencyPrecision';
 import {approvedCompanyEvidence} from '../marketplace/verifiedCounterparties';
@@ -28,6 +29,7 @@ export async function runPriceWatches(){
  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'price_watch:'+watch.actorUserId+':'+watch.entityId}))`);
  const [latest]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'price_watch_preference'),eq(auditLogsTable.actorUserId,watch.actorUserId!),eq(auditLogsTable.entityId,watch.entityId!))).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1);if(latest?.id!==watch.id)return;
  const [u]=await tx.select({id:usersTable.id,phone:usersTable.phone,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,watch.actorUserId!)).limit(1);if(!u?.phone||u.role!=='buyer'||u.status!=='verified'||!await approvedCompanyEvidence(u.id,tx))return;
+ if(!await currentEmailAccountConsent(u.id))return;const [preferences]=await tx.select({optional:notificationPreferencesTable.optionalWhatsApp,announcements:notificationPreferencesTable.announcements}).from(notificationPreferencesTable).where(eq(notificationPreferencesTable.userId,u.id)).limit(1);if(preferences&&(preferences.optional===false||preferences.announcements===false))return;
  const [r]=await tx.select().from(buyerRequestsTable).where(and(eq(buyerRequestsTable.id,watch.entityId!),eq(buyerRequestsTable.buyerUserId,u.id),eq(buyerRequestsTable.status,'approved'))).limit(1);if(!r||r.currency!==m.currency||r.unit!==m.unit)return;
  const listings=await tx.select().from(sellerListingsTable).where(and(eq(sellerListingsTable.productId,r.productId),eq(sellerListingsTable.status,'approved'),eq(sellerListingsTable.currency,r.currency),eq(sellerListingsTable.unit,r.unit))).orderBy(desc(sellerListingsTable.updatedAt)).limit(50);
  for(const listing of listings){if(Date.now()-listing.updatedAt.getTime()>7*86400000||listing.updatedAt.getTime()>Date.now()+60000||!priceBelow(listing.price,m.threshold as string)||!canAutomaticallyPresentOffer(r,listing))continue;
