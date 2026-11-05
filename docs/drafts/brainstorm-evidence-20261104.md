@@ -265,3 +265,9 @@ Brain tracking guard now refuses unsupported shipped/dispatched/departed/picked-
 ### 2026-11-05 11:15LA fractional extraction precision
 
 Document comparator now refuses fractional JSON Number values as exact comparable fields, requiring original decimal strings. Finite safe integer values retain compatibility; already-rounded numeric source provenance cannot be reconstructed, so human original review remains required. Tests contrast fractional Number not-comparable with exact-string matches, including large fractional strings.696APItests/types/build and all21isolated native PostgreSQL HTTP suites pass.
+
+### 2026-11-05 11:28LA PR302 source closeout and next slice
+
+PR302 main1bf6948 source-only pushed11:23 after exact candidate7green. Fresh five Render settings immediately before/after remain Auto-DeployOff and production8743bd6. Postmain696APItests/types/nativeHTTPSQL pass; both new main-triggered runs42093479938/42093479959 all7green at11:28. No deployment.
+
+Next synthetic slice: email `seller review DEAL-ID` shares the same current buyer/seller/account/listed-company evidence reader and formatter as WhatsApp. Signed synthetic HTTP/nativeSQL proves own buyer view, suspended seller no-current-review wording, wrong deal and wrong current role refusal, no sellerID/private floor/storage URL and visible non-guarantee caveat.696APItests/types/build/all21isolatedPostgreSQLHTTPsuites pass. No real email connection/send or public trust badge.
