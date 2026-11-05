@@ -385,3 +385,6 @@ Actual translation tests reproduced model output changing500→590 and dropping 
 
 ## Shared private human-help status
 WhatsApp request-status and synthetic email `request status DEAL-ID` now use one exact-deal current-role/current-party reader. It returns only that requester's latest5 requests and bounded recorded human-review notes, with a queue-only caveat. Prior separate WhatsApp query did not transaction-lock its account/deal/evidence. Native SQL covers both adapters, actual prior admin resolved note, seller/outsider isolation, email independent of WhatsApp selection with zero selection/request/review mutation, and a concurrent buyer→seller role change that blocks then denies. No human staffing/contact or real resolution is implied; no real inbox/send enabled.
+
+## Continuous signed human-help queue proof
+Full native lifecycle now executes signed buyer deal selection/help request with same-ID replay and new-ID duplicate, buyer-denied admin review, two concurrent admin terminal reviews (one200/one409 and one audit), signed buyer status readback, and signed seller status that excludes the buyer's private review note. Original deal count/status remain unchanged. Uses local signed webhook and reply sink, actual HTTP/admin and PostgreSQL; no Meta, staff contact or physical resolution. All12 remaining native suites pass with this continuous fixture.
