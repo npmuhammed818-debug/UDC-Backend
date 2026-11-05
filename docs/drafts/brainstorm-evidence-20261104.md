@@ -299,3 +299,7 @@ Separate actual signed WhatsApp/native PostgreSQL fixture now sends full exact p
 ### 2026-11-05 11:54LA exact proposal-presentation gate
 
 A buyer callback could previously decide an existing proposal without evidence its full terms/button were accepted by transport. New append-only match_terms_presented audit records exact fingerprint only after every term chunk and button succeeds; response refuses missing/mismatched presentation before acceptance/rejection. This is provider acceptance evidence, not delivery/read proof or payment authority. Signed webhook/nativeSQL explicitly removes presentation fixture, proves callback denied/no acceptance, restores it and verifies legitimate buyer/duplicate behavior. Continuous trial/repeat/switch still pass.697APItests/types/build/all21native PostgreSQLHTTPsuites pass. Existing unpresented proposals need resending, not inferred historical delivery. No migration/live action.
+
+### 2026-11-05 11:57LA malformed expiry and failed presentation regression
+
+Proposal response rejects missing/invalid expiry rather than letting Date.parse NaN pass its time guard. Mock database/transport regression forces proposal delivery failure, proves no presentation/acceptance, then retries full presentation before valid decision. Actual signed/native and continuous lifecycle suites remain passing.697APItests/types/build/all21native PostgreSQLHTTPsuites pass. These are no-send local tests; no historical approval or financial policy inferred.

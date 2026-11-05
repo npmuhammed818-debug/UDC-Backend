@@ -300,9 +300,10 @@ export async function respondToTerms(
         )
         .orderBy(desc(auditLogsTable.createdAt))
         .limit(1);
+      const expiry=typeof metadata.expiresAt==='string'?Date.parse(metadata.expiresAt):NaN;
       if (
         latest?.id !== proposal.id ||
-        Date.parse(metadata.expiresAt) <= Date.now() ||
+        !Number.isFinite(expiry) || expiry <= Date.now() ||
         metadata.fingerprint !== termsFingerprint(c.terms)
       )
         return "These terms changed or expired. Ask UDC to send the current proposal.";
