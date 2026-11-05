@@ -1,39 +1,40 @@
 # Brainstorm implementation evidence, 2026-11-04
 
-Source-only main moved to 9f176ea after all seven CI checks. Production remained 8743bd6; no deployment. Follow-on staging candidate aa93241 is not on main. No global percent is meaningful: these ideas differ in scope, and code presence is not end-to-end readiness.
+Current source-only main:0d50082. Current PR298 candidate:b09c5f3 (2026-11-05 06:48LA). Production remains8743bd6 with go-live separate. Strict count:0/37 fully complete,36partial,1notstarted (#17discount blocked by no-commission-change limit). Idea10 is excluded by the user and is not one of the37. Email is additional scope outside37. The33 retained numbered ideas plus buyer pools, quick switch, document review and channel-neutral brain make37; no feature is counted complete from foundations or synthetic tests alone.
 
-| Idea | Current evidence | Remaining |
+| Idea | Current executed source-side evidence | Remaining |
 |---|---|---|
-|1 Status picture;28 progress bar|Staging SVG/JSON, actual SQL/HTTP privacy + pixels|WhatsApp image delivery not wired|
-|2 Price watch|No dedicated implementation located|Provider, opt-in, threshold, stale data, delivery|
-|3 Trust badge;18 fake-seller shield|Verified parties gate and current review label, no guarantee|Evidence-backed screening presentation and risk review|
-|4 Voice summary;31 voice-first|Existing voice replies and transcription, text-only critical terms|Dedicated deal voice summary/customer device tests|
-|5 Document checker|Existing extraction plus exact deterministic field comparisons, grant/freshness checks executed|Uploaded real-format fixture end-to-end; model extraction is untrusted|
-|6 Repeat order|Explicit request on completed deal saves buyer-owned draft for human review, SQL tested|Reviewed new requirement, fresh seller proposal and agreement|
-|7 Currency helper|No live-rate helper located|Dated provider, FX source, rounding, no silent deal-term conversion|
-|8 Delay warning|Existing recorded ETA and stale-update advisory, not physical delay proof|Full watch/provider/notification readiness check|
-|9 Deal memory|Existing authorized recent conversation + document-filtered memory|Cross-deal delivery-performance evidence, no private reasons|
+|1 Status picture;28 progress bar|ActualPNG/HTTP and signed webhook, bundled font, current direct-party privacy, local image sink; pixels inspected|Real Meta image upload, delivery/receipt and customer device|
+|2 Price watch|Explicit own approved requirement, six-decimal compare, compatible current verified listings, consent/globalSTOP/parallel dedup tested|Provider window/template/receipt and customer device; not whole-market data|
+|3 Trust badge;18 fake-seller shield|Current verified-account/company/evidence gates|Dedicated evidence-backed risk presentation and full screening workflow; no guarantee|
+|4 Voice summary;31 voice-first|Existing voice/transcription and text-only critical-term guards|Dedicated accurate deal voice summary and consented customer-device/provider proof|
+|5 Document checker|Exact comparisons/grant/freshness checks; real PDF through authenticated extractor and fixture-only checker mapping|Actual model structuring/storage/customer upload pipeline and human-review closeout|
+|6 Repeat order|Explicit request, admin prepares one pending buyer-owned requirement, nativeSQL/HTTP concurrency tested|Fresh review, seller proposal and exact buyer acceptance end-to-end|
+|7 Currency helper|Dated provider probe, decimal conversion, explicit recipient preference, real outbound payload through synthetic sink|Customer window/provider/device; never substitute FX reference for agreed terms|
+|8 Delay warning|Recorded ETA/stale-update advisory and shipment SQL suites|Full source freshness, watch and provider/device proof; not physical delay evidence|
+|9 Deal memory|Existing authorized recent history and grant-filtered document memory|Cross-deal delivery-performance evidence, exact relationship/permission checks, no private reasons|
 |10 Sample request|Dropped by user|Do not build|
-|11 Weekly market news|No dedicated customer delivery path located|Sources, dated facts, opt-in and delivery|
-|12 Group deals/buyer pool|Existing admin creation, capacity locks, invite acceptance/expiry + native integration suite|Same-country pilot enforcement and explicit manual review stage|
-|13 Trade-term tips;21 negotiation coach|Existing handbook/guidance, no trade authority|Dedicated context-safe coach evidence|
-|14 Seller scorecard|No dedicated scorecard located|Reliable message/response timestamps, seller-private comparison, no invented rating|
-|15 Photo quote|Existing image transcription foundation|Price-list/offer extraction and verified matching end-to-end|
-|16 Quality proof pack|Grant-filtered approved document metadata index, native test|Photo/cert package UI and explicit sharing flow|
-|17 Referral reward|Existing referral/code/invite paths|Discount not built. Commission rule needs separate owner approval|
-|19 Freight estimate|Guidance warns examples are rough|Dated carrier/forwarder inputs, routes, fees and no booking|
-|20 Festival timing|No dedicated implementation located|Country/product calendar sources and commercial opt-in|
-|22 Reminders|Existing task planner and shipment ETA follow-ups|Customer-owned general reminders and accurate delivery state|
-|23 Trader diary|UTC-month current-state counts SQL tested. Savings/ranking null|Historical completion ledger and evidenced savings|
-|24 Human help|Explicit request queue + existing handoff detection/grievance|Human assignment and actual work. Review closeout/status now records admin attestation, no claim person contacted|
-|25 Backup seller;quick switch|Predeal reject/rematch exists; new private buyer-only review request|New linked deal workflow, fresh terms/acceptance, never transfer old seller records|
-|26 Exit reason|API structured private reason stored for admin|Explicit WhatsApp 'exit reason delay' now works; guided buttons/skip remain. Never relay private reason|
-|27 Language bridge|Existing multilingual comprehension/voice foundations; text currently English by policy|Translation relay with exact critical terms preserved and scope review|
-|29 Trial order|No dedicated implementation located|Explicit proposed reduced quantity, seller terms, no inferred commitment|
-|30 Agent leaderboard|No leaderboard located; agents have redacted own referral views|Permissioned publication, honest metrics, no prices/private identities|
-|32 Paperwork helper|Existing LOI/ICPO/FCO/SPA/NCNDA drafts and review flow|Country/transaction checklist validity, no legal/authenticity claims|
-|33 Dispute helper|Private review request + existing case controls|Neutral authorized evidence bundle, party isolation and human decision|
-|34 Seller of the month|No dedicated implementation located|Metric definition and permission to publish award/identity|
+|11 Weekly market news|Reviewed source-dated FAO snapshot, opt-in/off, consent/STOP/expiry/weekly dedup in nativeSQL|Recurring current-source review, broader coverage, provider/device; no fabricated live quote|
+|12 Group deals/buyer pool|Exact-country gates, capacity/acceptance locks, manual review stage and UI; nativeSQL/pixels|Shared financing/purchase is not implemented; human/provider/device workflow|
+|13 Trade-term tips;21 negotiation coach|Reviewed sourced explanations, own-deal exact rule, private user-picked counter draft; signed webhook/SQL|Proactive timing, grounded recommendation evidence and customer-device proof|
+|14 Seller scorecard|Own relayed-turn metrics, UTC basis, last closed month scanner, on/off/STOP/dedup tested|Reliable provider receipts/device, comparison evidence; no invented rating|
+|15 Photo quote|Actual authenticated image normalization/vision foundation|Price-list extraction, user-confirmed interpretation, safe verified matching and full photo workflow|
+|16 Quality proof pack|Current-role/grant-filtered approved private index, bounded message/caveat; signed webhook/SQL|Photo/cert rendering and explicit sharing flow; authenticity is not inferred|
+|17 Referral reward|Existing referral/code paths only|Discount unstarted: requires separate commission-policy authority|
+|19 Freight estimate|Private deduplicated request and read-only admin UI with missing route/weight/fee inputs|Actual current carrier/forwarder quote; no invented rate or booking|
+|20 Festival timing|Scoped PIB calendar snapshot, calculated weekday, opt-in/off/expiry/dedup|Broader country/product evidence and provider/device; no assumed bank/port closures|
+|22 Reminders|Own-deal explicit offset timestamp, consent/STOP/current-party scan, parallel one-delivery sink test|Real provider/window/template/receipt and verified contractual dates|
+|23 Trader diary|Original UTC audit-month completion ledger, current-role isolation, nativeSQL/HTTP|Savings/best-seller evidence; missing history is not zero activity|
+|24 Human help|Deal-bound button and private deduplicated queue, admin review status; signed webhook/SQL|Actual staffing/assignment/contact/work and customer device; no online promise|
+|25 Backup seller;additional quick switch|Buyer-only request, pending buyer requirement, current compatible alternate leads and private UI|Fresh seller proposal/buyer acceptance/new linked deal; never transfer old seller records|
+|26 Exit reason|Private explicit reason plus guided optional list/skip; forged-party/parallel dedup tested|Device rendering and human follow-through; never relay private reason|
+|27 Language bridge|Existing multilingual comprehension/voice, English text policy|Accurate authorized relay translation with critical terms and full scope/device review|
+|29 Trial order|Exact reduced-quantity pending buyer draft, canonical decimal dedup, no price copied; SQL|Fresh review/proposal/acceptance and proactive suggestion, not a committed order|
+|30 Agent leaderboard;34 seller of month|Admin-only provisional counts plus audited completion evidence; no winner/publication/reward|Metric criteria, permissioned identities/publication, complete history|
+|32 Paperwork helper|Existing LOI/ICPO/FCO/SPA/NCNDA draft/review flow|Current country/transaction checklist validity and first-time exporter end-to-end; no legal guarantee|
+|33 Dispute helper|Admin-only bounded source-attributed evidence timeline/metadata and UI; SQL/pixels|Human case decision/closeout, no automated fault/refund/payment judgment|
+|Additional document view-and-approve|UDC-themed responsive PDF preview, browser-bound OTP/session and reviewed-only receipt; actualSQL/HTTP/races and pixels|Real provider OTP, deployed-origin/device proof; never bank/payment acceptance|
+|Additional channel-neutral brain|Transport-neutral verified binding/shared history contracts, synthetic email exact account/status/history drafts|Actual full read-only brain integration, adapters/provider/auth/device proof; email is additional channel execution scope|
 
 ## Safety/release gaps
 Live document OTP adapter is deliberately not configured, so no real code or message was sent. No hosted fixture/migration SQL was run. Review origins/environment and device/provider tests remain. Customer commands in the new slice are staging-only; admin queue is read-only. No commission, banking or payment rules changed. Existing handbook language is not proof of any financial protection or legal promise.
@@ -142,3 +143,5 @@ Extended the real signed WhatsApp + native PostgreSQL registration harness with 
 Quality-index message length guard: up to12 metadata rows shown with an explicit omitted count, keeping the no-authenticity/no-sharing caveat within WhatsApp's4096-character limit even with100 authorized records. Invalid dates are labelled unavailable, not fabricated.664API tests, typecheck and native reviewSQL pass. No new grant, file opening or share.
 
 Additional email scope, outside37: synthetic read-only adapter now drafts own exact-deal status and reviewed trade-term explanations alongside history. It explicitly identifies limited support, no action and no send. Native HTTP/SQL tests verify status, sourcedCIF explanation, unrelated-deal denial and no deal/requirement mutation for command-like input. This is deterministic read-only coverage, not a model or full AKIF parity.664tests/type/nativeSQLpass.
+
+2026-11-05 06:50LA verification sweep: all21 existing real-loopback PostgreSQL integration harnesses executed locally, each with a fresh disposable database. The nine broader webhook/security suites passed plus twelve remaining review/lifecycle/company/P0/vault/pool/pilot/journey/commission-regression/email-auth suites. Commission suites only test the existing rules on local synthetic databases; no new rule or money action. Latest API/web type checks, web/API bundles,664 API tests and5 real-format Python extractor tests passed. Original requested scope reconciled against the actual Nov4 message exchange and durable task:33 retained numbered ideas plus buyer pools, quick switch, document view and channel-neutral brain. No new invented ideas added.
