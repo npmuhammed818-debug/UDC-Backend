@@ -231,3 +231,7 @@ Carrier client no longer trusts the first accepted response row. It requires one
 Automatic proposal eligibility previously converted capacity, minimum order and target/unit price through Number. The gate now compares bounded six-decimal fixed-point BigInt values, rejecting invalid/scientific/more-than-six-decimal data. Regressions prove a one-millionth capacity shortage, above-target price and above-quantity minimum cannot become compatible from rounding, including quantities beyond Number safe integer. Ranking score remains a rough score, not agreement; no financial values or policy changed.690APItests/types pass.
 
 Current exact gate slice additionally passes production build and all21local native PostgreSQL HTTP suites. These are isolated synthetic databases, not hosted/staging DB migrations or live provider/device checks.
+
+### 2026-11-05 10:43LA exact ranking explanations
+
+The same exact-decimal check now covers marketplace ranking explanations, not just automatic eligibility. Ranking no longer states that an unsafe-integer rounded shortage covers the request, a rounded excessive minimum fits, or an excessive fractional price is within target. Invalid quantity/minimum/price states manual review explicitly.691APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. No new provider/device proof, policy, or live effect.

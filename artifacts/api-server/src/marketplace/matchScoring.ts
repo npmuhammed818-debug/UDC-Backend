@@ -44,18 +44,21 @@ function specificationOverlap(buyer: string, seller: string) {
 export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
   let score = 50;
   const reasons = ["same approved product", "both counterparties verified"];
-  const buyerQuantity = Number(buyer.quantity);
-  const listedQuantity = Number(seller.quantity);
-  const monthlyCapacity = Number(seller.monthlyCapacity ?? 0);
-  const capacity = Math.max(listedQuantity, monthlyCapacity);
+  const buyerQuantity = exactTerm(buyer.quantity);
+  const listedQuantity = exactTerm(seller.quantity);
+  const monthlyCapacity = exactTerm(seller.monthlyCapacity, true);
+  const capacity = listedQuantity === null || monthlyCapacity === null ? null : listedQuantity > monthlyCapacity ? listedQuantity : monthlyCapacity;
   const sameUnit = normalize(buyer.unit) === normalize(seller.unit);
 
   if (!sameUnit) {
     score -= 30;
     reasons.push("quantity units differ; manual review needed");
+  } else if (capacity === null || buyerQuantity === null || buyerQuantity <= 0n) {
+    score -= 15;
+    reasons.push("quantity data is invalid; manual review needed");
   } else if (capacity >= buyerQuantity) {
     score += 20;
-    reasons.push(monthlyCapacity >= buyerQuantity
+    reasons.push(monthlyCapacity !== null && monthlyCapacity >= buyerQuantity
       ? "monthly capacity covers the request"
       : "available quantity covers the request");
   } else {
@@ -63,8 +66,11 @@ export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
     reasons.push("listed quantity and monthly capacity are below the request");
   }
 
-  const minimumOrder = Number(seller.minimumOrderQuantity ?? 0);
-  if (sameUnit && minimumOrder > 0) {
+  const minimumOrder = exactTerm(seller.minimumOrderQuantity, true);
+  if (minimumOrder === null) {
+    score -= 15;
+    reasons.push("minimum order data is invalid; manual review needed");
+  } else if (sameUnit && minimumOrder > 0n && buyerQuantity !== null) {
     if (minimumOrder <= buyerQuantity) {
       score += 5;
       reasons.push("minimum order fits the requested quantity");
@@ -74,9 +80,12 @@ export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
     }
   }
 
-  const targetPrice = buyer.targetPrice === null ? undefined : Number(buyer.targetPrice);
-  const offerPrice = Number(seller.price);
-  if (targetPrice !== undefined && buyer.currency.toUpperCase() === seller.currency.toUpperCase()) {
+  const targetPrice = buyer.targetPrice == null ? undefined : exactTerm(buyer.targetPrice);
+  const offerPrice = exactTerm(seller.price);
+  if (offerPrice === null || offerPrice <= 0n || targetPrice === null) {
+    score -= 10;
+    reasons.push("price data is invalid; manual review needed");
+  } else if (targetPrice !== undefined && buyer.currency.toUpperCase() === seller.currency.toUpperCase()) {
     if (offerPrice <= targetPrice) {
       score += 15;
       reasons.push("offer is within the buyer's target price");

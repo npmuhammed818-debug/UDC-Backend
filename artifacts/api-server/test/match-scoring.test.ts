@@ -75,3 +75,17 @@ test('automatic proposal gate compares exact large and fractional terms without 
  assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100'}),true);
  for(const patch of [{monthlyCapacity:'NaN'},{minimumOrderQuantity:'NaN'},{price:'1e2'},{quantity:'100.0000001'}])assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',...patch}),false);
 });
+
+
+test('ranking never calls rounded short capacity or excess price compatible',()=>{
+ const q='9007199254740993.000001';
+ const ranked=scoreTradeMatch({...buyer,quantity:q,targetPrice:q},{...seller,quantity:'9007199254740993.000000',monthlyCapacity:null,minimumOrderQuantity:'9007199254740993.000002',price:'9007199254740993.000002'});
+ assert.ok(ranked.reasons.includes('listed quantity and monthly capacity are below the request'));
+ assert.ok(ranked.reasons.includes('minimum order exceeds the requested quantity'));
+ assert.ok(ranked.reasons.includes("offer is above the buyer's target price"));
+ assert.ok(!ranked.reasons.some(r=>r.includes('covers the request')||r.includes('within the buyer')));
+ const invalid=scoreTradeMatch(buyer,{...seller,quantity:'NaN',minimumOrderQuantity:'NaN',price:'1e3'});
+ assert.ok(invalid.reasons.includes('quantity data is invalid; manual review needed'));
+ assert.ok(invalid.reasons.includes('minimum order data is invalid; manual review needed'));
+ assert.ok(invalid.reasons.includes('price data is invalid; manual review needed'));
+});
