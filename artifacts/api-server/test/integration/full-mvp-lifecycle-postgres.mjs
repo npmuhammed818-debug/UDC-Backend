@@ -54,9 +54,9 @@ try {
     });
     return { status: response.status, body: await response.json().catch(() => ({})), cookie: response.headers.get("set-cookie")?.split(";")[0] };
   };
-  const signedMessage=async(from,content,id=randomUUID())=>{
+  const signedMessage=async(from,content,id=randomUUID(),signingSecret=process.env.WHATSAPP_APP_SECRET)=>{
     const raw=JSON.stringify({entry:[{changes:[{value:{messages:[{id,from,...(typeof content==='string'?{text:{body:content}}:{interactive:content})}]}}]}]});
-    const response=await fetch(origin+'/api/webhooks/whatsapp',{method:'POST',headers:{'content-type':'application/json','x-hub-signature-256':'sha256='+createHmac('sha256',process.env.WHATSAPP_APP_SECRET).update(raw).digest('hex')},body:raw});assert.equal(response.status,200,await response.text());
+    const response=await fetch(origin+'/api/webhooks/whatsapp',{method:'POST',headers:{'content-type':'application/json','x-hub-signature-256':'sha256='+createHmac('sha256',signingSecret).update(raw).digest('hex')},body:raw});assert.equal(response.status,signingSecret===process.env.WHATSAPP_APP_SECRET?200:401,await response.text());
   };
   const signedRequest=async(user,dealId,command,action)=>{
     await signedMessage('15550001111',{type:'list_reply',list_reply:{id:'udc:deal:'+dealId}});
@@ -72,6 +72,8 @@ try {
   const signedAcceptance=async proposalId=>{
     const button={type:'button_reply',button_reply:{id:'udc:terms:accept:'+proposalId}};
     const before=(await pool.query('select count(*)::int n from deals')).rows[0].n;
+    await signedMessage('15550001111',button,randomUUID(),'wrong-synthetic-signature');
+    assert.equal((await pool.query("select count(*)::int n from audit_logs where action='match_terms_accepted' and entity_id=$1",[proposalId])).rows[0].n,0,'forged signature cannot reach consent');
     const id=randomUUID();await signedMessage('15550001111',button,id);await signedMessage('15550001111',button,id);await signedMessage('15550001111',button);
     assert.equal((await pool.query("select count(*)::int n from audit_logs where action='match_terms_accepted' and entity_id=$1",[proposalId])).rows[0].n,1,'signed buyer retry and new-message duplicate leave one acceptance');
     assert.equal((await pool.query('select count(*)::int n from deals')).rows[0].n,before,'signed consent cannot silently open a deal');

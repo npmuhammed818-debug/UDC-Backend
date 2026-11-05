@@ -331,3 +331,7 @@ Run exposed another unreliable legacy whole-JSON price-digit assertion in full l
 ### 2026-11-05 12:46LA signed customer commands and admin preparation continuous proof
 
 Same continuous fixture now selects the actual deal via signed list callback and sends actual signed trial/repeat/backup/switch text, each with same-ID replay and new-ID duplicate: exactly one request/draft. Restart preparation uses actual authenticated admin HTTP, denies buyer403, and concurrent admin requests return one pending requirement. Subsequent human review/fresh seller offer/proposal/signed buyer acceptance/newdeal remain in that fixture. Trial additionally retains direct concurrency checks on the same signed-created draft. All12remaining native SQL/HTTP suites rerun pass. No runtime change, real messages, live data, provider/device or real human action.699API/types/build and broader9native suites remain passing from earlier test-only increment/baseline.0/37fullycomplete.
+
+### 2026-11-05 12:48LA forged acceptance signature refusal in each journey
+
+Every continuous trial/repeat/backup/switch acceptance now first posts the same buyer button with a forged synthetic HMAC, receives401 and leaves zero consent audits, then legitimate signed replay/duplicate proceeds once. Expected code corrected from403to actual401contract before full all12nativeSQLHTTP rerun pass. Test-only, no runtime/provider action.
