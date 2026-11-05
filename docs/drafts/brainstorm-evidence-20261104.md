@@ -257,3 +257,7 @@ Document comparison now lives in one transactional current-user/current-role/cur
 ### 2026-11-05 11:06LA WhatsApp private document checker
 
 Explicit synthetic WhatsApp `check document DOCUMENT-ID` now reads the selected own deal through the shared transactional checker, not the model. One formatter across WhatsApp/email returns field states and human-review/no-approval caveats only. Actual signed webhook/native SQL proves stale refusal, current quantity mismatch and unit-price match, revoked access and unknown-document refusal, no storage URL and no model/Meta invocation.693APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. No deployed/device/model proof or real send claimed.
+
+### 2026-11-05 11:11LA conservative shipment answer guards
+
+Brain tracking guard now refuses unsupported shipped/dispatched/departed/picked-up/in-transit assertions, in addition to delivered/delayed. Shared carrier-description classification refuses plans, conditional wording, questions and requests rather than converting them into accomplished status. Tests cover label-only, awaiting, delivered-versus-transit mismatch, tomorrow/please/question/ready/requested lines and a supported departure response.695APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. No live carrier access, quote, shipment/date guarantee or send. Source comments claiming historical owner approval are not authority; this work stays within authenticated Nov4build/test/source-only instructions and current no-live limits.

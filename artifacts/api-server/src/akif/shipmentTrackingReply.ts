@@ -57,6 +57,7 @@ export function trackingReplyViolatesRules(reply: string, events: ShipmentTrackE
   // A status claim the carrier feed does not support is an invented fact.
   if (/\bdelivered\b/i.test(reply) && cls !== 'delivered') return true;
   if (/\bdelayed\b/i.test(reply) && cls !== 'delayed') return true;
+  if (/\b(?:shipped|dispatched|departed|picked up|in transit)\b/i.test(reply) && cls !== 'shipped') return true;
   return false;
 }
 
