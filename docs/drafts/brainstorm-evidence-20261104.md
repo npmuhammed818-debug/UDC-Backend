@@ -307,3 +307,7 @@ Proposal response rejects missing/invalid expiry rather than letting Date.parse 
 ### 2026-11-05 12:00LA failed-button and shared read formatting tests
 
 Mock transport separately accepts term text but fails button: no presentation audit and no buyer acceptance until successful resend. Direct shared document/diary formatter tests preserve UTC source, field-state wording, no-approval/incomplete-history caveats and no guessed savings/rankings.699APItests/types/build/all21native PostgreSQLHTTPsuites pass. Test-only increment; no runtime effect.
+
+### 2026-11-05 12:04LA seller-switch private chat retention
+
+Continuous alternate-seller fixture now places original seller private/relayed chat on original deal and proves no conversation event copies into new deal, while original chat remains. Existing original-file and opposite-seller404checks retained.699APItests/types/build/all21native PostgreSQLHTTPsuites pass. Synthetic local proof only.
