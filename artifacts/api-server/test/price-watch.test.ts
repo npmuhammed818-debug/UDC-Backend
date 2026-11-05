@@ -4,3 +4,5 @@ test('price watch requires explicit asks and compares exact same-currency decima
  for(const x of ['he said watch price below 5 USD','watch price below -5 USD','watch price below 1,000 USD'])assert.equal(priceWatchCommand(x),null);
  assert.equal(priceBelow('499.99','500'),true);assert.equal(priceBelow('500','500'),false);assert.equal(priceBelow('0','5'),false);assert.equal(priceBelow('999999999999999.98','999999999999999.99'),true);
 });
+
+test('price watch compares six-decimal stored prices without rounding away small differences',()=>{assert.equal(priceBelow('90.000000','100'),true);assert.equal(priceBelow('90.000001','90.000002'),true);assert.equal(priceBelow('90.000002','90.000001'),false);assert.equal(priceBelow('90.000000','90'),false);assert.equal(priceBelow('90.0000001','100'),false);assert.deepEqual(priceWatchCommand('watch price below 90.000002 USD'),{off:false,threshold:'90.000002',currency:'USD'});});
