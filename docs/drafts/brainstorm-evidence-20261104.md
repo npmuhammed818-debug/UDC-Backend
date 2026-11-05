@@ -71,3 +71,5 @@ Document review now accepts the current verified recipient's code delivery throu
 
 ## Small-first preparation candidate
 Explicit `trial order 2 MT` creates a reduced-quantity pending buyer requirement from the requester's own selected pre-contract deal. Exact positive quantity reduction and unit enforced with decimal arithmetic; fresh quote required, target/seller prices not copied. Parallel duplicate requests return one draft. Late-stage deals, seller/outsider, equal-or-higher quantity or wrong unit refused. Actual native SQL executed idempotence/privacy/late-stage guards; no order/deal or obligation created. Proactive suggestion and fresh seller acceptance workflow remain separate.
+
+Document review evidence extension: executed one integrated native PostgreSQL plus actual Express flow from authenticated link issuance, anonymous sink code request, initiating-browser cookie binding, code verification, session PDF fetch and reviewed-only receipt, then revoked-grant denial. Storage is still a synthetic PDF fixture and provider is a local sink. Earlier OTP budget/concurrency cases run separately in the same isolated schema; no hosted data touched.
