@@ -181,3 +181,5 @@ Buyer-only selected-deal seller-review endpoint and explicit synthetic `seller r
 ### 2026-11-05 08:33LA commercial decimal precision fix
 
 Found active deal model prompts rounded unit prices to two decimals through JavaScript Number, which could turn a stored0.000001 price into0 and alter large quantities. Shared display now groups exact decimal strings without numeric conversion or rounding, trimming trailing zeros only; direct fact replies use the same formatter. Invalid/scientific inputs return unavailable rather than plausible amounts. Actual conversation-agent bundle with fixture context/model confirms exact0.000001 price and9007199254740993.123456 quantity reach the prompt unchanged in value.677APItests/type pass; no deal values changed or live model called.
+
+Shared deal-brain context now excludes document extractions older than the current document revision, using an exact PostgreSQL join/comparison rather than millisecond JavaScript dates. Native SQL proves old and0.8ms-old extraction terms are absent while newer terms remain. This is freshness only, not an access grant or authenticity check; existing viewer/grant filters remain required.
