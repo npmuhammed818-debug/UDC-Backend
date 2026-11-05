@@ -26,6 +26,7 @@ test("shipment watch poll: sparing, deduplicated, honest and transactionally saf
       where:c=>(condition=c,q),
       orderBy:c=>(order=c,q),
       limit:n=>(limit=n,q),
+      for:()=>q,
       then:(resolve,reject)=>Promise.resolve().then(()=>{
         let result=rows[from].map(row=>({[from]:row})).filter(item=>match(condition,item));
         if(order)result.sort((a,b)=>String(val(order,a)).localeCompare(String(val(order,b))));

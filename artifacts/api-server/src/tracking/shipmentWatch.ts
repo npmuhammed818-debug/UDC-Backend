@@ -64,44 +64,46 @@ export async function runShipmentWatchPoll(options: {
       ))
       .orderBy(asc(shipmentWatchesTable.id)).limit(PAGE_SIZE);
     for (const watch of page) {
-      polled++;
-      let events: ShipmentTrackEvent[];
-      try {
-        events = await tracker.fetchEvents(watch.trackingNumber);
-      } catch {
-        failed++;
-        continue; // next poll tries again; lastPolledAt untouched so it retries sooner
-      }
-      const found = classifyLatestEvent(events);
-      const fingerprint = found ? eventFingerprint(found.cls, found.event) : null;
-      if (!found || fingerprint === watch.lastFingerprint) {
-        unchanged++;
-        await database.update(shipmentWatchesTable).set({ lastPolledAt: now, updatedAt: now })
-          .where(eq(shipmentWatchesTable.id, watch.id));
-        continue;
-      }
-      const { title, body } = watchUpdateText(watch.trackingNumber, found.cls, found.event);
+      // Lock and recheck the current due row before any provider request. A
+      // second worker skips this row rather than spending quota or duplicating
+      // a notification. The transaction owns the claim through queue creation.
       await database.transaction(async (tx) => {
+        const [current] = await tx.select().from(shipmentWatchesTable).where(and(
+          eq(shipmentWatchesTable.id, watch.id), eq(shipmentWatchesTable.active, true),
+          or(isNull(shipmentWatchesTable.lastPolledAt), lt(shipmentWatchesTable.lastPolledAt, dueBefore)),
+        )).limit(1).for('update', { skipLocked: true });
+        if (!current) return;
+        polled++;
+        let events: ShipmentTrackEvent[];
+        try { events = await tracker.fetchEvents(current.trackingNumber); }
+        catch {
+          failed++;
+          // A failed request still spends provider quota. Respect the cadence.
+          await tx.update(shipmentWatchesTable).set({ lastPolledAt: now, updatedAt: now }).where(eq(shipmentWatchesTable.id, current.id));
+          return;
+        }
+        const found = classifyLatestEvent(events);
+        const fingerprint = found ? eventFingerprint(found.cls, found.event) : null;
+        if (!found || fingerprint === current.lastFingerprint) {
+          unchanged++;
+          await tx.update(shipmentWatchesTable).set({ lastPolledAt: now, updatedAt: now }).where(eq(shipmentWatchesTable.id, current.id));
+          return;
+        }
+        const { title, body } = watchUpdateText(current.trackingNumber, found.cls, found.event);
         await tx.update(shipmentWatchesTable)
           .set({ lastFingerprint: fingerprint, lastClass: found.cls, lastPolledAt: now, updatedAt: now })
-          .where(eq(shipmentWatchesTable.id, watch.id));
+          .where(eq(shipmentWatchesTable.id, current.id));
         const [notice] = await tx.insert(notificationsTable).values({
-          userId: watch.userId, type: "shipment_watch_update", title, body,
-          link: watch.dealId ? `/deals/${watch.dealId}/tracking` : null,
+          userId: current.userId, type: "shipment_watch_update", title, body,
+          link: current.dealId ? `/deals/${current.dealId}/tracking` : null,
         }).returning({ id: notificationsTable.id });
-        // Every watch queues the WhatsApp intent in the same transaction (deal-less
-        // jobs carry deal_id NULL and use the deal-less eligibility branch at send
-        // time). No live provider request is made by this producer.
-        if (notice) {
-          await enqueueShipmentWhatsApp(tx, { notificationId: notice.id, dealId: watch.dealId, recipientUserId: watch.userId });
-        }
+        if (notice) await enqueueShipmentWhatsApp(tx, { notificationId: notice.id, dealId: current.dealId, recipientUserId: current.userId });
         await tx.insert(auditLogsTable).values({
-          actorUserId: null, action: "shipment_watch_update_created",
-          entityType: "shipment_watch", entityId: watch.id,
-          metadata: { cls: found.cls, trackingNumber: watch.trackingNumber, dealLinked: Boolean(watch.dealId) },
+          actorUserId: null, action: "shipment_watch_update_created", entityType: "shipment_watch", entityId: current.id,
+          metadata: { cls: found.cls, trackingNumber: current.trackingNumber, dealLinked: Boolean(current.dealId) },
         });
+        notified++;
       });
-      notified++;
     }
     if (page.length < PAGE_SIZE) break;
     cursor = page[page.length - 1].id;
