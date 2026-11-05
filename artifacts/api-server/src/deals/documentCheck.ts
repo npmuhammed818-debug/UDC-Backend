@@ -1,6 +1,6 @@
 type RecordValue=Record<string,unknown>;
 const record=(v:unknown):RecordValue=>v&&typeof v==='object'&&!Array.isArray(v)?v as RecordValue:{};
-function decimal(v:unknown){if(typeof v!=='string'&&typeof v!=='number')return null;const s=String(v);if(!/^\d+(?:\.\d+)?$/.test(s)||s.length>60)return null;const [a,b='']=s.split('.');return a.replace(/^0+(?=\d)/,'')+'.'+b.replace(/0+$/,'');}
+function decimal(v:unknown){if(typeof v!=='string'&&typeof v!=='number')return null;if(typeof v==='number'&&(!Number.isFinite(v)||Math.abs(v)>Number.MAX_SAFE_INTEGER))return null;const s=String(v);if(!/^\d+(?:\.\d+)?$/.test(s)||s.length>60)return null;const [a,b='']=s.split('.');return a.replace(/^0+(?=\d)/,'')+'.'+b.replace(/0+$/,'');}
 /** Exact comparable fields only. Never use model conclusions as proof. */
 export function documentCheck(deal:{quantity:string;unit:string;agreedPrice:string;currency:string;incoterm:string|null;destination:string|null},extraction:unknown){
  const data=record(extraction),q=record(data.quantity),p=record(data.pricing),l=record(data.logistics);

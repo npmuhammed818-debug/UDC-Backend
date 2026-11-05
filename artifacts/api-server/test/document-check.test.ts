@@ -9,3 +9,8 @@ test('missing fields and changed price bases/currencies are never silently conve
  assert.ok(documentCheck(deal,null).checks.every(c=>c.state==='not_comparable'));
  assert.equal(documentCheck(deal,{quantity:{value:'100e0',unit:'MT'}}).checks.find(c=>c.field==='quantity')!.state,'not_comparable');
 });
+
+test('unsafe JSON numeric extraction cannot become an exact decimal match',()=>{
+ const r=documentCheck({...deal,agreedPrice:'9007199254740992'},{pricing:{unitPrice:9007199254740992,currency:'USD',basis:'MT'}});assert.equal(r.checks.find(c=>c.field==='unit_price')!.state,'not_comparable');
+ const exact=documentCheck({...deal,agreedPrice:'9007199254740992'},{pricing:{unitPrice:'9007199254740992',currency:'USD',basis:'MT'}});assert.equal(exact.checks.find(c=>c.field==='unit_price')!.state,'match');
+});
