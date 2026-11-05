@@ -211,3 +211,5 @@ Added one current-role/direct-party read-only term-summary capability with exact
 ### 2026-11-05 09:44LA conservative carrier classification
 
 Found description matching could classify 'not delivered' or 'proof of delivery unavailable' as delivered. Shared conservative classifier now rejects negated/uncertain delivery/shipping lines before choosing a carrier class; watcher and brain-output guard use the same classification. Explicit carrier delay/hold is not promoted to delivered. Regression tests include not-delivered, pending, out-for-delivery, unavailable proof, expected/scheduled arrival and not-shipped text. ETA advisory no longer promises UDC follow-up or calls an operator update independently confirmed.687APItests/types pass. No live carrier request, watch activation or customer message.
+
+Carrier negatives extended to not-in-transit, not-picked-up, failed/unsuccessful outcomes and resolved/no-delay text. Actual watcher with injected tracker/database ports confirms those descriptions create no notification or queued intent.688APItests/types pass. False negatives stay unclassified for human review rather than inventing an outcome.
