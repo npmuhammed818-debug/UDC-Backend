@@ -1,3 +1,4 @@
+import {handleQualityProofPack} from '../whatsapp/qualityProofPack';
 import {handleFreightEstimate} from '../whatsapp/freightEstimate';
 import {handleTradeBrief} from '../whatsapp/tradeBriefs';
 import {handleEmailChannelLink} from '../whatsapp/emailChannelLink';
@@ -1478,7 +1479,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
       }
       if (message.from && message.text?.body) {
-        try { if(await handleFreightEstimate(message.from,message.text.body))continue; if(await handleTradeBrief(message.from,message.text.body))continue; if (await handleDealReminder(message.from,message.text.body)) continue; if (await handleTrialOrder(message.from,message.text.body)) continue; if (await handleNegotiationCoach(message.from,message.text.body)) continue; if (await handlePriceWatch(message.from,message.text.body)) continue; if (await handleSellerScorecard(message.from,message.text.body)) continue; if (await handleTradeTerm(message.from,message.text.body)) continue; if (await handleCurrencyHelper(message.from,message.text.body)) continue; if (await handleTradeAssist(message.from,message.text.body)) continue; }
+        try { if(await handleQualityProofPack(message.from,message.text.body))continue; if(await handleFreightEstimate(message.from,message.text.body))continue; if(await handleTradeBrief(message.from,message.text.body))continue; if (await handleDealReminder(message.from,message.text.body)) continue; if (await handleTrialOrder(message.from,message.text.body)) continue; if (await handleNegotiationCoach(message.from,message.text.body)) continue; if (await handlePriceWatch(message.from,message.text.body)) continue; if (await handleSellerScorecard(message.from,message.text.body)) continue; if (await handleTradeTerm(message.from,message.text.body)) continue; if (await handleCurrencyHelper(message.from,message.text.body)) continue; if (await handleTradeAssist(message.from,message.text.body)) continue; }
         catch { await deliverWhatsAppReply(message.from,'I could not save that request. The deal is unchanged. Please try again.');continue; }
       }
       // Complaints are logged and acknowledged immediately, never answered by the model.
