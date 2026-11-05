@@ -371,3 +371,7 @@ Fixture now explicitly binds verified original seller's phone and obtains privac
 ### 2026-11-05 13:18LA shared private seller scorecard
 
 Synthetic registered seller email `my scorecard YYYY-MM` now uses the same bounded private response-metadata reader as WhatsApp, including current verified seller lock across activity read. Native fixture links a second synthetic registered account via its code, drafts its own60-minute scorecard, refuses buyer/changed-role/future requests and exposes no buyer/deal IDs or messages. Existing monthly scanner still passes.700APItests/types/API+frontend build and all21nativeSQLHTTP suites pass. Recorded successful relay submission timing is not provider delivery, rating, reliability or competitor evidence. No real mailbox/send/provider/device claim.
+
+### 2026-11-05 13:19LA scorecard concurrent role-change regression
+
+Native fixture explicitly holds an uncommitted seller-to-buyer edit, starts shared scorecard read, proves it waits for current account row, then commits and gets null rather than former-seller activity. Fixture restores role. Actual native review suite passes; test-only increment on all21/700green runtime.
