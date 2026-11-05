@@ -283,7 +283,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         const bodies:any[]=[];
         globalThis.fetch=(async(url:any,init:any)=>{bodies.push(JSON.parse(String(init.body)));const register=String(url).endsWith('/register');return new Response(JSON.stringify(register
           ?{code:0,data:{accepted:[{number:'QA-100',carrier:3011}],rejected:[]}}
-          :{code:0,data:{accepted:[{track_info:{latest_event:{time_iso:'2026-10-28T09:30:00Z',description:'Arrived at port',location:'Jebel Ali'}}}]}}),{status:200});}) as any;
+          :{code:0,data:{accepted:[{number:'QA-100',track_info:{latest_event:{time_iso:'2026-10-28T09:30:00Z',description:'Arrived at port',location:'Jebel Ali'}}}]}}),{status:200});}) as any;
         await m.handleChatUi(phone,{id:randomUUID(),text:{body:'track QA-100'}});
         assert.match(last(),/Latest carrier update for QA-100/);assert.match(last(),/Arrived at port in Jebel Ali/);assert.match(last(),/UDC has not verified/);
         assert.deepEqual(bodies,[[{number:'QA-100'}],[{number:'QA-100'}]], 'register first, then track');

@@ -60,10 +60,13 @@ export function createSeventeenTrackClient(): ShipmentTracker {
     async fetchEvents(trackingNumber: string): Promise<ShipmentTrackEvent[]> {
       await register(trackingNumber);
       const { data } = await post<{
-        accepted?: Array<{ track_info?: { latest_event?: { time_iso?: string; description?: string; location?: string } } }>;
+        accepted?: Array<{ number?: string; track_info?: { latest_event?: { time_iso?: string; description?: string; location?: string } } }>;
       }>('gettrackinfo', trackingNumber);
-      const latest = data.accepted?.[0]?.track_info?.latest_event;
-      return latest?.time_iso && latest?.description
+      const accepted=data.accepted?.filter(item=>item.number?.toLowerCase()===trackingNumber.toLowerCase());
+      if(!accepted?.length)return [];
+      if(accepted.length!==1)throw Error('17TRACK ambiguous tracking record');
+      const latest = accepted[0]?.track_info?.latest_event;
+      return typeof latest?.time_iso==='string'&&Number.isFinite(Date.parse(latest.time_iso))&&typeof latest.description==='string'&&latest.description.trim()
         ? [{ time: latest.time_iso, description: latest.description, ...(latest.location ? { location: latest.location } : {}) }]
         : [];
     },

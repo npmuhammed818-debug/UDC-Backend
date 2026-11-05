@@ -221,3 +221,7 @@ Explicit photo review now offers a 'Checked original' button only when all extra
 Photo-review button must not follow silently shortened product text: full validated product labels (up to120characters) are now shown before offering the button. Signed fixture uses a long product suffix and checks every character remains visible. At most8rows keeps the full row message bounded. This does not establish real-device pixels.
 
 Button callback now also requires a matching audit record that this buyer was offered that exact all-rows-shown snapshot. A forged callback carrying a current token for a9-row hidden snapshot cannot confirm. Existing direct authenticated HTTP confirmation remains separately explicit; this restriction applies to the button channel. Signed webhook regression passes.
+
+### 2026-11-05 10:32LA carrier response identity binding
+
+Carrier client no longer trusts the first accepted response row. It requires one exact requested tracking-number match and a parseable event time; unrelated/missing-number responses yield no events and duplicate matches refuse. Synthetic response tests include another shipment first, wrong number, invalid timestamp and ambiguity. Existing fixtures now include provider-returned numbers rather than relying on positional trust. No real carrier requests or configuration changes.

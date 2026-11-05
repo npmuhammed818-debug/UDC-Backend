@@ -53,7 +53,7 @@ test('live client registers first, then asks for the latest event (mocked fetch)
     const register = String(url).endsWith('/register');
     return new Response(JSON.stringify(register
       ? { code: 0, data: { accepted: [{ number: 'ABCDE12345', carrier: 3011 }], rejected: [] } }
-      : { code: 0, data: { accepted: [{ track_info: { latest_event: { time_iso: '2026-10-28T09:30:00Z', description: 'Arrived at port', location: 'Jebel Ali' } } }] } }), { status: 200 });
+      : { code: 0, data: { accepted: [{ number:'ABCDE12345',track_info: { latest_event: { time_iso: '2026-10-28T09:30:00Z', description: 'Arrived at port', location: 'Jebel Ali' } } }] } }), { status: 200 });
   }) as typeof fetch;
   try {
     await withEnv({ SEVENTEEN_TRACK_API_KEY: 'synthetic-key', SEVENTEEN_TRACK_BASE_URL: 'https://track.test' }, async () => {
@@ -146,7 +146,7 @@ test('live client against a real local fake 17TRACK server (socket-level)', asyn
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(req.url === '/track/v2.2/register'
         ? { code: 0, data: { accepted: [{ number: 'SYN777', carrier: 3011 }], rejected: [] } }
-        : { code: 0, data: { accepted: [{ track_info: { latest_event: { time_iso: '2026-10-28T11:00:00Z', description: 'Departed origin port', location: 'Mundra' } } }] } }));
+        : { code: 0, data: { accepted: [{ number:'SYN777',track_info: { latest_event: { time_iso: '2026-10-28T11:00:00Z', description: 'Departed origin port', location: 'Mundra' } } }] } }));
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -163,4 +163,12 @@ test('live client against a real local fake 17TRACK server (socket-level)', asyn
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test('tracking client binds events to exact requested number, never first returned record',async()=>{
+ const original=globalThis.fetch,saved=process.env.SEVENTEEN_TRACK_API_KEY;process.env.SEVENTEEN_TRACK_API_KEY='synthetic';
+ const event={time_iso:'2026-10-28T09:30:00Z',description:'Delivered'};let records:any[]=[];
+ globalThis.fetch=(async(url:any)=>Response.json({code:0,data:{accepted:String(url).endsWith('/register')?[{number:'SYN-BOUND'}]:records}})) as typeof fetch;
+ try{const client=createSeventeenTrackClient();records=[{number:'OTHER',track_info:{latest_event:event}}];assert.deepEqual(await client.fetchEvents('SYN-BOUND'),[]);records=[{number:'OTHER',track_info:{latest_event:event}},{number:'SYN-BOUND',track_info:{latest_event:{...event,description:'Departed'}}}];assert.equal((await client.fetchEvents('SYN-BOUND'))[0].description,'Departed');records=[{number:'SYN-BOUND',track_info:{latest_event:{...event,time_iso:'invalid'}}}];assert.deepEqual(await client.fetchEvents('SYN-BOUND'),[]);records=[{number:'SYN-BOUND',track_info:{latest_event:event}},{number:'SYN-BOUND',track_info:{latest_event:event}}];await assert.rejects(client.fetchEvents('SYN-BOUND'),/ambiguous/);
+ }finally{globalThis.fetch=original;if(saved===undefined)delete process.env.SEVENTEEN_TRACK_API_KEY;else process.env.SEVENTEEN_TRACK_API_KEY=saved;}
 });
