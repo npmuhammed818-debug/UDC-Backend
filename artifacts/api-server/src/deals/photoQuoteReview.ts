@@ -14,7 +14,11 @@ async function loadPhotoQuoteReview(tx:Pick<typeof db,'select'>,userId:string,de
  return {reviewToken,dealNumber:d.number,documentId,extractionAsOf:e.at,items,sourceUnverified:true,requiresHumanReview:true,sellerMatched:false,requirementCreated:false,notice:'Unverified extracted price-list rows for your private review. Check each product, decimal, currency code, unit and price against the original photo. No seller was matched or contacted, and no requirement, quotation, order or agreement was created. A shop price is not a verified UDC seller offer.'};
 }
 
-export async function photoQuoteReview(userId:string,dealId:string,documentId:string){return db.transaction(tx=>loadPhotoQuoteReview(tx,userId,dealId,documentId));}
+export async function photoQuoteReview(userId:string,dealId:string,documentId:string){return db.transaction(async tx=>{
+ const r=await loadPhotoQuoteReview(tx,userId,dealId,documentId);if('error'in r)return r;
+ const [review]=await tx.select({at:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'photo_quote_snapshot_reviewed'),eq(auditLogsTable.actorUserId,userId),eq(auditLogsTable.entityId,dealId),sql`${auditLogsTable.metadata}->>'reviewToken'=${r.reviewToken}`)).limit(1);
+ return {...r,reviewedAgainstOriginal:Boolean(review),reviewedAt:review?.at??null};
+});}
 /** Records only the buyer's review of this exact extracted snapshot. Never
  * accepts seller terms, verifies a source, creates a requirement or contacts anyone. */
 export async function confirmPhotoQuoteReview(userId:string,dealId:string,documentId:string,reviewToken:string){return db.transaction(async tx=>{
