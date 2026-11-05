@@ -15,7 +15,7 @@ import { PoolAllocationError, inviteExpiresAt, isInviteExpired, respondToPoolInv
 
 const router: IRouter = Router();
 router.use((req,res,next)=>{
- if(poolPilotEnabled()&&req.method==='POST'&&(!req.is('application/json')||(req.header('origin')&&req.header('origin')!==process.env.UDC_TRADE_ASSIST_ORIGIN))){res.sendStatus(403);return;}next();
+ if(poolPilotEnabled()&&(/^\/admin\/(?:buyer-pools(?:\/|$)|deals\/[^/]+\/buyer-pool$)/.test(req.path)||/^\/buyer-pools\//.test(req.path))&&req.method==='POST'&&(!req.is('application/json')||(req.header('origin')&&req.header('origin')!==process.env.UDC_TRADE_ASSIST_ORIGIN))){res.sendStatus(403);return;}next();
 });
 
 const createPoolSchema = z.object({
