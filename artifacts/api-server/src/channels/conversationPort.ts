@@ -11,11 +11,14 @@ export interface ConversationPorts {
   deliver(input:{channel:Channel;externalRecipientId:string;replyToProviderId:string;text:string}):Promise<void>;
 }
 export async function processChannelMessage(input:InboundEnvelope,ports:ConversationPorts) {
- if(!input.providerMessageId||!input.externalSenderId||!input.text.trim()||input.text.length>6000)return 'invalid' as const;
+ if(!['whatsapp','telegram','email'].includes(input.channel)||!input.providerMessageId||!input.externalSenderId||!input.text.trim()||input.text.length>6000)return 'invalid' as const;
  const principal=await ports.resolveVerifiedBinding({channel:input.channel,externalSenderId:input.externalSenderId});
- if(!principal||!principal.userId||!principal.consentVersion)return 'identity_or_consent_required' as const;
+ if(!principal||principal.status!=='verified'||!['buyer','seller','agent'].includes(principal.role)||!principal.userId||!principal.consentVersion)return 'identity_or_consent_required' as const;
  if(!await ports.claim({channel:input.channel,providerMessageId:input.providerMessageId}))return 'duplicate' as const;
  const text=await ports.respond({principal,text:input.text,replyToProviderId:input.replyToProviderId,channel:input.channel});
+ if(typeof text!=='string'||!text.trim()||text.length>12000)return 'response_unavailable' as const;
+ const current=await ports.resolveVerifiedBinding({channel:input.channel,externalSenderId:input.externalSenderId});
+ if(!current||current.status!=='verified'||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'binding_changed_not_delivered' as const;
  await ports.deliver({channel:input.channel,externalRecipientId:input.externalSenderId,replyToProviderId:input.providerMessageId,text});
  return 'delivered' as const;
 }
