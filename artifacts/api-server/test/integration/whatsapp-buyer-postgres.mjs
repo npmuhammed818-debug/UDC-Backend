@@ -74,7 +74,7 @@ try {
     stdin: {
       contents: `import express from 'express';
         import router from './src/routes/whatsappWebhook';
-        export {pool} from '@workspace/db';
+        export {pool} from '@workspace/db';export {readSunkReplies,clearSunkReplies} from './src/whatsapp/replySink';
         const app=express();
         app.use(express.json({verify(req,res,body){req.rawBody=body;}}));
         app.use((req,res,next)=>{req.log={info(){},error(){}};next();});
@@ -213,6 +213,26 @@ try {
     const {rows:[afterAccount]}=await pool.query('select id,full_name,email,role,status,verified_email,email_verified_at,password_recovery_enabled from users where phone=$1',[sender]);
     assert.deepEqual(afterAccount,beforeAccount,'cross-role attempts must not mutate the existing account');
   }
+  // New commands must traverse the actual signed webhook, not just direct handlers.
+  const {rows:[sellerAccount]}=await pool.query('select id from users where phone=$1',[sellerPhone]);
+  await pool.query("update users set status='verified' where id=any($1::uuid[])",[[buyer.id,sellerAccount.id]]);
+  const {rows:[source]}=await pool.query('select id,product_id from buyer_requests where buyer_user_id=$1 limit 1',[buyer.id]);
+  const fixtureDeal=randomUUID();
+  await pool.query("insert into deals(id,buyer_user_id,seller_user_id,buyer_request_id,product_id,quantity,unit,agreed_price,currency,incoterm,destination,status) values($1,$2,$3,$4,$5,10,'MT',100,'USD','FOB','Jebel Ali','negotiation')",[fixtureDeal,buyer.id,sellerAccount.id,source.id,source.product_id]);
+  await pool.query('insert into whatsapp_user_contexts(user_id,active_deal_id) values($1,$2) on conflict(user_id) do update set active_deal_id=excluded.active_deal_id',[buyer.id,fixtureDeal]);
+  process.env.UDC_APP_ENV='staging';process.env.AKIF_WHATSAPP_REPLY_SINK='store';
+  const metaBefore=sent.length,modelsBefore=providerCalls.length;module.clearSunkReplies();
+  await post('deal status picture');assert.equal(module.readSunkReplies(phone).at(-1).kind,'image');assert.match(module.readSunkReplies(phone).at(-1).text,/not payment or delivery confirmation/);
+  await post("explain my deal's incoterm");assert.match(module.readSunkReplies(phone).at(-1).text,/recorded Incoterm is FOB/);
+  await post('quality proof pack');assert.match(module.readSunkReplies(phone).at(-1).text,/0 accessible approved/);
+  await post('freight estimate');assert.match(module.readSunkReplies(phone).at(-1).text,/current forwarder quote/);
+  const helpMessage=randomUUID(),helpBody={type:'button_reply',button_reply:{id:'udc:human_help:'+fixtureDeal}};await post(helpBody,helpMessage);await post(helpBody,helpMessage);
+  assert.equal(await count("select count(*) from audit_logs where action='trade_assist_human_help' and entity_id=$1 and actor_user_id=$2",[fixtureDeal,buyer.id]),1);
+  assert.match(module.readSunkReplies(phone).at(-1).text,/does not mean a person is online/);
+  await pool.query("update users set role='seller' where id=$1",[buyer.id]);await post('deal status picture');assert.match(module.readSunkReplies(phone).at(-1).text,/No picture was shared/);await pool.query("update users set role='buyer' where id=$1",[buyer.id]);
+  assert.equal(providerCalls.length,modelsBefore,'explicit commands bypass all model calls');assert.equal(sent.length,metaBefore,'all new command outputs stay in local sink');assert.ok(module.readSunkReplies().every(r=>r.to===phone),'new commands disclose only to the requesting fixture phone');
+  delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
+  console.log('PASSED signed-webhook new commands: actual PNG sink, exact contextual term, grant-filtered quality index, freight preparation, bound human-help replay dedup, changed-role denial, no model/Meta sends.');
   console.log('PASSED additionally with real local PostgreSQL: seller and agent registration, two kg/AED offers, retained rejected registration + successful edit/retry, existing account unchanged, and signed cross-role intake blocked.');
 
   console.log('PASSED: signed webhook, privacy consent, worker timeout + fallback error, plain buyer registration, pending company review, private requirement persistence and duplicate submit protection (real local PostgreSQL; no live messages).');
