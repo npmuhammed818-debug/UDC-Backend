@@ -161,3 +161,5 @@ Memory chronology tightened: prior means created before the selected deal, not m
 ### 2026-11-05 07:32LA extraction retry fencing
 
 Concurrent extraction attempts previously shared an unconditional document-ID update. Added an exact PostgreSQL text timestamp revision claim plus processing-state predicate on success and failure saves. A superseded worker cannot overwrite the newer extraction or mark its successful result failed. Actual pipeline/nativeSQL test pauses old extraction, lets a new attempt complete, resumes old attempt and confirms current new text/status/file remain intact. Full668APItests/type/nativeSQLpass; extractor/model are local fixtures, no provider calls or hosted schema change.
+
+Exact document text comparison now compares the full extracted value before bounding display text. Regression: a destination with the same first120characters plus a different port suffix must be mismatch, never match from clipped text. No unit/FX conversion; needsHumanReview stays true. Focused tests/nativeSQL pass.

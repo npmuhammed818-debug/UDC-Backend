@@ -14,3 +14,5 @@ test('unsafe JSON numeric extraction cannot become an exact decimal match',()=>{
  const r=documentCheck({...deal,agreedPrice:'9007199254740992'},{pricing:{unitPrice:9007199254740992,currency:'USD',basis:'MT'}});assert.equal(r.checks.find(c=>c.field==='unit_price')!.state,'not_comparable');
  const exact=documentCheck({...deal,agreedPrice:'9007199254740992'},{pricing:{unitPrice:'9007199254740992',currency:'USD',basis:'MT'}});assert.equal(exact.checks.find(c=>c.field==='unit_price')!.state,'match');
 });
+
+test('bounded display cannot hide an extracted destination suffix in exact comparison',()=>{const destination='A'.repeat(120);const c=documentCheck({...deal,destination},{logistics:{destination:destination+' DIFFERENT PORT'}}).checks.find(c=>c.field==='destination')!;assert.equal(c.state,'mismatch');assert.ok(c.extracted!.length<=120);assert.equal(documentCheck({...deal,destination},{logistics:{destination}}).checks.find(c=>c.field==='destination')!.state,'match');});
