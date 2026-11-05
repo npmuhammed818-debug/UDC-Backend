@@ -1,6 +1,5 @@
 import {and,eq,desc,inArray,sql} from 'drizzle-orm';
 import {db,usersTable,whatsappUserContextsTable,auditLogsTable,dealsTable} from '@workspace/db';
-import {dealAccess} from '../deals/access';
 import {saveTradeAssistRequest} from '../deals/tradeAssistRepository';
 import {tradeAssistCommand,requestKinds} from '../deals/tradeAssist';
 import {sendWhatsAppText} from './client';
@@ -13,7 +12,7 @@ export async function handleTradeAssist(phone:string,text:string){
  if(!user||user.status!=='verified'||!['buyer','seller'].includes(user.role)){await sendWhatsAppText(phone,'Your account needs UDC review before a deal request can be saved.');return true;}
  const [context]=await db.select({dealId:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,user.id)).limit(1);
  if(!context){await sendWhatsAppText(phone,'Open My deals and select the deal first, then send this request again.');return true;}
- const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(and(eq(dealsTable.id,context.dealId),dealAccess(user.id,user.role))).limit(1);
+ const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(and(eq(dealsTable.id,context.dealId),eq(user.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,user.id))).limit(1);
  if(!deal){await sendWhatsAppText(phone,'This selected deal is not available for your account.');return true;}
  if(statusAsk){
   const requests=await db.select({id:auditLogsTable.id,action:auditLogsTable.action}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,user.id),eq(auditLogsTable.entityId,context.dealId),inArray(auditLogsTable.action,requestKinds.map(k=>'trade_assist_'+k)))).orderBy(desc(auditLogsTable.createdAt)).limit(5);

@@ -10,7 +10,6 @@ import {z} from 'zod/v4';
 import {db,dealsTable,usersTable,documentsTable,documentExtractionsTable,documentAccessTable,auditLogsTable} from '@workspace/db';
 import {requireAuth,requireRole} from '../auth/middleware';
 import {requireNonAgentDealAccess} from '../auth/agentDealPrivacy';
-import {dealAccess} from '../deals/access';
 import {requestAllowed,requestKinds,diarySummary} from '../deals/tradeAssist';
 const router=Router();
 router.get('/admin/trade-assist/requests',requireRole('admin'),async(_req,res)=>{
@@ -62,7 +61,7 @@ router.post('/trade-assist/deals/:dealId/requests',async(req,res)=>{
 router.get('/trade-assist/deals/:dealId',async(req,res)=>{
  try{
   const id=z.string().uuid().parse(req.params.dealId),u=req.authUser!;
-  const [deal]=await db.select({id:dealsTable.id,dealNumber:dealsTable.dealNumber,status:dealsTable.status,sellerUserId:dealsTable.sellerUserId,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(dealsTable.id,id),dealAccess(u.id,u.role))).limit(1);
+  const [deal]=await db.select({id:dealsTable.id,dealNumber:dealsTable.dealNumber,status:dealsTable.status,sellerUserId:dealsTable.sellerUserId,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1);
   if(!deal){res.sendStatus(404);return;}
   const [seller]=await db.select({status:usersTable.status}).from(usersTable).where(eq(usersTable.id,deal.sellerUserId)).limit(1);
   const proofPack=await db.select({id:documentsTable.id,type:documentsTable.documentType,status:documentsTable.status,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(100);
@@ -74,7 +73,7 @@ router.get('/trade-assist/deals/:dealId',async(req,res)=>{
 router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,res)=>{
  try{
   const id=z.string().uuid().parse(req.params.dealId),docId=z.string().uuid().parse(req.params.documentId),u=req.authUser!;
-  const [deal]=await db.select({quantity:dealsTable.quantity,unit:dealsTable.unit,agreedPrice:dealsTable.agreedPrice,currency:dealsTable.currency,incoterm:dealsTable.incoterm,destination:dealsTable.destination}).from(dealsTable).where(and(eq(dealsTable.id,id),dealAccess(u.id,u.role))).limit(1);
+  const [deal]=await db.select({quantity:dealsTable.quantity,unit:dealsTable.unit,agreedPrice:dealsTable.agreedPrice,currency:dealsTable.currency,incoterm:dealsTable.incoterm,destination:dealsTable.destination}).from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1);
   if(!deal){res.sendStatus(404);return;}
   const [document]=await db.select({id:documentsTable.id,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.id,docId),eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(1);
   if(!document){res.sendStatus(404);return;}
@@ -87,7 +86,7 @@ router.get('/trade-assist/completion-diary',async(req,res)=>{try{const r=await t
 router.get('/trade-assist/diary',async(req,res)=>{
  try{
   const month=z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).parse(req.query.month),start=new Date(month+'-01T00:00:00Z'),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1);
-  const rows=await db.select({status:dealsTable.status,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(dealAccess(req.authUser!.id,req.authUser!.role),gte(dealsTable.updatedAt,start),lt(dealsTable.updatedAt,end))).limit(1001);
+  const rows=await db.select({status:dealsTable.status,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(req.authUser!.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,req.authUser!.id),gte(dealsTable.updatedAt,start),lt(dealsTable.updatedAt,end))).limit(1001);
   if(rows.length>1000){res.status(422).json({error:'too_many_records_for_summary'});return;}
   res.json(diarySummary(rows,month));
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
