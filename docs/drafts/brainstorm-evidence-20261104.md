@@ -1,6 +1,6 @@
 # Brainstorm implementation evidence, 2026-11-04
 
-Current source-only main:1bf6948 (PR302, all7new-main checks green2026-11-05 11:28LA). Current candidate is PR303 staging/shared-seller-review; the append-only entries below are the detailed chronological evidence. Production remains8743bd6, go-live separate. Strict count:0/37 fully complete,36partial,1notstarted (#17discount blocked by no-commission-change limit). Idea10 is excluded by the user and is not one of37. Email is additional scope outside37. The33 retained numbered ideas plus buyer pools, quick switch, document review and channel-neutral brain make37. Synthetic/local handler evidence never counts as provider/device/human completion.
+Current source-only main:afedc4d (PR305, all7new-main checks green2026-11-05 14:39LA; fresh702 tests/types/build/all21native/5extractor passed). Current candidate is PR306 staging/watch-poll-serialization; the append-only entries below are detailed chronological evidence. Production remains8743bd6, five Auto-DeployOff checked before/after source-only push14:35. Go-live separate. Strict count:0/37 fully complete,36partial,1notstarted (#17discount blocked by no-commission-change limit). Idea10 is excluded by the user and is not one of37. Email is additional scope outside37. The33 retained numbered ideas plus buyer pools, quick switch, document review and channel-neutral brain make37. Synthetic/local handler evidence never counts as provider/device/human completion.
 
 | Idea | Current executed source-side evidence | Remaining |
 |---|---|---|
