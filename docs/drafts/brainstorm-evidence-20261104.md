@@ -207,3 +207,7 @@ Photo-review readback now shows reviewedAgainstOriginal and the review timestamp
 ### 2026-11-05 09:34LA shared read-only deal terms
 
 Added one current-role/direct-party read-only term-summary capability with exact decimals, current recorded timestamp and explicit no-offer/no-payment/delivery claim. Synthetic WhatsApp `my deal terms` and authenticated synthetic email `deal terms DEAL-ID` use the same capability; email binding/consent is checked again after the read. No general tool engine, real mailbox, relay or action is enabled. Native SQL tests cover own terms, unknown viewer and changed role. Full channel-neutral brain remains partial.
+
+### 2026-11-05 09:44LA conservative carrier classification
+
+Found description matching could classify 'not delivered' or 'proof of delivery unavailable' as delivered. Shared conservative classifier now rejects negated/uncertain delivery/shipping lines before choosing a carrier class; watcher and brain-output guard use the same classification. Explicit carrier delay/hold is not promoted to delivered. Regression tests include not-delivered, pending, out-for-delivery, unavailable proof, expected/scheduled arrival and not-shipped text. ETA advisory no longer promises UDC follow-up or calls an operator update independently confirmed.687APItests/types pass. No live carrier request, watch activation or customer message.

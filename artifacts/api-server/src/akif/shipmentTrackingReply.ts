@@ -1,3 +1,4 @@
+import {classifyCarrierDescription} from '../tracking/classifyCarrierEvent.ts';
 // Brain-led shipment tracking answers (owner approved 2 Nov, staging,
 // synthetic data, read-only answers, brain words not a fixed script, no date
 // promises, nothing live). Code fetches the carrier facts; AKIF only reads
@@ -15,11 +16,7 @@ import type { ShipmentTrackEvent } from '../tracking/seventeenTrack.ts';
 // free of database imports: which of the three watch classes the latest
 // carrier event belongs to, if any.
 function classifyLatest(events: ShipmentTrackEvent[]): 'shipped' | 'delayed' | 'delivered' | null {
-  const text = events[0]?.description.toLowerCase() ?? '';
-  if (/\bdelivered\b|proof of delivery/.test(text)) return 'delivered';
-  if (/\bdelay|exception|held\b|customs hold|failed attempt/.test(text)) return 'delayed';
-  if (/\bshipped\b|departed|dispatched|in transit|picked up|origin scan|left\b/.test(text)) return 'shipped';
-  return null;
+  return classifyCarrierDescription(events[0]?.description??'');
 }
 
 export type TrackingBrainChat = (message: string, system: string) => Promise<{ content: string }>;

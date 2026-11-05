@@ -1,3 +1,4 @@
+import {classifyCarrierDescription} from './classifyCarrierEvent';
 // Automatic shipment updates (feature requested by the owner through the
 // Instinct relay on 28 Oct): the customer gives a tracking number once; the
 // watcher checks it sparingly via 17TRACK and messages the customer on a real
@@ -18,11 +19,7 @@ export type WatchClass = "shipped" | "delayed" | "delivered";
 export function classifyLatestEvent(events: ShipmentTrackEvent[]): { cls: WatchClass; event: ShipmentTrackEvent } | null {
   const latest = events[0];
   if (!latest) return null;
-  const text = latest.description.toLowerCase();
-  if (/\bdelivered\b|proof of delivery/.test(text)) return { cls: "delivered", event: latest };
-  if (/\bdelay|exception|held\b|customs hold|failed attempt/.test(text)) return { cls: "delayed", event: latest };
-  if (/\bshipped\b|departed|dispatched|in transit|picked up|origin scan|left\b/.test(text)) return { cls: "shipped", event: latest };
-  return null;
+  const cls=classifyCarrierDescription(latest.description);return cls?{cls,event:latest}:null;
 }
 
 export function eventFingerprint(cls: WatchClass, event: ShipmentTrackEvent): string {
