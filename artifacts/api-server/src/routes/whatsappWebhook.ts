@@ -1,3 +1,4 @@
+import {handleEmailChannelLink} from '../whatsapp/emailChannelLink';
 import {handleDealReminder} from '../whatsapp/dealReminders';
 import {handleTrialOrder} from '../deals/trialOrder';
 import {promptExitReason,handleExitReason} from '../whatsapp/exitReason';
@@ -1461,6 +1462,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         if (recoveryReply !== null) { await deliverWhatsAppReply(message.from,recoveryReply); continue; }
       }
       if (message.from && typeof message.text?.body === 'string') {
+        const channelLinkReply = await handleEmailChannelLink(message.from,message.text.body);
+        if(channelLinkReply!==null){await deliverWhatsAppReply(message.from,channelLinkReply);continue;}
         const emailReply = await handleEmailVerification(message.from,message.text.body);
         if (emailReply !== null) { await deliverWhatsAppReply(message.from,emailReply); continue; }
       }
