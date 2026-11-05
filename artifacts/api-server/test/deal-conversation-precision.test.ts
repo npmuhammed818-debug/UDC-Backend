@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {build} from 'esbuild';import {mkdtemp,rm} from 'node:fs/promises';import {pathToFileURL} from 'node:url';
+test('actual deal conversation model prompt preserves exact stored commercial decimals',async()=>{
+ const dir=await mkdtemp('/tmp/udc-deal-precision-');try{
+ await build({entryPoints:['src/akif/dealConversationAgent.ts'],outfile:dir+'/agent.mjs',bundle:true,platform:'node',format:'esm',plugins:[{name:'fixture-context-model',setup(b){b.onResolve({filter:/intelligence\/dealContext$|intelligence\/hermesClient$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path.endsWith('dealContext')?`export async function getAkifDealContext(){return {deal:{buyerUserId:'buyer',sellerUserId:'seller',dealNumber:'TEST',status:'negotiation',quantity:'9007199254740993.123456',unit:'MT',agreedPrice:'0.000001',currency:'USD'},conversation:[],documents:[],documentExtractions:[]};}`:`export async function runConversationChat(user){globalThis.precisionPrompt=JSON.parse(user);return {content:JSON.stringify({intent:'deal_question',replyToSender:'A draft for review.',relay:false,relayToCounterparty:null,newTradeIntake:false})};}`,loader:'js'}));}}]});
+ const m=await import(pathToFileURL(dir+'/agent.mjs').href);await m.interpretActiveDealConversation({dealId:'deal',participantRole:'buyer',participantUserId:'buyer',message:'what is the current price?'});
+ assert.equal((globalThis as any).precisionPrompt.deal.quantity,'9,007,199,254,740,993.123456');assert.equal((globalThis as any).precisionPrompt.deal.agreedPrice,'$0.000001');
+ }finally{delete (globalThis as any).precisionPrompt;await rm(dir,{recursive:true,force:true});}
+});

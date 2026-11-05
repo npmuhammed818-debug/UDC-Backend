@@ -73,3 +73,17 @@ test("deal fact replies format stored numeric precision for humans", () => {
     "100 MT right now.",
   );
 });
+
+
+test("deal fact replies preserve fractional unit prices and large exact quantities",()=>{
+ const precise={...deal,quantity:'9007199254740993.123456',agreedPrice:'0.000001'};
+ assert.equal(directDealFactReply('current price?',precise),'$0.000001/MT right now.');
+ assert.equal(directDealFactReply('confirmed qty?',precise),'9,007,199,254,740,993.123456 MT right now.');
+ assert.match(directDealFactReply('deal status?',precise)??'',/9,007,199,254,740,993.123456 MT at \$0.000001/);
+});
+test("non-USD prices retain all stored decimal digits without a conversion",()=>{
+ assert.equal(directDealFactReply('current price?',{...deal,currency:'INR',agreedPrice:'123.456789'}),'INR 123.456789/MT right now.');
+});
+test("invalid or scientific numeric values do not become plausible trade amounts",()=>{
+ for(const agreedPrice of ['NaN','Infinity','1e6','1,000','-1','<script>'])assert.match(directDealFactReply('current price?',{...deal,agreedPrice})??'',/unavailable/);
+});
