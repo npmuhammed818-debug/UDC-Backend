@@ -1,3 +1,5 @@
+import {traderCompletionDiary} from '../deals/traderDiary';
+import {traderDiaryText} from '../deals/traderDiaryText';
 import {photoQuoteReview} from '../deals/photoQuoteReview';
 import {photoQuoteText} from '../deals/photoQuoteText';
 import {emailAccount} from './emailAccount';
@@ -12,13 +14,18 @@ import {termExplanation,formatTermExplanation} from '../tradeEducation/terms';
 export async function emailReadOnlyDraft(address:string,text:string){
  const input=text.trim();
  const term=termExplanation(input);if(term)return formatTermExplanation(term)+'\nStaging email draft only. No deal terms changed and no message sent.';
+ const diary=/^my diary (\d{4}-(?:0[1-9]|1[0-2]))$/i.exec(input);
+ if(diary){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'Your private diary is unavailable for this account. No private record was returned.';
+ const result=await traderCompletionDiary(principal.userId,diary[1]),current=await account!.repository.resolve(address);
+ if('error'in result||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'Your private diary is unavailable for this account and UTC month. No private record was returned.';
+ return traderDiaryText(result)+'\nStaging email draft only. No message sent.';}
  const photo=/^review photo quote ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}) ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
  if(photo){const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That photo extraction is unavailable for this account. No private record was returned.';
  const review=await photoQuoteReview(principal.userId,photo[1],photo[2]),current=await account!.repository.resolve(address);
  if('error'in review||!current||current.userId!==principal.userId||current.role!==principal.role||current.consentVersion!==principal.consentVersion)return 'That photo extraction is unavailable for this account. No private record was returned.';
  return photoQuoteText(review)+'\nStaging email draft only. Your review is not recorded by this email. No files opened or shared and no message sent.';}
  const m=/^(history|deal status|deal terms|quality proof pack) ([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.exec(input);
- if(!m)return 'Staging email draft only. Available read-only requests: history DEAL-ID, deal status DEAL-ID, deal terms DEAL-ID, quality proof pack DEAL-ID, review photo quote DEAL-ID DOCUMENT-ID, or explain FOB/CIF/CFR/FAS/LC. Use an exact deal reference. This is not full AKIF email conversation support. No order, deal or payment action was taken.';
+ if(!m)return 'Staging email draft only. Available read-only requests: my diary YYYY-MM, history DEAL-ID, deal status DEAL-ID, deal terms DEAL-ID, quality proof pack DEAL-ID, review photo quote DEAL-ID DOCUMENT-ID, or explain FOB/CIF/CFR/FAS/LC. Use an exact deal reference. This is not full AKIF email conversation support. No order, deal or payment action was taken.';
  if(m[1].toLowerCase()==='quality proof pack'){
  const account=emailAccount(),principal=account&&await account.repository.resolve(address);if(!principal)return 'That deal is unavailable for this account. No private record was returned.';
  const index=await qualityProofPack(principal.userId,m[2]);const current=await account!.repository.resolve(address);
