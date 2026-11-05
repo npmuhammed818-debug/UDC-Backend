@@ -388,3 +388,6 @@ WhatsApp request-status and synthetic email `request status DEAL-ID` now use one
 
 ## Continuous signed human-help queue proof
 Full native lifecycle now executes signed buyer deal selection/help request with same-ID replay and new-ID duplicate, buyer-denied admin review, two concurrent admin terminal reviews (one200/one409 and one audit), signed buyer status readback, and signed seller status that excludes the buyer's private review note. Original deal count/status remain unchanged. Uses local signed webhook and reply sink, actual HTTP/admin and PostgreSQL; no Meta, staff contact or physical resolution. All12 remaining native suites pass with this continuous fixture.
+
+## Human-help status transport bound
+Maximum5 admin notes at1000characters each could exceed WhatsApp4096 and drop the queue caveat. Shared formatter now shows at most400characters per note with explicit shortening, at most5rows and80character deal label, preserving caveat and transport suffix within4096. Added max-size and empty-status tests,702total API tests; native actual status/role-race suite passes. No UI changes or customer-device claim.

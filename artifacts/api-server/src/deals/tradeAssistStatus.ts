@@ -1,3 +1,4 @@
+import {tradeAssistStatusText} from './tradeAssistStatusText';
 import {and,eq,desc,inArray,sql} from 'drizzle-orm';
 import {db,usersTable,dealsTable,auditLogsTable} from '@workspace/db';
 import {requestKinds} from './tradeAssist';
@@ -10,6 +11,6 @@ export async function tradeAssistStatus(userId:string,dealId:string){return db.t
  const requests=await tx.select({id:auditLogsTable.id,action:auditLogsTable.action}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,userId),eq(auditLogsTable.entityId,dealId),inArray(auditLogsTable.action,requestKinds.map(k=>'trade_assist_'+k)))).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(5).for('share');
  const reviews=requests.length?await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),eq(auditLogsTable.entityId,dealId),inArray(sql<string>`${auditLogsTable.metadata}->>'requestId'`,requests.map(r=>r.id)))).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(101).for('share'):[];
  if(reviews.length>100)return null;
- const lines=requests.map(r=>{const review=reviews.find(v=>v.metadata?.requestId===r.id),status=review?.metadata?.status;return r.action.replace('trade_assist_','').replaceAll('_',' ')+': '+(['triaged','resolved','declined'].includes(String(status))?status:'awaiting human review')+(typeof review?.metadata?.note==='string'?' - '+review.metadata.note.slice(0,1000):'');});
- return `${d.number}: your latest recorded help requests.\n${lines.join('\n')||'No help requests recorded for you on this deal.'}\nRecorded queue status only. This does not confirm that a person has been contacted, an issue has been physically resolved, or a seller, order, payment or agreement has changed.`;
+ const records=requests.map(r=>{const review=reviews.find(v=>v.metadata?.requestId===r.id),status=String(review?.metadata?.status);return {kind:r.action.replace('trade_assist_','').replaceAll('_',' '),status:['triaged','resolved','declined'].includes(status)?status:'awaiting human review',note:typeof review?.metadata?.note==='string'?review.metadata.note:null};});
+ return tradeAssistStatusText(d.number,records);
 });}
