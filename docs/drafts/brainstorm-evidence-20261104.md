@@ -1,6 +1,6 @@
 # Brainstorm implementation evidence, 2026-11-04
 
-Current source-only main:0d50082. Current PR298 candidate:b09c5f3 (2026-11-05 06:48LA). Production remains8743bd6 with go-live separate. Strict count:0/37 fully complete,36partial,1notstarted (#17discount blocked by no-commission-change limit). Idea10 is excluded by the user and is not one of the37. Email is additional scope outside37. The33 retained numbered ideas plus buyer pools, quick switch, document review and channel-neutral brain make37; no feature is counted complete from foundations or synthetic tests alone.
+Current source-only main:1bf6948 (PR302, all7new-main checks green2026-11-05 11:28LA). Current candidate is PR303 staging/shared-seller-review; the append-only entries below are the detailed chronological evidence. Production remains8743bd6, go-live separate. Strict count:0/37 fully complete,36partial,1notstarted (#17discount blocked by no-commission-change limit). Idea10 is excluded by the user and is not one of37. Email is additional scope outside37. The33 retained numbered ideas plus buyer pools, quick switch, document review and channel-neutral brain make37. Synthetic/local handler evidence never counts as provider/device/human completion.
 
 | Idea | Current executed source-side evidence | Remaining |
 |---|---|---|
@@ -9,7 +9,7 @@ Current source-only main:0d50082. Current PR298 candidate:b09c5f3 (2026-11-05 06
 |3 Trust badge;18 fake-seller shield|Current verified-account/company/evidence gates|Dedicated evidence-backed risk presentation and full screening workflow; no guarantee|
 |4 Voice summary;31 voice-first|Existing voice/transcription and text-only critical-term guards|Dedicated accurate deal voice summary and consented customer-device/provider proof|
 |5 Document checker|Exact comparisons/grant/freshness checks; real PDF through authenticated extractor and fixture-only checker mapping|Actual model structuring/storage/customer upload pipeline and human-review closeout|
-|6 Repeat order|Explicit request, admin prepares one pending buyer-owned requirement, nativeSQL/HTTP concurrency tested|Fresh review, seller proposal and exact buyer acceptance end-to-end|
+|6 Repeat order|Explicit request, admin prepares one pending buyer-owned requirement, nativeSQL/HTTP concurrency tested|Continuous local review/proposal/direct acceptance/new deal proven; full signed continuous journey, provider/device/human closeout remain|
 |7 Currency helper|Dated provider probe, decimal conversion, explicit recipient preference, real outbound payload through synthetic sink|Customer window/provider/device; never substitute FX reference for agreed terms|
 |8 Delay warning|Recorded ETA/stale-update advisory and shipment SQL suites|Full source freshness, watch and provider/device proof; not physical delay evidence|
 |9 Deal memory|Existing authorized recent history and grant-filtered document memory|Cross-deal delivery-performance evidence, exact relationship/permission checks, no private reasons|
@@ -26,10 +26,10 @@ Current source-only main:0d50082. Current PR298 candidate:b09c5f3 (2026-11-05 06
 |22 Reminders|Own-deal explicit offset timestamp, consent/STOP/current-party scan, parallel one-delivery sink test|Real provider/window/template/receipt and verified contractual dates|
 |23 Trader diary|Original UTC audit-month completion ledger, current-role isolation, nativeSQL/HTTP|Savings/best-seller evidence; missing history is not zero activity|
 |24 Human help|Deal-bound button and private deduplicated queue, admin review status; signed webhook/SQL|Actual staffing/assignment/contact/work and customer device; no online promise|
-|25 Backup seller;additional quick switch|Buyer-only request, pending buyer requirement, current compatible alternate leads and private UI|Fresh seller proposal/buyer acceptance/new linked deal; never transfer old seller records|
+|25 Backup seller;additional quick switch|Buyer-only request, pending buyer requirement, current compatible alternate leads and private UI|Continuous local seller-switch review/proposal/direct acceptance/new deal proven, old file/chat retained; full signed/provider/device/human workflow remains|
 |26 Exit reason|Private explicit reason plus guided optional list/skip; forged-party/parallel dedup tested|Device rendering and human follow-through; never relay private reason|
 |27 Language bridge|Existing multilingual comprehension/voice, English text policy|Accurate authorized relay translation with critical terms and full scope/device review|
-|29 Trial order|Exact reduced-quantity pending buyer draft, canonical decimal dedup, no price copied; SQL|Fresh review/proposal/acceptance and proactive suggestion, not a committed order|
+|29 Trial order|Exact reduced-quantity pending buyer draft, canonical decimal dedup, no price copied; SQL|Continuous local review/proposal/direct acceptance/new deal proven; full signed/provider/device, proactive suggestion remain|
 |30 Agent leaderboard;34 seller of month|Admin-only provisional counts plus audited completion evidence; no winner/publication/reward|Metric criteria, permissioned identities/publication, complete history|
 |32 Paperwork helper|Existing LOI/ICPO/FCO/SPA/NCNDA draft/review flow|Current country/transaction checklist validity and first-time exporter end-to-end; no legal guarantee|
 |33 Dispute helper|Admin-only bounded source-attributed evidence timeline/metadata and UI; SQL/pixels|Human case decision/closeout, no automated fault/refund/payment judgment|
@@ -315,3 +315,7 @@ Continuous alternate-seller fixture now places original seller private/relayed c
 ### 2026-11-05 12:12LA deal creation revalidates exact consent evidence
 
 Deal creation now checks accepted decision fingerprint/match and exact full presentation evidence again, plus stored proposal fields against current terms. A stale/incomplete consent audit cannot silently authorize a new deal even if its action name says accepted. Mock tests alter decision/presentation/terms independently; native lifecycle alters decision/presentation fingerprints and proves refusal then restores synthetic fixture evidence before legitimate creation.699APItests/types/API+frontend build and all21isolated native PostgreSQL HTTP suites pass. Initial mock restoration used stale references after transaction rollback; fixed fixture to restore current records and reran. No hosted DB, historical consent backfill, sends or financial policy changes. Existing incomplete evidence requires a fresh proposal/decision, not inference.
+
+### 2026-11-05 12:15LA backup-seller continuous native proof
+
+Continuous isolated lifecycle now executes buyer backup request while original deal remains active, parallel deduplicated pending requirement, human review, separately verified alternate seller/fresh offer, exact proposal, no deal before buyer acceptance, direct acceptance handler and distinct new deal. Original status/quantity/seller remain unchanged; no old files/chat copied. Same fixture separately proves explicit seller switch after original hold, including opposite-seller404. All21native SQL/HTTP suites and prior699API/types/API+frontend build pass; new increment is test/docs only. Header/table reconciled to current evidence rather than stale PR298. No automatically chosen seller, full signed continuous journey, customer-device/Meta or human operational completion claimed.0/37fullycomplete remains.
