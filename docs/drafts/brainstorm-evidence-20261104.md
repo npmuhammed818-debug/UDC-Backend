@@ -351,3 +351,7 @@ Synthetic registered email `explain deal incoterm DEAL-ID` now shares WhatsApp's
 ### 2026-11-05 13:04LA diary role-change read race
 
 Shared diary now reads current user and joined status history inside one transaction with share locks, rather than allowing a concurrent role edit between authorization and audit read. Native PostgreSQL regression holds an uncommitted buyer-to-seller change, proves diary waits, commits it, then proves old buyer completion count is excluded. Fixture restores role afterward.700APItests/types/API+frontend build and all21native SQLHTTP suites pass. Local synthetic DB only, no hosted migration or user-role change.
+
+### 2026-11-05 13:06LA continuous signed rejection and alternate presentation
+
+Actual signed trial request to human review/fresh seller proposal now includes signed reject button, same-ID replay and new-ID duplicate: one rejection/declined match, unchanged requirement, one eligible verified alternate match and automatically presented exact alternate proposal. No deal created by rejection/rematching. Separate signed buyer acceptance of new proposal is still required before admin route creates distinct alternate-seller deal. All12nativeSQLHTTP remaining suites pass,700API/type/build plus broader9native suites passed on same runtime immediately before this test-only addition. Local sink/storage only, no live matching/send/device claim.
