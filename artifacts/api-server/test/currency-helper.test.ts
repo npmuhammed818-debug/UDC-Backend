@@ -1,6 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {parseCurrencyAsk,indicativeAmount,currencyConversion,clearCurrencyCache} from '../src/marketData/currency.ts';
 test('currency conversion uses exact decimal half-up and only explicit requests',()=>{
- assert.equal(indicativeAmount('100.05','1.12345',2),'112.40');assert.equal(indicativeAmount('1','1.005',2),'1.01');assert.equal(indicativeAmount('999999999999999','1',2),'999999999999999.00');assert.equal(indicativeAmount('1','1.5',0),'2');
+ assert.equal(indicativeAmount('100.05','1.12345',2),'112.40');assert.equal(indicativeAmount('1','1.005',2),'1.01');assert.equal(indicativeAmount('999999999999999','1',2),'999999999999999.00');assert.equal(indicativeAmount('1','1.5',0),'2');assert.equal(indicativeAmount('1','1.0005',3),'1.001');
  assert.deepEqual(parseCurrencyAsk('convert 100 USD to INR'),{amount:'100',base:'USD',quote:'INR'});for(const s of ['he said convert 100 USD to INR','convert my deal to INR','convert -5 USD to EUR'])assert.equal(parseCurrencyAsk(s),null);
 });
 test('provider gets currency pair only, caches pair, preserves date and rejects stale/invalid',async()=>{
