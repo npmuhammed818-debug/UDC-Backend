@@ -359,3 +359,7 @@ Actual signed trial request to human review/fresh seller proposal now includes s
 ### 2026-11-05 13:09LA no automatic return to previously rejected seller
 
 Continuous signed reject-all test reproduced seller bounce: after both sellers were declined, rematch could suggest a different listing owned by an earlier seller. Automatic rematch now excludes sellers behind every already attempted listing for the same requirement, not only current seller/exact listing. Native journey proves two signed rejections/retry leave exactly two declined matches, zero deal and original approved demand for human follow-through. Earlier signed fresh-alternate acceptance/new-deal case still passes.700APItests/types/API+frontend build and all21nativeSQLHTTPsuites pass. No live seller contacted or policy/money change. A later explicit human-reviewed fresh proposal is not prohibited by this automatic-selection guard.
+
+### 2026-11-05 13:13LA initial scanner respects rejected seller history
+
+Same reject-all native fixture reproduced the sibling initial-offer path reviving an earlier seller via another listing after all matches declined. Initial selection now excludes every seller behind attempted listings for that requirement too. Regression explicitly invokes initial-offer scan after signed exhaustion: false/no new match/proposal, prior two declined matches remain.700APItests/types/API+frontend build and all21nativeSQLHTTP suites pass. Source-only, no seller contacted or live scanner enabled; human review remains a separate path.
