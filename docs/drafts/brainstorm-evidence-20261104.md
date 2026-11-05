@@ -249,3 +249,7 @@ Shared photo formatter direct regressions preserve full long product suffixes an
 ### 2026-11-05 10:58LA shared private diary draft
 
 Synthetic authenticated email accepts explicit `my diary YYYY-MM`, sharing WhatsApp's current-role audit-month completion reader and one formatter. Native signed fixture HTTP verifies recorded UTC count, future-month refusal, changed-role exclusion, missing-history caveat, no savings/ranking guess and no delivery/payment inference. No private deal identities/prices/messages or counterpart data added.693APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. This remains manual-review synthetic drafts, not full email brain/provider support or permission to send.
+
+### 2026-11-05 11:03LA shared private document comparison
+
+Document comparison now lives in one transactional current-user/current-role/current-deal/current-approved-grant/current-native-revision reader. Existing staging HTTP uses it; synthetic email `check document DEAL-ID DOCUMENT-ID` returns bounded field match/mismatch/not-comparable states only plus review caveats, not private values/file URLs. Native SQL/HTTP confirms stale refusal before extraction refresh, mismatch after refresh, wrong-deal and revoked-grant denial. First email fixture correctly refused because its prior extraction was intentionally stale; test now explicitly proves that refusal before refreshing the isolated fixture.693APItests/types/build and all21isolated PostgreSQL HTTP suites pass. No model approval, payment/terms effect, real inbox or send.

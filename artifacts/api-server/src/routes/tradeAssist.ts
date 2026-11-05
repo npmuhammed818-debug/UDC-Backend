@@ -4,7 +4,7 @@ import {backupSellerReview} from '../deals/backupSellerReview';
 import {traderCompletionDiary} from '../deals/traderDiary';
 import {disputeBrief} from '../deals/disputeBrief';
 import {prepareRestartRequest} from '../deals/restartRequest';
-import {documentCheck} from '../deals/documentCheck';
+import {documentCheckRead} from '../deals/documentCheckRead';
 import {saveTradeAssistRequest} from '../deals/tradeAssistRepository';
 import {Router} from 'express';
 import {and,desc,eq,gte,lt,inArray,sql} from 'drizzle-orm';
@@ -79,16 +79,7 @@ router.post('/trade-assist/deals/:dealId/photo-quote/:documentId/reviewed',async
 });
 router.get('/trade-assist/deals/:dealId/photo-quote/:documentId',async(req,res)=>{try{const r=await photoQuoteReview(req.authUser!.id,z.string().uuid().parse(req.params.dealId),z.string().uuid().parse(req.params.documentId));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}});
 router.get('/trade-assist/deals/:dealId/document-check/:documentId',async(req,res)=>{
- try{
-  const id=z.string().uuid().parse(req.params.dealId),docId=z.string().uuid().parse(req.params.documentId),u=req.authUser!;
-  const [deal]=await db.select({quantity:dealsTable.quantity,unit:dealsTable.unit,agreedPrice:dealsTable.agreedPrice,currency:dealsTable.currency,incoterm:dealsTable.incoterm,destination:dealsTable.destination}).from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1);
-  if(!deal){res.sendStatus(404);return;}
-  const [document]=await db.select({id:documentsTable.id,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.id,docId),eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(1);
-  if(!document){res.sendStatus(404);return;}
-  const [extraction]=await db.select({structuredData:documentExtractionsTable.structuredData,status:documentExtractionsTable.status,updatedAt:documentExtractionsTable.updatedAt}).from(documentExtractionsTable).innerJoin(documentsTable,and(eq(documentsTable.id,documentExtractionsTable.documentId),eq(documentsTable.dealId,documentExtractionsTable.dealId))).where(and(eq(documentExtractionsTable.documentId,docId),eq(documentExtractionsTable.dealId,id),sql`${documentExtractionsTable.updatedAt} >= ${documentsTable.updatedAt}`)).limit(1);
-  if(!extraction||!['completed','needs_review'].includes(extraction.status)||extraction.updatedAt<document.updatedAt){res.status(409).json({error:'current_extraction_required',needsHumanReview:true});return;}
-  res.json({documentId:docId,extractionAsOf:extraction.updatedAt,...documentCheck(deal,extraction.structuredData)});
- }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
+ try{const r=await documentCheckRead(req.authUser!.id,z.string().uuid().parse(req.params.dealId),z.string().uuid().parse(req.params.documentId));if('error'in r){if(r.error===409){res.status(409).json({error:'current_extraction_required',needsHumanReview:true});return;}res.sendStatus(r.error!);return;}res.json(r);}catch(error){res.sendStatus(error instanceof z.ZodError?400:503);}
 });
 router.get('/trade-assist/completion-diary',async(req,res)=>{try{const r=await traderCompletionDiary(req.authUser!.id,String(req.query.month||new Date().toISOString().slice(0,7)));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch{res.sendStatus(503);}});
 router.get('/trade-assist/diary',async(req,res)=>{
