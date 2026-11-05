@@ -227,6 +227,15 @@ try {
   await signedAcceptance(nextProposal.id);const rematchDeal=await call('POST','/admin/deals',rematchTerms,admin.cookie);assert.equal(rematchDeal.status,201,JSON.stringify(rematchDeal.body));assert.equal(rematchDeal.body.deal.sellerUserId,alternateSeller.id);assert.notEqual(rematchDeal.body.deal.id,dealId);
   delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
   pass('signed rejection/replay/duplicate retains requirement, selects one verified eligible alternate and presents fresh exact terms; new signed acceptance then admin creation only, local sink');
+  // A second independent trial exhausts both sellers without committing any deal.
+  process.env.UDC_APP_ENV='staging';process.env.AKIF_WHATSAPP_REPLY_SINK='store';
+  await signedMessage('15550001111','trial order 40 MT');const exhaustedDraft=(await pool.query("select metadata from audit_logs where action='trial_requirement_prepared' and entity_id=$1 and metadata->>'quantity'='40'",[dealId])).rows[0];assert.ok(exhaustedDraft);const exhaustedId=exhaustedDraft.metadata.requirementId;
+  assert.equal((await call('PATCH',`/admin/buyer-requests/${exhaustedId}/status`,{status:'approved'},admin.cookie)).status,200);const exhaustedMatch=await call('POST','/admin/matches',{buyerRequestId:exhaustedId,sellerListingId:freshId},admin.cookie);assert.equal(exhaustedMatch.status,201);const exhaustedProposal=await call('POST',`/admin/matches/${exhaustedMatch.body.match.id}/terms-review`,{},admin.cookie);assert.equal(exhaustedProposal.status,200);
+  const reject=async id=>signedMessage('15550001111',{type:'button_reply',button_reply:{id:'udc:terms:reject:'+id}});
+  await reject(exhaustedProposal.body.proposalId);const lastMatch=(await pool.query('select id from matches where buyer_request_id=$1 and id<>$2',[exhaustedId,exhaustedMatch.body.match.id])).rows;assert.equal(lastMatch.length,1);const lastProposal=(await pool.query("select id from audit_logs where action='match_terms_proposed' and entity_id=$1",[lastMatch[0].id])).rows[0];assert.ok(lastProposal);
+  await reject(lastProposal.id);await reject(lastProposal.id);assert.equal((await pool.query('select count(*)::int n from matches where buyer_request_id=$1',[exhaustedId])).rows[0].n,2,'previous sellers not retried after both rejections');assert.equal((await pool.query("select count(*)::int n from matches where buyer_request_id=$1 and status='declined'",[exhaustedId])).rows[0].n,2);assert.equal((await pool.query('select count(*)::int n from deals where buyer_request_id=$1',[exhaustedId])).rows[0].n,0);assert.equal((await pool.query('select status from buyer_requests where id=$1',[exhaustedId])).rows[0].status,'approved','original demand remains available for human follow-through');
+  delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
+
 
 
 

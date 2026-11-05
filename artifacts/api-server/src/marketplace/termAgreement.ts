@@ -377,11 +377,16 @@ export async function respondToTerms(
           )
             eligible.push(offer);
         }
+        const attemptedSellers = attempted.length ? await tx
+          .select({sellerUserId:sellerListingsTable.sellerUserId})
+          .from(sellerListingsTable)
+          .where(inArray(sellerListingsTable.id,attempted.map(m=>m.sellerListingId))) : [];
         const ranked = eligible
           .filter(
             (o) =>
               o.unit === c.buyer.unit &&
               o.sellerUserId !== c.seller.sellerUserId &&
+              !attemptedSellers.some(s=>s.sellerUserId===o.sellerUserId) &&
               verified.some((u) => u.id === o.sellerUserId) &&
               !attempted.some((m) => m.sellerListingId === o.id),
           )
