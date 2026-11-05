@@ -1,5 +1,5 @@
 import {documentExtractionReview,parseDocumentExtractionObject} from './documentExtractionReview';
-import { eq } from "drizzle-orm";
+import { and,eq,sql } from "drizzle-orm";
 import {
   db,
   dealIntelligenceSnapshotsTable,
@@ -269,7 +269,7 @@ export async function processDocumentIntelligence(input: {
   fileName: string;
   mimeType: string;
 }) {
-  await db.insert(documentExtractionsTable)
+  const [claim]=await db.insert(documentExtractionsTable)
     .values({
       documentId: input.documentId,
       dealId: input.dealId,
@@ -277,7 +277,7 @@ export async function processDocumentIntelligence(input: {
       extractor: "udc-open-source+qwen",
       mimeType: input.mimeType,
       fileName: input.fileName,
-      updatedAt: new Date(),
+      updatedAt: sql`clock_timestamp()`,
     })
     .onConflictDoUpdate({
       target: documentExtractionsTable.documentId,
@@ -292,9 +292,11 @@ export async function processDocumentIntelligence(input: {
         confidence: null,
         pageCount: null,
         errorCode: null,
-        updatedAt: new Date(),
+        updatedAt: sql`clock_timestamp()`,
       },
-    });
+    }).returning({revision:sql<string>`${documentExtractionsTable.updatedAt}::text`});
+  if(!claim)throw Error("document_extraction_claim_failed");
+  const owns=and(eq(documentExtractionsTable.documentId,input.documentId),eq(documentExtractionsTable.status,"processing"),sql`${documentExtractionsTable.updatedAt}::text=${claim.revision}`);
 
   try {
     const extraction = await extractDocumentBytes({
@@ -335,7 +337,7 @@ export async function processDocumentIntelligence(input: {
       ? String(Math.max(0, Math.min(1, rawConfidence)))
       : null;
 
-    await db.update(documentExtractionsTable)
+    const [saved]=await db.update(documentExtractionsTable)
       .set({
         status,
         extractor: `${extraction.extraction_method}+qwen`,
@@ -347,7 +349,8 @@ export async function processDocumentIntelligence(input: {
         errorCode: null,
         updatedAt: new Date(),
       })
-      .where(eq(documentExtractionsTable.documentId, input.documentId));
+      .where(owns).returning({id:documentExtractionsTable.id});
+    if(!saved)throw Error("document_extraction_superseded");
 
     await refreshDealIntelligenceSnapshot(input.dealId);
     return { status, structured, warnings, textLength: vision.text.length };
@@ -359,7 +362,7 @@ export async function processDocumentIntelligence(input: {
         errorCode,
         updatedAt: new Date(),
       })
-      .where(eq(documentExtractionsTable.documentId, input.documentId));
+      .where(owns);
 
     await refreshDealIntelligenceSnapshot(input.dealId).catch(() => undefined);
     throw error;
