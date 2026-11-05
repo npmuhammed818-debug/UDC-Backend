@@ -143,6 +143,12 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
+    await t.test('private exit callback is handled before generic interactive UI',async()=>{
+      reset();seedDeal();const oldEnv=process.env.UDC_APP_ENV;process.env.UDC_APP_ENV='staging';
+      try{const dealId=randomUUID();rows.dealsTable[0].id=dealId;rows.dealsTable[0].status='cancelled';rows.auditLogsTable.push({id:randomUUID(),actorUserId:'buyer',action:'deal_closed_by_party',entityId:dealId});
+      const uiBefore=state.uiCalls||0;const r=await message({interactive:{type:'list_reply',list_reply:{id:'udc:exit:'+dealId+':skip'}}});assert.equal(r.status,200);assert.equal(rows.auditLogsTable.filter(x=>x.action==='trade_exit_reason_skipped').length,1);assert.equal(state.uiCalls||0,uiBefore);
+      }finally{if(oldEnv===undefined)delete process.env.UDC_APP_ENV;else process.env.UDC_APP_ENV=oldEnv;}
+    });
     await t.test('staging crisis text, captions and voice stop before trade and model calls', async () => {
       const oldEnv=process.env.UDC_APP_ENV; process.env.UDC_APP_ENV='staging';
       try {

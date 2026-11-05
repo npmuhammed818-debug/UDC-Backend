@@ -65,3 +65,6 @@ Verified direct buyer/seller can ask `coach counter 95 USD` on their selected ne
 
 ## Guided private exit reason candidate
 After a successful explicit confirmed deal closure, staging asks the closing party an optional list question with price/delay/trust/quality/terms/other/skip. Callback includes deal ID and rechecks current verified direct party plus their own closure audit. Counterparty/forged callback is denied. Answer uses existing immutable private request queue, skip is idempotent and never shared. Native SQL/actual prompt/handler test executed. Customer-device list rendering remains unverified; only source-side synthetic execution claimed.
+
+## Synthetic document-code adapter candidate
+Document review now accepts the current verified recipient's code delivery through the staging local reply sink only. Live Meta code delivery remains impossible in this adapter. Current user role/status rechecked, failed delivery refused. Existing browser-bound OTP/session/receipt security stays intact. Native SQL adapter test confirms sink-only gate, correct recipient and suspension denial. This does not claim real WhatsApp template activation or customer-device delivery.
