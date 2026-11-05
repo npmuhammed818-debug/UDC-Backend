@@ -303,3 +303,7 @@ A buyer callback could previously decide an existing proposal without evidence i
 ### 2026-11-05 11:57LA malformed expiry and failed presentation regression
 
 Proposal response rejects missing/invalid expiry rather than letting Date.parse NaN pass its time guard. Mock database/transport regression forces proposal delivery failure, proves no presentation/acceptance, then retries full presentation before valid decision. Actual signed/native and continuous lifecycle suites remain passing.697APItests/types/build/all21native PostgreSQLHTTPsuites pass. These are no-send local tests; no historical approval or financial policy inferred.
+
+### 2026-11-05 12:00LA failed-button and shared read formatting tests
+
+Mock transport separately accepts term text but fails button: no presentation audit and no buyer acceptance until successful resend. Direct shared document/diary formatter tests preserve UTC source, field-state wording, no-approval/incomplete-history caveats and no guessed savings/rankings.699APItests/types/build/all21native PostgreSQLHTTPsuites pass. Test-only increment; no runtime effect.
