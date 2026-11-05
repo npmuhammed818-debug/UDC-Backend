@@ -64,3 +64,14 @@ test('automatic presentation stays within quantity, budget, delivery and stated 
  assert.equal(canAutomaticallyPresentOffer(buyer,{...compatible,incoterm:'EXW',destination:'Named seller warehouse'}),true);
  assert.equal(canAutomaticallyPresentOffer({...buyer,additionalConditions:'Delivery within seven days'},compatible),false);assert.equal(canAutomaticallyPresentOffer({...buyer,inspectionRequirements:'SGS at destination'},compatible),false);
 });
+
+
+test('automatic proposal gate compares exact large and fractional terms without Number rounding',()=>{
+ const b={...buyer,quantity:'9007199254740993.000001',targetPrice:'100.000001',specification:null};
+ const s={...seller,quantity:'9007199254740993.000000',monthlyCapacity:null,minimumOrderQuantity:null,price:'100.000001',specification:null};
+ assert.equal(canAutomaticallyPresentOffer(b,s),false,'one millionth below required capacity must refuse');
+ assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',price:'100.000002'}),false,'one millionth above target must refuse');
+ assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',minimumOrderQuantity:'100.000001'}),false);
+ assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100'}),true);
+ for(const patch of [{monthlyCapacity:'NaN'},{minimumOrderQuantity:'NaN'},{price:'1e2'},{quantity:'100.0000001'}])assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',...patch}),false);
+});

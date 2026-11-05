@@ -225,3 +225,9 @@ Button callback now also requires a matching audit record that this buyer was of
 ### 2026-11-05 10:32LA carrier response identity binding
 
 Carrier client no longer trusts the first accepted response row. It requires one exact requested tracking-number match and a parseable event time; unrelated/missing-number responses yield no events and duplicate matches refuse. Synthetic response tests include another shipment first, wrong number, invalid timestamp and ambiguity. Existing fixtures now include provider-returned numbers rather than relying on positional trust. No real carrier requests or configuration changes.
+
+### 2026-11-05 10:36LA exact automatic-proposal gate
+
+Automatic proposal eligibility previously converted capacity, minimum order and target/unit price through Number. The gate now compares bounded six-decimal fixed-point BigInt values, rejecting invalid/scientific/more-than-six-decimal data. Regressions prove a one-millionth capacity shortage, above-target price and above-quantity minimum cannot become compatible from rounding, including quantities beyond Number safe integer. Ranking score remains a rough score, not agreement; no financial values or policy changed.690APItests/types pass.
+
+Current exact gate slice additionally passes production build and all21local native PostgreSQL HTTP suites. These are isolated synthetic databases, not hosted/staging DB migrations or live provider/device checks.
