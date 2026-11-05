@@ -28,3 +28,10 @@ test("webhook refuses Aadhaar before any other processing; vault has no Aadhaar 
   const link = await readFile(new URL("../src/vault/uploadLink.ts", import.meta.url), "utf8");
   assert.ok(!/aadhaar|aadhar/i.test(link.slice(0, link.indexOf("CONFIDENTIAL_WORDS"))));
 });
+
+test("checksum coincidences in exact UUID record identifiers are not Aadhaar",()=>{
+ const id='aaaaaaaa-bbbb-4ccc-8ddd-234123412346';
+ assert.equal(containsAadhaarNumber('review photo quote '+id),false);
+ assert.equal(containsAadhaarNumber('record '+id+' and ID 2341 2341 2346'),true);
+ assert.equal(containsAadhaarNumber('not-a-uuid-234123412346'),true);
+});

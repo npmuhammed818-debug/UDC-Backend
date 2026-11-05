@@ -10,12 +10,16 @@ function verhoeff(digits: string): boolean {
   return c === 0;
 }
 
+// UUID identifiers can end with twelve numeric hex characters. A checksum
+// coincidence inside that identifier is not a standalone identity number.
+const UUID = /(?<![a-z0-9-])[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}(?![a-z0-9-])/gi;
+const withoutUuids=(text:string)=>text.replace(UUID,'[record-id]');
 const NUMBER = /(?<!\d)([2-9]\d{3})[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)/g;
 
 /** True when the text holds a 12-digit number that passes the Aadhaar (Verhoeff) check. */
 export function containsAadhaarNumber(text: string | null | undefined): boolean {
   if (typeof text !== "string") return false;
-  for (const m of text.matchAll(NUMBER)) if (verhoeff(`${m[1]}${m[2]}${m[3]}`)) return true;
+  for (const m of withoutUuids(text).matchAll(NUMBER)) if (verhoeff(`${m[1]}${m[2]}${m[3]}`)) return true;
   return false;
 }
 
