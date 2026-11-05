@@ -1,5 +1,6 @@
+import {currentEmailAccountConsent} from '../channels/emailAccount';
 import {and,desc,eq,sql} from 'drizzle-orm';
-import {db,usersTable,dealsTable,whatsappUserContextsTable,auditLogsTable} from '@workspace/db';
+import {db,usersTable,dealsTable,whatsappUserContextsTable,auditLogsTable,notificationPreferencesTable} from '@workspace/db';
 import {reminderCommand,safeReminderTime,reminderText} from '../deals/reminderText';
 import {sendWhatsAppText} from './client';
 export async function handleDealReminder(phone:string,text:string){
@@ -20,6 +21,7 @@ export async function runDealReminders(now=new Date()){
  const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminder_delivered'),eq(auditLogsTable.entityId,r.id))).limit(1);if(prior)return;
  const [stop]=await tx.select({at:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminders_stopped'),eq(auditLogsTable.actorUserId,r.actorUserId!),eq(auditLogsTable.entityId,r.entityId!))).orderBy(desc(auditLogsTable.createdAt)).limit(1);if(stop&&stop.at>=r.createdAt)return;
  const [u]=await tx.select({phone:usersTable.phone,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,r.actorUserId!)).limit(1);if(!u?.phone||u.status!=='verified'||!['buyer','seller'].includes(u.role))return;
+ if(!await currentEmailAccountConsent(r.actorUserId!))return;const [preferences]=await tx.select({optional:notificationPreferencesTable.optionalWhatsApp,reminders:notificationPreferencesTable.reminders}).from(notificationPreferencesTable).where(eq(notificationPreferencesTable.userId,r.actorUserId!)).limit(1);if(preferences&&(preferences.optional===false||preferences.reminders===false))return;
  const [d]=await tx.select({status:dealsTable.status}).from(dealsTable).where(and(eq(dealsTable.id,r.entityId!),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,r.actorUserId!))).limit(1);if(!d||['completed','cancelled','rejected'].includes(d.status))return;
  const delivery=await sendWhatsAppText(u.phone,reminderText(String(r.metadata!.kind),String(r.metadata!.dueAt)));if(delivery.delivered){await tx.insert(auditLogsTable).values({actorUserId:r.actorUserId,action:'deal_reminder_delivered',entityType:'deal_reminder',entityId:r.id,metadata:{syntheticSink:true,dealId:r.entityId}});sent++;}
  });}return {sent,disabled:false};
