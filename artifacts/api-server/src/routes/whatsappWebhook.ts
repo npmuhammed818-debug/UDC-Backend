@@ -1,3 +1,4 @@
+import {promptExitReason,handleExitReason} from '../whatsapp/exitReason';
 import {handleNegotiationCoach} from '../whatsapp/negotiationCoach';
 import {handlePriceWatch} from '../whatsapp/priceWatch';
 import {handleSellerScorecard} from '../whatsapp/sellerScorecard';
@@ -895,6 +896,7 @@ async function handleDealWhatsAppMessage(
       return { reply: dealPausePrompt(pauseRequest.kind, deal.dealNumber), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: ctxKind };
     const result = await applyDealPause({ dealId: deal.id, dealNumber: deal.dealNumber, senderId: sender.id, receiverId: receiverUserId, kind: pauseRequest.kind });
     if (!result.applied) return { reply: "This deal is already paused, closed or finished, so nothing changed.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    if(pauseRequest.kind==='close'&&result.applied)await promptExitReason(from,deal.id).catch(()=>undefined);
     return { reply: (pauseRequest.kind === "pause" ? pausedConfirmationToSender : closedConfirmationToSender)(deal.dealNumber, result.told), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
   }
 
@@ -1462,6 +1464,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       // Explicit menu requests take precedence over AI guidance. Never open
       // the menu for ordinary greetings, consent, or unrelated chat messages.
+      const exitId=message.interactive?.list_reply?.id??message.interactive?.button_reply?.id;
+      if(message.from&&exitId){try{if(await handleExitReason(message.from,exitId))continue;}catch{await deliverWhatsAppReply(message.from,'Your private answer could not be saved. Please try again.');continue;}}
       if(message.from && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}

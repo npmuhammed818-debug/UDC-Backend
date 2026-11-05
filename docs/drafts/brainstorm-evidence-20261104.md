@@ -62,3 +62,6 @@ Verified buyer explicitly watches a threshold for their own selected approved re
 
 ## Private negotiation coach candidate
 Verified direct buyer/seller can ask `coach counter 95 USD` on their selected negotiation deal. Returns only a private draft using the user-proposed amount and exact recorded currency, unit, Incoterm and destination. Other terms still need agreement. Never invents a seller margin, market value, room to negotiate or probability of acceptance. Wrong currency, missing term, wrong party or non-negotiation fails closed. Actual native SQL/handler confirms only requester gets the draft and deal values stay unchanged. Price recommendation from evidence remains unbuilt, so this does not finish the original coach idea.
+
+## Guided private exit reason candidate
+After a successful explicit confirmed deal closure, staging asks the closing party an optional list question with price/delay/trust/quality/terms/other/skip. Callback includes deal ID and rechecks current verified direct party plus their own closure audit. Counterparty/forged callback is denied. Answer uses existing immutable private request queue, skip is idempotent and never shared. Native SQL/actual prompt/handler test executed. Customer-device list rendering remains unverified; only source-side synthetic execution claimed.
