@@ -66,7 +66,7 @@ export function createSeventeenTrackClient(): ShipmentTracker {
       if(!accepted?.length)return [];
       if(accepted.length!==1)throw Error('17TRACK ambiguous tracking record');
       const latest = accepted[0]?.track_info?.latest_event;
-      return typeof latest?.time_iso==='string'&&Number.isFinite(Date.parse(latest.time_iso))&&typeof latest.description==='string'&&latest.description.trim()
+      return typeof latest?.time_iso==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(latest.time_iso)&&Number.isFinite(Date.parse(latest.time_iso))&&typeof latest.description==='string'&&latest.description.trim()
         ? [{ time: latest.time_iso, description: latest.description, ...(latest.location ? { location: latest.location } : {}) }]
         : [];
     },

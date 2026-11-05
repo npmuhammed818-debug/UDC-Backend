@@ -271,3 +271,7 @@ Document comparator now refuses fractional JSON Number values as exact comparabl
 PR302 main1bf6948 source-only pushed11:23 after exact candidate7green. Fresh five Render settings immediately before/after remain Auto-DeployOff and production8743bd6. Postmain696APItests/types/nativeHTTPSQL pass; both new main-triggered runs42093479938/42093479959 all7green at11:28. No deployment.
 
 Next synthetic slice: email `seller review DEAL-ID` shares the same current buyer/seller/account/listed-company evidence reader and formatter as WhatsApp. Signed synthetic HTTP/nativeSQL proves own buyer view, suspended seller no-current-review wording, wrong deal and wrong current role refusal, no sellerID/private floor/storage URL and visible non-guarantee caveat.696APItests/types/build/all21isolatedPostgreSQLHTTPsuites pass. No real email connection/send or public trust badge.
+
+### 2026-11-05 11:31LA provider event timezone check
+
+17TRACK latest-event time must now be explicit offset/Z ISO timestamp, not date-only, browser-local timestamp or ambiguous locale date. Synthetic client tests refuse ambiguous examples and preserve an explicit+05:30event.696APItests/types/build/all21isolated native PostgreSQL HTTP suites pass. No live provider/key/registration/quota use.
