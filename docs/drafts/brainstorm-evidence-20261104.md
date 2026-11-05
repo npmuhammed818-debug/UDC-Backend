@@ -235,3 +235,7 @@ Current exact gate slice additionally passes production build and all21local nat
 ### 2026-11-05 10:43LA exact ranking explanations
 
 The same exact-decimal check now covers marketplace ranking explanations, not just automatic eligibility. Ranking no longer states that an unsafe-integer rounded shortage covers the request, a rounded excessive minimum fits, or an excessive fractional price is within target. Invalid quantity/minimum/price states manual review explicitly.691APItests/types/build and all21isolated native PostgreSQL HTTP suites pass. No new provider/device proof, policy, or live effect.
+
+### 2026-11-05 10:48LA shared private quality-index draft
+
+Synthetic authenticated email now supports exact `quality proof pack DEAL-ID` through the same current-role/current-grant index as WhatsApp. Actual signed local fixture HTTP and native SQL prove accessible approved certificate metadata only, outsider refusal, revoked grant disappearance, no storage URL/photo leakage and visible authenticity/sharing caveats. Draft-only, no file contents/new grants/mailbox/send.691APItests/types/build and all21nativeSQL HTTP suites pass. Source ranking exact-decimal follow-on also included. Full37 strict count unchanged0complete/36partial/1blocked.
