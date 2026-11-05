@@ -7,7 +7,7 @@ import {sameHash,type ReviewChallenge,type VerificationRepository} from './verif
 import {documentVersion,type ReviewLink,type ReviewRepository} from './service';
 
 async function loadAllowed(database:typeof db,userId:string,documentId:string) {
-  const [row]=await database.select({id:documentsTable.id,dealId:documentsTable.dealId,title:documentsTable.documentType,fileUrl:documentsTable.fileUrl,updatedAt:documentsTable.updatedAt})
+  const [row]=await database.select({id:documentsTable.id,dealId:documentsTable.dealId,title:documentsTable.documentType,fileUrl:documentsTable.fileUrl,updatedAt:documentsTable.updatedAt,revision:sql<string>`${documentsTable.updatedAt}::text`})
     .from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id))
     .innerJoin(dealsTable,eq(dealsTable.id,documentsTable.dealId)).innerJoin(usersTable,eq(usersTable.id,documentAccessTable.userId))
     .where(and(eq(documentsTable.id,documentId),eq(documentAccessTable.userId,userId),eq(documentsTable.status,'approved'),eq(usersTable.status,'verified'),sql`${usersTable.role} in ('buyer','seller')`,sql`(${dealsTable.buyerUserId}=${userId} or ${dealsTable.sellerUserId}=${userId})`)).limit(1);
@@ -16,6 +16,9 @@ async function loadAllowed(database:typeof db,userId:string,documentId:string) {
   // This prototype only previews PDF. No active HTML/office content is rendered.
   const file=await downloadDocumentBytes(path);
   if(file.bytes.length>20*1024*1024||Buffer.from(file.bytes).subarray(0,5).toString()!=='%PDF-')return null;
+  // Storage may await a network read. Recheck grants, account, parties and the
+  // exact row revision after that await, before returning any private bytes.
+  const [current]=await database.select({id:documentsTable.id}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).innerJoin(dealsTable,eq(dealsTable.id,documentsTable.dealId)).innerJoin(usersTable,eq(usersTable.id,documentAccessTable.userId)).where(and(eq(documentsTable.id,documentId),eq(documentsTable.dealId,row.dealId),eq(documentsTable.fileUrl,row.fileUrl),sql`${documentsTable.updatedAt}::text=${row.revision}`,eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,userId),eq(usersTable.status,'verified'),sql`${usersTable.role} in ('buyer','seller')`,sql`(${dealsTable.buyerUserId}=${userId} or ${dealsTable.sellerUserId}=${userId})`)).limit(1);if(!current)return null;
   return {id:row.id,dealId:row.dealId,title:row.title,version:documentVersion(`${row.updatedAt.toISOString()}\0${path}`,file.bytes),bytes:file.bytes,contentType:'application/pdf'};
 }
 export const reviewRepository:ReviewRepository={
