@@ -375,3 +375,7 @@ Synthetic registered seller email `my scorecard YYYY-MM` now uses the same bound
 ### 2026-11-05 13:19LA scorecard concurrent role-change regression
 
 Native fixture explicitly holds an uncommitted seller-to-buyer edit, starts shared scorecard read, proves it waits for current account row, then commits and gets null rather than former-seller activity. Fixture restores role. Actual native review suite passes; test-only increment on all21/700green runtime.
+
+## Private memory and quality-index concurrent evidence correction
+PR304 main0038c5b completed all7 NEWmain checks2026-11-05 13:37LA, fresh700 tests/types/API+frontend build/all21nativeSQLHTTP/5extractor tests. Production remained8743bd6 with all5Auto-DeployOff before/after source-only push13:34.
+Next source candidate reproduced two stale private reads in real local PostgreSQL: same-pair history returned earlier-party counts while an in-flight prior-deal reassignment was pending, and quality index exposed document metadata while its grant was being revoked. Shared readers now take share locks on prior deals/completion audit rows and the approved-document/access join. Actual concurrent native tests wait for writer commit then exclude reassigned history, corrected non-completions, revoked grants and withdrawn approvals. No new grants, files, provider calls, sends, hosted DB SQL, money or commission changes. This strengthens synthetic evidence, not customer/provider/device completion. Strict0/37 complete,36partial,1blocked remains.
