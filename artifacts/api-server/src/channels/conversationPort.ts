@@ -1,7 +1,7 @@
 /** Transport-neutral contract. An adapter cannot prove identity by naming a user.
  * Trusted identity resolution is injected by the application, not inbound content.
  * No Telegram account, automatic account merge or transport send is provided. */
-export type Channel='whatsapp'|'telegram';
+export type Channel='whatsapp'|'telegram'|'email';
 export type InboundEnvelope={channel:Channel;externalSenderId:string;providerMessageId:string;text:string;replyToProviderId?:string};
 export type ConversationPrincipal={userId:string;consentVersion:string;status:'verified'|'pending';role:'buyer'|'seller'|'agent'};
 export interface ConversationPorts {

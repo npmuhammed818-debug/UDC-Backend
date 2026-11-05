@@ -1,0 +1,39 @@
+import {processChannelMessage,type ConversationPorts,type ConversationPrincipal} from './conversationPort.ts';
+/** Provider delivery/authentication evidence belongs to the adapter, never MIME
+ * headers or text supplied by a sender. This pilot has no provider implementation. */
+export type EmailEvidence={eventId:string;messageId:string;threadId:string;from:string;to:string[];cc:string[];replyTo?:string;subject:string;text:string;autoSubmitted:boolean;bulk:boolean;attachments:Array<{id:string;name:string;type:string;bytes:number}>};
+export interface EmailPilotPorts{
+ verifyDelivery(event:EmailEvidence):Promise<{signatureValid:boolean;dmarcAligned:boolean;authenticatedFrom:string}|null>;
+ resolveVerifiedAddress(address:string):Promise<ConversationPrincipal|null>;
+ claim(messageId:string):Promise<boolean>;
+ // Must be a read-only brain capability: no tool execution, deal mutation, mailbox access or sends.
+ respondDraft(input:{principal:ConversationPrincipal;text:string;channel:'email';replyToProviderId?:string;executionMode:'draft_only';sourceTrust:'untrusted_email'}):Promise<string>;
+ saveDraft(input:{to:string;from:string;subject:string;threadId:string;inReplyTo:string;references:string[];text:string;cc:[];attachments:[];requiresHumanReview:true}):Promise<void>;
+}
+export function canonicalEmail(input:string){if(input!==input.trim()||input.length>254||/[\r\n<>\s]/.test(input))return null;const m=/^([A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+)@([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)$/.exec(input);return m&&m[2].includes('.')?m[1]+'@'+m[2].toLowerCase():null;}
+export function safeEmailAttachment(a:EmailEvidence['attachments'][number]){return !!a.id&&a.name.length>0&&a.name.length<=180&&!/[\r\n\/\\]/.test(a.name)&&a.bytes>0&&a.bytes<=20*1024*1024&&['application/pdf','image/jpeg','image/png'].includes(a.type);}
+/** Synthetic/manual-review pilot. No mailbox read, SMTP, provider send or attachment
+ * extraction implemented. Never claims a draft was delivered. */
+export async function processEmailPilot(event:EmailEvidence,ports:EmailPilotPorts,env:NodeJS.ProcessEnv=process.env){
+ if(env.UDC_APP_ENV!=='staging'||env.UDC_EMAIL_PILOT_MODE!=='synthetic')return 'disabled';
+ const from=canonicalEmail(event.from),mailbox='udc@updowncircle.site';
+ if(!from||from===mailbox||event.to.length!==1||canonicalEmail(event.to[0])!==mailbox||event.cc.length||event.replyTo&&canonicalEmail(event.replyTo)!==from)return 'audience_review_required';
+ if(event.autoSubmitted||event.bulk)return 'loop_or_bulk_ignored';
+ if(!event.eventId||!event.messageId||!event.threadId||[event.messageId,event.threadId,event.subject].some(v=>/[\r\n]/.test(v))||event.subject.length>180||event.text.length>6000||!event.text.trim())return 'invalid';
+ const auth=await ports.verifyDelivery(event);if(!auth?.signatureValid||!auth.dmarcAligned||canonicalEmail(auth.authenticatedFrom)!==from)return 'sender_authentication_required';
+ if(event.attachments.length){if(event.attachments.length>5||event.attachments.some(a=>!safeEmailAttachment(a)))return 'unsafe_attachment';return 'private_attachment_review_required';}
+ let drafted=false;
+ const adapted:ConversationPorts={
+ resolveVerifiedBinding:async()=>{const p=await ports.resolveVerifiedAddress(from);return p?.status==='verified'?p:null;},claim:()=>ports.claim(event.messageId),
+ respond:async input=>{
+ if(input.principal.status!=='verified')return '';
+ // Raw email is source content. The brain must not treat it, quotes or signatures
+ // as platform/owner authority. Draft-only output cannot execute deal commands.
+ return ports.respondDraft({...input,channel:'email',executionMode:'draft_only',sourceTrust:'untrusted_email'});
+ },
+ deliver:async input=>{if(!input.text.trim()||input.text.length>12000)return;
+ await ports.saveDraft({to:from,from:mailbox,subject:/^re:/i.test(event.subject)?event.subject:'Re: '+event.subject,threadId:event.threadId,inReplyTo:event.messageId,references:[event.messageId],text:input.text,cc:[],attachments:[],requiresHumanReview:true});drafted=true;},
+ };
+ const result=await processChannelMessage({channel:'email',externalSenderId:from,providerMessageId:event.messageId,text:event.text,replyToProviderId:event.threadId},adapted);
+ return result==='delivered'?(drafted?'drafted_not_sent':'no_draft'):result;
+}
