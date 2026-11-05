@@ -243,3 +243,5 @@ Synthetic authenticated email now supports exact `quality proof pack DEAL-ID` th
 ### 2026-11-05 10:52LA shared extracted-photo text
 
 Private synthetic email can read exact `review photo quote DEAL-ID DOCUMENT-ID` through the same buyer/current-deal/current-grant/revision checks as WhatsApp. Both adapters now use one bounded exact-string formatter. Native signed fixture HTTP proves decimal precision, wrong-deal and revoked-grant refusal, no storage URL and no snapshot-review audit created by reading an email draft. No email review/acceptance/matching/send is inferred.691APItests/types/build and all21native SQL HTTP suites pass. Real model/photo/provider/device workflow remains incomplete.
+
+Shared photo formatter direct regressions preserve full long product suffixes and exact high-magnitude six-decimal prices, call out the ninth omitted row and retain review caveats.693APItests/type/build pass; this test-only increment does not change runtime behavior or supersede full21nativeSQL proof at4fd0ecf.
