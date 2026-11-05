@@ -339,3 +339,7 @@ Every continuous trial/repeat/backup/switch acceptance now first posts the same 
 ### 2026-11-05 12:51LA shared private same-party history email read
 
 Synthetic registered email `our deal history DEAL-ID` now uses the same transactional current-role/verified-same-pair history count as WhatsApp, with explicit deal binding rather than borrowing WhatsApp selection. Shared formatter preserves no-delivery/reliability/terms inference and missing-audit caveats. Native signed fixture HTTP+SQL proves prior same-pair count/completion, outsider/randomdeal refusal, suspended counterparty refusal and changed-role denial; no priorIDs/private content exposed.699APItests/types/API+frontend build and all21isolatednativeSQLHTTPsuites pass. Synthetic email drafts only, no real inbox connection/send or new grant.0/37fullycomplete remains.
+
+### 2026-11-05 12:55LA email history selection isolation
+
+Native signed email fixture selects a different WhatsApp deal, then proves email exact-reference history still returns the requested same-pair count and leaves WhatsApp selection unchanged. Pure shared formatter moved to a dependency-free module with its own caveat/count test.700APItests/types/API+frontend build and all12remaining nativeSQLHTTP suites rerun pass; broader9native suites passed before formatter-only move. Initial direct formatter test imported SQL module with extensionless native imports, fixed by separating pure formatting rather than test stubbing. No live effect.

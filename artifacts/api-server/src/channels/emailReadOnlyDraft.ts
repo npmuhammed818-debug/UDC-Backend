@@ -1,4 +1,5 @@
-import {relationshipMemory,relationshipMemoryText} from '../deals/relationshipMemory';
+import {relationshipMemoryText} from '../deals/relationshipMemoryText';
+import {relationshipMemory} from '../deals/relationshipMemory';
 import {sellerReviewCard} from '../deals/sellerReviewCard';
 import {sellerReviewText} from '../deals/sellerReviewText';
 import {documentCheckText} from '../deals/documentCheckText';

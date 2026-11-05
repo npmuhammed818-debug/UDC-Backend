@@ -15,7 +15,3 @@ export async function relationshipMemory(userId:string,dealId?:string){return db
  const evidence=completionEvidence(events.filter((e):e is typeof e&{dealId:string}=>!!e.dealId),new Date(0),new Date());
  return {dealNumber:current.number,priorRecordedDeals:previous.length,priorRecordedCompletions:evidence.records.length,physicalDeliveryEvidenceAvailable:false,termsChanged:false,notice:'Private recorded history for the same current buyer and seller only, excluding this deal. Missing audit history is not zero activity. A recorded completion does not prove timely delivery, payment, product quality or reliability. No prior messages, documents, prices, identities or private exit reasons are shown. Ask UDC to review evidence before proposing any new term.'};
 });}
-
-export function relationshipMemoryText(result:{dealNumber:string;priorRecordedDeals:number;priorRecordedCompletions:number;notice:string}){
- return `${result.dealNumber}: ${result.priorRecordedDeals} prior recorded deals with this same party; ${result.priorRecordedCompletions} with a recorded completion transition.\n${result.notice}`;
-}
