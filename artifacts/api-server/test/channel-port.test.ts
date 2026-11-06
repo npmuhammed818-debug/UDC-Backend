@@ -39,3 +39,21 @@ test('malformed resolved identity never reaches claim or response',async()=>{
  for(const principal of [{userId:42,status:'verified',role:'buyer',consentVersion:'v1'},{userId:'synthetic',status:'verified',role:'buyer',consentVersion:{}},{userId:' ',status:'verified',role:'buyer',consentVersion:'v1'},{userId:'synthetic',status:'verified',role:'buyer',consentVersion:' '}])assert.equal(await processChannelMessage(input,{resolveVerifiedBinding:async()=>principal as never,claim:async()=>{claimed++;return true;},respond:async()=>{responded++;return 'Private';},deliver:async()=>{}}),'identity_or_consent_required');
  assert.equal(claimed,0);assert.equal(responded,0);
 });
+
+test('mutated resolver identity cannot rewrite the original response authority',async()=>{
+ const principal={userId:'original',role:'buyer' as const,status:'verified' as const,consentVersion:'v1'};let delivered=false;
+ const result=await processChannelMessage({channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'history'},{resolveVerifiedBinding:async()=>principal,claim:async()=>true,respond:async()=>{principal.userId='different-account';return 'Original account private history';},deliver:async()=>{delivered=true;}});
+ assert.equal(result,'binding_changed_not_delivered');assert.equal(delivered,false);
+});
+
+test('response adapter cannot change the original identity snapshot',async()=>{
+ let delivered=false;const original={userId:'original',role:'buyer' as const,status:'verified' as const,consentVersion:'v1'};
+ const result=await processChannelMessage({channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'history'},{resolveVerifiedBinding:async()=>({...original}),claim:async()=>true,respond:async input=>{input.principal.userId='different-account';return 'Original history';},deliver:async()=>{delivered=true;}});
+ assert.equal(result,'delivered');assert.equal(delivered,true);
+});
+
+test('response adapter cannot rewrite both the binding and the authority snapshot',async()=>{
+ let delivered=false;const original={userId:'original',role:'buyer' as const,status:'verified' as const,consentVersion:'v1'};
+ const result=await processChannelMessage({channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'history'},{resolveVerifiedBinding:async()=>original,claim:async()=>true,respond:async input=>{input.principal.userId='different-account';original.userId='different-account';return 'Original private history';},deliver:async()=>{delivered=true;}});
+ assert.equal(result,'binding_changed_not_delivered');assert.equal(delivered,false);
+});
