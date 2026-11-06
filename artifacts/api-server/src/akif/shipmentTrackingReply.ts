@@ -39,12 +39,11 @@ const FORBIDDEN_SURFACE = /\b(?:app|application|dashboard|portal)\b/i;
 function extractReply(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
   try {
-    const parsed = JSON.parse(trimmed.slice(start, end + 1)) as { reply?: unknown };
-    return typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim() : null;
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const { reply } = parsed as { reply?: unknown };
+    return typeof reply === 'string' && reply.trim() ? reply.trim() : null;
   } catch {
     return null;
   }
