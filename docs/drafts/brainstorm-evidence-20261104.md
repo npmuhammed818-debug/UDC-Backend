@@ -430,3 +430,6 @@ Reproduced `Delivered to sender` classified as final delivery and bare `left` de
 ## Parallel direct tracking quota guard, 2026-11-05
 
 Reproduced five concurrent direct tracking lookups causing five carrier requests despite the six-hour cache. Same-process in-flight lookups now share one promise per normalized number, bounded to500 active numbers; settled failures release the slot and are not cached as success. Tests execute five overlapping calls with one synthetic provider request and one answer, plus shared failure and later retry. 708tests/types/build/all21native/5extractor pass. This is per-process coalescing, not a cross-worker durable quota guarantee. No live carrier/Meta, deployment, hosted SQL, money or commission changes.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
