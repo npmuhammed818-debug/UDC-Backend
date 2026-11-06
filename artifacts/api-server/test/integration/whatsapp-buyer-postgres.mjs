@@ -288,6 +288,21 @@ try {
   assert.equal(await count("select count(*) from audit_logs where action='trade_restart_requirement_prepared' and metadata->>'requestId'=$1",[signedBackup.id]),1);
   assert.equal(await count('select count(*) from deals'),restartDealsBefore,'admin preparation creates no replacement deal');
   assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation);
+  // Preparation is insufficient: review the new requirement and present fresh terms.
+  const freshMatch=randomUUID();
+  await pool.query("insert into matches(id,buyer_request_id,seller_listing_id,status) values($1,$2,$3,'approved')",[freshMatch,preparedRequest.id,termsListing]);
+  await assert.rejects(()=>module.requestTermsReview(freshMatch,adminForPreparation),/approved_compatible_records_required/,'pending requirement cannot receive a proposal');
+  assert.equal(await count("select count(*) from audit_logs where action='match_terms_proposed' and entity_id=$1",[freshMatch]),0);
+  await pool.query("update buyer_requests set status='approved' where id=$1",[preparedRequest.id]);
+  const freshProposal=await module.requestTermsReview(freshMatch,adminForPreparation);
+  assert.notEqual(freshProposal.proposalId,termsProposal.proposalId,'restart has its own fresh proposal, not old acceptance');
+  const freshAccept={type:'button_reply',button_reply:{id:'udc:terms:accept:'+freshProposal.proposalId}};
+  await sendAs(sellerPhone,freshAccept);
+  assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1",[freshProposal.proposalId]),0);
+  await post(freshAccept);await post(freshAccept);
+  assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1 and actor_user_id=$2",[freshProposal.proposalId,buyer.id]),1);
+  assert.equal(await count('select count(*) from deals'),restartDealsBefore,'fresh signed buyer decision alone creates no deal');
+  assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation,'fresh proposal leaves original deal untouched');
   await pool.query('delete from users where id=$1',[adminForPreparation]);
   assert.equal(providerCalls.length,modelsBefore,'explicit commands bypass all model calls');assert.equal(sent.length,metaBefore,'all new command outputs stay in local sink');assert.ok(module.readSunkReplies().every(r=>r.to===phone||r.to===sellerPhone),'new commands disclose only to the requesting fixture parties');
   delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
