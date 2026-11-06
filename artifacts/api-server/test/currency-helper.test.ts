@@ -43,3 +43,11 @@ test('currency runtime inputs and provider envelopes fail with controlled errors
  for(const value of [null,[],42,{date:20261105,base:'USD',quote:'INR',rate:84},{date:'2026-11-05',base:'USD',quote:'INR',rate:'84'}]){clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{...ports,fetch:async()=>new Response(JSON.stringify(value))}),/invalid_rate_response/);}
  for(const places of [NaN,Infinity,1.5,'2',null])assert.throws(()=>indicativeAmount('1','1',places as never),/invalid_conversion/);
 });
+
+test('currency provider isolation enforces byte bound and redirect refusal without leaking private inputs',async()=>{
+ const now=Date.parse('2026-11-05T12:00:00Z');let observed:any;
+ const fetcher=async(url:any,options:any)=>{observed={url:String(url),options};return new Response(JSON.stringify({date:'2026-11-05',base:'USD',quote:'INR',rate:84}));};clearCurrencyCache();
+ await currencyConversion({amount:'987654321.123456',base:'USD',quote:'INR'},{fetch:fetcher as typeof fetch,now});assert.equal(observed.url,'https://api.frankfurter.dev/v2/rate/usd/inr');assert.equal(observed.options.redirect,'error');assert.equal(observed.options.body,undefined);assert.equal(observed.options.headers,undefined);assert.ok(observed.options.signal instanceof AbortSignal);assert.ok(!JSON.stringify(observed).includes('987654321'));
+ for(const advertised of [true,false]){clearCurrencyCache();let cancelled=false;const stream=new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode(' '.repeat(4097)));},cancel(){cancelled=true;}});const response=new Response(stream,advertised?{headers:{'content-length':'4097'}}:undefined);await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>response,now}),/invalid_rate_response/);assert.equal(cancelled,true,'oversized stream is cancelled whether size was advertised or streamed');}
+ clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(null,{status:302,headers:{location:'https://other.example.invalid'}}),now}),/currency_rate_unavailable/);
+});
