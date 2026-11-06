@@ -33,3 +33,9 @@ test('transport-neutral port does not deliver after account, role or consent ver
  const msg={channel:'whatsapp' as const,externalSenderId:'verified-phone',providerMessageId:'id',text:'status'};let sends=0;
  for(const patch of [{userId:'other-user'},{role:'seller' as const},{consentVersion:'v2'},{status:'pending' as const}]){let reads=0;const original={userId:'verified-user',status:'verified' as const,role:'buyer' as const,consentVersion:'v1'};const ports:ConversationPorts={resolveVerifiedBinding:async()=>++reads===1?original:{...original,...patch},claim:async()=>true,respond:async()=>'Private response',deliver:async()=>{sends++;}};assert.equal(await processChannelMessage(msg,ports),'binding_changed_not_delivered');}assert.equal(sends,0);
 });
+
+test('malformed resolved identity never reaches claim or response',async()=>{
+ const input={channel:'email' as const,externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'hello'};let claimed=0,responded=0;
+ for(const principal of [{userId:42,status:'verified',role:'buyer',consentVersion:'v1'},{userId:'synthetic',status:'verified',role:'buyer',consentVersion:{}},{userId:' ',status:'verified',role:'buyer',consentVersion:'v1'},{userId:'synthetic',status:'verified',role:'buyer',consentVersion:' '}])assert.equal(await processChannelMessage(input,{resolveVerifiedBinding:async()=>principal as never,claim:async()=>{claimed++;return true;},respond:async()=>{responded++;return 'Private';},deliver:async()=>{}}),'identity_or_consent_required');
+ assert.equal(claimed,0);assert.equal(responded,0);
+});
