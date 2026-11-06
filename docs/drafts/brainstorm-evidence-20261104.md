@@ -479,3 +479,6 @@ Native actual handler reproduced returning a negotiation draft while cancellatio
 
 ## Carrier intermediate handoff boundaries
 Actual classifier tests reproduced 'Delivered to local carrier' becoming final delivered. Shared conservative classifier now refuses delivery-partner/carrier/sorting-hub/customs-office/parcel-locker/onward-transport handoffs and explicit if-delivered conditions. Actual deterministic reply guard also refuses a final-delivered claim for each fixture.711APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. English lexical guard only, not arbitrary-language semantics or proof of physical delivery; carrier text remains unverified. No provider call, real send, hosted SQL, deployment or money/commission change.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
