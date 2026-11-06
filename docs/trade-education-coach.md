@@ -197,3 +197,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual sink delivery reproduced delivering an already exhausted five-attempt challenge code. Delivery now requires a numeric nonnegative safe-integer attempt count below five, matching confirmation. Exhausted challenge refuses without delivery, normal enrollment remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email code delivery evidence boundary proof, 2026-11-06
+
+Test-only actual sink delivery refuses malformed/expired expiry, malformed/exhausted attempt counts, nonboolean unused evidence and mismatched address, phone fingerprint or consent version. Each refusal asserts unchanged sink count. Normal enrollment and confirmation remain. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
