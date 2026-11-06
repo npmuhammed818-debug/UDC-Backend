@@ -94,6 +94,8 @@ try {
   for(const events of [[{time:'2026-11-04T09:00:00Z',description:'Delivered'}],[{time:'2026-02-30T12:00:00Z',description:'Delivered'}],[{time:'2099-01-01T12:00:00Z',description:'Delivered'}],[{time:'2026-11-05T09:00:00Z',description:'Delivered'},{time:'2026-11-05T11:00:00Z',description:'Label created'}],[{time:'2026-11-05T09:00:00Z',description:'Delivered'},{time:'2026-11-05T09:00:00Z',description:'Customs hold'}]]){
     await pool.query('update shipment_watches set last_polled_at=null where id=$1',[watchId]);
     const r=await mod.runShipmentWatchPoll({tracker:{name:'synthetic-invalid-feed',async fetchEvents(){return events;}},now:watchNow});assert.equal(r.notified,0,'invalid, future, stale array order or equal-time conflict cannot queue delivery');
+    assert.equal((await pool.query("select count(*)::int n from audit_logs where action='shipment_watch_update_created' and entity_id=$1",[watchId])).rows[0].n,1,'rejected feed creates no false delivery audit');
+    assert.equal((await pool.query('select count(*)::int n from whatsapp_shipment_outbox where notification_id=any($1::uuid[])',[watchNotices])).rows[0].n,1,'rejected feed creates no extra outbox entry');
     assert.equal((await pool.query("select count(*)::int n from notifications where user_id=$1 and type='shipment_watch_update'",[buyer.id])).rows[0].n,1);
   }
   let failedCarrierCalls=0;const brokenCarrier={name:'synthetic-error',async fetchEvents(){failedCarrierCalls++;throw Error('synthetic bounded provider failure');}};
