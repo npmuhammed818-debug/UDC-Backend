@@ -17,3 +17,9 @@ test('automatic price references refuse partial, signed and embedded Unicode tok
  for(const text of ['USD 1e6','USD 12abc','USD 12\u0663','\u03b1USD 12','12 USD\u03b1','\u221212 USD','+12 USD','\u066312 USD','USD 12\u0301'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);
  assert.equal(calls,0);assert.match(await addPriceReferences('USD 12/MT','INR',convert),/Indicative FX/);assert.equal(calls,1);
 });
+
+test('automatic FX never converts one endpoint of an amount range',async()=>{
+ let calls=0;const convert=async()=>{calls++;return {converted:'84',rateDate:'2026-11-05'} as any;};
+ for(const text of ['USD 12-15','USD 12\u201315','USD 12\u201415','USD 12\u221215','12\u201315 USD','12\u201415 USD','USD 12 - 15','12 - 15 USD'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);assert.equal(calls,0);
+ assert.match(await addPriceReferences('USD 12 - price per MT','INR',convert),/Indicative FX/);
+});
