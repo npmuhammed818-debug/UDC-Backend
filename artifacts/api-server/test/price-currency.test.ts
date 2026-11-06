@@ -35,3 +35,9 @@ test('automatic FX refuses percentage and ratio-like values rather than guessing
  for(const text of ['USD 12%','USD 12 %','USD 12\u066a','USD 12\u2030','USD 12/15','USD 12 / 15'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);assert.equal(calls,0);
  assert.match(await addPriceReferences('USD 12/carton','INR',convert),/Indicative FX/);
 });
+
+test('automatic FX refuses scaled amounts and textual ranges or denominator fragments',async()=>{
+ let calls=0;const convert=async()=>{calls++;return {converted:'84',rateDate:'2026-11-05'} as any;};
+ for(const text of ['USD 12 million','USD 12 billion','USD 12 thousand','USD 12 lakh','USD 12 crore','12 million USD','USD 12 to 15','12 to 15 USD','USD 12 through 15','1/12 USD','1 / 12 USD'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);assert.equal(calls,0);
+ assert.match(await addPriceReferences('USD 12 per carton','INR',convert),/Indicative FX/);
+});
