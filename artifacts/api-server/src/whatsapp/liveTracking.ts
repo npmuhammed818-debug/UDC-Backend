@@ -12,6 +12,7 @@ import { brainTrackingReply } from '../akif/shipmentTrackingReply.ts';
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const CACHE_MAX = 500;
 const cache = new Map<string, { at: number; text: string }>();
+const pendingLookups = new Map<string, Promise<string>>();
 
 export function clearLiveTrackingCache() {
   cache.clear();
@@ -59,6 +60,9 @@ export async function liveTrackingReply(
   const now = deps.now ?? Date.now();
   const cached = cache.get(number);
   if (cached && now - cached.at < CACHE_TTL_MS) return cached.text;
+  const pending=pendingLookups.get(number);if(pending)return pending;
+  if(pendingLookups.size>=CACHE_MAX)return 'Carrier tracking is busy right now. Please try again in a little while.';
+  const lookup=(async()=>{
   const tracker = deps.tracker ?? activeTracker();
   let text: string;
   try {
@@ -78,4 +82,7 @@ export async function liveTrackingReply(
   if (cache.size >= CACHE_MAX) cache.clear();
   cache.set(number, { at: now, text });
   return text;
+  })();
+  pendingLookups.set(number,lookup);
+  try{return await lookup;}finally{if(pendingLookups.get(number)===lookup)pendingLookups.delete(number);}
 }
