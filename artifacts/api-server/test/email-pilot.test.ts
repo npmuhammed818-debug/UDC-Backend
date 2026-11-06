@@ -16,3 +16,8 @@ test('email attachment sizes must be finite positive whole bytes',()=>{
  for(const bytes of [0.5,1.5,NaN,Infinity,-Infinity,0,-1])assert.equal(safeEmailAttachment({id:'synthetic',name:'invoice.pdf',type:'application/pdf',bytes}),false,String(bytes));
  assert.equal(safeEmailAttachment({id:'synthetic',name:'invoice.pdf',type:'application/pdf',bytes:1}),true);
 });
+
+test('email canonicalization refuses malformed dot-atoms and domain labels',()=>{
+ for(const address of ['.buyer@example.com','buyer.@example.com','buy..er@example.com','buyer@example..com','buyer@-example.com','buyer@example-.com','buyer@exam_ple.com','buyer@a.'+'x'.repeat(64)])assert.equal(canonicalEmail(address),null,address);
+ assert.equal(canonicalEmail('Buyer+tag@sub.EXAMPLE.COM'),'Buyer+tag@sub.example.com');
+});
