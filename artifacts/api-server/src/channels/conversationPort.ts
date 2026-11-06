@@ -12,6 +12,7 @@ export interface ConversationPorts {
 }
 export async function processChannelMessage(input:InboundEnvelope,ports:ConversationPorts) {
  if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.channel!=='string'||typeof input.externalSenderId!=='string'||typeof input.providerMessageId!=='string'||typeof input.text!=='string'||input.replyToProviderId!==undefined&&typeof input.replyToProviderId!=='string'||!['whatsapp','telegram','email'].includes(input.channel)||!input.providerMessageId||!input.externalSenderId||!input.text.trim()||input.text.length>6000)return 'invalid' as const;
+ input={...input};
  const resolved=await ports.resolveVerifiedBinding({channel:input.channel,externalSenderId:input.externalSenderId});
  const principal=resolved?{...resolved}:null;
  if(!principal||principal.status!=='verified'||!['buyer','seller','agent'].includes(principal.role)||typeof principal.userId!=='string'||!principal.userId.trim()||typeof principal.consentVersion!=='string'||!principal.consentVersion.trim())return 'identity_or_consent_required' as const;

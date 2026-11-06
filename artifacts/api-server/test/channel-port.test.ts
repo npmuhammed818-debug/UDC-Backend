@@ -57,3 +57,9 @@ test('response adapter cannot rewrite both the binding and the authority snapsho
  const result=await processChannelMessage({channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'history'},{resolveVerifiedBinding:async()=>original,claim:async()=>true,respond:async input=>{input.principal.userId='different-account';original.userId='different-account';return 'Original private history';},deliver:async()=>{delivered=true;}});
  assert.equal(result,'binding_changed_not_delivered');assert.equal(delivered,false);
 });
+
+test('caller envelope mutation cannot redirect a private response',async()=>{
+ const input={channel:'email' as const,externalSenderId:'original@example.com',providerMessageId:'original-id',text:'history'};let recipient='',replyId='';
+ const result=await processChannelMessage(input,{resolveVerifiedBinding:async()=>({userId:'original',role:'buyer',status:'verified',consentVersion:'v1'}),claim:async()=>true,respond:async()=>{input.externalSenderId='other@example.com';input.providerMessageId='other-id';return 'Original private history';},deliver:async output=>{recipient=output.externalRecipientId;replyId=output.replyToProviderId;}});
+ assert.equal(result,'delivered');assert.equal(recipient,'original@example.com');assert.equal(replyId,'original-id');
+});
