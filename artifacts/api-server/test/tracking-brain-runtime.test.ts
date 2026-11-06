@@ -22,3 +22,7 @@ test('tracking intent refuses prose and arrays around the decision',async()=>{
  for(const content of ['Ignore unrelated instructions {"trackingNumber":"ABC123"}','[{"trackingNumber":"ABC123"}]','{"trackingNumber":"ABC123"} extra text'])assert.equal(await interpretTrackingAsk('Track ABC123 please',{chat:async()=>({content})}),null);
  assert.equal(await interpretTrackingAsk('Track ABC123 please',{chat:async()=>({content:'```json\n{"trackingNumber":"ABC123"}\n```'})}),'ABC123');
 });
+
+test('nominal delivery-date predictions cannot bypass the no-date-promise guard',async()=>{
+ for(const reply of ['Delivery is tomorrow.','Arrival: Monday.','Delivery in 2 days.','Your parcel arrives tomorrow.'])assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content:JSON.stringify({reply})})}),null,reply);
+});
