@@ -153,6 +153,12 @@ test("shipment watch poll: sparing, deduplicated, honest and transactionally saf
     assert.equal(m.classifyLatestEvent([at('Departed from origin facility')])?.cls,'shipped');
     assert.equal(m.classifyLatestEvent([at('Label created')]),null,'unrelated statuses never message the customer');
     assert.equal(m.classifyLatestEvent([]),null);
+    assert.equal(m.classifyLatestEvent([{time:'2026-02-30T12:00:00Z',description:'Delivered'}]),null,'impossible date cannot establish delivery');
+    assert.equal(m.classifyLatestEvent([{time:'2099-01-01T12:00:00Z',description:'Delivered'}],new Date('2026-11-05T12:00:00Z')),null,'future event cannot establish delivery');
+    assert.equal(m.classifyLatestEvent([at('Delivered'),{time:'2026-10-29T08:00:00Z',description:'Customs hold'}])?.cls,'delayed','newest timestamp wins rather than feed position');
+    assert.equal(m.classifyLatestEvent([at('Delivered'),{time:'2026-10-29T08:00:00Z',description:'Label created'}]),null,'latest unclassified event cannot resurrect old delivery');
+    assert.equal(m.classifyLatestEvent([at('Delivered'),at('Customs hold')]),null,'conflicting equal-time events require review');
+
     const txt=m.watchUpdateText('SYN1','delayed',{time:'2026-10-28T09:30:00Z',description:'Held at customs',location:'Jebel Ali'});
     assert.match(txt.title,/delayed/);
     assert.match(txt.body,/Shipment update for SYN1: Delayed/);

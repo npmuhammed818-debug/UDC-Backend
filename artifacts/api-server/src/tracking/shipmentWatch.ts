@@ -1,3 +1,4 @@
+import {validCarrierTimestamp} from './carrierTimestamp';
 import {classifyCarrierDescription} from './classifyCarrierEvent';
 // Automatic shipment updates (feature requested by the owner through the
 // Instinct relay on 28 Oct): the customer gives a tracking number once; the
@@ -16,9 +17,16 @@ const PAGE_SIZE = 100;
 
 export type WatchClass = "shipped" | "delayed" | "delivered";
 
-export function classifyLatestEvent(events: ShipmentTrackEvent[]): { cls: WatchClass; event: ShipmentTrackEvent } | null {
-  const latest = events[0];
-  if (!latest) return null;
+export function classifyLatestEvent(events: ShipmentTrackEvent[], now=new Date()): { cls: WatchClass; event: ShipmentTrackEvent } | null {
+  if (!Number.isFinite(now.getTime()) || !events.length || events.length > 1000) return null;
+  // A tracker must not turn array position, an impossible date or a future
+  // timestamp into an accomplished shipment outcome. Ambiguous feeds need review.
+  if (events.some(e => !e || !validCarrierTimestamp(e.time) || Date.parse(e.time) > now.getTime() ||
+      typeof e.description !== 'string' || !e.description.trim())) return null;
+  const ordered = [...events].sort((a,b) => Date.parse(b.time)-Date.parse(a.time));
+  const latest = ordered[0]!;
+  if (ordered.some(e => Date.parse(e.time) === Date.parse(latest.time) &&
+      e.description.trim() !== latest.description.trim())) return null;
   const cls=classifyCarrierDescription(latest.description);return cls?{cls,event:latest}:null;
 }
 
@@ -82,9 +90,12 @@ export async function runShipmentWatchPoll(options: {
           await tx.update(shipmentWatchesTable).set({ lastPolledAt: now, updatedAt: now }).where(eq(shipmentWatchesTable.id, current.id));
           return;
         }
-        const found = classifyLatestEvent(events);
+        const found = classifyLatestEvent(events,now);
         const fingerprint = found ? eventFingerprint(found.cls, found.event) : null;
-        if (!found || fingerprint === current.lastFingerprint) {
+        const previousTime = current.lastFingerprint?.split('|')[1];
+        const olderThanRecorded = found && validCarrierTimestamp(previousTime) &&
+          Date.parse(found.event.time) < Date.parse(previousTime);
+        if (!found || olderThanRecorded || fingerprint === current.lastFingerprint) {
           unchanged++;
           await tx.update(shipmentWatchesTable).set({ lastPolledAt: now, updatedAt: now }).where(eq(shipmentWatchesTable.id, current.id));
           return;
