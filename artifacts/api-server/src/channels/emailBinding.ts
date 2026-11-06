@@ -24,7 +24,7 @@ export function emailBindingService(ports:EmailLinkPorts,secret:string,env:NodeJ
  // Caller must establish current WhatsApp account identity independently. The code
  // is entered on that WhatsApp account, never accepted from an arbitrary email.
  async confirmFromVerifiedWhatsApp(id:string,code:string,verifiedUserId:string){
- if(!enabled()||!/^[a-f0-9-]{36}$/.test(id)||!/^\d{6}$/.test(code)||!verifiedUserId)return false;
+ if(!enabled()||typeof id!=='string'||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(id)||typeof code!=='string'||!/^\d{6}$/.test(code)||typeof verifiedUserId!=='string'||!verifiedUserId.trim())return false;
  return ports.consumeAndBind(id,verifiedUserId,hash(id,code),clock());
  }
  };

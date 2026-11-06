@@ -19,3 +19,9 @@ test('link code recipient remains the resolved account even when its shared obje
  const service=emailBindingService({findRegisteredAccount:async()=>account,reserve:async challenge=>{assert.equal(challenge.userId,'original-user');account.userId='other-user';return true;},consumeAndBind:async()=>false,putWhatsAppCodeInSyntheticSink:async user=>{recipient=user;}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});
  assert.equal((await service.startFromAuthenticatedEmail(account.address)).status,'synthetic_challenge_created');assert.equal(recipient,'original-user');
 });
+
+test('link confirmation refuses coerced runtime identifiers and codes before consuming',async()=>{
+ let consumes=0;const service=emailBindingService({findRegisteredAccount:async()=>null,reserve:async()=>false,consumeAndBind:async()=>{consumes++;return true;},putWhatsAppCodeInSyntheticSink:async()=>{}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});const id='11111111-1111-4111-8111-111111111111';
+ for(const args of [[id,123456,'synthetic'],[id,'123456',42],[id,'123456',' '],['-'.repeat(36),'123456','synthetic'],[[id],'123456','synthetic'],[id,['123456'],'synthetic']])assert.equal(await service.confirmFromVerifiedWhatsApp(...args as [never,never,never]),false);
+ assert.equal(consumes,0);
+});
