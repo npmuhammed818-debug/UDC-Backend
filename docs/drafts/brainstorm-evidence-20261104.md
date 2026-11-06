@@ -464,3 +464,6 @@ Actual handler/native SQL reproduced saving optional brief preference after acco
 
 ## Monthly scorecard preference current seller and consent
 Native actual handler reproduced saving a monthly-scorecard preference after the account changed from seller to buyer during the serialization-lock wait. Writer now locks/rechecks current phone, verified seller role and current consent inside that transaction. Native role-change and consent-withdrawal boundary tests create no preference or false success; normal on/off, private body and scanner tests still pass.710APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Synthetic only, no provider/real sends, hosted SQL, deployment, reward or money/commission change.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
