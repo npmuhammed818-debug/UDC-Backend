@@ -49,6 +49,10 @@ const docker = (...args) => {
 run('codegen', 'pnpm', ['--filter', '@workspace/api-spec', 'run', 'codegen']);
 // Fixed source baseline for the Oct27 staging wording, not launch/legal approval.
 const legalSourceBaseline = '6ad693fa4e4e93a2631ee68c6378efb8071a2248';
+// Shallow CI checkouts may lack this exact source object. Fetch only that fixed
+// commit; never substitute HEAD or skip the subsequent content comparison.
+const legalObject = spawnSync('git', ['cat-file', '-e', legalSourceBaseline + '^{commit}'], { cwd: root, encoding: 'utf8' });
+if (legalObject.status !== 0) run('legal-source-fetch', 'git', ['fetch', '--no-tags', 'origin', legalSourceBaseline]);
 run('legal-text-preserved', 'git', ['diff', '--exit-code', legalSourceBaseline, '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
 run('generated-contracts', 'git', ['diff', '--exit-code', '--', 'lib/api-zod/src/generated', 'lib/api-client-react/src/generated']);
 run('release', 'pnpm', ['run', 'release:verify'], {}, true);

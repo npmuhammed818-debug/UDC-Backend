@@ -1,7 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {spawnSync} from 'node:child_process';
 const root=new URL('../../../',import.meta.url);
 const driver=readFileSync(new URL('scripts/acceptance/full-mvp.mjs',root),'utf8');
 test('full synthetic acceptance pins current legal source and reports no launch approval',()=>{
@@ -10,8 +9,9 @@ test('full synthetic acceptance pins current legal source and reports no launch 
  assert.match(driver,/run\('legal-text-preserved', 'git', \['diff', '--exit-code', legalSourceBaseline, '--'/);
  assert.match(driver,/const report = \{ legalSourceBaseline, legalLaunchApproved: false/);
  assert.match(driver,/fullMvpAccepted: false, stagingActivationApproved: false/);
- const result=spawnSync('git',['diff','--exit-code',baseline!,'--','artifacts/api-server/src/privacy/policies.ts','artifacts/api-server/src/privacy/consentNotice.ts'],{cwd:root,encoding:'utf8'});
- assert.equal(result.status,0,result.stdout+result.stderr);
+ assert.match(driver, /'artifacts\/api-server\/src\/privacy\/policies\.ts', 'artifacts\/api-server\/src\/privacy\/consentNotice\.ts'/);
+ assert.match(driver,/run\('legal-source-fetch', 'git', \['fetch', '--no-tags', 'origin', legalSourceBaseline\]\)/);
+ assert.doesNotMatch(driver,/legalSourceBaseline = ['"]HEAD['"]/);
 });
 test('full acceptance keeps all native suite inventory and exact source-integrity gates',()=>{
  assert.match(driver,/assert\.deepEqual\(pg\.map\(p => p\.id \+ '-postgres\.mjs'\)\.sort\(\), programs\.sort\(\)/);

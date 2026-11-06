@@ -226,3 +226,7 @@ Full774/types/APIfrontend/all21native and all68 worker/extractor Python tests pa
 ## Full acceptance legal-source provenance proof, 2026-11-06
 
 Acceptance JSON now names its fixed legal source baseline and explicitly records legalLaunchApproved false. Tests verify exact current legal-source preservation, continued false full-MVP/activation flags, complete native-suite inventory, source-integrity recheck and required disposable container. No legal text or activation change. Synthetic only; no provider/send, hosted SQL, deployment, money or commission change.
+
+## Integrated acceptance checkout repair, 2026-11-06
+
+Run 42239062829 passed every executable stage except legal source comparison: checkout was shallow and git reported bad object for the exact baseline commit. The acceptance driver now fetches only that fixed source commit when missing; the original exact legal diff still fails on any content difference. Unit proof checks that exact commit retrieval and content diff remain configured instead of requiring historical objects inside unrelated shallow unit jobs. No assertion bypass or legal wording change.
