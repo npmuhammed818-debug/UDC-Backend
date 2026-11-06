@@ -16,7 +16,7 @@ export async function handleTradeAssist(phone:string,text:string){
  const [deal]=await db.select({id:dealsTable.id}).from(dealsTable).where(and(eq(dealsTable.id,context.dealId),eq(user.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,user.id))).limit(1);
  if(!deal){await sendWhatsAppText(phone,'This selected deal is not available for your account.');return true;}
  if(statusAsk){
-  const body=await tradeAssistStatus(user.id,context.dealId);
+  const body=await tradeAssistStatus(user.id,context.dealId,{phone,selectedDeal:true});
   await sendWhatsAppText(phone,body||'This private request status is unavailable for your current account and deal.');return true;
  }
  const result=await saveTradeAssistRequest(user,context.dealId,reason?'exit_reason':kind!,reason?.[1].toLowerCase(),phone,true);
