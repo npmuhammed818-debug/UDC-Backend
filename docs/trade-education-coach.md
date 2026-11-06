@@ -187,3 +187,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual sink delivery reproduced sending a link code using old phone evidence while phone reassignment was pending. Delivery now serializes with email linking and locks the current account, consent and exact challenge row; current address, phone fingerprint, consent, unused state and expiry must still match before the synthetic sink call. Pending phone reassignment waits then refuses without delivery. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email code delivery current challenge proof, 2026-11-06
+
+Test-only native actual code delivery waits for a pending exact-challenge row change to consumed, then refuses without sink delivery. Restored challenge retains normal single-use confirmation. This proves the selected-row lock and unused check from the prior recipient fix. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
