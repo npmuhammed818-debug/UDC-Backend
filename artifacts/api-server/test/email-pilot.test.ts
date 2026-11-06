@@ -53,3 +53,11 @@ test('email draft retains validated headers despite caller or verifier mutation'
  assert.equal(await processEmailPilot(event,ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'drafted_not_sent');assert.equal(saved.subject,'Re: Original subject');assert.equal(saved.threadId,'original-thread');assert.equal(saved.inReplyTo,'original-message');assert.equal(saved.to,'buyer@example.com');
  }
 });
+
+test('delivery authentication needs true booleans and a string authenticated address',async()=>{
+ const event:EmailEvidence={eventId:'event',messageId:'message',threadId:'thread',from:'buyer@example.com',to:['udc@updowncircle.site'],cc:[],subject:'Trade',text:'history',autoSubmitted:false,bulk:false,attachments:[]};let calls=0;
+ for(const auth of [{signatureValid:'false',dmarcAligned:true,authenticatedFrom:event.from},{signatureValid:true,dmarcAligned:'false',authenticatedFrom:event.from},{signatureValid:1,dmarcAligned:1,authenticatedFrom:event.from},{signatureValid:true,dmarcAligned:true,authenticatedFrom:null}]){
+ const ports:EmailPilotPorts={verifyDelivery:async()=>auth as never,resolveVerifiedAddress:async()=>{calls++;return null;},claim:async()=>{calls++;return true;},respondDraft:async()=>'',saveDraft:async()=>{calls++;}};
+ assert.equal(await processEmailPilot(event,ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'sender_authentication_required');
+ }assert.equal(calls,0);
+});

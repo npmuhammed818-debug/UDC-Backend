@@ -23,7 +23,7 @@ export async function processEmailPilot(event:EmailEvidence,ports:EmailPilotPort
  if(!from||from===mailbox||event.to.length!==1||canonicalEmail(event.to[0])!==mailbox||event.cc.length||event.replyTo&&canonicalEmail(event.replyTo)!==from)return 'audience_review_required';
  if(event.autoSubmitted||event.bulk)return 'loop_or_bulk_ignored';
  if(!event.eventId||!event.messageId||!event.threadId||[event.messageId,event.threadId,event.subject].some(v=>/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(v))||event.subject.length>180||event.text.length>6000||!event.text.trim())return 'invalid';
- const auth=await ports.verifyDelivery({...event,to:[...event.to],cc:[...event.cc],attachments:event.attachments.map(a=>({...a}))});if(!auth?.signatureValid||!auth.dmarcAligned||canonicalEmail(auth.authenticatedFrom)!==from)return 'sender_authentication_required';
+ const auth=await ports.verifyDelivery({...event,to:[...event.to],cc:[...event.cc],attachments:event.attachments.map(a=>({...a}))});if(auth?.signatureValid!==true||auth.dmarcAligned!==true||typeof auth.authenticatedFrom!=='string'||canonicalEmail(auth.authenticatedFrom)!==from)return 'sender_authentication_required';
  if(event.attachments.length){if(event.attachments.length>5||event.attachments.some(a=>!safeEmailAttachment(a)))return 'unsafe_attachment';return 'private_attachment_review_required';}
  if(/^link email[.!]?$/i.test(event.text.trim())&&ports.startAccountLink){if(!await ports.claim(event.messageId))return 'duplicate';const result=await ports.startAccountLink(from);return result.status==='synthetic_challenge_created'?'synthetic_link_code_created':'link_verification_unavailable';}
  let drafted=false;
