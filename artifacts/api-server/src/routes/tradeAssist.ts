@@ -62,14 +62,19 @@ router.post('/trade-assist/deals/:dealId/requests',async(req,res)=>{
 });
 router.get('/trade-assist/deals/:dealId',async(req,res)=>{
  try{
-  const id=z.string().uuid().parse(req.params.dealId),u=req.authUser!;
-  const [deal]=await db.select({id:dealsTable.id,dealNumber:dealsTable.dealNumber,status:dealsTable.status,sellerUserId:dealsTable.sellerUserId,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1);
-  if(!deal){res.sendStatus(404);return;}
-  const [seller]=await db.select({status:usersTable.status}).from(usersTable).where(eq(usersTable.id,deal.sellerUserId)).limit(1);
-  const proofPack=await db.select({id:documentsTable.id,type:documentsTable.documentType,status:documentsTable.status,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(100);
-  const requests=await db.select({id:auditLogsTable.id,action:auditLogsTable.action,metadata:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind)))).orderBy(desc(auditLogsTable.createdAt)).limit(30);
-  const reviews=requests.length?await db.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),inArray(sql<string>`${auditLogsTable.metadata}->>'requestId'`,requests.map(r=>r.id)))).orderBy(desc(auditLogsTable.createdAt)):[];
-  res.json({dealNumber:deal.dealNumber,status:deal.status,asOf:deal.updatedAt,sellerReview:{status:seller?.status==='verified'?'verified':'not_currently_verified',notice:'Recorded account review only, not a guarantee of stock, performance or authenticity.'},proofPack:{documents:proofPack,notice:'Accessible approved records only. Approval is not an authenticity guarantee. No files have been shared.'},requests:requests.map(({metadata,...r})=>{const review=reviews.find(v=>v.metadata?.requestId===r.id);return {...r,status:review?.metadata?.status||'awaiting_human_review',reviewNote:review?.metadata?.note||null};}),actions:requestKinds.filter(kind=>requestAllowed(kind,u.role,deal.status)),notice:'Prior seller chats, documents and quotations stay on their original deal.'});
+  const id=z.string().uuid().parse(req.params.dealId),principal=req.authUser!;
+  const result=await db.transaction(async tx=>{
+  const [u]=await tx.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,principal.id)).limit(1).for('share');
+  if(!u||u.status!=='verified'||!['buyer','seller'].includes(u.role)||u.role!==principal.role)return {error:403};
+  const [deal]=await tx.select({id:dealsTable.id,dealNumber:dealsTable.dealNumber,status:dealsTable.status,sellerUserId:dealsTable.sellerUserId,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1).for('share');
+  if(!deal)return {error:404};
+  const [seller]=await tx.select({status:usersTable.status,role:usersTable.role}).from(usersTable).where(eq(usersTable.id,deal.sellerUserId)).limit(1).for('share');
+  const proofPack=await tx.select({id:documentsTable.id,type:documentsTable.documentType,status:documentsTable.status,updatedAt:documentsTable.updatedAt}).from(documentsTable).innerJoin(documentAccessTable,eq(documentAccessTable.documentId,documentsTable.id)).where(and(eq(documentsTable.dealId,id),eq(documentsTable.status,'approved'),eq(documentAccessTable.userId,u.id))).limit(100).for('share');
+  const requests=await tx.select({id:auditLogsTable.id,action:auditLogsTable.action,metadata:auditLogsTable.metadata,createdAt:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),inArray(auditLogsTable.action,requestKinds.map(kind=>'trade_assist_'+kind)))).orderBy(desc(auditLogsTable.createdAt)).limit(30).for('share');
+  const reviews=requests.length?await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),inArray(sql<string>`${auditLogsTable.metadata}->>'requestId'`,requests.map(r=>r.id)))).orderBy(desc(auditLogsTable.createdAt)).for('share'):[];
+  return {dealNumber:deal.dealNumber,status:deal.status,asOf:deal.updatedAt,sellerReview:{status:seller?.status==='verified'&&seller.role==='seller'?'verified':'not_currently_verified',notice:'Recorded account review only, not a guarantee of stock, performance or authenticity.'},proofPack:{documents:proofPack,notice:'Accessible approved records only. Approval is not an authenticity guarantee. No files have been shared.'},requests:requests.map(({metadata,...r})=>{const review=reviews.find(v=>v.metadata?.requestId===r.id);return {...r,status:review?.metadata?.status||'awaiting_human_review',reviewNote:review?.metadata?.note||null};}),actions:requestKinds.filter(kind=>requestAllowed(kind,u.role,deal.status)),notice:'Prior seller chats, documents and quotations stay on their original deal.'};
+  });
+  if('error'in result){res.sendStatus(result.error!);return;}res.json(result);
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 router.get('/trade-assist/deals/:dealId/seller-review',async(req,res)=>{try{const r=await sellerReviewCard(req.authUser!.id,z.string().uuid().parse(req.params.dealId));if('error'in r){res.sendStatus(r.error!);return;}res.json(r);}catch(e){res.sendStatus(e instanceof z.ZodError?400:503);}});
@@ -85,9 +90,16 @@ router.get('/trade-assist/completion-diary',async(req,res)=>{try{const r=await t
 router.get('/trade-assist/diary',async(req,res)=>{
  try{
   const month=z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).parse(req.query.month),start=new Date(month+'-01T00:00:00Z'),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1);
-  const rows=await db.select({status:dealsTable.status,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(req.authUser!.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,req.authUser!.id),gte(dealsTable.updatedAt,start),lt(dealsTable.updatedAt,end))).limit(1001);
-  if(rows.length>1000){res.status(422).json({error:'too_many_records_for_summary'});return;}
-  res.json(diarySummary(rows,month));
+  const result=await db.transaction(async tx=>{
+   const principal=req.authUser!;
+   const [account]=await tx.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,principal.id)).limit(1).for('share');
+   if(!account||account.status!=='verified'||!['buyer','seller'].includes(account.role)||account.role!==principal.role)return {error:403};
+   const rows=await tx.select({status:dealsTable.status,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(account.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,account.id),gte(dealsTable.updatedAt,start),lt(dealsTable.updatedAt,end))).limit(1001).for('share');
+   if(rows.length>1000)return {error:422};
+   return diarySummary(rows,month);
+  });
+  if('error'in result){res.status(result.error!).json({error:result.error===422?'too_many_records_for_summary':'current_verified_account_required'});return;}
+  res.json(result);
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 export default router;
