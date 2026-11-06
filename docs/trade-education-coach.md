@@ -202,3 +202,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Test-only actual sink delivery refuses malformed/expired expiry, malformed/exhausted attempt counts, nonboolean unused evidence and mismatched address, phone fingerprint or consent version. Each refusal asserts unchanged sink count. Normal enrollment and confirmation remain. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email confirmation expiry after lock waits, 2026-11-06
+
+Native actual confirmation reproduced accepting a code that expired while waiting for email-link serialization. The service supplied its call-start time. Consumption now rechecks expiry against the current clock after account/consent lock waits and records that current consumption time in the binding. Pending expiry test waits past expiry then refuses; normal confirmation remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
