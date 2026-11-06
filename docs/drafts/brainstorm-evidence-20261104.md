@@ -485,3 +485,6 @@ Actual shared-feed test reproduced null feed throwing before validation. Feed gu
 
 ## Carrier status whole-word boundaries
 Actual classifier test reproduced 'Tracking data withheld' becoming delayed because held matched within withheld. Delay/exception/held and departure/dispatch/transit alternatives now require whole words; unrelated withheld/unexceptional/undeparted/undispatched/predelayed fixtures refuse.713APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Conservative English lexical correction only, not full sentence understanding or physical status proof. No provider/real sends, hosted SQL, deployment or money/commission changes.
+
+## Translation Unicode currency symbols
+Actual translation guard test reproduced changing ¥100 to ₩100 while accepted. Critical-token recognition now includes Unicode currency symbols in addition to the prior named codes and legacy rial sign. Actual yen/won, lira omission, naira/peso swap and bitcoin omission cases refuse.714APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Lexical preservation only: currency interpretation, names, negation and prose meaning remain unverified. No model/provider call, real send, hosted SQL, deployment or money/commission change.
