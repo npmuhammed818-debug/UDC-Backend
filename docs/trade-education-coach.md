@@ -162,3 +162,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual account resolver reproduced returning bound identity while consent withdrawal was pending under its consent lock. Identity resolution now passes its transaction executor and requests the existing consent serialization lock before reading consent. Native pending withdrawal waits then denies identity. Reserve/confirmation consent paths are unchanged by this slice. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email confirmation pending consent withdrawal, 2026-11-06
+
+Native actual WhatsApp link confirmation reproduced creating a binding during pending consent withdrawal. Confirmation now reads consent through its existing transaction and consent serialization lock. Actual handler waits then refuses with unchanged binding count; after withdrawal fixture removal the legitimate code still links once. Reserve path is unchanged by this slice. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
