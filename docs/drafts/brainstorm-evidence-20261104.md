@@ -461,3 +461,6 @@ Native actual handler reproduced saving a watch while its pending lock wait let 
 
 ## Trade-brief preference current account and consent recheck
 Actual handler/native SQL reproduced saving optional brief preference after account suspension committed during its category-lock wait. Preference writer now locks/rechecks current phone, verified buyer/seller account and current consent after the category lock. Native tests also withdraw consent during that wait and prove no preference row or false success; normal on/off and runner tests pass.710APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Synthetic only; no mailbox/provider/send, hosted SQL, deployment, money or commission change.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
