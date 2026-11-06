@@ -167,3 +167,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual WhatsApp link confirmation reproduced creating a binding during pending consent withdrawal. Confirmation now reads consent through its existing transaction and consent serialization lock. Actual handler waits then refuses with unchanged binding count; after withdrawal fixture removal the legitimate code still links once. Reserve path is unchanged by this slice. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email challenge reservation pending consent withdrawal, 2026-11-06
+
+Native actual enrollment reproduced reserving and delivering a synthetic code during pending consent withdrawal. Reservation now reads consent through its transaction and existing consent serialization lock. Pending withdrawal waits then refuses with no challenge row or synthetic delivery; normal enrollment and single-use confirmation remain. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
