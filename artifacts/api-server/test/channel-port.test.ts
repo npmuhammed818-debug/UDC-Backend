@@ -69,3 +69,10 @@ test('channel replay claim requires a literal true result before response or del
  const result=await processChannelMessage({channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'hello'},{resolveVerifiedBinding:async()=>({userId:'synthetic',role:'buyer',status:'verified',consentVersion:'v1'}),claim:async()=>claimed as never,respond:async()=>{effects++;return 'Private';},deliver:async()=>{effects++;}});assert.equal(result,'duplicate');
  }assert.equal(effects,0);
 });
+
+test('history identity rejects coerced account IDs and malformed secrets',async()=>{
+ const {accountHistoryKey,resolveHistoryIdentity}=await import('../src/channels/historyIdentity.ts');
+ for(const id of [42,{},[],['synthetic'],' ',null,undefined])assert.throws(()=>accountHistoryKey(id as never,'s'.repeat(32)),/history_identity_unavailable/);
+ for(const secret of [null,undefined,42,{},[],['s'.repeat(32)]])assert.throws(()=>accountHistoryKey('synthetic',secret as never),/history_identity_unavailable/);
+ for(const userId of [42,{},[],['synthetic'],' '])assert.equal(await resolveHistoryIdentity('email','synthetic@example.com',async()=>userId as never,'s'.repeat(32)),null);
+});
