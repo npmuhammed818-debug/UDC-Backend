@@ -11,6 +11,8 @@ export async function handlePhotoQuoteReview(phone:string,text:string){
 }
 export async function handlePhotoReviewButton(phone:string,id:string){
  const m=/^udc:photo_review:([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}):([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}):([a-f0-9]{64})$/i.exec(id);if(!m||process.env.UDC_APP_ENV!=='staging'||process.env.AKIF_WHATSAPP_REPLY_SINK!=='store')return false;
- const [u]=await db.select({id:usersTable.id}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);const [offered]=u?await db.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'photo_review_button_offered'),eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,m[1]),sql`${auditLogsTable.metadata}->>'documentId'=${m[2]}`,sql`${auditLogsTable.metadata}->>'reviewToken'=${m[3]}`,sql`${auditLogsTable.metadata}->>'allRowsShown'='true'`)).limit(1):[];const r=u&&offered?await confirmPhotoQuoteReview(u.id,m[1],m[2],m[3]):{error:404};
+ return db.transaction(async tx=>{
+ const [u]=await tx.select({id:usersTable.id}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1).for('share');const [offered]=u?await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'photo_review_button_offered'),eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,m[1]),sql`${auditLogsTable.metadata}->>'documentId'=${m[2]}`,sql`${auditLogsTable.metadata}->>'reviewToken'=${m[3]}`,sql`${auditLogsTable.metadata}->>'allRowsShown'='true'`)).limit(1):[];const r=u&&offered?await confirmPhotoQuoteReview(u.id,m[1],m[2],m[3],tx):{error:404};
  await sendWhatsAppText(phone,'error'in r?'That exact photo snapshot is unavailable or changed. Review the current original and extracted rows again. No review was recorded.':r.notice);return true;
+ });
 }

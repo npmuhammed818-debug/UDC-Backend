@@ -22,11 +22,11 @@ export async function photoQuoteReview(userId:string,dealId:string,documentId:st
 };return executor?read(executor):db.transaction(read);}
 /** Records only the buyer's review of this exact extracted snapshot. Never
  * accepts seller terms, verifies a source, creates a requirement or contacts anyone. */
-export async function confirmPhotoQuoteReview(userId:string,dealId:string,documentId:string,reviewToken:string){return db.transaction(async tx=>{
+export async function confirmPhotoQuoteReview(userId:string,dealId:string,documentId:string,reviewToken:string,executor?:Pick<typeof db,'select'|'insert'|'execute'>){const confirm=async(tx:Pick<typeof db,'select'|'insert'|'execute'>)=>{
  const r=await loadPhotoQuoteReview(tx,userId,dealId,documentId);if('error'in r)return r;
  if(r.reviewToken!==reviewToken)return {error:409};
  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'photo_review:'+userId+':'+reviewToken}))`);
  const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'photo_quote_snapshot_reviewed'),eq(auditLogsTable.actorUserId,userId),eq(auditLogsTable.entityId,dealId),sql`${auditLogsTable.metadata}->>'reviewToken'=${reviewToken}`)).limit(1);
  if(!prior)await tx.insert(auditLogsTable).values({actorUserId:userId,action:'photo_quote_snapshot_reviewed',entityType:'deal',entityId:dealId,metadata:{reviewToken,documentId,sourceUnverified:true,requirementCreated:false,sellerMatched:false}});
  return {reviewed:true,repeated:Boolean(prior),sourceUnverified:true,requirementCreated:false,sellerMatched:false,notice:'Your review of this exact extracted snapshot was recorded. The photo and seller offer remain unverified. No requirement, seller match, quotation, agreement, order or message was created.'};
-});}
+};return executor?confirm(executor):db.transaction(confirm);}
