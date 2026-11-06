@@ -256,6 +256,22 @@ try {
   assert.equal(await count("select count(*) from audit_logs where action='trial_requirement_prepared' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal]),1);
   assert.equal(await count('select count(*) from deals'),trialDealsBefore,'signed trial request creates no deal');
   assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalTrialDeal,'original deal terms and state stay unchanged');
+  // Explicit restart requests remain private preparation, never an order/switch.
+  const restartRequestsBefore=await count('select count(*) from buyer_requests');
+  const restartDealsBefore=await count('select count(*) from deals');
+  await post('repeat order');assert.match(module.readSunkReplies(phone).at(-1).text,/cannot be saved/);
+  assert.equal(await count("select count(*) from audit_logs where action='trade_assist_repeat_order' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal]),0,'negotiation is not a completed repeat-order source');
+  for(const request of [{text:'repeat order',status:'completed',action:'trade_assist_repeat_order'},{text:'switch seller',status:'on_hold',action:'trade_assist_switch_seller'},{text:'backup seller',status:'negotiation',action:'trade_assist_backup_seller'}]){
+    await pool.query('update deals set status=$1 where id=$2',[request.status,fixtureDeal]);
+    const currentOriginal=(await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0];
+    await post(request.text);assert.match(module.readSunkReplies(phone).at(-1).text,/Saved for UDC human review/);
+    await post(request.text);assert.match(module.readSunkReplies(phone).at(-1).text,/already recorded/);
+    const rows=(await pool.query('select metadata from audit_logs where action=$1 and actor_user_id=$2 and entity_id=$3',[request.action,buyer.id,fixtureDeal])).rows;
+    assert.equal(rows.length,1);assert.equal(rows[0].metadata.noCounterpartyTransfer,true);assert.equal(rows[0].metadata.noCommitment,true);assert.equal(rows[0].metadata.state,'awaiting_human_review');
+    assert.equal(await count('select count(*) from buyer_requests'),restartRequestsBefore,'signed request alone creates no requirement');
+    assert.equal(await count('select count(*) from deals'),restartDealsBefore,'signed request alone creates no new deal');
+    assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],currentOriginal,'request does not change original seller or terms');
+  }
   assert.equal(providerCalls.length,modelsBefore,'explicit commands bypass all model calls');assert.equal(sent.length,metaBefore,'all new command outputs stay in local sink');assert.ok(module.readSunkReplies().every(r=>r.to===phone||r.to===sellerPhone),'new commands disclose only to the requesting fixture parties');
   delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
   console.log('PASSED signed-webhook new commands: actual PNG sink, exact contextual term, grant-filtered quality index, freight preparation, bound human-help replay dedup, changed-role denial, no model/Meta sends.');

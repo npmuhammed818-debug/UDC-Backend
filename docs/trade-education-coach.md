@@ -239,3 +239,7 @@ Cumulative449 a7104201aac653ed232c21663179dc507881e1e0 passed run42240631348, al
 ## Signed buyer trial-draft journey proof, 2026-11-06
 
 The existing signed synthetic WhatsApp buyer conversation now continues into trial-order drafting on its selected negotiation deal. Actual route/SQL proves one reduced-quantity pending buyer requirement, no copied target price, equivalent-decimal repeated request reuses the draft, oversized request refuses, no extra success audit and no new deal or original deal-field change. Existing all-model/Meta call-count invariants still hold; output stays in local synthetic sink. Schema numeric(18,6) is asserted exactly as2.000000, not a floating conversion. No fresh seller proposal/acceptance or real device/provider claim. Test-only, no runtime or money/commission change.
+
+## Signed restart-request journey proof, 2026-11-06
+
+Same signed synthetic buyer conversation now exercises repeat order, switch seller and backup seller requests. Negotiation cannot act as a completed repeat-order source; each valid status-bound request saves one private human-review audit, duplicate returns existing status, and requirement/deal counts plus every original deal field stay unchanged. No commitment or counterparty transfer; no model or Meta call. This joins signed routing to the existing private preparation path, not a completed fresh-quote/new-deal journey. Test-only; no runtime/live provider/device, deployment, hosted SQL or money/commission change.
