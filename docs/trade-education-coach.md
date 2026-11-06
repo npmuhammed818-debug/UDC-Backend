@@ -87,3 +87,7 @@ Native actual callback reproduced acknowledging a guided exit answer after its o
 ## Guided exit reopened-stage and positive proof, 2026-11-06
 
 Test-only native SQL invokes the actual reason callback while the request lock is held, reopens the deal, then releases it. Callback refuses without an exit-reason audit. A normal callback with cancelled stage and restored own-closure evidence still acknowledges the saved private answer. This proves the separate stage branch added in the prior fix, alongside its closure-withdrawal and phone-reassignment tests. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live send/provider, hosted SQL, deployment, money or commission change.
+
+## Repeated assist request current review lock, 2026-11-06
+
+Native actual help callback reproduced returning the old resolved/declined review while its latest review row correction was pending. Shared writer now share-locks the existing request and selected latest review row; latest review ordering also has an ID tie-break. Native test changes the actual latest review under a pending write and proves the callback waits then returns triaged. The fixture explicitly enables the synthetic reply sink and selects the latest row, not an older triage record. Full774/types/APIfrontend/all21native/5extractor passed. Existing-row locks do not prevent a later newly inserted review, and this is not a physical-resolution claim. No live provider/send, hosted SQL, deployment, money or commission change.
