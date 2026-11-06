@@ -55,3 +55,7 @@ Reproduced a pending phone reassignment still allowing the old phone's photo-rev
 ## Photo review button positive and unoffered proof, 2026-11-06
 
 Executed the actual WhatsApp button handler after a successful synthetic offer. It records exactly one buyer review for the bound snapshot; a repeated tap does not add another audit. An unoffered token is refused with no review audit. This closes the positive-path test gap for the shared phone-binding transaction added previously. Existing HTTP and pending-phone-reassignment tests remain. Full774/types/APIfrontend/all21native/5extractor passed. No live sends, provider calls, hosted SQL, deployment, money or commission changes.
+
+## Human-help offer current selected context, 2026-11-06
+
+Native SQL reproduced the help offer disclosing the old selected deal number and button while a context change was pending. Offer now locks current phone/account, selected context and direct-party deal in one transaction through the synthetic offer. The actual handler waits for the pending context write, then returns false without a button when the old deal is no longer selected. Normal offer and explicitly deal-bound request tests still pass. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no human contact, live sends/provider calls, hosted SQL, deployment, money or commission change.
