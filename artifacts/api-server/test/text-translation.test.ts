@@ -13,3 +13,8 @@ test('attached critical tokens survive only unchanged and remain bounded from or
 test('currency symbols outside the original short list cannot be changed or dropped',()=>{
  for(const [source,result] of [['Price ¥100 per MT','വില ₩100 per MT'],['Price ₺100','വില 100'],['Price ₦100','വില ₱100'],['Price ₿1','വില 1']])assert.equal(translatedTextOk(result,source,'malayalam'),false,source);
 });
+
+test('Unicode arithmetic signs in trade figures cannot disappear or change',()=>{
+ for(const [source,result] of [['Adjustment −100 USD','Ajustement 100 USD'],['Quantity 10 ± 2 MT','Quantite 10 2 MT'],['Price ≈100 USD','Prix =100 USD'],['Quantity 10 − 2 MT','Quantite 10 + 2 MT']])assert.equal(translatedTextOk(result,source,'french'),false,source);
+ assert.equal(translatedTextOk('Ajustement −100 USD','Adjustment −100 USD','french'),true);
+});
