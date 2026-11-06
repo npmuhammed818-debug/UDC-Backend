@@ -426,3 +426,7 @@ Reproduced the tracking brain accepting an impossible/future delivered event and
 ## Carrier outcome wording boundaries, 2026-11-05
 
 Reproduced `Delivered to sender` classified as final delivery and bare `left` descriptions as departure. Classifier now refuses return-to-sender/shipper and intermediate pickup/post-office delivery as final consignee delivery; proof-of-delivery document mentions alone do not establish delivery. `Left` needs an explicit origin/port/facility/warehouse/depot/terminal departure context. Unit and native polling tests include sender-return and left-message feeds with no new notice/outbox. 706tests/types/build/all21native/5extractor pass. This is conservative English-description classification, not full multilingual semantic verification. No carrier/Meta calls, hosted SQL, deploy, money or commission changes.
+
+## Parallel direct tracking quota guard, 2026-11-05
+
+Reproduced five concurrent direct tracking lookups causing five carrier requests despite the six-hour cache. Same-process in-flight lookups now share one promise per normalized number, bounded to500 active numbers; settled failures release the slot and are not cached as success. Tests execute five overlapping calls with one synthetic provider request and one answer, plus shared failure and later retry. 708tests/types/build/all21native/5extractor pass. This is per-process coalescing, not a cross-worker durable quota guarantee. No live carrier/Meta, deployment, hosted SQL, money or commission changes.
