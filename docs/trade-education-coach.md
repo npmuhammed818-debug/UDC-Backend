@@ -95,3 +95,7 @@ Native actual help callback reproduced returning the old resolved/declined revie
 ## Repeated assist review exact-deal binding, 2026-11-06
 
 Native actual help callback reproduced an unrelated deal review row overriding this deal's status when its metadata reused the request ID. Latest-review lookup now also requires entity type deal and the exact request's deal ID. Native synthetic unrelated-row test retains the own deal's actual resolved/declined winner instead of the unrelated triaged status. Full774/types/APIfrontend/all21native/5extractor passed. This is defensive source consistency, not a claim that a live malformed review occurred. No live send/provider, hosted SQL, deployment, money or commission change.
+
+## Repeated assist status allowlist, 2026-11-06
+
+Native actual callback reproduced a malformed synthetic review status being repeated verbatim as paid/order-accepted text, despite the queue-only caveat. Shared writer now recognizes only triaged, resolved and declined, matching the separate status reader, and falls back to awaiting_human_review for any other value. Actual malformed-review fixture returns awaiting human review without the injected status text. Existing valid triaged/resolved/declined evidence tests remain. Full774/types/APIfrontend/all21native/5extractor passed. Defensive malformed-row test, not evidence of live payment or malformed reviews. No live provider/send, hosted SQL, deployment, money or commission change.
