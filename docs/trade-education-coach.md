@@ -147,3 +147,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual confirmation reproduced null consumed evidence being treated as unused and creating a binding with the correct code. Consumption now requires an explicit boolean false rather than a falsy value. The null-evidence confirmation refuses; normal challenge concurrency remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email unused-evidence boundary proof, 2026-11-06
+
+Test-only actual native confirmation refuses absent consumed evidence, numeric zero, empty text, true, text false, array and object. Each refusal explicitly checks unchanged binding count; the restored boolean false challenge still has the existing parallel single-use success proof. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
