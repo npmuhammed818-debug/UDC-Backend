@@ -17,6 +17,7 @@ export function safeEmailAttachment(a:EmailEvidence['attachments'][number]){retu
  * extraction implemented. Never claims a draft was delivered. */
 export async function processEmailPilot(event:EmailEvidence,ports:EmailPilotPorts,env:NodeJS.ProcessEnv=process.env){
  if(env.UDC_APP_ENV!=='staging'||env.UDC_EMAIL_PILOT_MODE!=='synthetic')return 'disabled';
+ if(!event||typeof event!=='object'||Array.isArray(event)||['eventId','messageId','threadId','from','subject','text'].some(key=>typeof (event as unknown as Record<string,unknown>)[key]!=='string')||!Array.isArray(event.to)||!Array.isArray(event.cc)||[...event.to,...event.cc].some(value=>typeof value!=='string')||event.replyTo!==undefined&&typeof event.replyTo!=='string'||typeof event.autoSubmitted!=='boolean'||typeof event.bulk!=='boolean'||!Array.isArray(event.attachments)||event.attachments.some(a=>!a||typeof a!=='object'||typeof a.id!=='string'||typeof a.name!=='string'||typeof a.type!=='string'||typeof a.bytes!=='number'))return 'invalid';
  const from=canonicalEmail(event.from),mailbox='udc@updowncircle.site';
  if(!from||from===mailbox||event.to.length!==1||canonicalEmail(event.to[0])!==mailbox||event.cc.length||event.replyTo&&canonicalEmail(event.replyTo)!==from)return 'audience_review_required';
  if(event.autoSubmitted||event.bulk)return 'loop_or_bulk_ignored';
