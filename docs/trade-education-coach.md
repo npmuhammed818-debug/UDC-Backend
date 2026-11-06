@@ -79,3 +79,7 @@ Native actual handler reproduced request-status text returning the old selected 
 ## Text assist current phone native proof, 2026-11-06
 
 Executed both actual text commands, human help and request status, while a phone reassignment was pending. Both wait, refuse the old phone after commit, reveal no old queue/status and leave assist audit count unchanged. This test-only slice proves the phone branches added in the prior write/status changes; pending selected-context cases remain separate. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live provider/send, hosted SQL, deployment, money or commission change.
+
+## Guided exit reason current closure evidence, 2026-11-06
+
+Native actual callback reproduced acknowledging a guided exit answer after its own-closure evidence was withdrawn during the assist-lock wait. Guided reason buttons now opt into a locked cancelled-stage and own-closure audit recheck inside the shared writer before prior-answer lookup or save. The native pending withdrawal test waits then refuses with unchanged reason audit count. Free-text/HTTP exit reasons do not opt into this guided-button condition; skip retains its separate equivalent closure check. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live send/provider, hosted SQL, deployment, money or commission change.

@@ -1,7 +1,7 @@
 import {and,eq,sql,desc} from 'drizzle-orm';
 import {db,dealsTable,buyerRequestsTable,usersTable,auditLogsTable,whatsappUserContextsTable} from '@workspace/db';
 import {buyerContextDraft,requestAllowed,type AssistKind} from './tradeAssist';
-export async function saveTradeAssistRequest(u:{id:string;role:string},id:string,kind:AssistKind,reason?:string,expectedPhone?:string,requireSelectedDeal=false){
+export async function saveTradeAssistRequest(u:{id:string;role:string},id:string,kind:AssistKind,reason?:string,expectedPhone?:string,requireSelectedDeal=false,requireOwnClosure=false){
  if(process.env.UDC_APP_ENV!=='staging')return {error:404};
  return await db.transaction(async tx=>{
    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'assist:'+u.id+':'+id+':'+kind}))`);
@@ -11,6 +11,7 @@ export async function saveTradeAssistRequest(u:{id:string;role:string},id:string
    const [deal]=await tx.select().from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1).for('share');
    if(!deal)return {error:404};
    if(!requestAllowed(kind,u.role,deal.status))return {error:409};
+   if(requireOwnClosure){if(kind!=='exit_reason'||deal.status!=='cancelled')return {error:409};const [closure]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_closed_by_party'),eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id))).limit(1).for('share');if(!closure)return {error:409};}
    const action='trade_assist_'+kind;
    const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),eq(auditLogsTable.action,action))).limit(1);
    if(prior){const [review]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),sql`${auditLogsTable.metadata}->>'requestId'=${prior.id}`)).orderBy(desc(auditLogsTable.createdAt)).limit(1);return {requestId:prior.id,repeated:true,status:String(review?.metadata?.status||'awaiting_human_review')};}
