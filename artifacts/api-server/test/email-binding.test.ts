@@ -5,3 +5,17 @@ test('registered email binds only through current verified WhatsApp user and sin
  assert.equal((await service.startFromAuthenticatedEmail('other@example.com')).status,'verification_unavailable');assert.equal(code,'');const c=await service.startFromAuthenticatedEmail('registered@example.com');assert.equal(c.status,'synthetic_challenge_created');assert.match(code,/^\d{6}$/);assert.notEqual(challenge!.codeHash,code);assert.equal(await service.confirmFromVerifiedWhatsApp(c.challengeId!,code,'wrong-user'),false);assert.equal(bound,'');assert.equal(await service.confirmFromVerifiedWhatsApp(c.challengeId!,code,'account-1'),true);assert.equal(bound,'registered@example.com');assert.equal(await service.confirmFromVerifiedWhatsApp(c.challengeId!,code,'account-1'),false);
  const expired=await service.startFromAuthenticatedEmail('registered@example.com');now+=120001;assert.equal(await service.confirmFromVerifiedWhatsApp(expired.challengeId!,code,'account-1'),false);
 });
+
+test('link enrollment refuses malformed account evidence before reserving or producing a code',async()=>{
+ const valid={userId:'synthetic-user',address:'registered@example.com',verified:true,consentVersion:'v1'};let writes=0;
+ for(const account of [{...valid,verified:'false'},{...valid,userId:42},{...valid,userId:' '},{...valid,consentVersion:{}},{...valid,consentVersion:' '},{...valid,address:null}]){
+ const service=emailBindingService({findRegisteredAccount:async()=>account as never,reserve:async()=>{writes++;return true;},consumeAndBind:async()=>{writes++;return true;},putWhatsAppCodeInSyntheticSink:async()=>{writes++;}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});
+ assert.equal((await service.startFromAuthenticatedEmail(valid.address)).status,'verification_unavailable');
+ }assert.equal(writes,0);
+});
+
+test('link code recipient remains the resolved account even when its shared object changes',async()=>{
+ const account={userId:'original-user',address:'registered@example.com',verified:true,consentVersion:'v1'};let recipient='';
+ const service=emailBindingService({findRegisteredAccount:async()=>account,reserve:async challenge=>{assert.equal(challenge.userId,'original-user');account.userId='other-user';return true;},consumeAndBind:async()=>false,putWhatsAppCodeInSyntheticSink:async user=>{recipient=user;}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});
+ assert.equal((await service.startFromAuthenticatedEmail(account.address)).status,'synthetic_challenge_created');assert.equal(recipient,'original-user');
+});
