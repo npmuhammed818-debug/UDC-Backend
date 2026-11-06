@@ -74,12 +74,13 @@ try {
     stdin: {
       contents: `import express from 'express';
         import router from './src/routes/whatsappWebhook';
+        import adminRouter from './src/routes/admin';import {loadAuth} from './src/auth/middleware';export {createSession} from './src/auth/sessions';
         export {prepareRestartRequest} from './src/deals/restartRequest';
         export {requestTermsReview} from './src/marketplace/termAgreement';export {photoQuoteReview} from './src/deals/photoQuoteReview';export {getAkifDealContext} from './src/akif/intelligence/dealContext';export {pool} from '@workspace/db';export {readSunkReplies,clearSunkReplies} from './src/whatsapp/replySink';
         const app=express();
         app.use(express.json({verify(req,res,body){req.rawBody=body;}}));
         app.use((req,res,next)=>{req.log={info(){},error(){}};next();});
-        app.use('/api',router);export default app;`,
+        app.use('/api',router);app.use(loadAuth);app.use(adminRouter);export default app;`,
       resolveDir: fileURLToPath(new URL('../../', import.meta.url)),
     },
     outfile: output, bundle: true, platform: 'node', format: 'esm',
@@ -303,6 +304,21 @@ try {
   assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1 and actor_user_id=$2",[freshProposal.proposalId,buyer.id]),1);
   assert.equal(await count('select count(*) from deals'),restartDealsBefore,'fresh signed buyer decision alone creates no deal');
   assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation,'fresh proposal leaves original deal untouched');
+  // Real session-authenticated admin HTTP creates the separate deal only now.
+  const adminSession=await module.createSession(adminForPreparation),buyerSession=await module.createSession(buyer.id);
+  const createFreshDeal=async(body,token)=>{const r=await fetch(localOrigin+'/admin/deals',{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
+  const freshDealInput={matchId:freshMatch,quantity:Number(preparedRequest.quantity),agreedPrice:100,currency:'USD',incoterm:'CIF',destination:'Jebel Ali'};
+  assert.equal((await createFreshDeal(freshDealInput)).status,401);
+  assert.equal((await createFreshDeal(freshDealInput,buyerSession.token)).status,403);
+  const mismatchedDeal=await createFreshDeal({...freshDealInput,agreedPrice:101},adminSession.token);assert.equal(mismatchedDeal.status,409);assert.equal(mismatchedDeal.body.error,'deal_differs_from_buyer_accepted_terms');
+  assert.equal(await count('select count(*) from deals'),restartDealsBefore);
+  const createdFreshDeal=await createFreshDeal(freshDealInput,adminSession.token);assert.equal(createdFreshDeal.status,201,JSON.stringify(createdFreshDeal.body));
+  assert.equal(createdFreshDeal.body.deal.buyerRequestId,preparedRequest.id);assert.equal(createdFreshDeal.body.deal.buyerUserId,buyer.id);assert.equal(createdFreshDeal.body.deal.sellerUserId,sellerAccount.id);assert.equal(createdFreshDeal.body.deal.status,'initiated');assert.notEqual(createdFreshDeal.body.deal.id,fixtureDeal);
+  assert.equal((await createFreshDeal(freshDealInput,adminSession.token)).status,409,'duplicate admin submit cannot create another deal');
+  assert.equal(await count('select count(*) from deals'),restartDealsBefore+1);
+  assert.equal(await count('select count(*) from deal_participants where deal_id=$1',[createdFreshDeal.body.deal.id]),2);
+  assert.equal(await count("select count(*) from audit_logs where action='deal_created' and entity_id=$1 and actor_user_id=$2",[createdFreshDeal.body.deal.id,adminForPreparation]),1);
+  assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation,'separate admin-created deal preserves old deal');
   await pool.query('delete from users where id=$1',[adminForPreparation]);
   assert.equal(providerCalls.length,modelsBefore,'explicit commands bypass all model calls');assert.equal(sent.length,metaBefore,'all new command outputs stay in local sink');assert.ok(module.readSunkReplies().every(r=>r.to===phone||r.to===sellerPhone),'new commands disclose only to the requesting fixture parties');
   delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
