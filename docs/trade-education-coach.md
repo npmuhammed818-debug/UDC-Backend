@@ -59,3 +59,7 @@ Executed the actual WhatsApp button handler after a successful synthetic offer. 
 ## Human-help offer current selected context, 2026-11-06
 
 Native SQL reproduced the help offer disclosing the old selected deal number and button while a context change was pending. Offer now locks current phone/account, selected context and direct-party deal in one transaction through the synthetic offer. The actual handler waits for the pending context write, then returns false without a button when the old deal is no longer selected. Normal offer and explicitly deal-bound request tests still pass. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no human contact, live sends/provider calls, hosted SQL, deployment, money or commission change.
+
+## Human-help button current phone recheck, 2026-11-06
+
+Native SQL reproduced a pending phone reassignment still letting the old phone read a saved human-help request's resolved status. The shared assist writer accepts an optional expected phone and rechecks it under the existing account share lock after serialization; the human-help button passes its inbound phone. Existing callers without phone context retain their current behavior. Actual callback waits for the pending phone write, then refuses without request creation or old-account status disclosure. Normal bound help and full existing routes pass. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no actual human contact, provider/send, hosted SQL, deployment, money or commission change.

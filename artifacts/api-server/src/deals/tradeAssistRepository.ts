@@ -1,12 +1,12 @@
 import {and,eq,sql,desc} from 'drizzle-orm';
 import {db,dealsTable,buyerRequestsTable,usersTable,auditLogsTable} from '@workspace/db';
 import {buyerContextDraft,requestAllowed,type AssistKind} from './tradeAssist';
-export async function saveTradeAssistRequest(u:{id:string;role:string},id:string,kind:AssistKind,reason?:string){
+export async function saveTradeAssistRequest(u:{id:string;role:string},id:string,kind:AssistKind,reason?:string,expectedPhone?:string){
  if(process.env.UDC_APP_ENV!=='staging')return {error:404};
  return await db.transaction(async tx=>{
    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'assist:'+u.id+':'+id+':'+kind}))`);
-   const [currentUser]=await tx.select({status:usersTable.status,role:usersTable.role}).from(usersTable).where(eq(usersTable.id,u.id)).limit(1).for('share');
-   if(!currentUser||currentUser.status!=='verified'||currentUser.role!==u.role)return {error:403};
+   const [currentUser]=await tx.select({status:usersTable.status,role:usersTable.role,phone:usersTable.phone}).from(usersTable).where(eq(usersTable.id,u.id)).limit(1).for('share');
+   if(!currentUser||currentUser.status!=='verified'||currentUser.role!==u.role||(expectedPhone!==undefined&&currentUser.phone!==expectedPhone))return {error:403};
    const [deal]=await tx.select().from(dealsTable).where(and(eq(dealsTable.id,id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1).for('share');
    if(!deal)return {error:404};
    if(!requestAllowed(kind,u.role,deal.status))return {error:409};

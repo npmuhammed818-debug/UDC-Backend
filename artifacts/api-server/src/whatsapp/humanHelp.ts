@@ -9,7 +9,7 @@ export const helpButtonDeal=(id:string)=>/^udc:human_help:([a-f0-9]{8}-(?:[a-f0-
 export async function handleHumanHelpButton(phone:string,id:string){
  const dealId=helpButtonDeal(id);if(!dealId||process.env.UDC_APP_ENV!=='staging'||process.env.AKIF_WHATSAPP_REPLY_SINK!=='store')return false;
  const [u]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
- const result=u&&u.status==='verified'&&['buyer','seller'].includes(u.role)?await saveTradeAssistRequest(u,dealId,'human_help'):{error:403};
+ const result=u&&u.status==='verified'&&['buyer','seller'].includes(u.role)?await saveTradeAssistRequest(u,dealId,'human_help',undefined,phone):{error:403};
  await sendWhatsAppText(phone,'error'in result?'That deal is unavailable to your verified account. No help request was created.':`${result.repeated?'Your help request is already recorded.':'Your help request is saved for UDC review.'} Status: ${result.status.replaceAll('_',' ')}. This does not mean a person is online or has contacted you. No deal, order or payment was changed.`);return true;
 }
 export async function offerHumanHelpButton(phone:string){
