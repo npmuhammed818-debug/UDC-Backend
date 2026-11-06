@@ -141,7 +141,7 @@ test("shipment watch poll: sparing, deduplicated, honest and transactionally saf
     assert.equal(fifth.notified,0,'no events, no invented status');
     assert.equal(rows.notificationsTable.length,3);
 
-    for(const description of ['Not delivered','Proof of delivery unavailable','Not in transit','No delay reported']){
+    for(const description of ['Not delivered','Proof of delivery unavailable','Not in transit','No delay reported','Delivered to sender','Delivered to pickup point, available for collection','Left message for recipient','Proof of delivery document uploaded']){
       trackerEvents.value=[{time:'2026-10-31T08:00:00Z',description}];const before=rows.notificationsTable.length;
       const negative=await m.runShipmentWatchPoll({database:db,tracker,now:new Date('2026-11-01T13:00:00Z')});assert.equal(negative.notified,0,description);assert.equal(rows.notificationsTable.length,before,'no notification on negated status');
     }
