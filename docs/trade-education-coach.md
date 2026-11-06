@@ -67,3 +67,7 @@ Native SQL reproduced a pending phone reassignment still letting the old phone r
 ## Guided exit reason current phone recheck, 2026-11-06
 
 Native SQL reproduced a guided exit-reason callback resolving the old phone before an assist-lock wait and then acknowledging its earlier answer after that phone was reassigned. Callback now passes its inbound phone to the existing locked assist recheck. Actual handler waits at the serialization boundary, then refuses with no new exit-reason audit after reassignment. Skip uses its existing separate current-phone/closure checks. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live provider/send, hosted SQL, deployment, money or commission change.
+
+## Text assist request current selected deal, 2026-11-06
+
+Actual native command reproduced a help request acknowledgement for the old selected deal while a context change was pending. Text-driven assist writes now opt into the shared transaction's current selected-deal recheck under a context share lock and pass the inbound phone for the existing account recheck. Native callback waits then refuses with unchanged request count after context change. Explicit deal-bound help buttons and HTTP requests do not opt into selected-context semantics. Full774/types/APIfrontend/all21native/5extractor passed. Status-only command branch is unchanged and is not covered by this write-path fix. Synthetic only; no live sends/provider, hosted SQL, deployment, money or commission change.

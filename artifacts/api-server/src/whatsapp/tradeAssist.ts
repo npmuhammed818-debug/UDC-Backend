@@ -19,7 +19,7 @@ export async function handleTradeAssist(phone:string,text:string){
   const body=await tradeAssistStatus(user.id,context.dealId);
   await sendWhatsAppText(phone,body||'This private request status is unavailable for your current account and deal.');return true;
  }
- const result=await saveTradeAssistRequest(user,context.dealId,reason?'exit_reason':kind!,reason?.[1].toLowerCase());
+ const result=await saveTradeAssistRequest(user,context.dealId,reason?'exit_reason':kind!,reason?.[1].toLowerCase(),phone,true);
  if('error' in result){await sendWhatsAppText(phone,'This request cannot be saved for the selected deal right now. The deal and its parties are unchanged.');return true;}
  await sendWhatsAppText(phone,(result.repeated?'This request was already recorded. Status: '+result.status+'. ':'Saved for UDC human review. ' )+' This request action does not contact a person, place an order or change a seller. Any new seller needs fresh terms and your agreement. Old seller chats and documents stay private on the old deal.');return true;
 }
