@@ -30,3 +30,10 @@ test('malformed link enrollment addresses never reach account lookup',async()=>{
  let lookups=0;const service=emailBindingService({findRegisteredAccount:async()=>{lookups++;return null;},reserve:async()=>false,consumeAndBind:async()=>false,putWhatsAppCodeInSyntheticSink:async()=>{}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});
  for(const address of [null,undefined,42,{},[],['registered@example.com']])assert.equal((await service.startFromAuthenticatedEmail(address as never)).status,'verification_unavailable');assert.equal(lookups,0);
 });
+
+test('email link storage results need literal success before code output or confirmation',async()=>{
+ let codes=0;const id='11111111-1111-4111-8111-111111111111';for(const value of ['false',1,{},[],null,undefined]){
+ const service=emailBindingService({findRegisteredAccount:async address=>({userId:'synthetic',address,verified:true,consentVersion:'v1'}),reserve:async()=>value as never,consumeAndBind:async()=>value as never,putWhatsAppCodeInSyntheticSink:async()=>{codes++;}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});
+ assert.equal((await service.startFromAuthenticatedEmail('registered@example.com')).status,'rate_limited');assert.equal(await service.confirmFromVerifiedWhatsApp(id,'123456','synthetic'),false);
+ }assert.equal(codes,0);
+});
