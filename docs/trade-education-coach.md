@@ -172,3 +172,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual enrollment reproduced reserving and delivering a synthetic code during pending consent withdrawal. Reservation now reads consent through its transaction and existing consent serialization lock. Pending withdrawal waits then refuses with no challenge row or synthetic delivery; normal enrollment and single-use confirmation remain. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email current consent-row evidence, 2026-11-06
+
+Native actual resolver reproduced returning bound identity while the latest consent row was being corrected to withdrawn. Consent-locked reads now share-lock the selected current row too. Pending correction waits then denies identity; non-locking lookup semantics stay unchanged. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.

@@ -10,7 +10,8 @@ export async function currentEmailAccountConsent(userId:string,executor:Pick<typ
  const [u]=await executor.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,userId)).limit(1);if(!u?.phone||u.status!=='verified')return null;
  const fingerprint=createHmac('sha256',secret).update(u.phone).digest('hex');
  if(lockConsent)await executor.execute(sql`select pg_advisory_xact_lock(hashtext(${'whatsapp-consent:'+fingerprint}))`);
- const [r]=await executor.select({m:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityType,'whatsapp_consent'),sql`${auditLogsTable.metadata}->>'fingerprint'=${fingerprint}`)).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1);
+ const query=executor.select({m:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityType,'whatsapp_consent'),sql`${auditLogsTable.metadata}->>'fingerprint'=${fingerprint}`)).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1);
+ const [r]=await (lockConsent?query.for('share'):query);
  const version=consentVersion(POLICY_VERSION);return r?.m?.status==='accepted'&&r.m.policyVersion===version?version:null;
 }
 export function emailAccount(){const secret=process.env.UDC_EMAIL_BINDING_SECRET;if(!secret||secret.length<32)return null;const repository=emailLinkRepository(currentEmailAccountConsent,secret);return {repository,service:emailBindingService(repository.ports,secret)};}
