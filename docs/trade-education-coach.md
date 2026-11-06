@@ -142,3 +142,8 @@ Full774/types/APIfrontend/all21native/5extractor passed after the attempt-count 
 
 Test-only native actual confirmation refuses numeric-text, null, nonpositive, fractional and expired expiry values; null, numeric-text, negative, fractional and exhausted attempt counts. Every refusal explicitly proves unchanged binding count; restored normal challenge retains concurrent single-use proof. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email challenge unconsumed evidence, 2026-11-06
+
+Native actual confirmation reproduced null consumed evidence being treated as unused and creating a binding with the correct code. Consumption now requires an explicit boolean false rather than a falsy value. The null-evidence confirmation refuses; normal challenge concurrency remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
