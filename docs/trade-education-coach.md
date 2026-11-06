@@ -123,3 +123,7 @@ Native identity resolver reproduced returning the old registered address's bound
 ## Synthetic email binding expiry shape, 2026-11-06
 
 Native resolver reproduced malformed boundAt text passing expiry validation because Number returned NaN and the expiry comparison was false. Binding identity now requires a positive safe-integer numeric boundAt no later than the current clock, and still enforces its 30-day lifetime. Actual malformed binding fixture is refused while normal bind/history/draft flows pass. Full774/types/APIfrontend/all21native/5extractor passed. Defensive malformed-row test only, not a live binding incident. No real inbox/send, hosted SQL, deployment, money or commission change.
+
+## Synthetic email binding time boundary proof, 2026-11-06
+
+Test-only native resolver checks malformed text, numeric text, null, zero, negative, fractional, future and exactly expired 30-day binding times. Each denies identity; restored normal binding still supports existing history/draft tests. Full774/types/APIfrontend/all21native/5extractor passed. No real inbox/send, hosted SQL, deployment, money or commission change.
