@@ -127,3 +127,8 @@ Native resolver reproduced malformed boundAt text passing expiry validation beca
 ## Synthetic email binding time boundary proof, 2026-11-06
 
 Test-only native resolver checks malformed text, numeric text, null, zero, negative, fractional, future and exactly expired 30-day binding times. Each denies identity; restored normal binding still supports existing history/draft tests. Full774/types/APIfrontend/all21native/5extractor passed. No real inbox/send, hosted SQL, deployment, money or commission change.
+
+## Synthetic email challenge expiry shape, 2026-11-06
+
+Native actual confirmation reproduced malformed expiresAt text bypassing the code lifetime check and creating a channel binding with the correct code. Challenge consumption now requires a numeric safe-integer expiry strictly later than now. The malformed expiry test refuses without a binding, then restores the normal challenge for the existing concurrent single-use confirmation proof. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed after the expiry check. Existing normal challenge concurrency and synthetic draft flows remain covered.
