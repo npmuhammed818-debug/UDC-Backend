@@ -71,8 +71,16 @@ test('repeated lookups within 6 hours reuse the cached answer (quota guard)', as
 });
 
 test('formatLiveStatus clips oversized carrier fields and labels the source', () => {
-  const reply = formatLiveStatus('N1', [{ time: 'not-a-date', description: 'x'.repeat(500), location: 'y'.repeat(300) }]);
+  const reply = formatLiveStatus('N1', [{ time: '2026-10-28T12:00:00Z', description: 'x'.repeat(500), location: 'y'.repeat(300) }]);
   const lines = reply.split('\n');
   assert.ok(lines[1].length < 450, 'oversized carrier text is clipped');
   assert.match(lines[2], /via 17TRACK/);
+});
+
+
+test('invalid live feed bypasses brain and out-of-order feed uses newest event',async()=>{
+ clearLiveTrackingCache();let called=false;
+ const invalid=await liveTrackingReply('SYN123',{configured:true,tracker:trackerWith({SYN123:[{time:'2099-01-01T00:00:00Z',description:'Delivered'}]}),brain:async()=>{called=true;return 'Delivered';}});
+ assert.equal(called,false);assert.match(invalid,/No shipment status is confirmed/);
+ clearLiveTrackingCache();const text=await liveTrackingReply('SYN123',{configured:true,brain:null,tracker:trackerWith({SYN123:[{time:'2026-10-28T12:00:00Z',description:'Delivered'},{time:'2026-10-30T12:00:00Z',description:'Customs hold'}]})});assert.match(text,/Customs hold/);assert.doesNotMatch(text,/Delivered/);
 });

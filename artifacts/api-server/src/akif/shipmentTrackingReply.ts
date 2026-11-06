@@ -1,3 +1,4 @@
+import {currentCarrierEvents} from '../tracking/currentCarrierEvents.ts';
 import {classifyCarrierDescription} from '../tracking/classifyCarrierEvent.ts';
 // Brain-led shipment tracking answers (owner approved 2 Nov, staging,
 // synthetic data, read-only answers, brain words not a fixed script, no date
@@ -16,7 +17,7 @@ import type { ShipmentTrackEvent } from '../tracking/seventeenTrack.ts';
 // free of database imports: which of the three watch classes the latest
 // carrier event belongs to, if any.
 function classifyLatest(events: ShipmentTrackEvent[]): 'shipped' | 'delayed' | 'delivered' | null {
-  return classifyCarrierDescription(events[0]?.description??'');
+  return classifyCarrierDescription(currentCarrierEvents(events)?.[0]?.description??'');
 }
 
 export type TrackingBrainChat = (message: string, system: string) => Promise<{ content: string }>;
@@ -70,7 +71,8 @@ export async function brainTrackingReply(
   input: { number: string; events: ShipmentTrackEvent[] },
   deps: { chat?: TrackingBrainChat } = {},
 ): Promise<string | null> {
-  if (!input.events.length) return null;
+  const ordered=currentCarrierEvents(input.events);
+  if (!ordered?.length) return null;
   const chat = deps.chat ?? (isAkifBrainConfigured()
     ? (message: string, system: string) => runConversationChat(message, system)
     : null);
@@ -84,7 +86,7 @@ export async function brainTrackingReply(
     'Return exactly one valid JSON object of the form {"reply": "..."} and nothing else.',
   ].join(' ');
 
-  const events = input.events.slice(0, MAX_EVENTS_SENT).map((event) => ({
+  const events = ordered.slice(0, MAX_EVENTS_SENT).map((event) => ({
     time: event.time,
     description: event.description.slice(0, 300),
     ...(event.location ? { location: event.location.slice(0, 120) } : {}),

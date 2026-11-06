@@ -1,3 +1,4 @@
+import {currentCarrierEvents} from '../tracking/currentCarrierEvents.ts';
 // Live carrier tracking in chat: a verified user sends "track <number>" and
 // gets the latest carrier-reported status in plain words. Inert until a real
 // 17TRACK key is configured (SEVENTEEN_TRACK_API_KEY); without it the reply
@@ -18,11 +19,13 @@ export function clearLiveTrackingCache() {
 
 const clip = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().slice(0, max) : '');
 
-export function formatLiveStatus(number: string, events: { time: string; description: string; location?: string }[]): string {
+export function formatLiveStatus(number: string, events: { time: string; description: string; location?: string }[], now=new Date()): string {
+  const ordered=currentCarrierEvents(events,now);
+  if(!ordered)return `The carrier update for ${number} has an invalid, future or conflicting event time. No shipment status is confirmed. Check the number or ask UDC to review it.`;
   if (!events.length) {
     return `No carrier updates found for ${number} yet. Check the number and send Track followed by the number again.`;
   }
-  const latest = events[0];
+  const latest = ordered[0]!;
   const time = new Date(latest.time);
   const when = Number.isFinite(time.valueOf()) ? time.toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
   const where = clip(latest.location, 120);
@@ -60,12 +63,14 @@ export async function liveTrackingReply(
   let text: string;
   try {
     const events = await tracker.fetchEvents(number);
+    const ordered=currentCarrierEvents(events,new Date(now));
+    if(!ordered)return formatLiveStatus(number,events,new Date(now));
     const brain = deps.brain === undefined
       ? (n: string, ev: ShipmentTrackEvent[]) => brainTrackingReply({ number: n, events: ev })
       : deps.brain;
-    text = events.length && brain
-      ? (await brain(number, events).catch(() => null)) ?? formatLiveStatus(number, events)
-      : formatLiveStatus(number, events);
+    text = ordered.length && brain
+      ? (await brain(number, ordered).catch(() => null)) ?? formatLiveStatus(number, ordered,new Date(now))
+      : formatLiveStatus(number, ordered,new Date(now));
   } catch {
     // Never leak provider errors or configuration details into the chat.
     return 'The carrier tracking service is unreachable right now. Please try again in a little while.';
