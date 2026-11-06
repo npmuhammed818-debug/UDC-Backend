@@ -26,3 +26,8 @@ test('tracking intent refuses prose and arrays around the decision',async()=>{
 test('nominal delivery-date predictions cannot bypass the no-date-promise guard',async()=>{
  for(const reply of ['Delivery is tomorrow.','Arrival: Monday.','Delivery in 2 days.','Your parcel arrives tomorrow.'])assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content:JSON.stringify({reply})})}),null,reply);
 });
+
+test('tracking source-token boundaries include non-ASCII letters and digits',async()=>{
+ for(const message of ['Track αABC123β','Track ١ABC123٢','Track ＸABC123Ｙ'])assert.equal(await interpretTrackingAsk(message,{chat:async()=>({content:'{"trackingNumber":"ABC123"}'})}),null,message);
+ assert.equal(await interpretTrackingAsk('ABC123 എവിടെ',{chat:async()=>({content:'{"trackingNumber":"ABC123"}'})}),'ABC123');
+});
