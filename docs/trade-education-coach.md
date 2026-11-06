@@ -91,3 +91,7 @@ Test-only native SQL invokes the actual reason callback while the request lock i
 ## Repeated assist request current review lock, 2026-11-06
 
 Native actual help callback reproduced returning the old resolved/declined review while its latest review row correction was pending. Shared writer now share-locks the existing request and selected latest review row; latest review ordering also has an ID tie-break. Native test changes the actual latest review under a pending write and proves the callback waits then returns triaged. The fixture explicitly enables the synthetic reply sink and selects the latest row, not an older triage record. Full774/types/APIfrontend/all21native/5extractor passed. Existing-row locks do not prevent a later newly inserted review, and this is not a physical-resolution claim. No live provider/send, hosted SQL, deployment, money or commission change.
+
+## Repeated assist review exact-deal binding, 2026-11-06
+
+Native actual help callback reproduced an unrelated deal review row overriding this deal's status when its metadata reused the request ID. Latest-review lookup now also requires entity type deal and the exact request's deal ID. Native synthetic unrelated-row test retains the own deal's actual resolved/declined winner instead of the unrelated triaged status. Full774/types/APIfrontend/all21native/5extractor passed. This is defensive source consistency, not a claim that a live malformed review occurred. No live send/provider, hosted SQL, deployment, money or commission change.

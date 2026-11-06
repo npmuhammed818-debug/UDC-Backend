@@ -14,7 +14,7 @@ export async function saveTradeAssistRequest(u:{id:string;role:string},id:string
    if(requireOwnClosure){if(kind!=='exit_reason'||deal.status!=='cancelled')return {error:409};const [closure]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_closed_by_party'),eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id))).limit(1).for('share');if(!closure)return {error:409};}
    const action='trade_assist_'+kind;
    const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,id),eq(auditLogsTable.action,action))).limit(1).for('share');
-   if(prior){const [review]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),sql`${auditLogsTable.metadata}->>'requestId'=${prior.id}`)).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1).for('share');return {requestId:prior.id,repeated:true,status:String(review?.metadata?.status||'awaiting_human_review')};}
+   if(prior){const [review]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'trade_assist_review_recorded'),eq(auditLogsTable.entityType,'deal'),eq(auditLogsTable.entityId,id),sql`${auditLogsTable.metadata}->>'requestId'=${prior.id}`)).orderBy(desc(auditLogsTable.createdAt),desc(auditLogsTable.id)).limit(1).for('share');return {requestId:prior.id,repeated:true,status:String(review?.metadata?.status||'awaiting_human_review')};}
    let buyerDraft;
    if(['repeat_order','switch_seller','backup_seller'].includes(kind)){
     if(!deal.buyerRequestId)return {error:409};
