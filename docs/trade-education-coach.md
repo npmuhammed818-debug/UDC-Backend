@@ -243,3 +243,7 @@ The existing signed synthetic WhatsApp buyer conversation now continues into tri
 ## Signed restart-request journey proof, 2026-11-06
 
 Same signed synthetic buyer conversation now exercises repeat order, switch seller and backup seller requests. Negotiation cannot act as a completed repeat-order source; each valid status-bound request saves one private human-review audit, duplicate returns existing status, and requirement/deal counts plus every original deal field stay unchanged. No commitment or counterparty transfer; no model or Meta call. This joins signed routing to the existing private preparation path, not a completed fresh-quote/new-deal journey. Test-only; no runtime/live provider/device, deployment, hosted SQL or money/commission change.
+
+## Signed request to admin preparation continuity proof, 2026-11-06
+
+Existing signed buyer backup request now feeds the actual admin preparation service in the same synthetic conversation database. Parallel preparation returns one pending buyer-owned requirement and one success audit; every copied term equals the current buyer requirement, no new deal and original deal unchanged. Admin identity is a synthetic fixture; route-level admin authorization remains covered separately, not newly claimed by this direct service step. No model/Meta call or real seller contact. Fresh review/proposal/buyer acceptance/new deal remain separate from this pending preparation. Test-only; no runtime, deployment, hosted SQL or money/commission change.

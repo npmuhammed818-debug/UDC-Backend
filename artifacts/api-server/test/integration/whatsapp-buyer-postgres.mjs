@@ -74,6 +74,7 @@ try {
     stdin: {
       contents: `import express from 'express';
         import router from './src/routes/whatsappWebhook';
+        export {prepareRestartRequest} from './src/deals/restartRequest';
         export {requestTermsReview} from './src/marketplace/termAgreement';export {photoQuoteReview} from './src/deals/photoQuoteReview';export {getAkifDealContext} from './src/akif/intelligence/dealContext';export {pool} from '@workspace/db';export {readSunkReplies,clearSunkReplies} from './src/whatsapp/replySink';
         const app=express();
         app.use(express.json({verify(req,res,body){req.rawBody=body;}}));
@@ -272,6 +273,22 @@ try {
     assert.equal(await count('select count(*) from deals'),restartDealsBefore,'signed request alone creates no new deal');
     assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],currentOriginal,'request does not change original seller or terms');
   }
+  // Existing admin preparation consumes the exact request made in this conversation.
+  const signedBackup=(await pool.query("select id from audit_logs where action='trade_assist_backup_seller' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal])).rows[0];
+  const adminForPreparation=randomUUID();await pool.query("insert into users(id,full_name,email,password_hash,role,status) values($1,'Synthetic review admin',$2,'synthetic-not-a-login','admin','verified')",[adminForPreparation,'review-'+adminForPreparation+'@example.invalid']);
+  const requestsBeforePreparation=await count('select count(*) from buyer_requests');
+  const sourceRequestBeforePreparation=(await pool.query('select * from buyer_requests where id=$1',[source.id])).rows[0];
+  const originalBeforePreparation=(await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0];
+  const prepared=await Promise.all([module.prepareRestartRequest(signedBackup.id,adminForPreparation),module.prepareRestartRequest(signedBackup.id,adminForPreparation)]);
+  assert.ok(prepared.every(r=>!('error'in r)));assert.equal(prepared[0].requirementId,prepared[1].requirementId);assert.equal(prepared.filter(r=>r.repeated).length,1);
+  const preparedRequest=(await pool.query('select * from buyer_requests where id=$1',[prepared[0].requirementId])).rows[0];
+  assert.equal(preparedRequest.status,'pending_admin_review');assert.equal(preparedRequest.buyer_user_id,buyer.id);
+  for(const key of ['quantity','unit','currency','target_price','destination','preferred_incoterm','specification','contract_duration','payment_terms','inspection_requirements','additional_conditions'])assert.equal(preparedRequest[key],sourceRequestBeforePreparation[key],'only current buyer requirement copied: '+key);
+  assert.equal(await count('select count(*) from buyer_requests'),requestsBeforePreparation+1);
+  assert.equal(await count("select count(*) from audit_logs where action='trade_restart_requirement_prepared' and metadata->>'requestId'=$1",[signedBackup.id]),1);
+  assert.equal(await count('select count(*) from deals'),restartDealsBefore,'admin preparation creates no replacement deal');
+  assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation);
+  await pool.query('delete from users where id=$1',[adminForPreparation]);
   assert.equal(providerCalls.length,modelsBefore,'explicit commands bypass all model calls');assert.equal(sent.length,metaBefore,'all new command outputs stay in local sink');assert.ok(module.readSunkReplies().every(r=>r.to===phone||r.to===sellerPhone),'new commands disclose only to the requesting fixture parties');
   delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
   console.log('PASSED signed-webhook new commands: actual PNG sink, exact contextual term, grant-filtered quality index, freight preparation, bound human-help replay dedup, changed-role denial, no model/Meta sends.');
