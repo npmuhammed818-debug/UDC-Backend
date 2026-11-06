@@ -485,3 +485,6 @@ Actual shared-feed test reproduced null feed throwing before validation. Feed gu
 
 ## Carrier status whole-word boundaries
 Actual classifier test reproduced 'Tracking data withheld' becoming delayed because held matched within withheld. Delay/exception/held and departure/dispatch/transit alternatives now require whole words; unrelated withheld/unexceptional/undeparted/undispatched/predelayed fixtures refuse.713APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Conservative English lexical correction only, not full sentence understanding or physical status proof. No provider/real sends, hosted SQL, deployment or money/commission changes.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
