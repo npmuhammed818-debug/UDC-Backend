@@ -438,3 +438,7 @@ Reproduced `100USD` becoming `100EUR` while the exact-token guard returned true:
 ## Trade-assist overview current-evidence locks, 2026-11-05
 
 Reproduced the private overview returning an approved-document index while a grant revocation was pending. Overview now reads current role/status, direct-party deal, seller role/status, document approval/grants and request/review rows in one locked transaction. Native actual HTTP/SQL tests prove pending suspension, party reassignment, document approval withdrawal and grant revocation block then remove/deny the affected view. Focused HTTP uses an injected principal, real-session native suites remain separately exercised. 710tests/types/build/all21native/5extractor pass. No document bytes/shared grants, real sends/provider, deploy, hosted SQL, money or commission changes.
+
+## Backup lead current approval/evidence locks, 2026-11-05
+
+Reproduced admin alternate-seller review returning a listing while its approval withdrawal was pending. Listing leads and exact buyer/listed-seller company evidence now remain share-locked through the review transaction. Native HTTP/SQL covers listing approval withdrawal, alternate company evidence withdrawal and buyer company evidence withdrawal: waits then zero candidates or409. 710tests/types/build/all21native/5extractor pass. Private provisional review only, no seller contact, reservation, buyer disclosure, switch or new deal. No deploy, live sends/provider, hosted SQL, money or commission change.
