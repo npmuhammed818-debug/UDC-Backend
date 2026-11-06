@@ -36,7 +36,8 @@ const DATE_PROMISE = new RegExp(
 // dashboard or portal.
 const FORBIDDEN_SURFACE = /\b(?:app|application|dashboard|portal)\b/i;
 
-function extractReply(raw: string): string | null {
+function extractReply(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = trimmed.indexOf('{');
   const end = trimmed.lastIndexOf('}');
