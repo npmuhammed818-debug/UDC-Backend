@@ -98,3 +98,12 @@ test('failed parallel lookup releases its in-flight slot for a later retry',asyn
  const first=await Promise.all([liveTrackingReply('SYN777',{configured:true,tracker,brain:null}),liveTrackingReply('SYN777',{configured:true,tracker,brain:null})]);assert.equal(calls,1);assert.ok(first.every(t=>t.includes('unreachable')));
  assert.match(await liveTrackingReply('SYN777',{configured:true,tracker,brain:null}),/In transit/);assert.equal(calls,2);
 });
+
+test('a future-dated cache entry is not reused after a clock correction',async()=>{
+ clearLiveTrackingCache();let calls=0;
+ const tracker={name:'synthetic',fetchEvents:async()=>{calls++;return [{time:'2026-11-05T00:00:00Z',description:calls===1?'Label created':'Departed origin facility'}];}};
+ const now=Date.parse('2026-11-05T12:00:00Z');
+ await liveTrackingReply('CLOCK123',{tracker,configured:true,now,brain:null});
+ const reply=await liveTrackingReply('CLOCK123',{tracker,configured:true,now:now-60_000,brain:null});
+ assert.equal(calls,2);assert.match(reply,/Departed origin facility/);
+});
