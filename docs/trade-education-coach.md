@@ -207,3 +207,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual confirmation reproduced accepting a code that expired while waiting for email-link serialization. The service supplied its call-start time. Consumption now rechecks expiry against the current clock after account/consent lock waits and records that current consumption time in the binding. Pending expiry test waits past expiry then refuses; normal confirmation remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email reservation current clock, 2026-11-06
+
+Native repository reservation reproduced storing an already expired challenge when given a stale call-start clock. After account/consent waits, reservation now uses the current clock for its existing rate-window checks and creation time, and refuses an expired or malformed expiry. The native stale-clock test refuses without a challenge row. This is deterministic stale-clock proof, not a two-minute live lock-wait test. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
