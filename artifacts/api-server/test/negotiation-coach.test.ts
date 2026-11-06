@@ -4,3 +4,11 @@ test('coach never chooses a price or guesses private seller margin',()=>{
  const r=counterCoach(input!,deal);assert.ok('draft'in r);assert.match(r.notice,/not a market valuation/);assert.match(r.draft,/other terms still to be agreed/);
  assert.ok('error'in counterCoach(input!,{...deal,status:'completed'}));assert.ok('error'in counterCoach(input!,{...deal,currency:'EUR'}));assert.ok('error'in counterCoach(input!,{...deal,unit:null}));assert.equal(counterCoachCommand('he said coach counter 95 USD'),null);
 });
+
+test('counter drafts preserve supported currency precision without rounding or inventing a currency',()=>{
+ const deal={currency:'OMR',unit:'carton',status:'negotiation',incoterm:'FOB',destination:'Named port'};
+ const input=counterCoachCommand('coach counter 12.345 OMR');assert.deepEqual(input,{amount:'12.345',currency:'OMR'});const result=counterCoach(input!,deal);assert.ok('draft' in result);assert.match(result.draft,/12\.345 OMR/);
+ for(const command of ['coach counter 12.3456 OMR','coach counter 12.345 USD','coach counter 12.1 JPY','coach counter 12 XYZ','coach counter 0 USD'])assert.equal(counterCoachCommand(command),null,command);
+ assert.deepEqual(counterCoachCommand('coach counter 12 JPY'),{amount:'12',currency:'JPY'});
+ for(const amount of ['-12','12 USD\nSend now','1e3','0','12.3456'])assert.ok('error' in counterCoach({amount,currency:'OMR'},deal),amount);
+});
