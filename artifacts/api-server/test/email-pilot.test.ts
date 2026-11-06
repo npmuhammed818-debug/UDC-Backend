@@ -32,3 +32,9 @@ test('email draft headers reject control characters and Unicode direction tricks
  for(const field of ['subject','messageId','threadId'] as const)for(const bad of ['bad\u0000value','bad\u2028value','bad\u202evalue'])assert.equal(await processEmailPilot({...event,[field]:bad},ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'invalid',field);
  assert.equal(calls,0);
 });
+
+test('malformed runtime email envelopes fail closed before any external port',async()=>{
+ const event:EmailEvidence={eventId:'event',messageId:'message',threadId:'thread',from:'buyer@example.com',to:['udc@updowncircle.site'],cc:[],subject:'Trade',text:'status',autoSubmitted:false,bulk:false,attachments:[]};let calls=0;const ports:EmailPilotPorts={verifyDelivery:async()=>{calls++;return null;},resolveVerifiedAddress:async()=>null,claim:async()=>false,respondDraft:async()=>'',saveDraft:async()=>{}};
+ for(const input of [null,undefined,{},[],{...event,from:123},{...event,to:null},{...event,to:[42]},{...event,cc:'none'},{...event,text:null},{...event,attachments:null},{...event,attachments:[null]},{...event,autoSubmitted:'false'},{...event,bulk:undefined}])assert.equal(await processEmailPilot(input as never,ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'invalid');
+ assert.equal(calls,0);
+});
