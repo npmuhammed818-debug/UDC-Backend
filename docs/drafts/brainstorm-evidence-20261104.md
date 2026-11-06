@@ -467,3 +467,6 @@ Native actual handler reproduced saving a monthly-scorecard preference after the
 
 ## Synthetic email history current relay evidence
 Native shared email-history reader reproduced exposing a counterpart relay while its relayed marker correction was pending. Exact direct-party deal and bounded original/relay event rows now share-lock inside one transaction; the existing post-read account/binding/consent resolution remains. Native pending relay-marker withdrawal blocks then excludes that text.710APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. This is local synthetic read-only draft evidence, not full mailbox integration, provider delivery or customer-device completion. No real inbox/send, hosted SQL, deployment or money/commission changes.
+
+### Exact email history additional concurrent proof
+Actual native shared-reader tests also hold pending direct-party reassignment and own-original-text correction. History blocks then denies former party, or returns the corrected own text rather than the stale original. Focused native suite passed; runtime unchanged from the710/all21/5 verified candidate. Synthetic only, not real email or receipt evidence.
