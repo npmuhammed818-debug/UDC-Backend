@@ -38,3 +38,10 @@ test('malformed runtime email envelopes fail closed before any external port',as
  for(const input of [null,undefined,{},[],{...event,from:123},{...event,to:null},{...event,to:[42]},{...event,cc:'none'},{...event,text:null},{...event,attachments:null},{...event,attachments:[null]},{...event,autoSubmitted:'false'},{...event,bulk:undefined}])assert.equal(await processEmailPilot(input as never,ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'invalid');
  assert.equal(calls,0);
 });
+
+import {processChannelMessage,type ConversationPorts} from '../src/channels/conversationPort.ts';
+test('channel-neutral boundary refuses malformed runtime envelopes before identity resolution',async()=>{
+ const valid={channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'message',text:'hello'};let calls=0;const ports:ConversationPorts={resolveVerifiedBinding:async()=>{calls++;return null;},claim:async()=>false,respond:async()=>'',deliver:async()=>{}};
+ for(const input of [null,{},[],{...valid,text:null},{...valid,text:42},{...valid,externalSenderId:42},{...valid,providerMessageId:{}},{...valid,replyToProviderId:42}])assert.equal(await processChannelMessage(input as never,ports),'invalid');
+ assert.equal(calls,0);
+});

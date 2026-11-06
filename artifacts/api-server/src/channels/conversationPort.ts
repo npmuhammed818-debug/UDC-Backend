@@ -11,7 +11,7 @@ export interface ConversationPorts {
   deliver(input:{channel:Channel;externalRecipientId:string;replyToProviderId:string;text:string}):Promise<void>;
 }
 export async function processChannelMessage(input:InboundEnvelope,ports:ConversationPorts) {
- if(!['whatsapp','telegram','email'].includes(input.channel)||!input.providerMessageId||!input.externalSenderId||!input.text.trim()||input.text.length>6000)return 'invalid' as const;
+ if(!input||typeof input!=='object'||Array.isArray(input)||typeof input.channel!=='string'||typeof input.externalSenderId!=='string'||typeof input.providerMessageId!=='string'||typeof input.text!=='string'||input.replyToProviderId!==undefined&&typeof input.replyToProviderId!=='string'||!['whatsapp','telegram','email'].includes(input.channel)||!input.providerMessageId||!input.externalSenderId||!input.text.trim()||input.text.length>6000)return 'invalid' as const;
  const principal=await ports.resolveVerifiedBinding({channel:input.channel,externalSenderId:input.externalSenderId});
  if(!principal||principal.status!=='verified'||!['buyer','seller','agent'].includes(principal.role)||!principal.userId||!principal.consentVersion)return 'identity_or_consent_required' as const;
  if(!await ports.claim({channel:input.channel,providerMessageId:input.providerMessageId}))return 'duplicate' as const;
