@@ -18,3 +18,9 @@ test('brain cannot invent a departure or transit from a label or unresolved even
 test('planned, conditional and question text is not an accomplished carrier event',()=>{
  for(const text of ['Will be delivered tomorrow','May be delivered','Should be shipped today','Could be dispatched','Please confirm delivered','Delivered?','Ready for dispatch','Waiting for pickup','Delivery requested','Due to depart tomorrow'])assert.equal(classify(text),null,text);
 });
+
+test('return-to-sender, pickup-point and ambiguous left text are not final delivery or departure',()=>{
+ for(const text of ['Delivered to sender','Delivered back to shipper','Returned to sender, delivered','Delivered to pickup point, available for collection','Delivered to local post office','Left message for recipient','Left at reception','Customer left instructions','The left door is damaged','Proof of delivery document uploaded'])assert.equal(classify(text),null,text);
+ assert.equal(classify('Shipment left origin facility'),'shipped');
+ assert.equal(classify('Parcel delivered to consignee'),'delivered');
+});
