@@ -192,3 +192,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Test-only native actual code delivery waits for a pending exact-challenge row change to consumed, then refuses without sink delivery. Restored challenge retains normal single-use confirmation. This proves the selected-row lock and unused check from the prior recipient fix. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email code delivery attempt budget, 2026-11-06
+
+Native actual sink delivery reproduced delivering an already exhausted five-attempt challenge code. Delivery now requires a numeric nonnegative safe-integer attempt count below five, matching confirmation. Exhausted challenge refuses without delivery, normal enrollment remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
