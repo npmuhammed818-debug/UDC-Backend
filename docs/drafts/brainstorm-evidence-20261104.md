@@ -430,6 +430,10 @@ Reproduced `Delivered to sender` classified as final delivery and bare `left` de
 ## Parallel direct tracking quota guard, 2026-11-05
 
 Reproduced five concurrent direct tracking lookups causing five carrier requests despite the six-hour cache. Same-process in-flight lookups now share one promise per normalized number, bounded to500 active numbers; settled failures release the slot and are not cached as success. Tests execute five overlapping calls with one synthetic provider request and one answer, plus shared failure and later retry. 708tests/types/build/all21native/5extractor pass. This is per-process coalescing, not a cross-worker durable quota guarantee. No live carrier/Meta, deployment, hosted SQL, money or commission changes.
+
+## Attached translation token and comparison-sign guard, 2026-11-05
+
+Reproduced `100USD` becoming `100EUR` while the exact-token guard returned true: word boundaries excluded currency/unit suffixes attached to numbers. Currency/unit tokens now use letter boundaries so numeric attachment is covered, and exact comparison/operator signs plus piece/carton/container tokens are retained. Tests cover attached currency/unit, slash price basis, changed inequality and container counts while ordinary prose does not become a token. 710tests/types/build/all21native/5extractor pass with synthetic brain/provider only. This remains lexical verification, not proof of translated names, negation or commercial meaning. No real model/provider call, send, deploy, hosted SQL, money or commission change.
 Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
 
 PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
