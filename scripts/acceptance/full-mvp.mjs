@@ -47,7 +47,13 @@ const docker = (...args) => {
 };
 
 run('codegen', 'pnpm', ['--filter', '@workspace/api-spec', 'run', 'codegen']);
-run('legal-text-preserved', 'git', ['diff', '--exit-code', '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
+// Fixed source baseline for the Oct27 staging wording, not launch/legal approval.
+const legalSourceBaseline = '6ad693fa4e4e93a2631ee68c6378efb8071a2248';
+// Shallow CI checkouts may lack this exact source object. Fetch only that fixed
+// commit; never substitute HEAD or skip the subsequent content comparison.
+const legalObject = spawnSync('git', ['cat-file', '-e', legalSourceBaseline + '^{commit}'], { cwd: root, encoding: 'utf8' });
+if (legalObject.status !== 0) run('legal-source-fetch', 'git', ['fetch', '--no-tags', 'origin', legalSourceBaseline]);
+run('legal-text-preserved', 'git', ['diff', '--exit-code', legalSourceBaseline, '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
 run('generated-contracts', 'git', ['diff', '--exit-code', '--', 'lib/api-zod/src/generated', 'lib/api-client-react/src/generated']);
 run('release', 'pnpm', ['run', 'release:verify'], {}, true);
 run('feature-groups', 'pnpm', ['run', 'acceptance'], {}, true);
@@ -131,7 +137,7 @@ const requirements = [
 const capabilities = requirements.map(([capability, needed, scope]) => ({ capability, automated: !needed.length ? 'NOT YET VERIFIED' : needed.every(id => proof.get(id) === 'PASS') ? 'PASS' : 'FAIL',
   realProvider: 'NOT YET VERIFIED', evidence: needed, scope }));
 const passed = stages.every(s => s.status === 'PASS') && pg.length > 0 && pg.every(s => s.status === 'PASS');
-const report = { generatedAt: new Date().toISOString(), revision, sourceDigest: digest,
+const report = { legalSourceBaseline, legalLaunchApproved: false, generatedAt: new Date().toISOString(), revision, sourceDigest: digest,
   localChecksPassed: passed, fullMvpAccepted: false, stagingActivationApproved: false,
   parallelSources: { acceptanceBase: '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', base: '83fddc6cd8fba5f7fa6f2edc36a27aba9cdd2bb2', pr181: 'd71c1573bd0f96e19ba6bcbdbb914ec08283f5ca', pr182: '767f0fad88ba0fec3204d79f1a88f5fb4b406481', onboarding: '1578783b60c38c5e4b107f923e686e1dd8107606' },
   stages, postgres: pg, capabilities };
