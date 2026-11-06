@@ -45,3 +45,11 @@ test('channel-neutral boundary refuses malformed runtime envelopes before identi
  for(const input of [null,{},[],{...valid,text:null},{...valid,text:42},{...valid,externalSenderId:42},{...valid,providerMessageId:{}},{...valid,replyToProviderId:42}])assert.equal(await processChannelMessage(input as never,ports),'invalid');
  assert.equal(calls,0);
 });
+
+test('email draft retains validated headers despite caller or verifier mutation',async()=>{
+ for(const mutateVerifier of [false,true]){
+ const event:EmailEvidence={eventId:'event',messageId:'original-message',threadId:'original-thread',from:'buyer@example.com',to:['udc@updowncircle.site'],cc:[],subject:'Original subject',text:'history',autoSubmitted:false,bulk:false,attachments:[]};let saved:any;
+ const ports:EmailPilotPorts={verifyDelivery:async received=>{if(mutateVerifier){received.subject='bad\r\nBcc: other@example.com';received.messageId='other-message';received.to.push('other@example.com');}return {signatureValid:true,dmarcAligned:true,authenticatedFrom:'buyer@example.com'};},resolveVerifiedAddress:async()=>({userId:'original',role:'buyer',status:'verified',consentVersion:'v1'}),claim:async id=>{assert.equal(id,'original-message');return true;},respondDraft:async()=>{event.subject='bad\r\nBcc: other@example.com';event.threadId='other-thread';return 'Synthetic private history';},saveDraft:async draft=>{saved=draft;}};
+ assert.equal(await processEmailPilot(event,ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'drafted_not_sent');assert.equal(saved.subject,'Re: Original subject');assert.equal(saved.threadId,'original-thread');assert.equal(saved.inReplyTo,'original-message');assert.equal(saved.to,'buyer@example.com');
+ }
+});
