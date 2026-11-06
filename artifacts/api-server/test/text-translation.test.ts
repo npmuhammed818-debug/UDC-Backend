@@ -28,3 +28,8 @@ test('non-ASCII percentage and per-mille units cannot disappear or change',()=>{
  for(const [source,result] of [['Purity ٩٩٪','Purete ٩٩'],['Tolerance 2‰','Tolerance 2%'],['Tolerance 2‱','Tolerance 2‰']])assert.equal(translatedTextOk(result,source,'french'),false,source);
  assert.equal(translatedTextOk('Purete ٩٩٪','Purity ٩٩٪','french'),true);
 });
+
+test('Arabic decimal and grouping separators remain part of exact numeric tokens',()=>{
+ for(const [source,result] of [['Price ١٠٫٥ USD','Prix ١٠٬٥ USD'],['Price ١٬٠٠٠ USD','Prix ١٫٠٠٠ USD'],['Price ١٠٫٥ USD','Prix ١٠ ٥ USD']])assert.equal(translatedTextOk(result,source,'french'),false,source);
+ assert.equal(translatedTextOk('Prix ١٠٫٥ USD','Price ١٠٫٥ USD','french'),true);
+});
