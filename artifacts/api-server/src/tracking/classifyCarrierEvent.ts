@@ -2,6 +2,9 @@
  * cannot establish shipment or delivery. Carrier text remains unverified. */
 export function classifyCarrierDescription(description:string):'shipped'|'delayed'|'delivered'|null{
  const text=description.toLowerCase();
+ // Intermediate logistics handoffs do not establish delivery to the recipient.
+ if(/\bdelivered\b[^.\n]{0,80}\b(?:carrier|delivery partner|sorting hub|sorting cent(?:er|re)|customs office|parcel locker|onward transport)\b/.test(text))return null;
+ if(/\bif\s+(?:it\s+(?:is|was)\s+)?delivered\b/.test(text))return null;
  // Return legs and intermediate handoffs do not establish consignee delivery.
  if(/\b(?:return(?:ed|ing)?(?: to|ed)?|back to)\b[^.\n]{0,50}\b(?:sender|shipper|origin)\b|\bdelivered\b[^.\n]{0,60}\b(?:sender|shipper|pickup point|pick-up point|collection point|post office|available for collection)\b/.test(text))return null;
  if(/\bproof of delivery\b/.test(text)&&!/\bdelivered\b/.test(text))return null;

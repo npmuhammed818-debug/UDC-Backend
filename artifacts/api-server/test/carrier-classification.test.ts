@@ -24,3 +24,10 @@ test('return-to-sender, pickup-point and ambiguous left text are not final deliv
  assert.equal(classify('Shipment left origin facility'),'shipped');
  assert.equal(classify('Parcel delivered to consignee'),'delivered');
 });
+
+test('carrier and partner handoffs or conditional delivery text do not establish final delivery',()=>{
+ for(const text of ['Delivered to local carrier','Delivered to delivery partner','Delivered to destination sorting hub','Delivered to customs office','Delivered to parcel locker, awaiting collection','If delivered, tracking will update','Delivery has been delivered to carrier for onward transport']){
+  assert.equal(classify(text),null,text);
+  assert.equal(trackingReplyViolatesRules('Your parcel was delivered.',[{time:'2026-11-05T00:00:00Z',description:text}]),true,text);
+ }
+});
