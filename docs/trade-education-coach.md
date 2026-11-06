@@ -157,3 +157,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native actual resolver reproduced returning the old email address's bound identity after waiting for a pending registered-address change to commit. The initial address-to-user lookup was outside the account lock and the locked recheck did not compare the current address. Resolution now requires the locked current registered address to match the inbound address. Pending address change waits then returns no identity; restored normal binding remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email identity pending consent withdrawal, 2026-11-06
+
+Native actual account resolver reproduced returning bound identity while consent withdrawal was pending under its consent lock. Identity resolution now passes its transaction executor and requests the existing consent serialization lock before reading consent. Native pending withdrawal waits then denies identity. Reserve/confirmation consent paths are unchanged by this slice. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
