@@ -25,3 +25,15 @@ test('fractional JSON numbers require original decimal text before exact compari
  assert.equal(exact.checks.find(c=>c.field==='quantity')!.state,'match');assert.equal(exact.checks.find(c=>c.field==='unit_price')!.state,'match');
  assert.equal(documentCheck({...deal,agreedPrice:'9007199254740990.9'},{pricing:{unitPrice:'9007199254740990.9',currency:'USD',basis:'MT'}}).checks.find(c=>c.field==='unit_price')!.state,'match');
 });
+
+test('blank recorded unit or currency cannot authorize an exact numeric comparison',()=>{
+ const extraction={quantity:{value:'100',unit:' '},pricing:{unitPrice:'9999999999999999.01',currency:' ',basis:' '}};
+ const result=documentCheck({...deal,unit:' ',currency:' '},extraction);
+ assert.equal(result.checks.find(c=>c.field==='quantity')!.state,'not_comparable');
+ assert.equal(result.checks.find(c=>c.field==='unit_price')!.state,'not_comparable');
+});
+
+test('whitespace-only recorded text is missing evidence, not a proven mismatch',()=>{
+ const r=documentCheck({...deal,unit:' ',currency:' ',incoterm:' ',destination:' '},{quantity:{value:'100',unit:'MT'},pricing:{unitPrice:'9999999999999999.01',currency:'USD',basis:'MT'},logistics:{incoterm:'FOB',destination:'Dubai'}});
+ assert.ok(r.checks.every(c=>c.state==='not_comparable'));
+});

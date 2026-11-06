@@ -192,9 +192,9 @@ try {
   assert.ok(sent.slice(conflictBefore).some(m=>/already belongs/.test(m.text?.body??'')),'duplicate email refusal must be shown before the next question');
   assert.equal(await count('select count(*) from users where phone=$1',[conflictPhone]),0);
   const {rows:drafts}=await pool.query("select data from whatsapp_chat_sessions where data->>'full_name'=$1 and purpose='profile_buyer'",[label+' Retry']);
-  assert.equal(drafts.length,1);assert.equal(drafts[0].data.email,undefined,'duplicate email is never added to the draft');
+  assert.equal(drafts.length,1,JSON.stringify({label,sessions:(await pool.query("select purpose,step,data from whatsapp_chat_sessions where purpose='profile_buyer'")).rows,replies:sent.slice(conflictBefore).map(m=>m.text?.body)}));assert.equal(drafts[0].data.email,undefined,'duplicate email is never added to the draft');
   for(const text of [`retry-${randomUUID()}@example.invalid`,'QA Retry Imports Ltd','India','Submit'])await sendAs(conflictPhone,text);
-  assert.equal(await count('select count(*) from users where phone=$1 and status=$2',[conflictPhone,'pending']),1);
+  assert.equal(await count('select count(*) from users where phone=$1 and status=$2',[conflictPhone,'pending']),1,JSON.stringify({label,sessions:(await pool.query("select purpose,step,data from whatsapp_chat_sessions where purpose='profile_buyer'")).rows,replies:sent.slice(conflictBefore).map(m=>m.text?.body)}));
   const {rows:[originalBuyer]}=await pool.query('select email,role,status from users where id=$1',[buyer.id]);
   assert.equal(originalBuyer.email,email);assert.equal(originalBuyer.role,'buyer');assert.equal(originalBuyer.status,'pending');
 

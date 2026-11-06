@@ -90,9 +90,16 @@ router.get('/trade-assist/completion-diary',async(req,res)=>{try{const r=await t
 router.get('/trade-assist/diary',async(req,res)=>{
  try{
   const month=z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).parse(req.query.month),start=new Date(month+'-01T00:00:00Z'),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1);
-  const rows=await db.select({status:dealsTable.status,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(req.authUser!.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,req.authUser!.id),gte(dealsTable.updatedAt,start),lt(dealsTable.updatedAt,end))).limit(1001);
-  if(rows.length>1000){res.status(422).json({error:'too_many_records_for_summary'});return;}
-  res.json(diarySummary(rows,month));
+  const result=await db.transaction(async tx=>{
+   const principal=req.authUser!;
+   const [account]=await tx.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,principal.id)).limit(1).for('share');
+   if(!account||account.status!=='verified'||!['buyer','seller'].includes(account.role)||account.role!==principal.role)return {error:403};
+   const rows=await tx.select({status:dealsTable.status,updatedAt:dealsTable.updatedAt}).from(dealsTable).where(and(eq(account.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,account.id),gte(dealsTable.updatedAt,start),lt(dealsTable.updatedAt,end))).limit(1001).for('share');
+   if(rows.length>1000)return {error:422};
+   return diarySummary(rows,month);
+  });
+  if('error'in result){res.status(result.error!).json({error:result.error===422?'too_many_records_for_summary':'current_verified_account_required'});return;}
+  res.json(result);
  }catch(error){if(error instanceof z.ZodError){res.sendStatus(400);return;}res.sendStatus(503);}
 });
 export default router;
