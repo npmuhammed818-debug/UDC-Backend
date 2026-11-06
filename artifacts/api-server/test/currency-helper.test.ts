@@ -22,3 +22,10 @@ test('currency references never present a future UTC rate date as current',async
  clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date:'2026-11-06',base:'USD',quote:'INR',rate:84})),now:Date.parse('2026-11-05T23:59:59Z')}),/currency_rate_stale/);
  clearCurrencyCache();const result=await currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date:'2026-11-05',base:'USD',quote:'INR',rate:84})),now:Date.parse('2026-11-05T00:00:00Z')});assert.equal(result.rateDate,'2026-11-05');
 });
+
+test('rejected stale and future rates never poison the pair cache',async()=>{
+ for(const badDate of ['2026-10-01','2026-11-06']){
+ clearCurrencyCache();let calls=0;const fetcher=async()=>new Response(JSON.stringify({date:++calls===1?badDate:'2026-11-05',base:'USD',quote:'INR',rate:84}));const ports={fetch:fetcher as typeof fetch,now:Date.parse('2026-11-05T12:00:00Z')};
+ await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},ports),/currency_rate_stale/);const result=await currencyConversion({amount:'2',base:'USD',quote:'INR'},ports);assert.equal(result.converted,'168.00');assert.equal(calls,2);
+ }
+});
