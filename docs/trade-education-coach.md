@@ -27,3 +27,5 @@ Status-picture selection correction: native SQL reproduced the actual handler ge
 Trial current-role proof: a second native SQL connection holds a pending buyer-to-seller role change. Actual preparation waits, then returns forbidden after that change commits, with no new requirement or success audit. This tests the existing account lock and does not change role policy or create an order.
 
 Document comparison correction: whitespace-only recorded unit/currency matching whitespace extraction previously authorized numeric quantity/price matches. Numeric comparisons now require a nonblank recorded unit, and price also requires nonblank recorded currency. Empty labels cannot establish a comparable basis; no unit/FX conversion or approval is inferred.
+
+Actual authenticated HTTP + native SQL now verifies blank recorded basis produces non-comparable quantity and price despite matching numeric text. Human-review/authenticity boundaries remain. Entire deal and extraction rows plus total audit count are unchanged; a comparison cannot create an approval receipt.
