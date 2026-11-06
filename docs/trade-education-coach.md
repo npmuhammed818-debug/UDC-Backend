@@ -1,0 +1,73 @@
+
+### Recorded term label safety (synthetic proof)
+Counter drafts refuse blank, oversized, multiline and directional-control term labels. Normal international destination names still work. No label is silently cleaned into a different trade term. This is private draft validation, not a send or a change to a deal.
+
+The counter helper also rejects non-string runtime amount and currency values before string operations. Reproduced a numeric amount causing a TypeError; null, array, object and boolean inputs now return the ordinary no-draft error. No coercion to a different amount or currency.
+
+Trial-quantity helpers reject non-string runtime input before exact-decimal processing. Reproduced numeric input throwing during canonicalization; malformed values now return null/false. Existing string decimal canonicalization and positive-reduction arithmetic stay unchanged. No order is created by these helper tests.
+
+Native SQL handler proof stores a blank unit, a multiline destination and a directional-control destination in turn. The actual negotiation handler returns only the normal refusal to the requester, never a counter draft or the unsafe label. Each check compares every stored deal field before/after and verifies it is unchanged. Test transport is synthetic, not WhatsApp/Meta.
+
+A second SQL connection now holds a pending destination correction while the actual counter handler starts. The handler waits, reads the committed unsafe label and refuses instead of drafting from stale terms. The test checks requester-only transport, no leaked unsafe label and the full stored deal remaining unchanged after refusal.
+
+Trial preparation now has native SQL proof for malformed runtime quantities and a source-quantity correction held by a second connection. The actual preparation function waits, rejects a quantity no longer smaller than the corrected original, creates no buyer requirement or success audit, and changes no stored deal field. No customer orders or external transport are involved.
+
+Seller response summary correction: equal-timestamp inbound and outbound rows previously counted as an answered turn or not solely from database return order. Ties now process seller outbound first, so they cannot manufacture a proven reply to the simultaneous inbound. Older pending turns and later timestamped replies still work; the private summary explains the tie limitation. This is activity arithmetic, not a rating or ranking.
+
+Native SQL proof inserts equal-timestamp buyer/seller messages in both physical orders and calls the actual seller scorecard reader. Both return zero proven answers, one unanswered turn and no median, with the tie limitation. The full conversation rows remain unchanged; private account and deal IDs are absent from the summary.
+
+Freight request selection correction: native SQL reproduced preparation finishing against an old selected deal while a selection change was pending. The selected-context read now holds a shared row lock inside the existing preparation transaction. The two-connection test waits for the changed selection, refuses an unavailable deal and creates no freight-request audit. Existing role checks and parallel idempotence still pass. No freight quote, booking or money decision is made.
+
+Same-pair memory selection correction: native SQL reproduced reading old selected-deal history while a selection change was pending. The implicit selected-context read now holds a shared row lock in its existing transaction. A two-connection test waits, sees the committed unavailable selection and returns no pair-history fields or new audit. Explicit deal-reference reads remain independent of chat selection.
+
+Contextual Incoterm-tip correction: native SQL reproduced the actual handler returning the old selected deal's rule while a selection change was pending. The implicit selected-context read now holds a shared row lock. The handler waits, sees the committed unavailable selection and returns only the requester-side no-private-term fallback. Existing exact-rule explanations and no-term-mutation checks still pass.
+
+Status-picture selection correction: native SQL reproduced the actual handler generating a picture from the old selection while a selection change was pending. The context read now holds a shared row lock inside the existing handler transaction. The test waits, sees the committed unavailable selection and emits only the requester-side fallback with no PNG. No picture rendering or design changed.
+
+Trial current-role proof: a second native SQL connection holds a pending buyer-to-seller role change. Actual preparation waits, then returns forbidden after that change commits, with no new requirement or success audit. This tests the existing account lock and does not change role policy or create an order.
+
+Document comparison correction: whitespace-only recorded unit/currency matching whitespace extraction previously authorized numeric quantity/price matches. Numeric comparisons now require a nonblank recorded unit, and price also requires nonblank recorded currency. Empty labels cannot establish a comparable basis; no unit/FX conversion or approval is inferred.
+
+Actual authenticated HTTP + native SQL now verifies blank recorded basis produces non-comparable quantity and price despite matching numeric text. Human-review/authenticity boundaries remain. Entire deal and extraction rows plus total audit count are unchanged; a comparison cannot create an approval receipt.
+
+Recorded-text evidence correction: whitespace-only recorded unit, currency, Incoterm or destination is missing evidence, not a proven mismatch against extracted text. All such fields now return non-comparable instead of a false discrepancy. Existing actual differences remain mismatches; no record is rewritten.
+
+Selected-document comparison correction: native SQL reproduced WhatsApp comparison returning old selected-deal results while a selection change was pending. The handler now keeps current phone/account, selected context, comparison reads and synthetic response in one transaction; the shared comparison accepts that executor instead of nesting a separate transaction. Two-connection proof waits and returns only unavailable after the new selection commits. Explicit HTTP/email deal-reference behavior remains unchanged.
+
+Selected recorded-terms correction: native SQL reproduced the WhatsApp terms summary reading the old selected deal during a pending selection change. Phone/account, selected context, shared read and synthetic reply now share one transaction. Two-connection proof waits and returns no private terms after unavailable new selection commits. Explicit HTTP/email reads retain their own transaction and behavior.
+
+Selected seller-review correction: native SQL reproduced the WhatsApp seller-review handler reading the old selected deal during a pending selection change. Account/phone, selected context, shared review read and synthetic response now share one transaction. Two-connection proof waits and returns no seller review after an unavailable selection commits. Explicit-reference review checks remain unchanged; no new verification or guarantee is created.
+
+Selected quality-index correction: native SQL reproduced the WhatsApp quality-pack handler preparing an index for the old selection during a pending selection change. Account/phone, selection, index read/audit and synthetic response now share one transaction. The two-connection test waits and returns only unavailable for the committed new selection, with no stale prepared-index audit. No files/grants are shared or created.
+
+Selected photo-review correction: native SQL reproduced the WhatsApp handler showing old selected-deal rows and offering a review button during a pending selection change. Current phone/account, selection, shared photo read, offer audit and synthetic responses now share one transaction. The two-connection test waits and returns only unavailable for the committed new selection, with no button or offer audit. Exact-reference HTTP/email and confirmation logic are unchanged.
+
+Positive actual-handler photo proof now verifies the shared transaction still returns the exact synthetic extracted row and a deal/document/token-bound review button only to the requester. Exactly one offer audit is added; no snapshot-reviewed audit appears merely from showing the button. The later pending-selection race still produces only fallback, no extra offer.
+
+Photo offer grant-withdrawal proof: a second native SQL connection deletes the current document grant while the actual WhatsApp review handler starts. The handler waits, then sends only unavailable to the requester, with no extracted rows, button or new button-offered audit. This extends the existing confirmation-time revocation proof to the initial review offer.
+
+Photo-offer delivery correction: native SQL plus the actual handler reproduced adding a button-offered receipt even when extracted-row delivery failed. The handler now requires confirmed synthetic row delivery before offering review, and confirmed button delivery before writing the offer audit. Failed text creates no button or offer receipt; failed button creates no offer receipt. Positive and revocation/selection cases still pass. This is synthetic transport acknowledgement, not proof of a human reading a message.
+
+## Photo review button current-phone binding, 2026-11-06
+
+Reproduced a pending phone reassignment still allowing the old phone's photo-review button to record a review: the handler resolved the old phone outside the confirmation transaction. The handler now locks and resolves the phone binding and reads the existing offer within one transaction, passing that executor through exact-snapshot confirmation and the synthetic reply. Native SQL holds a phone change pending, invokes the actual button handler, then commits the change: the handler waits, refuses the old phone and creates no review audit. Existing HTTP confirmation still uses its own transaction and retains the snapshot/idempotence/grant-revocation checks. Full 774 tests, types, API/frontend builds, all 21 native suites and five extractor tests passed. Synthetic only; no live Meta/provider calls, deployment, hosted SQL, money or commission changes.
+
+## Photo review button positive and unoffered proof, 2026-11-06
+
+Executed the actual WhatsApp button handler after a successful synthetic offer. It records exactly one buyer review for the bound snapshot; a repeated tap does not add another audit. An unoffered token is refused with no review audit. This closes the positive-path test gap for the shared phone-binding transaction added previously. Existing HTTP and pending-phone-reassignment tests remain. Full774/types/APIfrontend/all21native/5extractor passed. No live sends, provider calls, hosted SQL, deployment, money or commission changes.
+
+## Human-help offer current selected context, 2026-11-06
+
+Native SQL reproduced the help offer disclosing the old selected deal number and button while a context change was pending. Offer now locks current phone/account, selected context and direct-party deal in one transaction through the synthetic offer. The actual handler waits for the pending context write, then returns false without a button when the old deal is no longer selected. Normal offer and explicitly deal-bound request tests still pass. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no human contact, live sends/provider calls, hosted SQL, deployment, money or commission change.
+
+## Human-help button current phone recheck, 2026-11-06
+
+Native SQL reproduced a pending phone reassignment still letting the old phone read a saved human-help request's resolved status. The shared assist writer accepts an optional expected phone and rechecks it under the existing account share lock after serialization; the human-help button passes its inbound phone. Existing callers without phone context retain their current behavior. Actual callback waits for the pending phone write, then refuses without request creation or old-account status disclosure. Normal bound help and full existing routes pass. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no actual human contact, provider/send, hosted SQL, deployment, money or commission change.
+
+## Guided exit reason current phone recheck, 2026-11-06
+
+Native SQL reproduced a guided exit-reason callback resolving the old phone before an assist-lock wait and then acknowledging its earlier answer after that phone was reassigned. Callback now passes its inbound phone to the existing locked assist recheck. Actual handler waits at the serialization boundary, then refuses with no new exit-reason audit after reassignment. Skip uses its existing separate current-phone/closure checks. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live provider/send, hosted SQL, deployment, money or commission change.
+
+## Text assist request current selected deal, 2026-11-06
+
+Actual native command reproduced a help request acknowledgement for the old selected deal while a context change was pending. Text-driven assist writes now opt into the shared transaction's current selected-deal recheck under a context share lock and pass the inbound phone for the existing account recheck. Native callback waits then refuses with unchanged request count after context change. Explicit deal-bound help buttons and HTTP requests do not opt into selected-context semantics. Full774/types/APIfrontend/all21native/5extractor passed. Status-only command branch is unchanged and is not covered by this write-path fix. Synthetic only; no live sends/provider, hosted SQL, deployment, money or commission change.
