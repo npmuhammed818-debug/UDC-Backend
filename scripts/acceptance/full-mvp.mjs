@@ -47,7 +47,8 @@ const docker = (...args) => {
 };
 
 run('codegen', 'pnpm', ['--filter', '@workspace/api-spec', 'run', 'codegen']);
-run('legal-text-preserved', 'git', ['diff', '--exit-code', '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
+// Fixed source baseline for the Oct27 staging wording, not launch/legal approval.
+run('legal-text-preserved', 'git', ['diff', '--exit-code', '6ad693fa4e4e93a2631ee68c6378efb8071a2248', '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
 run('generated-contracts', 'git', ['diff', '--exit-code', '--', 'lib/api-zod/src/generated', 'lib/api-client-react/src/generated']);
 run('release', 'pnpm', ['run', 'release:verify'], {}, true);
 run('feature-groups', 'pnpm', ['run', 'acceptance'], {}, true);

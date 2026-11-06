@@ -217,3 +217,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Test-only actual WhatsApp confirmation waits on the consent lock until its challenge expires, then refuses without a binding. This proves the current-clock recheck occurs after the consent wait too, separate from the email-link serialization wait. Restored expiry retains normal single-use linking. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Acceptance checker current consent baseline, 2026-11-06
+
+Expanded acceptance found the legal-preservation checker still pinned to Oct21 text and failing on existing Oct27 staging wording. Recovered the original Oct27 approval exchange for shorter consent/menu text, service support contact and restrictive withdrawal wording. Checker now pins the exact existing consent-v4 source commit, without changing legal text or treating staging approval as launch/legal approval. Worker/extractor Python3.12 all68, nine feature groups, three JavaScript suites, unchanged generated contracts and dependency audit0 advisories passed on the preceding identical application tree. Full MVP acceptance remains false; live/provider and human gates remain.
+Full774/types/APIfrontend/all21native and all68 worker/extractor Python tests passed. Native email and combined shipment migration reviews passed; local backup rehearsal lacks matching pg_dump/pg_restore clients and is not passed. The full acceptance driver still requires explicit disposable Docker for its integrated database/compose stages; no complete full-driver pass claimed.
