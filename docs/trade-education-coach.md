@@ -103,3 +103,7 @@ Native actual callback reproduced a malformed synthetic review status being repe
 ## Price currency preference current phone transaction, 2026-11-06
 
 Native actual handler reproduced saving a price-currency preference from an old phone while reassignment was pending. Preference now resolves and share-locks the current verified account inside the same transaction as its preference audit insert. Pending phone change blocks the command, then denies without a new preference row. Existing INR preference, outbound synthetic conversion and opt-out tests remain. Full774/types/APIfrontend/all21native/5extractor passed. This changes a display preference only, not rates, quotes, units, deal/payment terms or commissions. No live provider/send, hosted SQL or deployment.
+
+## Price currency current account proof, 2026-11-06
+
+Test-only actual handler/native SQL proof covers pending account suspension and buyer-to-agent role change during display-currency preference. Each command waits, then refuses without a preference audit after the change commits. Existing phone-reassignment and valid preference/opt-out paths remain. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic display-preference evidence only; no rate/quote/payment/commission change, provider/send, hosted SQL or deployment.
