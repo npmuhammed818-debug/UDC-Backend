@@ -461,3 +461,6 @@ Native actual handler reproduced saving a watch while its pending lock wait let 
 
 ## Trade-brief preference current account and consent recheck
 Actual handler/native SQL reproduced saving optional brief preference after account suspension committed during its category-lock wait. Preference writer now locks/rechecks current phone, verified buyer/seller account and current consent after the category lock. Native tests also withdraw consent during that wait and prove no preference row or false success; normal on/off and runner tests pass.710APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Synthetic only; no mailbox/provider/send, hosted SQL, deployment, money or commission change.
+
+## Monthly scorecard preference current seller and consent
+Native actual handler reproduced saving a monthly-scorecard preference after the account changed from seller to buyer during the serialization-lock wait. Writer now locks/rechecks current phone, verified seller role and current consent inside that transaction. Native role-change and consent-withdrawal boundary tests create no preference or false success; normal on/off, private body and scanner tests still pass.710APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Synthetic only, no provider/real sends, hosted SQL, deployment, reward or money/commission change.
