@@ -13,8 +13,8 @@ export function classifyCarrierDescription(description:string):'shipped'|'delaye
  if(/\?|\b(?:will|would|should|may|might|could|please|tomorrow|requested|requesting|ready to|ready for|waiting for|due to)\b/.test(text))return null;
  if(/\b(?:not|never|no|without|unable|cannot|can't|could not|couldn't|yet to|awaiting|pending|expected|estimated|scheduled|out for)\b[^.\n]{0,45}\b(?:deliver\w*|proof of delivery|ship\w*|depart\w*|dispatch\w*|in transit|picked up|left)\b|\b(?:deliver\w*|proof of delivery|ship\w*|depart\w*|dispatch\w*|in transit|picked up|left)\b[^.\n]{0,30}\b(?:not|pending|unavailable|unconfirmed|expected|scheduled|failed|unsuccessful)\b/.test(text))return null;
  if(/\b(?:no|not|without|resolved|cleared)\b[^.\n]{0,25}\b(?:delay\w*|exception|hold|held)\b|\b(?:delay\w*|exception|hold)\b[^.\n]{0,25}\b(?:resolved|cleared)\b/.test(text))return null;
- if(/\bdelay|exception|held\b|customs hold|failed attempt/.test(text))return 'delayed';
+ if(/\b(?:delay|delayed|delays|exception|exceptions|held|customs hold|failed attempt)\b/.test(text))return 'delayed';
  if(/\bdelivered\b/.test(text))return 'delivered';
- if(/\bshipped\b|departed|dispatched|in transit|picked up|origin scan|\bleft\b(?:\s+from)?\s+(?:the\s+)?(?:origin|port|facility|warehouse|depot|terminal)\b/.test(text))return 'shipped';
+ if(/\b(?:shipped|departed|dispatched|in transit|picked up|origin scan)\b|\bleft\b(?:\s+from)?\s+(?:the\s+)?(?:origin|port|facility|warehouse|depot|terminal)\b/.test(text))return 'shipped';
  return null;
 }
