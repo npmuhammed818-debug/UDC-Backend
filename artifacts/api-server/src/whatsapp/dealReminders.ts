@@ -9,8 +9,15 @@ export async function handleDealReminder(phone:string,text:string){
  const [c]=await db.select({id:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,u.id)).limit(1);const [d]=c?await db.select({id:dealsTable.id,status:dealsTable.status}).from(dealsTable).where(and(eq(dealsTable.id,c.id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1):[];
  if(!d||['completed','cancelled','rejected'].includes(d.status)||input&&!safeReminderTime(input.dueAt)){await sendWhatsAppText(phone,'Select your own active deal and a future timestamp with its UTC offset, within one year. No reminder changed.');return true;}
  const key=input?input.kind:'off';const result=await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'deal_reminder:'+u.id+':'+d.id}))`);
+ const [currentUser]=await tx.select({role:usersTable.role,status:usersTable.status,phone:usersTable.phone}).from(usersTable).where(eq(usersTable.id,u.id)).limit(1).for('share');
+ if(!currentUser||currentUser.status!=='verified'||currentUser.role!==u.role||currentUser.phone!==phone)return 'unavailable';
+ const [selected]=await tx.select({id:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,u.id)).limit(1).for('share');
+ if(selected?.id!==d.id)return 'unavailable';
+ const [currentDeal]=await tx.select({status:dealsTable.status}).from(dealsTable).where(and(eq(dealsTable.id,d.id),eq(currentUser.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1).for('share');
+ if(!currentDeal||['completed','cancelled','rejected'].includes(currentDeal.status)||input&&!safeReminderTime(input.dueAt))return 'unavailable';
  if(input){const [old]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminder_requested'),eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,d.id),sql`${auditLogsTable.metadata}->>'kind'=${input.kind}`,sql`${auditLogsTable.metadata}->>'dueAt'=${input.dueAt}`)).limit(1);if(old)return true;}
  await tx.insert(auditLogsTable).values({actorUserId:u.id,action:off?'deal_reminders_stopped':'deal_reminder_requested',entityType:'deal',entityId:d.id,metadata:input?{kind:input.kind,dueAt:input.dueAt,userRequested:true}:{all:true}});return false;});
+ if(result==='unavailable'){await sendWhatsAppText(phone,'Your verified account or selected active deal changed. No reminder changed. Select your current deal and try again.');return true;}
  await sendWhatsAppText(phone,off?'All existing reminders for this selected deal are stopped.':`${result?'Already recorded':'Reminder saved'}: ${key}, ${input!.dueAt} (UTC). This is your reminder time, not a verified contractual deadline. Send reminders off to stop existing reminders on this deal.`);return true;
 }
 export async function runDealReminders(now=new Date()){
