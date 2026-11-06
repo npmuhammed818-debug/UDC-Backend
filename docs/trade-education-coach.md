@@ -63,3 +63,7 @@ Native SQL reproduced the help offer disclosing the old selected deal number and
 ## Human-help button current phone recheck, 2026-11-06
 
 Native SQL reproduced a pending phone reassignment still letting the old phone read a saved human-help request's resolved status. The shared assist writer accepts an optional expected phone and rechecks it under the existing account share lock after serialization; the human-help button passes its inbound phone. Existing callers without phone context retain their current behavior. Actual callback waits for the pending phone write, then refuses without request creation or old-account status disclosure. Normal bound help and full existing routes pass. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no actual human contact, provider/send, hosted SQL, deployment, money or commission change.
+
+## Guided exit reason current phone recheck, 2026-11-06
+
+Native SQL reproduced a guided exit-reason callback resolving the old phone before an assist-lock wait and then acknowledging its earlier answer after that phone was reassigned. Callback now passes its inbound phone to the existing locked assist recheck. Actual handler waits at the serialization boundary, then refuses with no new exit-reason audit after reassignment. Skip uses its existing separate current-phone/closure checks. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live provider/send, hosted SQL, deployment, money or commission change.
