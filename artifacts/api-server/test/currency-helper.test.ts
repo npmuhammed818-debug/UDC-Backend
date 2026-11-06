@@ -29,3 +29,10 @@ test('rejected stale and future rates never poison the pair cache',async()=>{
  await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},ports),/currency_rate_stale/);const result=await currencyConversion({amount:'2',base:'USD',quote:'INR'},ports);assert.equal(result.converted,'168.00');assert.equal(calls,2);
  }
 });
+
+test('unrepresentable provider rates fail before cache and allow a valid retry',async()=>{
+ for(const badRate of [1e-7,1e10,0.1234567890123]){
+ clearCurrencyCache();let calls=0;const fetcher=async()=>new Response(JSON.stringify({date:'2026-11-05',base:'USD',quote:'INR',rate:++calls===1?badRate:84}));const ports={fetch:fetcher as typeof fetch,now:Date.parse('2026-11-05T12:00:00Z')};
+ await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},ports),/invalid_rate_response/);assert.equal((await currencyConversion({amount:'2',base:'USD',quote:'INR'},ports)).converted,'168.00');assert.equal(calls,2);
+ }
+});
