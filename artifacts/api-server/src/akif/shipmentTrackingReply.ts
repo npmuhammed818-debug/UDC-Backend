@@ -57,7 +57,7 @@ export function trackingReplyViolatesRules(reply: string, events: ShipmentTrackE
   if (FORBIDDEN_SURFACE.test(reply)) return true;
   const cls = classifyLatest(events);
   // A status claim the carrier feed does not support is an invented fact.
-  if (/\bdelivered\b/i.test(reply) && cls !== 'delivered') return true;
+  if (/\bdelivered\b|\bdelivery\s+(?:is\s+|was\s+|has\s+been\s+)?complete(?:d)?\b|\b(?:arrived|reached)\b[^.\n]{0,35}\b(?:your address|your home|recipient|consignee)\b|\breceived\s+by\s+(?:the\s+)?(?:recipient|consignee|you)\b/i.test(reply) && cls !== 'delivered') return true;
   if (/\bdelayed\b/i.test(reply) && cls !== 'delayed') return true;
   if (/\b(?:shipped|dispatched|departed|picked up|in transit)\b/i.test(reply) && cls !== 'shipped') return true;
   return false;
