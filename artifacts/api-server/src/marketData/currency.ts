@@ -25,6 +25,6 @@ export async function currencyConversion(input:{amount:string;base:string;quote:
    if(cache.size>=500)cache.delete(cache.keys().next().value!);cache.set(key,{at:now,data});
   }
  }
- const age=now-Date.parse(data.date+'T00:00:00Z');if(!Number.isFinite(age)||age< -86400000||age>7*86400000)throw Error('currency_rate_stale');
+ const age=now-Date.parse(data.date+'T00:00:00Z');if(!Number.isFinite(age)||age<0||age>7*86400000)throw Error('currency_rate_stale');
  return {amount,base,quote,rate:String(data.rate),converted:indicativeAmount(amount,String(data.rate),places),rounding:`Half up to ${places} decimal places`,rateDate:data.date,sourceUrl,indicativeOnly:true,notice:'Daily reference estimate, not a bank quote. Fees and spreads excluded. Deal terms and payments are unchanged.'};
 }
