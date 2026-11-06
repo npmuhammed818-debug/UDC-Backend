@@ -294,16 +294,21 @@ try {
   assert.equal(await count('select count(*) from deals'),restartDealsBefore,'admin preparation creates no replacement deal');
   assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation);
   // Preparation is insufficient: review the new requirement and present fresh terms.
-  const freshMatch=randomUUID();
-  await pool.query("insert into matches(id,buyer_request_id,seller_listing_id,status) values($1,$2,$3,'approved')",[freshMatch,preparedRequest.id,termsListing]);
-  await assert.rejects(()=>module.requestTermsReview(freshMatch,adminForPreparation),/approved_compatible_records_required/,'pending requirement cannot receive a proposal');
-  assert.equal(await count("select count(*) from audit_logs where action='match_terms_proposed' and entity_id=$1",[freshMatch]),0);
+  const createRestartMatch=async(token)=>{const r=await fetch(localOrigin+'/admin/matches',{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:JSON.stringify({buyerRequestId:preparedRequest.id,sellerListingId:termsListing})});return {status:r.status,body:await r.json()};};
+  assert.equal((await createRestartMatch()).status,401);assert.equal((await createRestartMatch(buyerSession.token)).status,403);
+  const pendingMatch=await createRestartMatch(adminSession.token);assert.equal(pendingMatch.status,409);assert.equal(pendingMatch.body.error,'match_records_require_admin_approval');
+  assert.equal(await count('select count(*) from matches where buyer_request_id=$1',[preparedRequest.id]),0,'pending requirement cannot gain a match');
   const reviewRequirement=async(token)=>fetch(localOrigin+'/admin/buyer-requests/'+preparedRequest.id+'/status',{method:'PATCH',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:JSON.stringify({status:'approved'})});
   assert.equal((await reviewRequirement()).status,401);assert.equal((await reviewRequirement(buyerSession.token)).status,403);
   assert.equal((await pool.query('select status from buyer_requests where id=$1',[preparedRequest.id])).rows[0].status,'pending_admin_review');
   const reviewedRequirement=await reviewRequirement(adminSession.token);assert.equal(reviewedRequirement.status,200,await reviewedRequirement.text());
   const reviewedAudit=(await pool.query("select metadata from audit_logs where action='buyer_requirement_reviewed' and actor_user_id=$1 and entity_id=$2",[adminForPreparation,preparedRequest.id])).rows;
   assert.equal(reviewedAudit.length,1);assert.equal(reviewedAudit[0].metadata.previousStatus,'pending_admin_review');assert.equal(reviewedAudit[0].metadata.newStatus,'approved');
+  const matchedRestart=await createRestartMatch(adminSession.token);assert.equal(matchedRestart.status,201,JSON.stringify(matchedRestart.body));
+  const freshMatch=matchedRestart.body.match.id;assert.equal(matchedRestart.body.match.status,'approved');
+  assert.equal((await createRestartMatch(adminSession.token)).status,409,'duplicate match refused');
+  assert.equal(await count('select count(*) from matches where buyer_request_id=$1',[preparedRequest.id]),1);
+  assert.equal(await count("select count(*) from audit_logs where action='match_created' and entity_id=$1 and actor_user_id=$2",[freshMatch,adminForPreparation]),1);
   const freshProposal=await module.requestTermsReview(freshMatch,adminForPreparation);
   assert.notEqual(freshProposal.proposalId,termsProposal.proposalId,'restart has its own fresh proposal, not old acceptance');
   const freshAccept={type:'button_reply',button_reply:{id:'udc:terms:accept:'+freshProposal.proposalId}};

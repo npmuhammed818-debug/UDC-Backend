@@ -263,3 +263,7 @@ The continuous synthetic signed restart journey replaces its direct SQL requirem
 ## Signed restart actual session-admin preparation HTTP proof, 2026-11-06
 
 Continuous signed restart journey now replaces direct preparation-service calls with actual bearer-session admin POST. Anonymous401/buyer403 create no draft; parallel admin responses200/201 return the same pending requirement and one success audit. Then actual session requirement review, fresh terms, signed buyer decision and separate session-admin deal creation continue. Initial verification/match selection still fixtures; no alternate seller or provider/human acceptance inferred. Test-only; no runtime/deployment/hosted SQL/real send/money or commission change.
+
+## Signed restart session-admin match HTTP proof, 2026-11-06
+
+Continuous signed restart journey replaces direct SQL match creation with actual session-admin POST. Anonymous401/buyer403, pending requirement409/no match, reviewed requirement201/one approved match and exact creation audit, duplicate409. Fresh terms/signed decision/separate admin deal continue. Product/listing/account/company evidence remain synthetic setup; same seller is not alternate-seller proof and no human review quality/provider/device acceptance is inferred. Test-only; no runtime/deployment/hosted SQL/real send/money or commission change.
