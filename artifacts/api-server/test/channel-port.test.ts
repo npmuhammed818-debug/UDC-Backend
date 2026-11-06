@@ -63,3 +63,9 @@ test('caller envelope mutation cannot redirect a private response',async()=>{
  const result=await processChannelMessage(input,{resolveVerifiedBinding:async()=>({userId:'original',role:'buyer',status:'verified',consentVersion:'v1'}),claim:async()=>true,respond:async()=>{input.externalSenderId='other@example.com';input.providerMessageId='other-id';return 'Original private history';},deliver:async output=>{recipient=output.externalRecipientId;replyId=output.replyToProviderId;}});
  assert.equal(result,'delivered');assert.equal(recipient,'original@example.com');assert.equal(replyId,'original-id');
 });
+
+test('channel replay claim requires a literal true result before response or delivery',async()=>{
+ let effects=0;for(const claimed of ['false','true',1,{},[],null,undefined]){
+ const result=await processChannelMessage({channel:'email',externalSenderId:'synthetic@example.com',providerMessageId:'synthetic',text:'hello'},{resolveVerifiedBinding:async()=>({userId:'synthetic',role:'buyer',status:'verified',consentVersion:'v1'}),claim:async()=>claimed as never,respond:async()=>{effects++;return 'Private';},deliver:async()=>{effects++;}});assert.equal(result,'duplicate');
+ }assert.equal(effects,0);
+});

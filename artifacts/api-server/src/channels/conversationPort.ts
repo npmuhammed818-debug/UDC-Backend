@@ -16,7 +16,7 @@ export async function processChannelMessage(input:InboundEnvelope,ports:Conversa
  const resolved=await ports.resolveVerifiedBinding({channel:input.channel,externalSenderId:input.externalSenderId});
  const principal=resolved?{...resolved}:null;
  if(!principal||principal.status!=='verified'||!['buyer','seller','agent'].includes(principal.role)||typeof principal.userId!=='string'||!principal.userId.trim()||typeof principal.consentVersion!=='string'||!principal.consentVersion.trim())return 'identity_or_consent_required' as const;
- if(!await ports.claim({channel:input.channel,providerMessageId:input.providerMessageId}))return 'duplicate' as const;
+ if(await ports.claim({channel:input.channel,providerMessageId:input.providerMessageId})!==true)return 'duplicate' as const;
  const text=await ports.respond({principal:{...principal},text:input.text,replyToProviderId:input.replyToProviderId,channel:input.channel});
  if(typeof text!=='string'||!text.trim()||text.length>12000)return 'response_unavailable' as const;
  const current=await ports.resolveVerifiedBinding({channel:input.channel,externalSenderId:input.externalSenderId});

@@ -65,3 +65,8 @@ test('delivery authentication needs true booleans and a string authenticated add
 test('email canonicalization rejects nonstring runtime values without coercion or throwing',()=>{
  for(const value of [null,undefined,42,{},[],['buyer@example.com'],true])assert.equal(canonicalEmail(value as never),null);
 });
+
+test('link enrollment needs literal replay-claim success before generating a challenge',async()=>{
+ const event:EmailEvidence={eventId:'event',messageId:'message',threadId:'thread',from:'buyer@example.com',to:['udc@updowncircle.site'],cc:[],subject:'Link',text:'link email',autoSubmitted:false,bulk:false,attachments:[]};let starts=0;
+ for(const claim of ['false',1,{},[]])assert.equal(await processEmailPilot(event,{verifyDelivery:async()=>({signatureValid:true,dmarcAligned:true,authenticatedFrom:event.from}),claim:async()=>claim as never,startAccountLink:async()=>{starts++;return {status:'synthetic_challenge_created'};},resolveVerifiedAddress:async()=>null,respondDraft:async()=>'',saveDraft:async()=>{}},{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'duplicate');assert.equal(starts,0);
+});
