@@ -443,6 +443,10 @@ Reproduced the private overview returning an approved-document index while a gra
 
 Reproduced admin alternate-seller review returning a listing while its approval withdrawal was pending. Listing leads and exact buyer/listed-seller company evidence now remain share-locked through the review transaction. Native HTTP/SQL covers listing approval withdrawal, alternate company evidence withdrawal and buyer company evidence withdrawal: waits then zero candidates or409. 710tests/types/build/all21native/5extractor pass. Private provisional review only, no seller contact, reservation, buyer disclosure, switch or new deal. No deploy, live sends/provider, hosted SQL, money or commission change.
 
+## Dispute brief current source-evidence locks, 2026-11-05
+
+Reproduced private admin dispute brief listing an approved document while approval withdrawal was pending. Request, original/relay event rows and approved-document metadata now stay share-locked through the brief transaction. Native HTTP/SQL proves pending document withdrawal removes that metadata and pending source-text correction returns the corrected original, not stale prose. 710tests/types/build/all21native/5extractor pass. Admin evidence only: no finding of credibility, fault, authenticity, refund, payment or physical outcome. No document bytes, counterpart disclosure, real sends/provider, deploy, hosted SQL, money or commission change.
+
 Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
 
 PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
