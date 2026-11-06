@@ -132,3 +132,8 @@ Test-only native resolver checks malformed text, numeric text, null, zero, negat
 
 Native actual confirmation reproduced malformed expiresAt text bypassing the code lifetime check and creating a channel binding with the correct code. Challenge consumption now requires a numeric safe-integer expiry strictly later than now. The malformed expiry test refuses without a binding, then restores the normal challenge for the existing concurrent single-use confirmation proof. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed after the expiry check. Existing normal challenge concurrency and synthetic draft flows remain covered.
+
+## Synthetic email challenge attempt-count shape, 2026-11-06
+
+Native actual confirmation reproduced malformed attempts text bypassing the five-try guard and creating a binding with the correct code. Consumption now requires a nonnegative safe-integer numeric count below five; no coercion of malformed counts. The malformed-count confirmation refuses, normal challenge concurrency remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed after the attempt-count check.
