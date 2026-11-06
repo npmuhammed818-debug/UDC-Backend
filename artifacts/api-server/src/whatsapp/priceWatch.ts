@@ -15,8 +15,21 @@ export async function handlePriceWatch(phone:string,text:string){
  const [r]=d?.requestId?await db.select().from(buyerRequestsTable).where(and(eq(buyerRequestsTable.id,d.requestId),eq(buyerRequestsTable.buyerUserId,u.id),eq(buyerRequestsTable.status,'approved'))).limit(1):[];
  if(!r){await sendWhatsAppText(phone,'Select a buyer deal with your own approved requirement first. No watch was changed.');return true;}
  if(!command.off&&(minorUnitDigits(command.currency)===null||command.currency!==r.currency||!/[1-9]/.test(command.threshold))){await sendWhatsAppText(phone,'Use the approved requirement currency and a positive threshold. No rate conversion or watch change made.');return true;}
- await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'price_watch:'+u.id+':'+r.id}))`);await tx.insert(auditLogsTable).values({actorUserId:u.id,action:'price_watch_preference',entityType:'buyer_request',entityId:r.id,metadata:command.off?{off:true}:{off:false,threshold:command.threshold,currency:command.currency,unit:r.unit}});});
- await sendWhatsAppText(phone,command.off?'Price watch is off for this requirement.':`Price watch saved below ${command.threshold} ${command.currency} per ${r.unit} for this approved requirement. Alerts use current compatible approved listings from verified sellers, not the whole market. No order or price change. Send price watch off to stop.`);return true;
+ const saved=await db.transaction(async tx=>{
+ await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'price_watch:'+u.id+':'+r.id}))`);
+ const [current]=await tx.select({role:usersTable.role,status:usersTable.status,phone:usersTable.phone}).from(usersTable).where(eq(usersTable.id,u.id)).limit(1).for('share');
+ if(current?.role!=='buyer'||current.status!=='verified'||current.phone!==phone)return null;
+ const [selected]=await tx.select({id:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,u.id)).limit(1).for('share');
+ if(selected?.id!==ctx!.dealId)return null;
+ const [deal]=await tx.select({requestId:dealsTable.buyerRequestId}).from(dealsTable).where(and(eq(dealsTable.id,selected.id),eq(dealsTable.buyerUserId,u.id))).limit(1).for('share');
+ if(deal?.requestId!==r.id)return null;
+ const [requirement]=await tx.select({currency:buyerRequestsTable.currency,unit:buyerRequestsTable.unit}).from(buyerRequestsTable).where(and(eq(buyerRequestsTable.id,r.id),eq(buyerRequestsTable.buyerUserId,u.id),eq(buyerRequestsTable.status,'approved'))).limit(1).for('share');
+ if(!requirement||!command.off&&command.currency!==requirement.currency)return null;
+ await tx.insert(auditLogsTable).values({actorUserId:u.id,action:'price_watch_preference',entityType:'buyer_request',entityId:r.id,metadata:command.off?{off:true}:{off:false,threshold:command.threshold,currency:command.currency,unit:requirement.unit}});
+ return requirement;
+ });
+ if(!saved){await sendWhatsAppText(phone,'Your current verified buyer account, selected deal or approved requirement changed. No watch was changed. Select the current requirement and try again.');return true;}
+ await sendWhatsAppText(phone,command.off?'Price watch is off for this requirement.':`Price watch saved below ${command.threshold} ${command.currency} per ${saved.unit} for this approved requirement. Alerts use current compatible approved listings from verified sellers, not the whole market. No order or price change. Send price watch off to stop.`);return true;
 }
 /** Safe staging delivery only. Never enable real provider sends via this runner. A future
  * launch needs review of customer window/templates, delivery receipts and release authority. */
