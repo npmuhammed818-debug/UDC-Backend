@@ -230,3 +230,8 @@ Acceptance JSON now names its fixed legal source baseline and explicitly records
 ## Integrated acceptance checkout repair, 2026-11-06
 
 Run 42239062829 passed every executable stage except legal source comparison: checkout was shallow and git reported bad object for the exact baseline commit. The acceptance driver now fetches only that fixed source commit when missing; the original exact legal diff still fails on any content difference. Unit proof checks that exact commit retrieval and content diff remain configured instead of requiring historical objects inside unrelated shallow unit jobs. No assertion bypass or legal wording change.
+
+
+## Integrated synthetic acceptance closeout, 2026-11-06
+
+Cumulative449 a7104201aac653ed232c21663179dc507881e1e0 passed run42240631348, all15 stages, all21 native PostgreSQL suites,776 tests/types/builds,68 Python tests, both migration reviews and genuine14-selected-table restore. Exact legal comparison passed after fixed-object fetch. Source digest unchanged. All7 ordinary exact-SHA CI checks passed too. Report26 automated capability passes/eight unverified provider-human gates; fullMvpAccepted, stagingActivationApproved and legalLaunchApproved false. This supersedes the earlier447 local backup/tooling and full-driver pending notes, not live/provider/human gates. Evidence https://github.com/npmuhammed818-debug/UDC-Backend/actions/runs/42240631348 . No deployment, real sends, hosted SQL, money or commission-policy change. Strict0/37 complete,36partial,#17blocked.
