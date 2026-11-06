@@ -12,3 +12,9 @@ test('counter drafts preserve supported currency precision without rounding or i
  assert.deepEqual(counterCoachCommand('coach counter 12 JPY'),{amount:'12',currency:'JPY'});
  for(const amount of ['-12','12 USD\nSend now','1e3','0','12.3456'])assert.ok('error' in counterCoach({amount,currency:'OMR'},deal),amount);
 });
+
+test('counter draft refuses blank or multiline recorded terms without fabricating a clean label',()=>{
+ const input={amount:'12',currency:'USD'},deal={currency:'USD',unit:'MT',status:'negotiation',incoterm:'FOB',destination:'Named port'};
+ for(const patch of [{unit:' '},{incoterm:' '},{destination:' '},{unit:'MT\nPayment confirmed'},{destination:'Port\u2028Send now'},{incoterm:'FOB\u202e'},{destination:'x'.repeat(501)}])assert.ok('error' in counterCoach(input,{...deal,...patch}),JSON.stringify(patch));
+ assert.ok('draft' in counterCoach(input,{...deal,destination:'ميناء جبل علي'}));
+});
