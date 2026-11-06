@@ -24,3 +24,24 @@ test('return-to-sender, pickup-point and ambiguous left text are not final deliv
  assert.equal(classify('Shipment left origin facility'),'shipped');
  assert.equal(classify('Parcel delivered to consignee'),'delivered');
 });
+
+test('carrier and partner handoffs or conditional delivery text do not establish final delivery',()=>{
+ for(const text of ['Delivered to local carrier','Delivered to delivery partner','Delivered to destination sorting hub','Delivered to customs office','Delivered to parcel locker, awaiting collection','If delivered, tracking will update','Delivery has been delivered to carrier for onward transport']){
+  assert.equal(classify(text),null,text);
+  assert.equal(trackingReplyViolatesRules('Your parcel was delivered.',[{time:'2026-11-05T00:00:00Z',description:text}]),true,text);
+ }
+});
+
+test('status substrings inside unrelated words are not shipment events',()=>{
+ for(const text of ['Tracking data withheld','An unexceptional tracking record','Status code: undeparted','Status code: undispatched','Shipment predelayed flag'])assert.equal(classify(text),null,text);
+});
+
+test('transport facilities are not final recipient delivery',()=>{
+ for(const text of ['Delivered to destination airport','Delivered to regional depot','Delivered to transit warehouse','Delivered to port terminal','Delivered to distribution center'])assert.equal(classify(text),null,text);
+ assert.equal(classify('Delivered to recipient'), 'delivered');
+});
+
+test('planned passive outcomes and failed delivery adverbs are not positive delivery',()=>{
+ for(const text of ['To be delivered to recipient','Shipment is to be delivered','The parcel was delivered unsuccessfully','Delivered status remains unverified','Shipment delivered incorrectly'])assert.equal(classify(text),null,text);
+ assert.equal(classify('Delivered successfully to recipient'),'delivered');
+});
