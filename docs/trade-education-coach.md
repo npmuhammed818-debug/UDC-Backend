@@ -255,3 +255,7 @@ The same signed request/admin preparation journey now reaches its new requiremen
 ## Signed restart to session-admin separate deal proof, 2026-11-06
 
 Same synthetic signed buyer journey now reaches actual bearer-session admin HTTP creation after its own fresh terms decision. Anonymous401, buyer403, accepted-price mismatch409, exact admin201, duplicate409; two direct participants and one creation audit, new requirement link and separate initiated deal, old deal byte-for-byte unchanged. Existing local reply sink handles notifications, model/Meta counts unchanged. Requirement approval remains explicit fixture SQL and supply is the same seller, so this is not full alternate-seller/provider/device/human proof. No runtime change, real commitment, deployment, hosted SQL or money/commission change.
+
+## Signed restart actual session-admin requirement review proof, 2026-11-06
+
+The continuous synthetic signed restart journey replaces its direct SQL requirement-approval transition with the actual session-authenticated admin PATCH route. Anonymous401, buyer403 leave pending state; admin200 creates one buyer_requirement_reviewed audit with exact previous/new statuses. Fresh terms/signed decision/separate admin-created deal follow as before. Source match selection and initial verification remain fixtures; no human review quality, alternate seller or provider/device acceptance is inferred. Test-only, no runtime/deployment/hosted SQL/real sends/money or commission change.
