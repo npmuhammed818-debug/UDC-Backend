@@ -36,3 +36,10 @@ test('unrepresentable provider rates fail before cache and allow a valid retry',
  await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},ports),/invalid_rate_response/);assert.equal((await currencyConversion({amount:'2',base:'USD',quote:'INR'},ports)).converted,'168.00');assert.equal(calls,2);
  }
 });
+
+test('currency runtime inputs and provider envelopes fail with controlled errors',async()=>{
+ let calls=0;const ports={fetch:async()=>{calls++;return new Response('{}');},now:Date.parse('2026-11-05T12:00:00Z')};
+ for(const input of [null,{},[],{amount:1,base:'USD',quote:'INR'},{amount:'1',base:42,quote:'INR'},{amount:'1',base:'USD',quote:null}])await assert.rejects(currencyConversion(input as never,ports),/invalid_conversion/);assert.equal(calls,0);
+ for(const value of [null,[],42,{date:20261105,base:'USD',quote:'INR',rate:84},{date:'2026-11-05',base:'USD',quote:'INR',rate:'84'}]){clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{...ports,fetch:async()=>new Response(JSON.stringify(value))}),/invalid_rate_response/);}
+ for(const places of [NaN,Infinity,1.5,'2',null])assert.throws(()=>indicativeAmount('1','1',places as never),/invalid_conversion/);
+});
