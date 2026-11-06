@@ -10,3 +10,29 @@ test('provider gets currency pair only, caches pair, preserves date and rejects 
  clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:fetcher as typeof fetch,now:Date.parse('2026-11-15T00:00Z')}),/stale/);
  clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date:'2026-11-04',base:'EUR',quote:'INR',rate:1}))}),/invalid/);
 });
+
+test('currency rates reject impossible calendar dates rather than normalizing them',async()=>{
+ for(const date of ['2026-02-30','2026-02-29','2026-04-31','2026-13-01','2026-00-10']){
+ clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date,base:'USD',quote:'INR',rate:84})),now:Date.parse(date==='2026-04-31'?'2026-05-02T00:00:00Z':'2026-03-03T00:00:00Z')}),/invalid_rate_response/);
+ }
+ clearCurrencyCache();const result=await currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date:'2028-02-29',base:'USD',quote:'INR',rate:84})),now:Date.parse('2028-03-01T00:00:00Z')});assert.equal(result.rateDate,'2028-02-29');
+});
+
+test('currency references never present a future UTC rate date as current',async()=>{
+ clearCurrencyCache();await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date:'2026-11-06',base:'USD',quote:'INR',rate:84})),now:Date.parse('2026-11-05T23:59:59Z')}),/currency_rate_stale/);
+ clearCurrencyCache();const result=await currencyConversion({amount:'1',base:'USD',quote:'INR'},{fetch:async()=>new Response(JSON.stringify({date:'2026-11-05',base:'USD',quote:'INR',rate:84})),now:Date.parse('2026-11-05T00:00:00Z')});assert.equal(result.rateDate,'2026-11-05');
+});
+
+test('rejected stale and future rates never poison the pair cache',async()=>{
+ for(const badDate of ['2026-10-01','2026-11-06']){
+ clearCurrencyCache();let calls=0;const fetcher=async()=>new Response(JSON.stringify({date:++calls===1?badDate:'2026-11-05',base:'USD',quote:'INR',rate:84}));const ports={fetch:fetcher as typeof fetch,now:Date.parse('2026-11-05T12:00:00Z')};
+ await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},ports),/currency_rate_stale/);const result=await currencyConversion({amount:'2',base:'USD',quote:'INR'},ports);assert.equal(result.converted,'168.00');assert.equal(calls,2);
+ }
+});
+
+test('unrepresentable provider rates fail before cache and allow a valid retry',async()=>{
+ for(const badRate of [1e-7,1e10,0.1234567890123]){
+ clearCurrencyCache();let calls=0;const fetcher=async()=>new Response(JSON.stringify({date:'2026-11-05',base:'USD',quote:'INR',rate:++calls===1?badRate:84}));const ports={fetch:fetcher as typeof fetch,now:Date.parse('2026-11-05T12:00:00Z')};
+ await assert.rejects(currencyConversion({amount:'1',base:'USD',quote:'INR'},ports),/invalid_rate_response/);assert.equal((await currencyConversion({amount:'2',base:'USD',quote:'INR'},ports)).converted,'168.00');assert.equal(calls,2);
+ }
+});
