@@ -18,3 +18,9 @@ test('counter draft refuses blank or multiline recorded terms without fabricatin
  for(const patch of [{unit:' '},{incoterm:' '},{destination:' '},{unit:'MT\nPayment confirmed'},{destination:'Port\u2028Send now'},{incoterm:'FOB\u202e'},{destination:'x'.repeat(501)}])assert.ok('error' in counterCoach(input,{...deal,...patch}),JSON.stringify(patch));
  assert.ok('draft' in counterCoach(input,{...deal,destination:'ميناء جبل علي'}));
 });
+
+test('counter helper refuses non-string runtime amount and currency without throwing',()=>{
+ const deal={currency:'USD',unit:'MT',status:'negotiation',incoterm:'FOB',destination:'Named port'};
+ for(const amount of [null,undefined,12,{},['12'],true])assert.ok('error' in counterCoach({amount,currency:'USD'} as any,deal));
+ for(const currency of [null,undefined,12,{},['USD'],true])assert.ok('error' in counterCoach({amount:'12',currency} as any,deal));
+});
