@@ -74,6 +74,7 @@ try {
     stdin: {
       contents: `import express from 'express';
         import router from './src/routes/whatsappWebhook';
+        export {prepareRestartRequest} from './src/deals/restartRequest';
         export {requestTermsReview} from './src/marketplace/termAgreement';export {photoQuoteReview} from './src/deals/photoQuoteReview';export {getAkifDealContext} from './src/akif/intelligence/dealContext';export {pool} from '@workspace/db';export {readSunkReplies,clearSunkReplies} from './src/whatsapp/replySink';
         const app=express();
         app.use(express.json({verify(req,res,body){req.rawBody=body;}}));
@@ -192,9 +193,9 @@ try {
   assert.ok(sent.slice(conflictBefore).some(m=>/already belongs/.test(m.text?.body??'')),'duplicate email refusal must be shown before the next question');
   assert.equal(await count('select count(*) from users where phone=$1',[conflictPhone]),0);
   const {rows:drafts}=await pool.query("select data from whatsapp_chat_sessions where data->>'full_name'=$1 and purpose='profile_buyer'",[label+' Retry']);
-  assert.equal(drafts.length,1);assert.equal(drafts[0].data.email,undefined,'duplicate email is never added to the draft');
+  assert.equal(drafts.length,1,JSON.stringify({label,sessions:(await pool.query("select purpose,step,data from whatsapp_chat_sessions where purpose='profile_buyer'")).rows,replies:sent.slice(conflictBefore).map(m=>m.text?.body)}));assert.equal(drafts[0].data.email,undefined,'duplicate email is never added to the draft');
   for(const text of [`retry-${randomUUID()}@example.invalid`,'QA Retry Imports Ltd','India','Submit'])await sendAs(conflictPhone,text);
-  assert.equal(await count('select count(*) from users where phone=$1 and status=$2',[conflictPhone,'pending']),1);
+  assert.equal(await count('select count(*) from users where phone=$1 and status=$2',[conflictPhone,'pending']),1,JSON.stringify({label,sessions:(await pool.query("select purpose,step,data from whatsapp_chat_sessions where purpose='profile_buyer'")).rows,replies:sent.slice(conflictBefore).map(m=>m.text?.body)}));
   const {rows:[originalBuyer]}=await pool.query('select email,role,status from users where id=$1',[buyer.id]);
   assert.equal(originalBuyer.email,email);assert.equal(originalBuyer.role,'buyer');assert.equal(originalBuyer.status,'pending');
 
@@ -238,6 +239,71 @@ try {
   assert.match(module.readSunkReplies(phone).at(-1).text,/does not mean a person is online/);
   await pool.query("update users set role='seller' where id=$1",[buyer.id]);await post('deal status picture');assert.match(module.readSunkReplies(phone).at(-1).text,/No picture was shared/);await pool.query("update users set role='buyer' where id=$1",[buyer.id]);
   await pool.query("update companies set verification_status='verified' where owner_user_id=any($1::uuid[])",[[buyer.id,sellerAccount.id]]);await pool.query("insert into company_verification_documents(company_id,uploaded_by,document_type,file_url,status) select id,owner_user_id,'company_registration','storage://SYNTHETIC_REVIEWED_COMPANY','approved' from companies where owner_user_id=any($1::uuid[])",[[buyer.id,sellerAccount.id]]);await pool.query("update buyer_requests set status='approved',quantity=10,unit='MT',currency='USD',destination='Jebel Ali',target_price=101 where id=$1",[source.id]);const termsListing=randomUUID(),termsMatch=randomUUID();await pool.query("insert into seller_listings(id,seller_user_id,product_id,company_id,quantity,unit,price,currency,incoterm,destination,status) select $1,$2,$3,id,20,'MT',100,'USD','CIF','Jebel Ali','approved' from companies where owner_user_id=$2 limit 1",[termsListing,sellerAccount.id,source.product_id]);await pool.query("insert into matches(id,buyer_request_id,seller_listing_id,status) values($1,$2,$3,'approved')",[termsMatch,source.id,termsListing]);const termsProposal=await module.requestTermsReview(termsMatch,buyer.id);const acceptBody={type:'button_reply',button_reply:{id:'udc:terms:accept:'+termsProposal.proposalId}};const presentedAudit=(await pool.query("delete from audit_logs where action='match_terms_presented' and entity_id=$1 returning *",[termsProposal.proposalId])).rows[0];assert.ok(presentedAudit);await post({type:'button_reply',button_reply:{id:'udc:terms:accept:'+termsProposal.proposalId}});assert.match(module.readSunkReplies(phone).at(-1).text,/not been fully presented/);assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1",[termsProposal.proposalId]),0,'unpresented proposal cannot be accepted');await pool.query('insert into audit_logs(id,actor_user_id,action,entity_type,entity_id,metadata) values($1,$2,$3,$4,$5,$6)',[presentedAudit.id,presentedAudit.actor_user_id,presentedAudit.action,presentedAudit.entity_type,presentedAudit.entity_id,presentedAudit.metadata]);await sendAs(sellerPhone,acceptBody);assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1",[termsProposal.proposalId]),0,'signed seller cannot accept buyer terms');await post(acceptBody);await post(acceptBody);assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1 and actor_user_id=$2",[termsProposal.proposalId,buyer.id]),1,'signed buyer acceptance and duplicate create one decision');assert.equal(await count('select count(*) from deals where buyer_request_id=$1 and seller_listing_id=$2',[source.id,termsListing]),0,'acceptance does not silently create a deal');
+  // Continue this same signed buyer conversation into reduced-quantity drafting.
+  const trialDealsBefore=await count('select count(*) from deals');
+  const originalTrialDeal=(await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0];
+  const trialRequestsBefore=await count('select count(*) from buyer_requests');
+  await post('trial order 2 MT');
+  assert.match(module.readSunkReplies(phone).at(-1).text,/smaller pending buyer requirement is prepared/);
+  const trialAudit=(await pool.query("select metadata from audit_logs where action='trial_requirement_prepared' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal])).rows;
+  assert.equal(trialAudit.length,1);
+  const trialDraft=(await pool.query('select * from buyer_requests where id=$1',[trialAudit[0].metadata.requirementId])).rows[0];
+  assert.equal(trialDraft.buyer_user_id,buyer.id);assert.equal(trialDraft.status,'pending_admin_review');assert.equal(trialDraft.quantity,'2.000000');assert.equal(trialDraft.unit,'MT');assert.equal(trialDraft.target_price,null);
+  assert.equal(await count('select count(*) from buyer_requests'),trialRequestsBefore+1);
+  await post('trial order 02.000000 MT');
+  assert.match(module.readSunkReplies(phone).at(-1).text,/earlier trial draft is already saved/);
+  await post('trial order 20 MT');assert.match(module.readSunkReplies(phone).at(-1).text,/No order or change was made/);
+  assert.equal(await count('select count(*) from buyer_requests'),trialRequestsBefore+1,'signed duplicate and invalid quantity create no extra draft');
+  assert.equal(await count("select count(*) from audit_logs where action='trial_requirement_prepared' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal]),1);
+  assert.equal(await count('select count(*) from deals'),trialDealsBefore,'signed trial request creates no deal');
+  assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalTrialDeal,'original deal terms and state stay unchanged');
+  // Explicit restart requests remain private preparation, never an order/switch.
+  const restartRequestsBefore=await count('select count(*) from buyer_requests');
+  const restartDealsBefore=await count('select count(*) from deals');
+  await post('repeat order');assert.match(module.readSunkReplies(phone).at(-1).text,/cannot be saved/);
+  assert.equal(await count("select count(*) from audit_logs where action='trade_assist_repeat_order' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal]),0,'negotiation is not a completed repeat-order source');
+  for(const request of [{text:'repeat order',status:'completed',action:'trade_assist_repeat_order'},{text:'switch seller',status:'on_hold',action:'trade_assist_switch_seller'},{text:'backup seller',status:'negotiation',action:'trade_assist_backup_seller'}]){
+    await pool.query('update deals set status=$1 where id=$2',[request.status,fixtureDeal]);
+    const currentOriginal=(await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0];
+    await post(request.text);assert.match(module.readSunkReplies(phone).at(-1).text,/Saved for UDC human review/);
+    await post(request.text);assert.match(module.readSunkReplies(phone).at(-1).text,/already recorded/);
+    const rows=(await pool.query('select metadata from audit_logs where action=$1 and actor_user_id=$2 and entity_id=$3',[request.action,buyer.id,fixtureDeal])).rows;
+    assert.equal(rows.length,1);assert.equal(rows[0].metadata.noCounterpartyTransfer,true);assert.equal(rows[0].metadata.noCommitment,true);assert.equal(rows[0].metadata.state,'awaiting_human_review');
+    assert.equal(await count('select count(*) from buyer_requests'),restartRequestsBefore,'signed request alone creates no requirement');
+    assert.equal(await count('select count(*) from deals'),restartDealsBefore,'signed request alone creates no new deal');
+    assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],currentOriginal,'request does not change original seller or terms');
+  }
+  // Existing admin preparation consumes the exact request made in this conversation.
+  const signedBackup=(await pool.query("select id from audit_logs where action='trade_assist_backup_seller' and actor_user_id=$1 and entity_id=$2",[buyer.id,fixtureDeal])).rows[0];
+  const adminForPreparation=randomUUID();await pool.query("insert into users(id,full_name,email,password_hash,role,status) values($1,'Synthetic review admin',$2,'synthetic-not-a-login','admin','verified')",[adminForPreparation,'review-'+adminForPreparation+'@example.invalid']);
+  const requestsBeforePreparation=await count('select count(*) from buyer_requests');
+  const sourceRequestBeforePreparation=(await pool.query('select * from buyer_requests where id=$1',[source.id])).rows[0];
+  const originalBeforePreparation=(await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0];
+  const prepared=await Promise.all([module.prepareRestartRequest(signedBackup.id,adminForPreparation),module.prepareRestartRequest(signedBackup.id,adminForPreparation)]);
+  assert.ok(prepared.every(r=>!('error'in r)));assert.equal(prepared[0].requirementId,prepared[1].requirementId);assert.equal(prepared.filter(r=>r.repeated).length,1);
+  const preparedRequest=(await pool.query('select * from buyer_requests where id=$1',[prepared[0].requirementId])).rows[0];
+  assert.equal(preparedRequest.status,'pending_admin_review');assert.equal(preparedRequest.buyer_user_id,buyer.id);
+  for(const key of ['quantity','unit','currency','target_price','destination','preferred_incoterm','specification','contract_duration','payment_terms','inspection_requirements','additional_conditions'])assert.equal(preparedRequest[key],sourceRequestBeforePreparation[key],'only current buyer requirement copied: '+key);
+  assert.equal(await count('select count(*) from buyer_requests'),requestsBeforePreparation+1);
+  assert.equal(await count("select count(*) from audit_logs where action='trade_restart_requirement_prepared' and metadata->>'requestId'=$1",[signedBackup.id]),1);
+  assert.equal(await count('select count(*) from deals'),restartDealsBefore,'admin preparation creates no replacement deal');
+  assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation);
+  // Preparation is insufficient: review the new requirement and present fresh terms.
+  const freshMatch=randomUUID();
+  await pool.query("insert into matches(id,buyer_request_id,seller_listing_id,status) values($1,$2,$3,'approved')",[freshMatch,preparedRequest.id,termsListing]);
+  await assert.rejects(()=>module.requestTermsReview(freshMatch,adminForPreparation),/approved_compatible_records_required/,'pending requirement cannot receive a proposal');
+  assert.equal(await count("select count(*) from audit_logs where action='match_terms_proposed' and entity_id=$1",[freshMatch]),0);
+  await pool.query("update buyer_requests set status='approved' where id=$1",[preparedRequest.id]);
+  const freshProposal=await module.requestTermsReview(freshMatch,adminForPreparation);
+  assert.notEqual(freshProposal.proposalId,termsProposal.proposalId,'restart has its own fresh proposal, not old acceptance');
+  const freshAccept={type:'button_reply',button_reply:{id:'udc:terms:accept:'+freshProposal.proposalId}};
+  await sendAs(sellerPhone,freshAccept);
+  assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1",[freshProposal.proposalId]),0);
+  await post(freshAccept);await post(freshAccept);
+  assert.equal(await count("select count(*) from audit_logs where action='match_terms_accepted' and entity_id=$1 and actor_user_id=$2",[freshProposal.proposalId,buyer.id]),1);
+  assert.equal(await count('select count(*) from deals'),restartDealsBefore,'fresh signed buyer decision alone creates no deal');
+  assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation,'fresh proposal leaves original deal untouched');
+  await pool.query('delete from users where id=$1',[adminForPreparation]);
   assert.equal(providerCalls.length,modelsBefore,'explicit commands bypass all model calls');assert.equal(sent.length,metaBefore,'all new command outputs stay in local sink');assert.ok(module.readSunkReplies().every(r=>r.to===phone||r.to===sellerPhone),'new commands disclose only to the requesting fixture parties');
   delete process.env.UDC_APP_ENV;delete process.env.AKIF_WHATSAPP_REPLY_SINK;
   console.log('PASSED signed-webhook new commands: actual PNG sink, exact contextual term, grant-filtered quality index, freight preparation, bound human-help replay dedup, changed-role denial, no model/Meta sends.');

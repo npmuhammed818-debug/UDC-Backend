@@ -31,7 +31,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     const q: any = {
       from(t: any) { table = t._tableName; return q; }, where(c: any) { condition = c; return q; },
       innerJoin(t: any, on: any) { joins.push({ table: t._tableName, on }); return q; },
-      orderBy() { return q; }, limit(n: number) { maximum = n; return q; },
+      orderBy() { return q; }, for() { return q; }, limit(n: number) { maximum = n; return q; },
       run() {
         let values = rows[table].map(r => ({ [table]: r }));
         for (const join of joins) values = values.flatMap(r => rows[join.table]
