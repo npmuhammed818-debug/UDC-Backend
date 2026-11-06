@@ -71,8 +71,39 @@ test('repeated lookups within 6 hours reuse the cached answer (quota guard)', as
 });
 
 test('formatLiveStatus clips oversized carrier fields and labels the source', () => {
-  const reply = formatLiveStatus('N1', [{ time: 'not-a-date', description: 'x'.repeat(500), location: 'y'.repeat(300) }]);
+  const reply = formatLiveStatus('N1', [{ time: '2026-10-28T12:00:00Z', description: 'x'.repeat(500), location: 'y'.repeat(300) }]);
   const lines = reply.split('\n');
   assert.ok(lines[1].length < 450, 'oversized carrier text is clipped');
   assert.match(lines[2], /via 17TRACK/);
+});
+
+
+test('invalid live feed bypasses brain and out-of-order feed uses newest event',async()=>{
+ clearLiveTrackingCache();let called=false;
+ const invalid=await liveTrackingReply('SYN123',{configured:true,tracker:trackerWith({SYN123:[{time:'2099-01-01T00:00:00Z',description:'Delivered'}]}),brain:async()=>{called=true;return 'Delivered';}});
+ assert.equal(called,false);assert.match(invalid,/No shipment status is confirmed/);
+ clearLiveTrackingCache();const text=await liveTrackingReply('SYN123',{configured:true,brain:null,tracker:trackerWith({SYN123:[{time:'2026-10-28T12:00:00Z',description:'Delivered'},{time:'2026-10-30T12:00:00Z',description:'Customs hold'}]})});assert.match(text,/Customs hold/);assert.doesNotMatch(text,/Delivered/);
+});
+
+test('parallel lookups for one normalized number use one carrier request',async()=>{
+ clearLiveTrackingCache();let calls=0;
+ const tracker:ShipmentTracker={name:'parallel-fixture',async fetchEvents(){calls++;await new Promise(r=>setTimeout(r,35));return [{time:'2026-10-28T12:00:00Z',description:'Departed origin'}];}};
+ const answers=await Promise.all(Array.from({length:5},()=>liveTrackingReply('syn123',{configured:true,tracker,brain:null})));
+ assert.equal(calls,1,'parallel requests must not multiply provider quota');assert.equal(new Set(answers).size,1);
+});
+
+
+test('failed parallel lookup releases its in-flight slot for a later retry',async()=>{
+ clearLiveTrackingCache();let calls=0;const tracker:ShipmentTracker={name:'failure-fixture',async fetchEvents(){calls++;await new Promise(r=>setTimeout(r,25));if(calls===1)throw Error('synthetic');return [{time:'2026-10-28T12:00:00Z',description:'In transit'}];}};
+ const first=await Promise.all([liveTrackingReply('SYN777',{configured:true,tracker,brain:null}),liveTrackingReply('SYN777',{configured:true,tracker,brain:null})]);assert.equal(calls,1);assert.ok(first.every(t=>t.includes('unreachable')));
+ assert.match(await liveTrackingReply('SYN777',{configured:true,tracker,brain:null}),/In transit/);assert.equal(calls,2);
+});
+
+test('a future-dated cache entry is not reused after a clock correction',async()=>{
+ clearLiveTrackingCache();let calls=0;
+ const tracker={name:'synthetic',fetchEvents:async()=>{calls++;return [{time:'2026-11-05T00:00:00Z',description:calls===1?'Label created':'Departed origin facility'}];}};
+ const now=Date.parse('2026-11-05T12:00:00Z');
+ await liveTrackingReply('CLOCK123',{tracker,configured:true,now,brain:null});
+ const reply=await liveTrackingReply('CLOCK123',{tracker,configured:true,now:now-60_000,brain:null});
+ assert.equal(calls,2);assert.match(reply,/Departed origin facility/);
 });
