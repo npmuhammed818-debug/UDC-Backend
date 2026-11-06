@@ -83,3 +83,7 @@ Executed both actual text commands, human help and request status, while a phone
 ## Guided exit reason current closure evidence, 2026-11-06
 
 Native actual callback reproduced acknowledging a guided exit answer after its own-closure evidence was withdrawn during the assist-lock wait. Guided reason buttons now opt into a locked cancelled-stage and own-closure audit recheck inside the shared writer before prior-answer lookup or save. The native pending withdrawal test waits then refuses with unchanged reason audit count. Free-text/HTTP exit reasons do not opt into this guided-button condition; skip retains its separate equivalent closure check. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live send/provider, hosted SQL, deployment, money or commission change.
+
+## Guided exit reopened-stage and positive proof, 2026-11-06
+
+Test-only native SQL invokes the actual reason callback while the request lock is held, reopens the deal, then releases it. Callback refuses without an exit-reason audit. A normal callback with cancelled stage and restored own-closure evidence still acknowledges the saved private answer. This proves the separate stage branch added in the prior fix, alongside its closure-withdrawal and phone-reassignment tests. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live send/provider, hosted SQL, deployment, money or commission change.
