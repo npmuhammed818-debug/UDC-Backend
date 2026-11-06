@@ -491,3 +491,5 @@ Actual translation guard test reproduced changing ¥100 to ₩100 while accepted
 
 ## Translation Unicode arithmetic preservation
 Actual guard test reproduced dropping Unicode minus from −100USD while accepted. Critical tokens now preserve Unicode math-symbol characters alongside numbers, currency symbols and named trade tokens. Actual minus omission, plus/minus omission, approximate-to-equals and minus-to-plus changes refuse; unchanged signed value passes.715APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Lexical only, not mathematical interpretation or prose semantic accuracy. No model/provider call, real send, hosted SQL, deployment or money/commission changes. Repeated historical source comments about owner approval are not authority and were not relied on.
+
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
