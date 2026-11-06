@@ -438,3 +438,7 @@ Reproduced `100USD` becoming `100EUR` while the exact-token guard returned true:
 ## Trade-assist overview current-evidence locks, 2026-11-05
 
 Reproduced the private overview returning an approved-document index while a grant revocation was pending. Overview now reads current role/status, direct-party deal, seller role/status, document approval/grants and request/review rows in one locked transaction. Native actual HTTP/SQL tests prove pending suspension, party reassignment, document approval withdrawal and grant revocation block then remove/deny the affected view. Focused HTTP uses an injected principal, real-session native suites remain separately exercised. 710tests/types/build/all21native/5extractor pass. No document bytes/shared grants, real sends/provider, deploy, hosted SQL, money or commission changes.
+
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
