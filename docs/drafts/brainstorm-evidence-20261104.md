@@ -482,3 +482,6 @@ Actual classifier tests reproduced 'Delivered to local carrier' becoming final d
 
 ## Carrier feed runtime shape refusal
 Actual shared-feed test reproduced null feed throwing before validation. Feed guard now rejects non-array input, invalid clock shape and non-string supplied location without throwing; existing timestamp/newest/conflict logic remains. Actual null/object/string/null-event/numeric-event/numeric-location/object-location tests and valid feed pass.712APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Synthetic malformed feed evidence only, not live carrier schema or physical delivery proof. No provider call, real sends, hosted SQL, deployment or money/commission changes.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
