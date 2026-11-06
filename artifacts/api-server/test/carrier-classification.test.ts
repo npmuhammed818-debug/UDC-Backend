@@ -35,3 +35,8 @@ test('carrier and partner handoffs or conditional delivery text do not establish
 test('status substrings inside unrelated words are not shipment events',()=>{
  for(const text of ['Tracking data withheld','An unexceptional tracking record','Status code: undeparted','Status code: undispatched','Shipment predelayed flag'])assert.equal(classify(text),null,text);
 });
+
+test('transport facilities are not final recipient delivery',()=>{
+ for(const text of ['Delivered to destination airport','Delivered to regional depot','Delivered to transit warehouse','Delivered to port terminal','Delivered to distribution center'])assert.equal(classify(text),null,text);
+ assert.equal(classify('Delivered to recipient'), 'delivered');
+});
