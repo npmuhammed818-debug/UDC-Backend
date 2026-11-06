@@ -137,3 +137,8 @@ Full774/types/APIfrontend/all21native/5extractor passed after the expiry check. 
 
 Native actual confirmation reproduced malformed attempts text bypassing the five-try guard and creating a binding with the correct code. Consumption now requires a nonnegative safe-integer numeric count below five; no coercion of malformed counts. The malformed-count confirmation refuses, normal challenge concurrency remains. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed after the attempt-count check.
+
+## Synthetic email challenge shape boundary proof, 2026-11-06
+
+Test-only native actual confirmation refuses numeric-text, null, nonpositive, fractional and expired expiry values; null, numeric-text, negative, fractional and exhausted attempt counts. Every refusal explicitly proves unchanged binding count; restored normal challenge retains concurrent single-use proof. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
