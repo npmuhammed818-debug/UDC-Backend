@@ -107,3 +107,7 @@ Native actual handler reproduced saving a price-currency preference from an old 
 ## Price currency current account proof, 2026-11-06
 
 Test-only actual handler/native SQL proof covers pending account suspension and buyer-to-agent role change during display-currency preference. Each command waits, then refuses without a preference audit after the change commits. Existing phone-reassignment and valid preference/opt-out paths remain. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic display-preference evidence only; no rate/quote/payment/commission change, provider/send, hosted SQL or deployment.
+
+## Synthetic email unlink current phone, 2026-11-06
+
+Native actual WhatsApp unlink handler reproduced revoking the email channel after a pending phone reassignment committed, using an old resolved account ID. Revoke now accepts an optional expected inbound phone and checks it under its existing account lock and email-link serialization transaction. WhatsApp unlink passes that phone. The pending reassignment test waits then refuses with unchanged revoke audit count; existing legitimate unlink remains covered later. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic email only, no real mailbox binding/revocation, provider/send, hosted SQL, deployment, money or commission change.
