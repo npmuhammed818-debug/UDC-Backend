@@ -61,3 +61,7 @@ test('delivery authentication needs true booleans and a string authenticated add
  assert.equal(await processEmailPilot(event,ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'sender_authentication_required');
  }assert.equal(calls,0);
 });
+
+test('email canonicalization rejects nonstring runtime values without coercion or throwing',()=>{
+ for(const value of [null,undefined,42,{},[],['buyer@example.com'],true])assert.equal(canonicalEmail(value as never),null);
+});

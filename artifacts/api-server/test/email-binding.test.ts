@@ -25,3 +25,8 @@ test('link confirmation refuses coerced runtime identifiers and codes before con
  for(const args of [[id,123456,'synthetic'],[id,'123456',42],[id,'123456',' '],['-'.repeat(36),'123456','synthetic'],[[id],'123456','synthetic'],[id,['123456'],'synthetic']])assert.equal(await service.confirmFromVerifiedWhatsApp(...args as [never,never,never]),false);
  assert.equal(consumes,0);
 });
+
+test('malformed link enrollment addresses never reach account lookup',async()=>{
+ let lookups=0;const service=emailBindingService({findRegisteredAccount:async()=>{lookups++;return null;},reserve:async()=>false,consumeAndBind:async()=>false,putWhatsAppCodeInSyntheticSink:async()=>{}},'s'.repeat(40),{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'});
+ for(const address of [null,undefined,42,{},[],['registered@example.com']])assert.equal((await service.startFromAuthenticatedEmail(address as never)).status,'verification_unavailable');assert.equal(lookups,0);
+});
