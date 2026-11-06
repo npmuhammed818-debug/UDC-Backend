@@ -482,3 +482,6 @@ Actual classifier tests reproduced 'Delivered to local carrier' becoming final d
 
 ## Carrier feed runtime shape refusal
 Actual shared-feed test reproduced null feed throwing before validation. Feed guard now rejects non-array input, invalid clock shape and non-string supplied location without throwing; existing timestamp/newest/conflict logic remains. Actual null/object/string/null-event/numeric-event/numeric-location/object-location tests and valid feed pass.712APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Synthetic malformed feed evidence only, not live carrier schema or physical delivery proof. No provider call, real sends, hosted SQL, deployment or money/commission changes.
+
+## Carrier status whole-word boundaries
+Actual classifier test reproduced 'Tracking data withheld' becoming delayed because held matched within withheld. Delay/exception/held and departure/dispatch/transit alternatives now require whole words; unrelated withheld/unexceptional/undeparted/undispatched/predelayed fixtures refuse.713APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Conservative English lexical correction only, not full sentence understanding or physical status proof. No provider/real sends, hosted SQL, deployment or money/commission changes.

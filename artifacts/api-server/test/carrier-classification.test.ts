@@ -31,3 +31,7 @@ test('carrier and partner handoffs or conditional delivery text do not establish
   assert.equal(trackingReplyViolatesRules('Your parcel was delivered.',[{time:'2026-11-05T00:00:00Z',description:text}]),true,text);
  }
 });
+
+test('status substrings inside unrelated words are not shipment events',()=>{
+ for(const text of ['Tracking data withheld','An unexceptional tracking record','Status code: undeparted','Status code: undispatched','Shipment predelayed flag'])assert.equal(classify(text),null,text);
+});
