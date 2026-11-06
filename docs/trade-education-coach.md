@@ -75,3 +75,7 @@ Actual native command reproduced a help request acknowledgement for the old sele
 ## Text assist status current channel context, 2026-11-06
 
 Native actual handler reproduced request-status text returning the old selected deal's private queue while a context switch was pending. Shared status reader now accepts optional channel context, rechecks inbound phone on the locked account and locks/rechecks current selected deal before reading the exact request/review rows. WhatsApp status opts in; explicit HTTP/email deal reads retain their existing direct-party semantics. Pending selected-context test waits then refuses without old private queue text. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no real send/provider, hosted SQL, deployment, money or commission change.
+
+## Text assist current phone native proof, 2026-11-06
+
+Executed both actual text commands, human help and request status, while a phone reassignment was pending. Both wait, refuse the old phone after commit, reveal no old queue/status and leave assist audit count unchanged. This test-only slice proves the phone branches added in the prior write/status changes; pending selected-context cases remain separate. Full774/types/APIfrontend/all21native/5extractor passed. Synthetic only; no live provider/send, hosted SQL, deployment, money or commission change.
