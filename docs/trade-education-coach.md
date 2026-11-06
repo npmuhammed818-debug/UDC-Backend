@@ -119,3 +119,7 @@ Native identity resolver reproduced returning a bound account while a channel re
 ## Synthetic email binding row current evidence, 2026-11-06
 
 Native identity resolver reproduced returning the old registered address's bound identity while its latest binding row address correction was pending. Resolver now share-locks the selected latest binding/revoke row inside the existing binding transaction. Actual pending row correction test waits then denies the old address; normal binding, revoke serialization and synthetic draft-save paths remain. Full774/types/APIfrontend/all21native/5extractor passed. Defensive current-row evidence, not proof that any live binding was corrected. No real inbox/send, hosted SQL, deployment, money or commission change.
+
+## Synthetic email binding expiry shape, 2026-11-06
+
+Native resolver reproduced malformed boundAt text passing expiry validation because Number returned NaN and the expiry comparison was false. Binding identity now requires a positive safe-integer numeric boundAt no later than the current clock, and still enforces its 30-day lifetime. Actual malformed binding fixture is refused while normal bind/history/draft flows pass. Full774/types/APIfrontend/all21native/5extractor passed. Defensive malformed-row test only, not a live binding incident. No real inbox/send, hosted SQL, deployment, money or commission change.
