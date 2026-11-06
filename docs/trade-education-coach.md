@@ -259,3 +259,7 @@ Same synthetic signed buyer journey now reaches actual bearer-session admin HTTP
 ## Signed restart actual session-admin requirement review proof, 2026-11-06
 
 The continuous synthetic signed restart journey replaces its direct SQL requirement-approval transition with the actual session-authenticated admin PATCH route. Anonymous401, buyer403 leave pending state; admin200 creates one buyer_requirement_reviewed audit with exact previous/new statuses. Fresh terms/signed decision/separate admin-created deal follow as before. Source match selection and initial verification remain fixtures; no human review quality, alternate seller or provider/device acceptance is inferred. Test-only, no runtime/deployment/hosted SQL/real sends/money or commission change.
+
+## Signed restart actual session-admin preparation HTTP proof, 2026-11-06
+
+Continuous signed restart journey now replaces direct preparation-service calls with actual bearer-session admin POST. Anonymous401/buyer403 create no draft; parallel admin responses200/201 return the same pending requirement and one success audit. Then actual session requirement review, fresh terms, signed buyer decision and separate session-admin deal creation continue. Initial verification/match selection still fixtures; no alternate seller or provider/human acceptance inferred. Test-only; no runtime/deployment/hosted SQL/real send/money or commission change.

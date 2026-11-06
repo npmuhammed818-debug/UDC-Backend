@@ -74,13 +74,12 @@ try {
     stdin: {
       contents: `import express from 'express';
         import router from './src/routes/whatsappWebhook';
-        import adminRouter from './src/routes/admin';import {loadAuth} from './src/auth/middleware';export {createSession} from './src/auth/sessions';
-        export {prepareRestartRequest} from './src/deals/restartRequest';
+        import adminRouter from './src/routes/admin';import assistRouter from './src/routes/tradeAssist';import {loadAuth} from './src/auth/middleware';export {createSession} from './src/auth/sessions';
         export {requestTermsReview} from './src/marketplace/termAgreement';export {photoQuoteReview} from './src/deals/photoQuoteReview';export {getAkifDealContext} from './src/akif/intelligence/dealContext';export {pool} from '@workspace/db';export {readSunkReplies,clearSunkReplies} from './src/whatsapp/replySink';
         const app=express();
         app.use(express.json({verify(req,res,body){req.rawBody=body;}}));
         app.use((req,res,next)=>{req.log={info(){},error(){}};next();});
-        app.use('/api',router);app.use(loadAuth);app.use(adminRouter);export default app;`,
+        app.use('/api',router);app.use(loadAuth);app.use(adminRouter);app.use(assistRouter);export default app;`,
       resolveDir: fileURLToPath(new URL('../../', import.meta.url)),
     },
     outfile: output, bundle: true, platform: 'node', format: 'esm',
@@ -280,7 +279,12 @@ try {
   const requestsBeforePreparation=await count('select count(*) from buyer_requests');
   const sourceRequestBeforePreparation=(await pool.query('select * from buyer_requests where id=$1',[source.id])).rows[0];
   const originalBeforePreparation=(await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0];
-  const prepared=await Promise.all([module.prepareRestartRequest(signedBackup.id,adminForPreparation),module.prepareRestartRequest(signedBackup.id,adminForPreparation)]);
+  const adminSession=await module.createSession(adminForPreparation),buyerSession=await module.createSession(buyer.id);
+  const prepareSignedRestart=async(token)=>{const r=await fetch(localOrigin+'/admin/trade-assist/requests/'+signedBackup.id+'/prepare-requirement',{method:'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:'{}'});return {status:r.status,body:await r.json().catch(()=>({}))};};
+  assert.equal((await prepareSignedRestart()).status,401);assert.equal((await prepareSignedRestart(buyerSession.token)).status,403);
+  assert.equal(await count('select count(*) from buyer_requests'),requestsBeforePreparation,'unauthorized preparation creates no draft');
+  const preparationResponses=await Promise.all([prepareSignedRestart(adminSession.token),prepareSignedRestart(adminSession.token)]);
+  assert.deepEqual(preparationResponses.map(r=>r.status).sort(),[200,201]);const prepared=preparationResponses.map(r=>r.body);
   assert.ok(prepared.every(r=>!('error'in r)));assert.equal(prepared[0].requirementId,prepared[1].requirementId);assert.equal(prepared.filter(r=>r.repeated).length,1);
   const preparedRequest=(await pool.query('select * from buyer_requests where id=$1',[prepared[0].requirementId])).rows[0];
   assert.equal(preparedRequest.status,'pending_admin_review');assert.equal(preparedRequest.buyer_user_id,buyer.id);
@@ -290,7 +294,6 @@ try {
   assert.equal(await count('select count(*) from deals'),restartDealsBefore,'admin preparation creates no replacement deal');
   assert.deepEqual((await pool.query('select * from deals where id=$1',[fixtureDeal])).rows[0],originalBeforePreparation);
   // Preparation is insufficient: review the new requirement and present fresh terms.
-  const adminSession=await module.createSession(adminForPreparation),buyerSession=await module.createSession(buyer.id);
   const freshMatch=randomUUID();
   await pool.query("insert into matches(id,buyer_request_id,seller_listing_id,status) values($1,$2,$3,'approved')",[freshMatch,preparedRequest.id,termsListing]);
   await assert.rejects(()=>module.requestTermsReview(freshMatch,adminForPreparation),/approved_compatible_records_required/,'pending requirement cannot receive a proposal');
