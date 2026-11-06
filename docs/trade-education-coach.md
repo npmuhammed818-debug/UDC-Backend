@@ -212,3 +212,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Native repository reservation reproduced storing an already expired challenge when given a stale call-start clock. After account/consent waits, reservation now uses the current clock for its existing rate-window checks and creation time, and refuses an expired or malformed expiry. The native stale-clock test refuses without a challenge row. This is deterministic stale-clock proof, not a two-minute live lock-wait test. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email confirmation consent-wait expiry proof, 2026-11-06
+
+Test-only actual WhatsApp confirmation waits on the consent lock until its challenge expires, then refuses without a binding. This proves the current-clock recheck occurs after the consent wait too, separate from the email-link serialization wait. Restored expiry retains normal single-use linking. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
