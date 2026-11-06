@@ -182,3 +182,8 @@ Full774/types/APIfrontend/all21native/5extractor passed.
 
 Test-only actual enrollment and WhatsApp confirmation both wait for pending latest-consent-row correction to withdrawn, then refuse. Reservation writes no challenge and delivers no code; confirmation creates no binding. Restored consent retains normal enrollment and single-use confirmation. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
 Full774/types/APIfrontend/all21native/5extractor passed.
+
+## Synthetic email code delivery current recipient, 2026-11-06
+
+Native actual sink delivery reproduced sending a link code using old phone evidence while phone reassignment was pending. Delivery now serializes with email linking and locks the current account, consent and exact challenge row; current address, phone fingerprint, consent, unused state and expiry must still match before the synthetic sink call. Pending phone reassignment waits then refuses without delivery. Synthetic only; no real inbox/send, hosted SQL, deployment, money or commission change.
+Full774/types/APIfrontend/all21native/5extractor passed.
