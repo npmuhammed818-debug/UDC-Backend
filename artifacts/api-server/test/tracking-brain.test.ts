@@ -94,3 +94,17 @@ test('a malformed brain-proposed number never reaches the lookup', async () => {
   assert.equal(await interpretTrackingAsk('track ABC123', { chat: chatReturning('{"trackingNumber":"<script>"}') }), null);
   assert.equal(await interpretTrackingAsk('track ABC123', { chat: async () => { throw new Error('down'); } }), null);
 });
+
+test('invalid and future carrier data never reaches tracking brain or status claim',async()=>{
+ for(const time of ['2026-02-30T12:00:00Z','2099-01-01T12:00:00Z']){
+  const bad=[{time,description:'Delivered'}];let called=false;
+  assert.equal(await brainTrackingReply({number:'SYN123',events:bad},{chat:async()=>{called=true;return {content:'{"reply":"The shipment was delivered."}'};}}),null);
+  assert.equal(called,false,'invalid feed is not model input');
+  assert.equal(trackingReplyViolatesRules('The shipment was delivered.',bad),true);
+ }
+});
+test('latest timestamp, not feed order, controls tracking brain support',()=>{
+ const rows=[{time:'2026-10-28T12:00:00Z',description:'Delivered'},{time:'2026-10-30T12:00:00Z',description:'Customs hold'}];
+ assert.equal(trackingReplyViolatesRules('The shipment was delivered.',rows),true);
+ assert.equal(trackingReplyViolatesRules('The carrier reports it is delayed.',rows),false);
+});
