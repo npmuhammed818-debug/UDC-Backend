@@ -36,14 +36,14 @@ const DATE_PROMISE = new RegExp(
 // dashboard or portal.
 const FORBIDDEN_SURFACE = /\b(?:app|application|dashboard|portal)\b/i;
 
-function extractReply(raw: string): string | null {
+function extractReply(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
   const trimmed = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const start = trimmed.indexOf('{');
-  const end = trimmed.lastIndexOf('}');
-  if (start < 0 || end <= start) return null;
   try {
-    const parsed = JSON.parse(trimmed.slice(start, end + 1)) as { reply?: unknown };
-    return typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply.trim() : null;
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const { reply } = parsed as { reply?: unknown };
+    return typeof reply === 'string' && reply.trim() ? reply.trim() : null;
   } catch {
     return null;
   }
@@ -53,10 +53,11 @@ export function trackingReplyViolatesRules(reply: string, events: ShipmentTrackE
   if (reply.length > MAX_REPLY_CHARS) return true;
   if (hasUnresolvedPlaceholder(reply)) return true;
   if (DATE_PROMISE.test(reply)) return true;
+  if (/\b(?:delivery|arrival|arrives|arriving|reaches|reaching)\b[^.\n]{0,35}\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s+(?:days?|hours?|weeks?))\b/i.test(reply)) return true;
   if (FORBIDDEN_SURFACE.test(reply)) return true;
   const cls = classifyLatest(events);
   // A status claim the carrier feed does not support is an invented fact.
-  if (/\bdelivered\b/i.test(reply) && cls !== 'delivered') return true;
+  if (/\bdelivered\b|\bdelivery\s+(?:is\s+|was\s+|has\s+been\s+)?complete(?:d)?\b|\b(?:arrived|reached)\b[^.\n]{0,35}\b(?:your address|your home|recipient|consignee)\b|\breceived\s+by\s+(?:the\s+)?(?:recipient|consignee|you)\b/i.test(reply) && cls !== 'delivered') return true;
   if (/\bdelayed\b/i.test(reply) && cls !== 'delayed') return true;
   if (/\b(?:shipped|dispatched|departed|picked up|in transit)\b/i.test(reply) && cls !== 'shipped') return true;
   return false;
