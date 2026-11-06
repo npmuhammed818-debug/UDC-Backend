@@ -8,3 +8,9 @@ test('runtime carrier feed shapes refuse without throwing',()=>{
  }
  assert.deepEqual(currentCarrierEvents([event],now),[event]);
 });
+
+test('sparse carrier feed cannot bypass validation or throw while ordering',()=>{
+ const sparse=new Array(2);sparse[1]={time:'2026-11-05T00:00:00Z',description:'Delivered to consignee'};
+ assert.equal(currentCarrierEvents(sparse,now),null);
+ assert.equal(currentCarrierEvents(new Array(1),now),null);
+});
