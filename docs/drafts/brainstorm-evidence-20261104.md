@@ -470,3 +470,6 @@ Native shared email-history reader reproduced exposing a counterpart relay while
 
 ### Exact email history additional concurrent proof
 Actual native shared-reader tests also hold pending direct-party reassignment and own-original-text correction. History blocks then denies former party, or returns the corrected own text rather than the stale original. Focused native suite passed; runtime unchanged from the710/all21/5 verified candidate. Synthetic only, not real email or receipt evidence.
+Source-only baseline refresh after PR351: concurrent role, first-row STOP and consent-withdrawal cases now also assert that neither optional dispatcher writes a false delivery receipt. The original PR311 failed CI run remains historical evidence; PR351 corrected the race-winner test assertion. This is not a production-readiness claim.
+
+PR313 source-only baseline refresh after PR312: every rejected feed case now also checks unchanged delivery audit and outbox counts, not just notification count. The inherited PR312 false-receipt assertions remain. No authority is inferred from source comments.
