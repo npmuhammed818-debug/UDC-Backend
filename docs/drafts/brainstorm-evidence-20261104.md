@@ -470,3 +470,6 @@ Native shared email-history reader reproduced exposing a counterpart relay while
 
 ### Exact email history additional concurrent proof
 Actual native shared-reader tests also hold pending direct-party reassignment and own-original-text correction. History blocks then denies former party, or returns the corrected own text rather than the stale original. Focused native suite passed; runtime unchanged from the710/all21/5 verified candidate. Synthetic only, not real email or receipt evidence.
+
+## Private exit-skip current closure recheck
+Native actual callback reproduced saving a skip after a closed deal reopened during its serialization-lock wait. Skip writer now locks/rechecks current account/phone/role, direct party, cancelled stage and own closure audit. Native reopened-deal and withdrawn-own-closure evidence cases refuse without a skip; normal signed callback/dedup still pass.710APItests/types/API+frontend build, all21nativeSQLHTTP and5extractor tests pass. Webhook unit SQL fake gained no-op share-lock support; real locking is proved by native tests. This change covers guided skip only, not a new restriction on the separate free-text private reason command. No real sends, hosted SQL, deployment or money/commission changes.
