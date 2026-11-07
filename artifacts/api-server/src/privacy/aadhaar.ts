@@ -12,7 +12,7 @@ function verhoeff(digits: string): boolean {
 
 // UUID identifiers can end with twelve numeric hex characters. A checksum
 // coincidence inside that identifier is not a standalone identity number.
-const UUID = /(?<![a-z0-9-])[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}(?![a-z0-9-])/gi;
+const UUID = /(?<![a-z0-9])[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}(?![a-z0-9])/gi;
 const withoutUuids=(text:string)=>text.replace(UUID,'[record-id]');
 const NUMBER = /(?<!\d)([2-9]\d{3})[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)/g;
 
@@ -29,7 +29,9 @@ export function mentionsAadhaarDocument(text: string | null | undefined): boolea
 
 /** Replace Aadhaar-valid numbers so they are never stored. */
 export function scrubAadhaar(text: string): string {
-  return text.replace(NUMBER, (all, a, b, c) => (verhoeff(`${a}${b}${c}`) ? "[aadhaar removed]" : all));
+  // Match complete record IDs first, so scrubbing agrees with detection.
+  const identifiersOrNumbers = new RegExp(`${UUID.source}|${NUMBER.source}`, "gi");
+  return text.replace(identifiersOrNumbers, (all, a, b, c) => (a && verhoeff(`${a}${b}${c}`) ? "[aadhaar removed]" : all));
 }
 
 export const AADHAAR_REFUSAL =
