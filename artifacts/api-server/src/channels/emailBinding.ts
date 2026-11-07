@@ -16,7 +16,7 @@ export function emailBindingService(ports:EmailLinkPorts,secret:string,env:NodeJ
  return {
  async startFromAuthenticatedEmail(address:string){
  if(!enabled())return {status:'disabled'};const canonical=canonicalEmail(address);if(!canonical)return {status:'verification_unavailable'};
- const account=await ports.findRegisteredAccount(canonical);if(!account?.verified||!account.consentVersion||canonicalEmail(account.address)!==canonical)return {status:'verification_unavailable'};
+ const resolved=await ports.findRegisteredAccount(canonical),account=resolved?{...resolved}:null;if(account?.verified!==true||typeof account.userId!=='string'||!account.userId.trim()||typeof account.consentVersion!=='string'||!account.consentVersion.trim()||typeof account.address!=='string'||canonicalEmail(account.address)!==canonical)return {status:'verification_unavailable'};
  const id=randomUUID(),code=String(randomInt(1000000)).padStart(6,'0'),now=clock();
  if(!await ports.reserve({id,userId:account.userId,address:canonical,codeHash:hash(id,code),expiresAt:now+120000,attempts:0},now))return {status:'rate_limited'};
  await ports.putWhatsAppCodeInSyntheticSink(account.userId,code,id);return {status:'synthetic_challenge_created',challengeId:id};
