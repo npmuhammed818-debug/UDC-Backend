@@ -12,7 +12,7 @@ export interface EmailPilotPorts{
  saveDraft(input:{to:string;from:string;subject:string;threadId:string;inReplyTo:string;references:string[];text:string;cc:[];attachments:[];requiresHumanReview:true}):Promise<void>;
 }
 export function canonicalEmail(input:string){if(input!==input.trim()||input.length>254||/[\r\n<>\s]/.test(input))return null;const m=/^([A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+)@([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)$/.exec(input);if(!m||m[1].length>64||m[1].startsWith('.')||m[1].endsWith('.')||m[1].includes('..'))return null;const labels=m[2].split('.');if(labels.length<2||labels.some(label=>!label||label.length>63||!/^([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])$/.test(label)))return null;return m[1]+'@'+m[2].toLowerCase();}
-export function safeEmailAttachment(a:EmailEvidence['attachments'][number]){return !!a.id&&a.name.length>0&&a.name.length<=180&&!/[\r\n\/\\]/.test(a.name)&&Number.isSafeInteger(a.bytes)&&a.bytes>0&&a.bytes<=20*1024*1024&&['application/pdf','image/jpeg','image/png'].includes(a.type);}
+export function safeEmailAttachment(a:EmailEvidence['attachments'][number]){return !!a.id&&a.name.length>0&&a.name.length<=180&&!/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069/\\]/u.test(a.name)&&Number.isSafeInteger(a.bytes)&&a.bytes>0&&a.bytes<=20*1024*1024&&['application/pdf','image/jpeg','image/png'].includes(a.type);}
 /** Synthetic/manual-review pilot. No mailbox read, SMTP, provider send or attachment
  * extraction implemented. Never claims a draft was delivered. */
 export async function processEmailPilot(event:EmailEvidence,ports:EmailPilotPorts,env:NodeJS.ProcessEnv=process.env){

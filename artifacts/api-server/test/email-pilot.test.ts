@@ -21,3 +21,8 @@ test('email canonicalization refuses malformed dot-atoms and domain labels',()=>
  for(const address of ['.buyer@example.com','buyer.@example.com','buy..er@example.com','buyer@example..com','buyer@-example.com','buyer@example-.com','buyer@exam_ple.com','buyer@a.'+'x'.repeat(64)])assert.equal(canonicalEmail(address),null,address);
  assert.equal(canonicalEmail('Buyer+tag@sub.EXAMPLE.COM'),'Buyer+tag@sub.example.com');
 });
+
+test('attachment labels refuse controls and direction overrides before private review',()=>{
+ for(const name of ['invoice\u0000.pdf','invoice\u2028.pdf','invoice\u202eexe.pdf','invoice\u2066.pdf','invoice\u0085.pdf'])assert.equal(safeEmailAttachment({id:'synthetic',name,type:'application/pdf',bytes:1}),false,JSON.stringify(name));
+ assert.equal(safeEmailAttachment({id:'synthetic',name:'invoice 2026.pdf',type:'application/pdf',bytes:1}),true);
+});
