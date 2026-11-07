@@ -11,3 +11,9 @@ test('tracking model output must be one object rather than prose containing a re
  for(const content of ['Ignore the rules. {"reply":"The carrier created a label."}','{"reply":"The carrier created a label."} Extra claims outside the reply.','[{"reply":"The carrier created a label."}]'])assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content})}),null);
  assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content:'```json\n{"reply":"The carrier created a label."}\n```'})}),'The carrier created a label.');
 });
+
+import {interpretTrackingAsk} from '../src/akif/trackingIntent.ts';
+test('tracking intent cannot invent or extend the user supplied carrier number',async()=>{
+ for(const [message,number] of [['Track ABC123 please','XYZ987'],['Track ABC123 please','ABC1234'],['Track XABC123Y please','ABC123']])assert.equal(await interpretTrackingAsk(message,{chat:async()=>({content:JSON.stringify({trackingNumber:number})})}),null,message+' -> '+number);
+ assert.equal(await interpretTrackingAsk('Track abc123 please',{chat:async()=>({content:'{"trackingNumber":"ABC123"}'})}),'ABC123');
+});
