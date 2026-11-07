@@ -166,14 +166,14 @@ try {
   for(const sender of [sellerPhone,agentPhone,conflictPhone])testPhones.add(sender);
   const sendAs=(sender,text)=>post(text,randomUUID(),sender);
   for(const [role,sender,answers] of [
-    ['seller',sellerPhone,[label+' Seller',`seller-${randomUUID()}@example.invalid`,label+' Test Exports Ltd','Oman']],
+    ['seller',sellerPhone,[label+' Seller',`seller-00000000-0000-4000-8000-234567890124@example.invalid`,label+' Test Exports Ltd','Oman']],
     ['agent',agentPhone,[label+' Agent',`qa-${randomUUID()}@gmail.com`]],
   ]){
     for(const text of ['Hello','AGREE',role,...answers])await sendAs(sender,text);
     assert.equal(await count('select count(*) from users where phone=$1',[sender]),0);
     await sendAs(sender,'Submit');
     const {rows:[account]}=await pool.query('select id,role,status from users where phone=$1',[sender]);
-    assert.ok(account);assert.equal(account.role,role);assert.equal(account.status,'pending');
+    assert.ok(account,`${role} registration must persist after its validated answers`);assert.equal(account.role,role);assert.equal(account.status,'pending');
     if(role==='agent')assert.equal(await count('select count(*) from companies where owner_user_id=$1',[account.id]),0);
     else assert.equal(await count('select count(*) from companies where owner_user_id=$1 and verification_status=$2',[account.id,'pending']),1);
   }
