@@ -18,11 +18,13 @@ const mail=[];globalThis.__lifecycleMail=mail;
 await mkdir(new URL("../../tmp/", import.meta.url), { recursive: true });
 const directory = await mkdtemp(fileURLToPath(new URL("../../tmp/qa-lifecycle-", import.meta.url)));
 let server, pool, origin;
+globalThis.__pilotStoredDocuments=new Map();
 const beforeFetch = globalThis.fetch;
 const prompts=[];
 globalThis.fetch = async (input, init) => {
   if(new URL(String(input)).origin==='https://worker.example.invalid'){
     prompts.push(JSON.parse(init.body));
+    if(globalThis.__pilotDocumentExtraction)return Response.json({choices:[{message:{content:JSON.stringify(globalThis.__pilotDocumentExtraction)}}]});
     return Response.json({choices:[{message:{content:JSON.stringify({intent:'status_question',replyToSender:'Your recorded deal needs UDC review.',relay:false,relayToCounterparty:null,newTradeIntake:false})}}]});
   }
   assert.equal(new URL(String(input)).origin, origin, "never contact external services");
@@ -34,7 +36,7 @@ try {
       contents: `import express from 'express';import whatsapp from './src/routes/whatsappWebhook';import tradeAssist from './src/routes/tradeAssist';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import marketplace from './src/routes/marketplace';import deals from './src/routes/deals';import documents from './src/routes/documents';import referrals from './src/routes/referrals';import admin from './src/routes/admin';import email from './src/routes/emailAuth';import vault,{vaultShortRouter} from './src/routes/vault';import commissions from './src/routes/commissions';import notifications from './src/routes/notifications';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {readSunkReplies,clearSunkReplies} from './src/whatsapp/replySink';export {hashPassword} from './src/auth/passwords';export {interpretActiveDealConversation} from './src/akif/dealConversationAgent';export {saveTradeAssistRequest} from './src/deals/tradeAssistRepository';export {prepareRestartRequest} from './src/deals/restartRequest';export {prepareTrialOrder} from './src/deals/trialOrder';export {respondToTerms,presentInitialVerifiedOffer} from './src/marketplace/termAgreement';export {requestRoleChange} from './src/accounts/roleChangeRequest';import roleReview from './src/routes/roleChangeReview';const app=express();app.set('trust proxy','loopback');app.use(express.json({verify(req,res,body){req.rawBody=body;}}));app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use('/api',whatsapp);app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(email);app.use(vault);app.use(vaultShortRouter);app.use('/api',vault);app.use(marketplace);app.use(deals);app.use(documents);app.use(referrals);app.use(admin);app.use(commissions);app.use(notifications);app.use(roleReview);app.use(tradeAssist);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
-    plugins: [{name:"fictional-mail",setup(b){b.onResolve({filter:/\/emailDelivery$/},()=>({path:"mail",namespace:"mail"}));b.onLoad({filter:/.*/,namespace:"mail"},()=>({contents:"export const sendAuthEmail=async value=>{globalThis.__lifecycleMail.push(value);};"}));}}, { name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
+    plugins: [{name:'synthetic-document-extractor',setup(b){b.onResolve({filter:/\/documentExtractorClient$/},()=>({path:'extractor',namespace:'extractor'}));b.onLoad({filter:/.*/,namespace:'extractor'},()=>({contents:"export async function extractDocumentBytes(input){if(Buffer.from(input.bytes).subarray(0,5).toString()!=='%PDF-')throw Error('fixture_pdf_required');return {text:'Synthetic invoice. Quantity 100 MT. Price 505 USD per MT. CIF Dubai. Model extraction deliberately reads quantity incorrectly for human correction.',extraction_method:'synthetic-pdf-text-fixture',page_count:1,warnings:[],metadata:{}};}"}));}}, {name:"fictional-mail",setup(b){b.onResolve({filter:/\/emailDelivery$/},()=>({path:"mail",namespace:"mail"}));b.onLoad({filter:/.*/,namespace:"mail"},()=>({contents:"export const sendAuthEmail=async value=>{globalThis.__lifecycleMail.push(value);};"}));}}, { name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path,bytes){globalThis.__pilotStoredDocuments.set(path,new Uint8Array(bytes));return 'storage://udc-documents/'+path;} export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(path){const bytes=globalThis.__pilotStoredDocuments.get(path);if(!bytes)throw Error('missing synthetic object');return {bytes,contentType:'application/pdf'};}" })); } }],
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
@@ -178,9 +180,11 @@ try {
   const humanRequest=await signedRequest(buyer,dealId,'human help','trade_assist_human_help');
   const reviewPath='/admin/trade-assist/requests/'+humanRequest.id+'/review';
   assert.equal((await call('POST',reviewPath,{status:'triaged',note:'Synthetic queue: checking your documents.'},buyer.cookie)).status,403);
+  assert.equal((await call('POST',reviewPath,{status:'resolved',note:'Cannot close before assignment.'},admin.cookie)).status,409);
+  assert.equal((await call('POST',reviewPath,{status:'assigned',note:'Synthetic operator accepts the document-review request.'},admin.cookie)).status,200);
   const reviews=await Promise.all([call('POST',reviewPath,{status:'resolved',note:'Synthetic human review completed; check the original documents before agreeing.'},admin.cookie),call('POST',reviewPath,{status:'resolved',note:'Synthetic human review completed; check the original documents before agreeing.'},admin.cookie)]);
   assert.deepEqual(reviews.map(r=>r.status).sort(),[200,409],'concurrent human terminal review recorded once');
-  assert.equal((await pool.query("select count(*)::int n from audit_logs where action='trade_assist_review_recorded' and metadata->>'requestId'=$1",[humanRequest.id])).rows[0].n,1);
+  assert.equal((await pool.query("select count(*)::int n from audit_logs where action='trade_assist_review_recorded' and metadata->>'requestId'=$1",[humanRequest.id])).rows[0].n,2);
   app.clearSunkReplies();await signedMessage('15550001111','request status');
   const buyerStatus=app.readSunkReplies('15550001111').map(r=>r.text).join('\n');assert.match(buyerStatus,/human help: resolved - Synthetic human review completed/);assert.match(buyerStatus,/Recorded queue status only/);
   await signedMessage('15550002222',{type:'list_reply',list_reply:{id:'udc:deal:'+dealId}});app.clearSunkReplies();await signedMessage('15550002222','request status');
@@ -335,6 +339,30 @@ try {
   assert.equal(rej.fileUrl, null, "rejected files are not downloadable");
   assert.equal((await pool.query("select count(*)::int n from notifications where user_id=$1 and type='document_reviewed'", [seller.id])).rows[0].n >= 1, true, "uploader told why");
   pass("trade documents: PDF-only upload, private until approved, admin review with mandatory rejection reason, rejected files not downloadable, uploader notified");
+  // One continuous pilot document journey. Storage/extractor/model are explicit
+  // synthetic ports; upload, rebuild, persistence, human correction, party reads
+  // and access controls are the actual routes/services and native SQL.
+  process.env.UDC_APP_ENV='staging';process.env.AKIF_WORKER_CONVERSATION_ENABLED='true';process.env.AKIF_WORKER_URL='https://worker.example.invalid';process.env.AKIF_WORKER_TOKEN='synthetic-worker-token';
+  globalThis.__pilotDocumentExtraction={quantity:{value:'101',unit:'MT'},pricing:{unitPrice:'505',currency:'USD',basis:'MT'},logistics:{incoterm:'CIF',destination:'Dubai'},confidence:0.8};
+  const rebuildPath=`/admin/deals/${dealId}/documents/${inv.body.document.id}/extraction-review/rebuild`;
+  assert.equal((await call('POST',rebuildPath,{extractThisPrivatePdf:true},buyer.cookie)).status,403);
+  assert.equal((await call('POST',rebuildPath,{},admin.cookie)).status,400);
+  assert.equal((await call('POST',rebuildPath,{extractThisPrivatePdf:true},admin.cookie)).status,200);
+  let snapshot;
+  const extractionPath=`/admin/deals/${dealId}/documents/${inv.body.document.id}/extraction-review`;
+  for(let i=0;i<200;i++){const r=await call('GET',extractionPath,undefined,admin.cookie);if(r.status===200){snapshot=r.body;break;}await new Promise(r=>setTimeout(r,25));}
+  assert.ok(snapshot?.reviewToken,'uploaded PDF reaches persisted completed extraction');assert.equal(snapshot.extractedFields.quantity.value,'101');
+  const comparisonPath=`/trade-assist/deals/${dealId}/document-check/${inv.body.document.id}`;
+  const rawComparison=await call('GET',comparisonPath,undefined,buyer.cookie);assert.equal(rawComparison.status,200,JSON.stringify(rawComparison.body));assert.equal(rawComparison.body.checks.find(c=>c.field==='quantity').state,'mismatch');
+  const checked={reviewToken:snapshot.reviewToken,checkedAgainstOriginal:true,fields:{quantity:{value:'100',unit:'MT'},pricing:{unitPrice:'505',currency:'USD',basis:'MT'},logistics:{incoterm:'CIF',destination:'Dubai'}},note:'Synthetic operator checked the original PDF and corrected the model quantity from 101 to 100 MT.'};
+  assert.equal((await call('POST',extractionPath,checked,buyer.cookie)).status,403);
+  assert.equal((await call('POST',extractionPath,{...checked,checkedAgainstOriginal:false},admin.cookie)).status,400);
+  assert.equal((await call('POST',extractionPath,checked,admin.cookie)).status,201);
+  for(const person of [buyer,seller]){const checkedRead=await call('GET',comparisonPath,undefined,person.cookie);assert.equal(checkedRead.status,200);assert.equal(checkedRead.body.checks.find(c=>c.field==='quantity').state,'mismatch','original model evidence preserved');assert.equal(checkedRead.body.humanReview.checks.find(c=>c.field==='quantity').state,'match');assert.equal(checkedRead.body.authenticityVerified,false);}
+  assert.equal((await call('GET',comparisonPath,undefined,stranger.cookie)).status,404);
+  assert.equal((await pool.query('select quantity::text from deals where id=$1',[dealId])).rows[0].quantity,'100.000000','correction never changes agreed terms');
+  delete globalThis.__pilotDocumentExtraction;for(const key of ['UDC_APP_ENV','AKIF_WORKER_CONVERSATION_ENABLED','AKIF_WORKER_URL','AKIF_WORKER_TOKEN'])delete process.env[key];
+  pass('pilot PDF upload/private review/approval -> persisted synthetic extraction -> quantity mismatch -> admin transcription correction -> both authorized party comparisons, original extraction and deal terms preserved');
   // 8 document generators (LOI, ICPO, FCO, SPA, NCNDA): drafts for review only
   const kinds = ["ncnda", "spa", "loi", "icpo", "fco"];
   const out = {};
