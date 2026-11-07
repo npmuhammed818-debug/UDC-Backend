@@ -11,3 +11,21 @@ test('failed rates and too many prices never fabricate or silently replace origi
  const original='USD 5';assert.match(await addPriceReferences(original,'INR',async()=>{throw Error('unavailable')}),/^USD 5\n.*No rate guessed/);
  let calls=0;const out=await addPriceReferences('USD 1 USD 2 USD 3 USD 4','INR',async()=>{calls++;throw Error();});assert.equal(calls,0);assert.match(out,/Too many prices/);
 });
+
+test('automatic price references refuse partial, signed and embedded Unicode tokens',async()=>{
+ let calls=0;const convert=async()=>{calls++;return {converted:'84',rateDate:'2026-11-05'} as any;};
+ for(const text of ['USD 1e6','USD 12abc','USD 12\u0663','\u03b1USD 12','12 USD\u03b1','\u221212 USD','+12 USD','\u066312 USD','USD 12\u0301'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);
+ assert.equal(calls,0);assert.match(await addPriceReferences('USD 12/MT','INR',convert),/Indicative FX/);assert.equal(calls,1);
+});
+
+test('automatic FX never converts one endpoint of an amount range',async()=>{
+ let calls=0;const convert=async()=>{calls++;return {converted:'84',rateDate:'2026-11-05'} as any;};
+ for(const text of ['USD 12-15','USD 12\u201315','USD 12\u201415','USD 12\u221215','12\u201315 USD','12\u201415 USD','USD 12 - 15','12 - 15 USD'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);assert.equal(calls,0);
+ assert.match(await addPriceReferences('USD 12 - price per MT','INR',convert),/Indicative FX/);
+});
+
+test('automatic FX refuses signed and accounting-negative prices even with spaces',async()=>{
+ let calls=0;const convert=async()=>{calls++;return {converted:'84',rateDate:'2026-11-05'} as any;};
+ for(const text of ['- 12 USD','+ 12 USD','\u2212 12 USD','- USD 12','+ USD 12','\u2212 USD 12','(12 USD)','(USD 12)'])assert.equal(await addPriceReferences(text,'INR',convert),text,text);assert.equal(calls,0);
+ assert.match(await addPriceReferences('Quote: USD 12 per MT','INR',convert),/Indicative FX/);
+});
