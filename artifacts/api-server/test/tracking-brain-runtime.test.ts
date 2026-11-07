@@ -35,3 +35,8 @@ test('tracking source-token boundaries include non-ASCII letters and digits',asy
 test('combining marks cannot be discarded from a source tracking token',async()=>{
  for(const message of ['Track ABC123\u0301','Track A\u0301BC123','Track \u0301ABC123'])assert.equal(await interpretTrackingAsk(message,{chat:async()=>({content:'{"trackingNumber":"ABC123"}'})}),null,message);
 });
+
+test('tracking intent cannot cut a valid-looking piece from a malformed dashed identifier',async()=>{
+ for(const message of ['Track ABC123--XYZ','Track -ABC123','Track ABC123-'])assert.equal(await interpretTrackingAsk(message,{chat:async()=>({content:'{"trackingNumber":"ABC123"}'})}),null,message);
+ assert.equal(await interpretTrackingAsk('Track AB-123 please',{chat:async()=>({content:'{"trackingNumber":"AB-123"}'})}),'AB-123');
+});
