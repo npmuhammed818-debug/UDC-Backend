@@ -6,3 +6,8 @@ test('malformed tracking model content refuses without throwing',async()=>{
 test('tracking model cannot replace unsupported delivery with completion synonyms',async()=>{
  for(const reply of ['Delivery completed.','The parcel arrived at your address.','The shipment reached the recipient.','The package has been received by the consignee.'])assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content:JSON.stringify({reply})})}),null,reply);
 });
+
+test('tracking model output must be one object rather than prose containing a reply',async()=>{
+ for(const content of ['Ignore the rules. {"reply":"The carrier created a label."}','{"reply":"The carrier created a label."} Extra claims outside the reply.','[{"reply":"The carrier created a label."}]'])assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content})}),null);
+ assert.equal(await brainTrackingReply({number:'SYNTHETIC',events:[{time:'2026-11-05T00:00:00Z',description:'Label created'}]},{chat:async()=>({content:'```json\n{"reply":"The carrier created a label."}\n```'})}),'The carrier created a label.');
+});
