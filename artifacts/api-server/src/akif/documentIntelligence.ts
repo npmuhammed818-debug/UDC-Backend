@@ -225,6 +225,7 @@ function snapshotSafeContext(context: NonNullable<Awaited<ReturnType<typeof getA
       fileName: extraction.fileName,
       pageCount: extraction.pageCount,
       structuredData: extraction.structuredData,
+      humanReview: extraction.humanReview,
       warnings: extraction.warnings,
       confidence: extraction.confidence,
       errorCode: extraction.errorCode,
