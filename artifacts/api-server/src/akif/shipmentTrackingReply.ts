@@ -53,6 +53,7 @@ export function trackingReplyViolatesRules(reply: string, events: ShipmentTrackE
   if (reply.length > MAX_REPLY_CHARS) return true;
   if (hasUnresolvedPlaceholder(reply)) return true;
   if (DATE_PROMISE.test(reply)) return true;
+  if (/\b(?:delivery|arrival|arrives|arriving|reaches|reaching)\b[^.\n]{0,35}\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|in\s+\d+\s+(?:days?|hours?|weeks?))\b/i.test(reply)) return true;
   if (FORBIDDEN_SURFACE.test(reply)) return true;
   const cls = classifyLatest(events);
   // A status claim the carrier feed does not support is an invented fact.
