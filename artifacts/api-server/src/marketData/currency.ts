@@ -21,9 +21,10 @@ export async function currencyConversion(input:{amount:string;base:string;quote:
    const response=await (ports.fetch??fetch)(sourceUrl,{signal:AbortSignal.timeout(7000),redirect:'error'});if(!response.ok)throw Error('currency_rate_unavailable');
    const length=Number(response.headers.get('content-length')||0);if(length>4096)throw Error('invalid_rate_response');const reader=response.body?.getReader();if(!reader)throw Error('invalid_rate_response');const chunks:Uint8Array[]=[];let size=0;try{while(true){const next=await reader.read();if(next.done)break;size+=next.value.length;if(size>4096){await reader.cancel();throw Error('invalid_rate_response');}chunks.push(next.value);}}finally{reader.releaseLock();}const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}data=JSON.parse(new TextDecoder().decode(bytes));
    if(data.base!==base||data.quote!==quote||!/^\d{4}-\d{2}-\d{2}$/.test(data.date)||!Number.isFinite(data.rate)||data.rate<=0||data.rate>1e10)throw Error('invalid_rate_response');
+   const day=Date.parse(data.date+'T00:00:00Z');if(!Number.isFinite(day)||new Date(day).toISOString().slice(0,10)!==data.date)throw Error('invalid_rate_response');
    if(cache.size>=500)cache.delete(cache.keys().next().value!);cache.set(key,{at:now,data});
   }
  }
- const age=now-Date.parse(data.date+'T00:00:00Z');if(!Number.isFinite(age)||age< -86400000||age>7*86400000)throw Error('currency_rate_stale');
+ const age=now-Date.parse(data.date+'T00:00:00Z');if(!Number.isFinite(age)||age<0||age>7*86400000)throw Error('currency_rate_stale');
  return {amount,base,quote,rate:String(data.rate),converted:indicativeAmount(amount,String(data.rate),places),rounding:`Half up to ${places} decimal places`,rateDate:data.date,sourceUrl,indicativeOnly:true,notice:'Daily reference estimate, not a bank quote. Fees and spreads excluded. Deal terms and payments are unchanged.'};
 }
