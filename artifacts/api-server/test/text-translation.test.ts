@@ -18,3 +18,8 @@ test('Unicode arithmetic signs in trade figures cannot disappear or change',()=>
  for(const [source,result] of [['Adjustment −100 USD','Ajustement 100 USD'],['Quantity 10 ± 2 MT','Quantite 10 2 MT'],['Price ≈100 USD','Prix =100 USD'],['Quantity 10 − 2 MT','Quantite 10 + 2 MT']])assert.equal(translatedTextOk(result,source,'french'),false,source);
  assert.equal(translatedTextOk('Ajustement −100 USD','Adjustment −100 USD','french'),true);
 });
+
+test('standalone ASCII subtraction cannot disappear or turn positive',()=>{
+ for(const [source,result] of [['Quantity 10 - 2 MT','Quantite 10 2 MT'],['Adjustment - 100 USD','Ajustement 100 USD'],['Quantity 10 - 2 MT','Quantite 10 + 2 MT']])assert.equal(translatedTextOk(result,source,'french'),false,source);
+ assert.equal(translatedTextOk('Quantite 10 - 2 MT','Quantity 10 - 2 MT','french'),true);
+});
