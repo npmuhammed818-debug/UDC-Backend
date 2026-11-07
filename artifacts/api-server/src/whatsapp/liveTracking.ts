@@ -59,7 +59,7 @@ export async function liveTrackingReply(
   }
   const now = deps.now ?? Date.now();
   const cached = cache.get(number);
-  if (cached && now - cached.at < CACHE_TTL_MS) return cached.text;
+  if (cached && now >= cached.at && now - cached.at < CACHE_TTL_MS) return cached.text;
   const pending=pendingLookups.get(number);if(pending)return pending;
   if(pendingLookups.size>=CACHE_MAX)return 'Carrier tracking is busy right now. Please try again in a little while.';
   const lookup=(async()=>{
