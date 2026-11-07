@@ -49,7 +49,7 @@ export function parseTranslateRequest(text: string): TranslateRequest | null {
 // A model instruction is not evidence that figures or written trade tokens survived.
 // Compare the exact token sequence, including repeated tokens. This is a fail-closed lexical
 // guard, not a claim that the prose, identities or commercial meaning were verified.
-const EXACT_TRADE_TOKENS = /https?:\/\/[^\s]+|[^\s@]+@[^\s@]+\.[^\s@]+|[+-]?(?:[\p{N}]+(?:[.,:/-][\p{N}]+)*|[.,][\p{N}]+)|(?:<=|>=|[-\p{Sm}])|[\p{Sc}﷼%٪‰‱]|(?<![\p{L}])(?:USD|INR|EUR|AED|GBP|SAR|CNY|RMB|JPY|CHF|CAD|AUD|SGD|HKD|NZD|ZAR|BRL|MXN|TRY|IDR|MYR|THB|VND|KRW|PKR|BDT|LKR|QAR|KWD|BHD|OMR|FOB|CIF|CFR|FAS|EXW|FCA|CPT|CIP|DAP|DPU|DDP|LC|DLC|SBLC|MT|KG|KGS|G|LB|LBS|TON|TONS|TONNE|TONNES|LITRE|LITRES|LITER|LITERS|CBM|PIECE|PIECES|CARTON|CARTONS|CONTAINER|CONTAINERS)(?![\p{L}])/giu;
+const EXACT_TRADE_TOKENS = /https?:\/\/[^\s]+|[^\s@]+@[^\s@]+\.[^\s@]+|[+-]?(?:[\p{N}]+(?:[.,٫٬:/-][\p{N}]+)*|[.,٫][\p{N}]+)|(?:<=|>=|[-\p{Sm}])|[\p{Sc}﷼%٪‰‱]|(?<![\p{L}])(?:USD|INR|EUR|AED|GBP|SAR|CNY|RMB|JPY|CHF|CAD|AUD|SGD|HKD|NZD|ZAR|BRL|MXN|TRY|IDR|MYR|THB|VND|KRW|PKR|BDT|LKR|QAR|KWD|BHD|OMR|FOB|CIF|CFR|FAS|EXW|FCA|CPT|CIP|DAP|DPU|DDP|LC|DLC|SBLC|MT|KG|KGS|G|LB|LBS|TON|TONS|TONNE|TONNES|LITRE|LITRES|LITER|LITERS|CBM|PIECE|PIECES|CARTON|CARTONS|CONTAINER|CONTAINERS)(?![\p{L}])/giu;
 function exactTradeTokens(text: string): string[] {
   return [...text.matchAll(EXACT_TRADE_TOKENS)].map(match => match[0]);
 }
