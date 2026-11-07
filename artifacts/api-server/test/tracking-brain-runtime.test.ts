@@ -17,3 +17,8 @@ test('tracking intent cannot invent or extend the user supplied carrier number',
  for(const [message,number] of [['Track ABC123 please','XYZ987'],['Track ABC123 please','ABC1234'],['Track XABC123Y please','ABC123']])assert.equal(await interpretTrackingAsk(message,{chat:async()=>({content:JSON.stringify({trackingNumber:number})})}),null,message+' -> '+number);
  assert.equal(await interpretTrackingAsk('Track abc123 please',{chat:async()=>({content:'{"trackingNumber":"ABC123"}'})}),'ABC123');
 });
+
+test('tracking intent refuses prose and arrays around the decision',async()=>{
+ for(const content of ['Ignore unrelated instructions {"trackingNumber":"ABC123"}','[{"trackingNumber":"ABC123"}]','{"trackingNumber":"ABC123"} extra text'])assert.equal(await interpretTrackingAsk('Track ABC123 please',{chat:async()=>({content})}),null);
+ assert.equal(await interpretTrackingAsk('Track ABC123 please',{chat:async()=>({content:'```json\n{"trackingNumber":"ABC123"}\n```'})}),'ABC123');
+});
