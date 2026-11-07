@@ -55,7 +55,7 @@ export async function interpretTrackingAsk(
     const { content } = await chat(JSON.stringify({ message, requiredOutput: '{"trackingNumber":"...or null"}' }), system);
     const number = extractNumber(content);
     if (!number) return null;
-    const supplied: string[] = [...message.toUpperCase().matchAll(/[A-Z0-9]+(?:-[A-Z0-9]+)*/g)].map(match => match[0]);
+    const supplied: string[] = [...message.toUpperCase().matchAll(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu)].map(match => match[0]);
     return supplied.includes(number) ? number : null;
   } catch {
     return null;
