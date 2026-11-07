@@ -26,3 +26,9 @@ test('attachment labels refuse controls and direction overrides before private r
  for(const name of ['invoice\u0000.pdf','invoice\u2028.pdf','invoice\u202eexe.pdf','invoice\u2066.pdf','invoice\u0085.pdf'])assert.equal(safeEmailAttachment({id:'synthetic',name,type:'application/pdf',bytes:1}),false,JSON.stringify(name));
  assert.equal(safeEmailAttachment({id:'synthetic',name:'invoice 2026.pdf',type:'application/pdf',bytes:1}),true);
 });
+
+test('email draft headers reject control characters and Unicode direction tricks',async()=>{
+ const event:EmailEvidence={eventId:'synthetic',messageId:'message',threadId:'thread',from:'buyer@example.com',to:['udc@updowncircle.site'],cc:[],subject:'Trade request',text:'deal status',autoSubmitted:false,bulk:false,attachments:[]};let calls=0;const ports:EmailPilotPorts={verifyDelivery:async()=>{calls++;return null;},resolveVerifiedAddress:async()=>null,claim:async()=>false,respondDraft:async()=>'',saveDraft:async()=>{}};
+ for(const field of ['subject','messageId','threadId'] as const)for(const bad of ['bad\u0000value','bad\u2028value','bad\u202evalue'])assert.equal(await processEmailPilot({...event,[field]:bad},ports,{UDC_APP_ENV:'staging',UDC_EMAIL_PILOT_MODE:'synthetic'}),'invalid',field);
+ assert.equal(calls,0);
+});
