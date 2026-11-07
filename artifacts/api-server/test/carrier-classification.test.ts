@@ -40,3 +40,8 @@ test('transport facilities are not final recipient delivery',()=>{
  for(const text of ['Delivered to destination airport','Delivered to regional depot','Delivered to transit warehouse','Delivered to port terminal','Delivered to distribution center'])assert.equal(classify(text),null,text);
  assert.equal(classify('Delivered to recipient'), 'delivered');
 });
+
+test('planned passive outcomes and failed delivery adverbs are not positive delivery',()=>{
+ for(const text of ['To be delivered to recipient','Shipment is to be delivered','The parcel was delivered unsuccessfully','Delivered status remains unverified','Shipment delivered incorrectly'])assert.equal(classify(text),null,text);
+ assert.equal(classify('Delivered successfully to recipient'),'delivered');
+});
