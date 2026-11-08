@@ -4,7 +4,7 @@ import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("HF_DATASETS_TRUST_REMOTE_CODE", "1")
 
-!pip -q install "transformers==4.51.3" "peft==0.15.2" "trl==0.19.1" "bitsandbytes==0.45.5" "datasets==3.5.0" "accelerate==1.6.0"
+!pip -q install "transformers==4.51.3" "peft==0.15.2" "trl==0.19.1" "bitsandbytes>=0.46.0" "datasets==3.5.0" "accelerate==1.6.0"
 
 import json, glob, time
 import torch
