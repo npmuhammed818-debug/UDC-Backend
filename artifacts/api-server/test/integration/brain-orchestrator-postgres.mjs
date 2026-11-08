@@ -153,6 +153,20 @@ try {
   assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "later turns forbid the menu");
   pass("menu-once: later turns forbid any menu mention");
 
+  // Turn 9b: the model disobeys the soft prompt rule and mentions the menu again anyway;
+  // hard enforcement strips the menu sentence(s) from the outgoing reply.
+  chat = async () => ({ content: "I am doing well, thanks! You can type \"Menu\" to see the next steps you can take.", toolCalls: [] });
+  out = await runBrainTurn({ phone: menuPhone, text: "how are you", messageId: "m9b" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(out?.reply, "I am doing well, thanks!", "menu sentence stripped from the outgoing reply");
+  pass("menu-once: hard enforcement strips a repeated menu mention from the reply");
+
+  // Turn 9c: the model's whole reply is a menu mention after the intro -> scripted chain takes over.
+  chat = async () => ({ content: "Send the word menu anytime to see every option.", toolCalls: [] });
+  out = await runBrainTurn({ phone: menuPhone, text: "what can you do", messageId: "m9c" }, chat);
+  assert.equal(out, null, "menu-only repeat falls back to the scripted chain");
+  pass("menu-once: a menu-only repeat falls back to the scripted chain");
+
   // Turn 10: change_role is a tool like every other menu row; the actual role
   // switch stays inside the fixed review code (requestRoleChange).
   chat = async (messages) => {
