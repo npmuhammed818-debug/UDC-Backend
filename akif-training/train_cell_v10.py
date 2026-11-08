@@ -1,4 +1,4 @@
-# AKIF v10 - single-GPU SFT (T4). v9 settings: LoRA r32/a32, lr 2e-4 cosine, MAX_LEN 2048,
+# AKIF v10 - single-GPU SFT (T4). v5: MAX_LEN 800 + sdpa attention (v2/v4 OOM at 2048/1024 on current image).
 # effective batch 8 (bs1 x accum8), 3 epochs. Data: v8 948 rows + reviewed selfplay v6 lessons.
 import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -16,7 +16,7 @@ from trl import SFTConfig, SFTTrainer
 BASE = "Qwen/Qwen3-8B"
 DATA = sorted(glob.glob("/kaggle/input/**/*sft_dataset_v8.jsonl", recursive=True))[-1]  # v8 948 rows (reviewed lessons already merged in v8)
 OUT_DIR = "/kaggle/working/akif-qlora-8b-v10"
-MAX_LEN = 1024   # v3: T4 OOM at 2048 on the current image
+MAX_LEN = 800    # v5: v4 preflight measured max=799 - covers ALL rows, zero truncation (v4 OOMed at 1024 on the current image)
 
 rows = [json.loads(l) for l in open(DATA)]
 print("TRAIN ROWS:", len(rows), flush=True)
@@ -54,7 +54,7 @@ bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                          bnb_4bit_compute_dtype=torch.float16, bnb_4bit_use_double_quant=True)
 model = AutoModelForCausalLM.from_pretrained(BASE, quantization_config=bnb,
                                              device_map={"": 0},
-                                             torch_dtype=torch.float16, attn_implementation="eager")
+                                             torch_dtype=torch.float16, attn_implementation="sdpa")  # v5: sdpa = memory-efficient attention, no full seq x seq matrix (eager was OOM factor)
 model.config.use_cache = False
 for _n, _p in model.named_parameters():
     if _p.dtype == torch.bfloat16:
