@@ -146,13 +146,13 @@ export const BRAIN_TOOLS: GroqToolDefinition[] = [
   { type: "function", function: { name: "submit_requirement", description: "Submit the collected buyer requirement for UDC review, only when all required fields are saved and the customer confirms.", parameters: z.toJSONSchema(z.object({})) } },
   { type: "function", function: { name: "save_offer_details", description: "Save seller offer details the customer stated (product, quantity, unit, price, currency, origin, incoterm, optional specification, availability, destination, payment terms). Registered sellers only.", parameters: z.toJSONSchema(z.object(tradeFields)) } },
   { type: "function", function: { name: "submit_offer", description: "Submit the collected seller offer for UDC review, only when all required fields are saved and the customer confirms.", parameters: z.toJSONSchema(z.object({})) } },
-  { type: "function", function: { name: "show_feature", description: "Show the customer one of their own account features: deals (their deals; for agents their assigned deals), track (shipment tracking), verification (their verification status), documents (document upload links), profile (their saved details), change_role (request to switch buyer/seller/agent role; UDC reviews it), referrals (their referrals), commissions (their commission records), invite (their referral code), meeting (how to request a meeting), menu (the full feature menu - only when the customer explicitly asks for the menu).", parameters: z.toJSONSchema(z.object({ feature: z.enum(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting", "menu"]) })) } },
+  { type: "function", function: { name: "show_feature", description: "Show the customer one of their own account features: deals (their deals; for agents their assigned deals), track (shipment tracking), verification (their verification status), documents (document upload links), profile (their saved details), change_role (request to switch buyer/seller/agent role; UDC reviews it), referrals (their referrals), commissions (their commission records), invite (their referral code), meeting (how to request a meeting). There is NO menu feature: when the customer asks for the menu or what you can do, answer in your own words instead of calling any tool.", parameters: z.toJSONSchema(z.object({ feature: z.enum(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]) })) } },
   { type: "function", function: { name: "read_deal_terms", description: "Read the stated terms of the customer's own current deal (product, quantity, stated price, currency, incoterm, status). Read-only: use it to answer price or term questions with the real recorded terms. Never invent terms.", parameters: z.toJSONSchema(z.object({})) } },
   { type: "function", function: { name: "relay_to_other_party", description: "Pass the customer's message to the other party of their deal (buyer<->seller) here in WhatsApp. Use it when the customer wants to negotiate, ask the other side something, or send them an offer. You relay the customer's words only - you never accept, counter, discount or approve anything yourself, and you never share contact details.", parameters: z.toJSONSchema(z.object({ message: z.string().max(1000) })) } },
   { type: "function", function: { name: "human_help", description: "Hand the conversation to a UDC person when the customer asks for a human or the situation needs one.", parameters: z.toJSONSchema(z.object({})) } },
 ];
 
-const INFO_FEATURES = new Set(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting", "menu"]);
+const INFO_FEATURES = new Set(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]);
 
 type ToolOutcome = { note: string; finalReply?: string };
 
@@ -213,9 +213,16 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
   if (name === "show_feature") {
     const feature = typeof args.feature === "string" && INFO_FEATURES.has(args.feature) ? args.feature : null;
     if (!feature) return { note: "Unknown feature." };
-    if (feature === "menu") state.menuMentioned = true;
+    // Unregistered customer: send NOTHING. The brain explains what the
+    // feature is in its own words and guides the one next registration
+    // step - no card, no canned gate, no double reply (owner rule, 8 Nov).
+    const [featureUser] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+    if (!featureUser) {
+      const what = feature === "documents" ? "the document upload link (a private, secure vault page where they upload their company verification documents such as a trade license)" : `the ${feature} feature`;
+      return { note: `Nothing was sent - the customer is not registered yet. In your own words, briefly explain ${what}, say you will set it up right after a quick registration, then ask only the one next registration question.` };
+    }
     const handled = await handleChatUi(phone, { interactive: { type: "list_reply", list_reply: { id: `udc:${feature}` } } } as ChatMessage);
-    return { note: handled ? "The requested account information was just sent to the customer in chat. Do not repeat its contents; add at most one short sentence." : "That feature is not available for this customer (they may need to register first)." };
+    return { note: handled ? "The requested account information was just sent to the customer in chat. Do not repeat its contents; explain in your own words, in one or two short sentences, what was sent and the one next step." : "That feature is not available for this customer right now; say so plainly and offer the one next step." };
   }
   if (name === "read_deal_terms") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);

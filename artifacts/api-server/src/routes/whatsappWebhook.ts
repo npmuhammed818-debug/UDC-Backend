@@ -1553,24 +1553,39 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           continue;
         }
       }
-      if (message.from && message.text?.body && asksForUploadLink(message.text.body) && await sendDocumentsLink(message.from)) continue;
       if (message.from && message.text?.body && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
+      // A clear typed answer to an already-open native form is still consumed
+      // here. Brain on: learning questions themselves go to the brain below,
+      // never to scripted tutoring (owner rule, 8 Nov). Brain off (outage
+      // switch): the scripted tutoring chain answers exactly as before.
       if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
         try {
-          // UDC/AKIF can occur in a person's or company's name. Consume a
-          // clear answer to the active form before keyword-based tutoring;
-          // actual learning questions still bypass intake without a model call.
           if (await handleChatUi(message.from, message, true)) continue;
-          const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
-          if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
+          if (!isBrainOrchestratorEnabled()) {
+            const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
+            if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
+          }
         } catch {
-          await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
-          continue;
+          if (!isBrainOrchestratorEnabled()) { await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly."); continue; }
         }
       }
-      if (message.from) {
+      // Interactive taps keep the fixed feature path. Typed texts only
+      // consume an answer into an already-open native form; every other typed
+      // word belongs to the brain below, never to a pattern-matched script.
+      if (message.from && message.interactive) {
         try { if (await handleChatUi(message.from, message)) continue; }
-        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Send Menu and try again.'); continue; }
+        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Please tap it again.'); continue; }
+      }
+      if (message.from && message.text?.body) {
+        try {
+          // Brain on: typed texts only feed an already-open native form - the
+          // brain does the talking. Brain off (outage switch): the full
+          // scripted chain still carries registration and forms as before.
+          const consumed = isBrainOrchestratorEnabled()
+            ? await handleChatUi(message.from, message, true)
+            : await handleChatUi(message.from, message);
+          if (consumed) continue;
+        } catch { /* fall through to the brain or the scripted chain */ }
       }
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {

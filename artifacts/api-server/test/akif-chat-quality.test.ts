@@ -15,7 +15,8 @@ test("prompt carries the approved scope and estimate rules and quoted-reply hint
   assert.match(guidance, /Do not say it is outside scope/);
   assert.match(guidance, /rough examples that change/);
   assert.match(guidance, /quotedReply is true/);
-  assert.match(webhook, /Boolean\(message\.context\?\.id\)/);
+  // Learning questions now fall through to the brain (no scripted tutoring).
+  assert.match(webhook, /learning questions themselves go to the brain/);
 });
 
 test("no-deal file reply wording is the approved text", () => {
