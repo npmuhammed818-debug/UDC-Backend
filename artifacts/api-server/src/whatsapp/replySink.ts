@@ -42,3 +42,19 @@ export function sinkReadAuthorized(signature: string | undefined, env: NodeJS.Pr
   const given = Buffer.from(signature.slice(7));
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
+
+/**
+ * Staging test exception: while the sink stores replies, a digits-only allowlist of
+ * recipients (AKIF_WHATSAPP_REPLY_ALLOWLIST, comma-separated) still gets REAL Meta sends, so the owner can
+ * chat with the staging bot from his own phone. Every other recipient's replies stay stored, never sent.
+ * Allowlisted sends additionally require real Meta credentials to be configured; without them the reply is
+ * stored like any other, never sent with placeholder credentials.
+ */
+export const replySinkSendAllowlist = (env: NodeJS.ProcessEnv = process.env): string[] =>
+  (env.AKIF_WHATSAPP_REPLY_ALLOWLIST ?? "").split(",").map((s) => s.replace(/\D/g, "")).filter((s) => s.length >= 8);
+
+export const replySinkSendAllowed = (to: string, env: NodeJS.ProcessEnv = process.env): boolean => {
+  if (!replySinkEnabled(env)) return false;
+  const digits = String(to).replace(/\D/g, "");
+  return digits.length >= 8 && replySinkSendAllowlist(env).includes(digits);
+};

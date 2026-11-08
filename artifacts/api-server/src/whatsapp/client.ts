@@ -1,6 +1,6 @@
 import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
 import { AsyncLocalStorage } from "node:async_hooks";
-import { replySinkEnabled, recordSunkReply } from "./replySink.ts";
+import { replySinkEnabled, replySinkSendAllowed, recordSunkReply } from "./replySink.ts";
 import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
@@ -58,7 +58,7 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
       init={...init,body:JSON.stringify(payload)};
     }
   }
-  if (replySinkEnabled() && url.endsWith("/messages")) { // staging reply sink: store, never send
+  if (replySinkEnabled() && url.endsWith("/messages") && !sinkBypassForAllowlistedRecipient(to)) { // staging reply sink: store, never send (except allowlisted test recipients with real credentials)
     let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
     return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
   }
@@ -79,6 +79,13 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
   return null;
 }
 
+/** Real Meta credentials configured (not sink placeholders)? Only then may an allowlisted recipient bypass the sink. */
+const hasRealMetaCredentials = (env: NodeJS.ProcessEnv = process.env) =>
+  Boolean(env.WHATSAPP_ACCESS_TOKEN?.trim() && env.WHATSAPP_PHONE_NUMBER_ID?.trim());
+
+const sinkBypassForAllowlistedRecipient = (to: string, env: NodeJS.ProcessEnv = process.env) =>
+  replySinkSendAllowed(to, env) && hasRealMetaCredentials(env);
+
 type WhatsAppConfig = {
   accessToken: string;
   phoneNumberId: string;
@@ -87,7 +94,7 @@ type WhatsAppConfig = {
 export function getWhatsAppConfig(env:NodeJS.ProcessEnv=process.env): WhatsAppConfig | null {
   const accessToken = env.WHATSAPP_ACCESS_TOKEN?.trim();
   const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
-  if (replySinkEnabled(env)) return { accessToken: accessToken || "sink", phoneNumberId: phoneNumberId || "sink" };
+  if (replySinkEnabled(env)) return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : { accessToken: accessToken || "sink", phoneNumberId: phoneNumberId || "sink" };
   return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : null;
 }
 
@@ -368,7 +375,7 @@ export async function sendWhatsAppReaction(to: string, inboundMessageId: string,
 export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
-  if (replySinkEnabled()) { const id = recordSunkReply(to, { type: "audio" }).id; return readMessageAcknowledgement(Response.json({ messages: [{ id }] })); }
+  if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { const id = recordSunkReply(to, { type: "audio" }).id; return readMessageAcknowledgement(Response.json({ messages: [{ id }] })); }
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", "audio/ogg");
@@ -397,7 +404,7 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
  */
 export function markReadAndTyping(to: string, inboundMessageId: string | null | undefined): void {
   if (process.env["UDC_WHATSAPP_TYPING"] !== "on" || typeof inboundMessageId !== "string" || !inboundMessageId) return;
-  if (replySinkEnabled()) { recordSunkReply(to, { type: "read_typing" }); return; }
+  if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { recordSunkReply(to, { type: "read_typing" }); return; }
   const config = getConfig();
   if (!config) return;
   void fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
