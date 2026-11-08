@@ -1555,10 +1555,19 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       if (message.from && message.text?.body && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
       // A clear typed answer to an already-open native form is still consumed
-      // here; learning questions themselves now go to the brain below, never
-      // to scripted tutoring (owner rule, 8 Nov).
+      // here. Brain on: learning questions themselves go to the brain below,
+      // never to scripted tutoring (owner rule, 8 Nov). Brain off (outage
+      // switch): the scripted tutoring chain answers exactly as before.
       if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
-        try { if (await handleChatUi(message.from, message, true)) continue; } catch { /* fall through to the brain */ }
+        try {
+          if (await handleChatUi(message.from, message, true)) continue;
+          if (!isBrainOrchestratorEnabled()) {
+            const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
+            if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
+          }
+        } catch {
+          if (!isBrainOrchestratorEnabled()) { await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly."); continue; }
+        }
       }
       // Interactive taps keep the fixed feature path. Typed texts only
       // consume an answer into an already-open native form; every other typed
