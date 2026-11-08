@@ -21,7 +21,8 @@ import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerRequirement.ts";
 import { recordPendingSellerOffer, sellerOfferSchema } from "./recordPendingSellerOffer.ts";
 import { guidanceHistoryIdentity } from "../whatsapp/guidanceSession.ts";
-import { formatMemoriesForPrompt, recallCustomerMemories } from "./customerMemory.ts";
+import { formatMemoriesForPrompt, recallCustomerMemories, saveCustomerMemory } from "./customerMemory.ts";
+import { customerLocalTimeLine, factStorageBlock, isBrainMemoryWriteEnabled } from "./timeMemory.ts";
 import { formatSharedLessonsForPrompt, recallSharedLessons } from "./sharedLessons.ts";
 import { estimateCustomerEmotion, feelingEventFor, formatEmotionalContextForPrompt, recordAkifFeeling, FEELING_BASELINE } from "./emotionContext.ts";
 import type { FlowPurpose } from "../whatsapp/flowToken.ts";
@@ -133,6 +134,12 @@ export const BRAIN_TOOLS: GroqToolDefinition[] = [
   { type: "function", function: { name: "relay_to_other_party", description: "Pass the customer's message to the other party of their deal (buyer<->seller) here in WhatsApp. Use it when the customer wants to negotiate, ask the other side something, or send them an offer. You relay the customer's words only - you never accept, counter, discount or approve anything yourself, and you never share contact details.", parameters: z.toJSONSchema(z.object({ message: z.string().max(1000) })) } },
   { type: "function", function: { name: "human_help", description: "Hand the conversation to a UDC person when the customer asks for a human or the situation needs one.", parameters: z.toJSONSchema(z.object({})) } },
 ];
+
+// Long-term memory write (env-gated AKIF_BRAIN_MEMORY_WRITE, off by default;
+// owner feature yes, 8 Nov). The brain may note ONE fact the customer stated.
+// Storage itself is still consent-gated inside saveCustomerMemory - no opt-in,
+// nothing is written, and the tool note says so honestly.
+const REMEMBER_FACT_TOOL: GroqToolDefinition = { type: "function", function: { name: "remember_fact", description: "Privately note one short fact about this customer for future chats (a preference, a name detail, context they asked you to keep). Only facts the customer stated in chat; never ID numbers, documents, passwords or payment details. Stored only when the customer has opted in to learning - if it cannot be stored, carry the fact in this chat only and never promise to remember it later.", parameters: z.toJSONSchema(z.object({ fact: z.string().max(300) })) } };
 
 const INFO_FEATURES = new Set(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]);
 
@@ -250,16 +257,34 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     await db.insert(auditLogsTable).values({ actorUserId: user.id, action: "whatsapp_brain_relay", entityType: "deal", entityId: deal.id, metadata: { channel: "whatsapp", via: "brain_orchestrator", dealNumber: deal.dealNumber, from: role } }).catch(() => undefined);
     return { note: `The customer's message was relayed to the ${otherRole} for deal ${deal.dealNumber}. Tell the customer you passed it on to the ${otherRole} and will come back here with their reply. Never share the ${otherRole}'s contact details.` };
   }
+  if (name === "remember_fact") {
+    if (!isBrainMemoryWriteEnabled()) return { note: "Long-term notes are not available; carry the fact in this chat only and never promise to remember it later." };
+    const fact = typeof args.fact === "string" ? args.fact.trim() : "";
+    const blocked = factStorageBlock(fact);
+    if (blocked) return { note: blocked };
+    const [noteUser] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+    if (!noteUser) return { note: "Not stored - the customer is not registered. Carry the fact in this chat only." };
+    try {
+      await saveCustomerMemory({ userId: noteUser.id, kind: "fact", content: fact, source: "whatsapp brain chat" });
+      return { note: "Noted privately for future chats. Carry on naturally - do not explain storage mechanics." };
+    } catch {
+      return { note: "Not stored - this customer has not opted in to long-term notes. Carry the fact in this chat only, and never promise to remember it later." };
+    }
+  }
   if (name === "human_help") {
     return { note: "Human hand-off noted. Tell the customer a UDC person will take over here in WhatsApp, and that trade details stay private.", finalReply: "I’m bringing in a UDC person to help you directly here in WhatsApp. Your trade details stay private." };
   }
   return { note: "Unknown tool." };
 }
 
-function orchestratorSystem(sender: { registered: boolean; role?: string; status?: string; emailVerified: boolean; companyStatus?: string }): string {
+function orchestratorSystem(sender: { registered: boolean; role?: string; status?: string; emailVerified: boolean; companyStatus?: string; country?: string | null }): string {
   const state = sender.registered
     ? `The customer is registered as ${sender.role} (account ${sender.status}, email ${sender.emailVerified ? "confirmed" : "not confirmed"}, company review: ${sender.companyStatus ?? "no company"}).`
     : "The customer is not registered yet.";
+  // Time awareness (env-gated AKIF_BRAIN_TIME_AWARE, off by default; owner
+  // feature yes, 8 Nov): manner only - facts, deals and safety never change
+  // with the hour. Null when the country is unknown or multi-zone.
+  const timeLine = customerLocalTimeLine(sender.country);
   return `${udcHandbookForRole(sender.role)}
 
 YOU ARE AKIF, UDC's assistant on WhatsApp. Your goal is to help each customer the way a good human assistant would in a chat: understand what they want, answer from what you know and what your tools return, and get things done for them.
@@ -275,7 +300,7 @@ BOUNDARIES - you never:
 
 Everything else - wording, flow, when to ask what - is your judgment. Each tool's own description says what it does; use a tool whenever it covers what the customer asked, and when a tool sends something, make clear what was sent and what happens next.
 
-${state}`;
+${state}${timeLine ? "\n\n" + timeLine : ""}`;
 }
 
 // Form-dump guard (owner rule, 8 Nov): AKIF chats like a person. It must never
@@ -340,6 +365,7 @@ export async function runBrainTurn(input: { phone: string; text: string; message
     status: user?.status,
     emailVerified: Boolean(user?.emailVerifiedAt),
     companyStatus,
+    country: user?.country,
   };
 
   const { key, state, found } = await loadBrainSession(input.phone);
@@ -390,7 +416,7 @@ export async function runBrainTurn(input: { phone: string; text: string; message
 
   let finalReply: string | null = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const turn = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS);
+    const turn = await chat(messages, isBrainMemoryWriteEnabled() ? [...BRAIN_TOOLS, REMEMBER_FACT_TOOL] : BRAIN_TOOLS, TURN_TIMEOUT_MS);
     if (turn.toolCalls.length === 0) {
       finalReply = turn.content;
       break;
