@@ -128,6 +128,43 @@ try {
   assert.equal(out, null);
   pass("provider failure returns null so the scripted chain runs unchanged");
 
+  // Turn 8 (owner rule): the word "menu" may be surfaced exactly once, at the
+  // very start of a conversation; the session locks it afterwards.
+  const menuPhone = "+1555000222";
+  let systemSeen = "";
+  chat = async (messages) => {
+    systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
+    return { content: "Hi! I am Akif, UDC's trade assistant. You can send the word menu anytime to see every option. What do you trade?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: menuPhone, text: "hi", messageId: "m8" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(systemSeen, /you may mention ONCE/, "first turn allows the one-time menu mention");
+  [session] = await db.select().from(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`).orderBy(sql`${whatsappChatSessionsTable.updatedAt} DESC`).limit(1);
+  assert.equal(session?.data?.brain?.menuMentioned, true, "menu mention locks the session flag");
+  pass("menu-once: first turn may mention the menu once; the session locks it");
+
+  // Turn 9: next turn on the same session forbids any further menu mention.
+  chat = async (messages) => {
+    systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
+    return { content: "Sure - tell me what you want to buy.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: menuPhone, text: "cardamom", messageId: "m9" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "later turns forbid the menu");
+  pass("menu-once: later turns forbid any menu mention");
+
+  // Turn 10: change_role is a tool like every other menu row; the actual role
+  // switch stays inside the fixed review code (requestRoleChange).
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("show_feature", { feature: "change_role" })] };
+    assert.match(tool.content, /was just sent/, "change_role prompt delivered via the fixed chat path");
+    return { content: "Sure - which role would you like UDC to review?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "I want to switch to buyer", messageId: "m10" }, chat);
+  assert.equal(out?.handled, true);
+  pass("change_role is brain-reachable as a tool; the switch itself stays code-locked");
+
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
   await pool?.end().catch(() => {});
