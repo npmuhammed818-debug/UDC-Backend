@@ -620,6 +620,11 @@ async function handleWhatsAppDealDocument(
     try {
       const [dealRow] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
         .where(eq(dealsTable.id, dealId)).limit(1);
+      // Only the deal's buyer/seller principals ever receive an automatic photo
+      // relay. Agents (and anyone whose account role no longer matches their
+      // participant role, such as after a role change) are excluded: confidential
+      // deal content is never auto-relayed to them and they receive no
+      // document-access grant from the relay below.
       const counterparties = await db.select({
         userId: dealParticipantsTable.userId,
         phone: usersTable.phone,
@@ -628,6 +633,8 @@ async function handleWhatsAppDealDocument(
         .where(and(
           eq(dealParticipantsTable.dealId, dealId),
           eq(dealParticipantsTable.status, "active"),
+          inArray(dealParticipantsTable.participantRole, ["buyer", "seller"]),
+          inArray(usersTable.role, ["buyer", "seller"]),
           eq(usersTable.status, "verified"),
           ne(dealParticipantsTable.userId, sender.id),
         ));
