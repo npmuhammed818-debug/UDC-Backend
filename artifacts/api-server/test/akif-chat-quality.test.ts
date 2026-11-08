@@ -16,7 +16,7 @@ test("prompt carries the approved scope and estimate rules and quoted-reply hint
   assert.match(guidance, /rough examples that change/);
   assert.match(guidance, /quotedReply is true/);
   // Learning questions now fall through to the brain (no scripted tutoring).
-  assert.match(webhook, /learning questions themselves now go to the brain/);
+  assert.match(webhook, /learning questions themselves go to the brain/);
 });
 
 test("no-deal file reply wording is the approved text", () => {
