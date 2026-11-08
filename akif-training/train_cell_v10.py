@@ -21,8 +21,21 @@ MAX_LEN = 1024   # v3: T4 OOM at 2048 on the current image
 rows = [json.loads(l) for l in open(DATA)]
 print("TRAIN ROWS:", len(rows), flush=True)
 
-# v3 preflight: exact token lengths BEFORE any model/GPU work (owner: check few rows exceed 1024).
+# v4 preflight: schema audit + exact token lengths BEFORE any model/GPU work.
+# v3 found mixed schemas in the 948 rows (some rows have no "text" key - they
+# would crash dataset_text_field="text" too), so normalize first.
 _tok = AutoTokenizer.from_pretrained(BASE)
+def row_text(r):
+    if isinstance(r.get("text"), str): return r["text"]
+    msgs = r.get("messages")
+    if isinstance(msgs, list): return _tok.apply_chat_template(msgs, tokenize=False)
+    return json.dumps(r, ensure_ascii=False)
+_schema_counts = {}
+for r in rows:
+    k = "text" if isinstance(r.get("text"), str) else ("messages" if isinstance(r.get("messages"), list) else "other")
+    _schema_counts[k] = _schema_counts.get(k, 0) + 1
+print("SCHEMA COUNTS:", _schema_counts, flush=True)
+for r in rows: r["text"] = row_text(r)
 _lens = [len(_tok(r["text"])["input_ids"]) for r in rows]
 _over = sum(1 for L in _lens if L > MAX_LEN)
 print(f"TOKEN LEN max={max(_lens)} p95={sorted(_lens)[int(0.95*len(_lens))]} OVER_{MAX_LEN}={_over}/{len(rows)}", flush=True)
