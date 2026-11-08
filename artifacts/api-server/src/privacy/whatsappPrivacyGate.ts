@@ -177,6 +177,11 @@ export async function whatsappPrivacyGate(
             adultBusinessUser: true,
           },
         });
+      if (account) {
+        // Memory default-on (owner rule 8 Nov): consenting enrolls the user in
+        // AKIF memory; the consent-v5 notice tells them and forget/withdraw turns it off.
+        await tx.update(usersTable).set({ akifLearningOptIn: true, updatedAt: new Date() }).where(eq(usersTable.id, account.id));
+      }
       return { kind: "consent_accepted" as const };
     }
     const noticeAlreadyShown = current?.metadata?.status === "notice_sent" && current.metadata.policyVersion === CONSENT_VERSION;

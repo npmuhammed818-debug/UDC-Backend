@@ -1,5 +1,6 @@
 import {startDealReminderRunner} from './whatsapp/dealReminders';
 import {startPriceWatchRunner} from './whatsapp/priceWatch';
+import {startProactiveRunner} from './akif/proactiveNudges.ts';
 import { startAutomaticMatching } from './marketplace/automaticMatching';
 import { startGuidedDraftCleanup } from './whatsapp/guidedChat';
 import { startChatFlowSetup } from './whatsapp/setupFlows';
@@ -40,6 +41,7 @@ app.listen(port, (err) => {
   startGuidedDraftCleanup();
   startAutomaticMatching(logger);
   startPriceWatchRunner();
+  startProactiveRunner();
   startDealReminderRunner();
   void startAcceptanceProbe();
   startAkifResearchQueueRunner();
