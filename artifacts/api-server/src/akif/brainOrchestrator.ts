@@ -8,7 +8,7 @@
 // unchanged.
 import { z } from "zod/v4";
 import { and, eq } from "drizzle-orm";
-import { db, usersTable, companiesTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable } from "@workspace/db";
+import { db, usersTable, companiesTable, companyVerificationDocumentsTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable } from "@workspace/db";
 import { desc, or } from "drizzle-orm";
 import { sendWhatsAppText } from "../whatsapp/client.ts";
 import { isGroqConfigured, runGroqToolChat, type GroqToolChatMessage, type GroqToolDefinition } from "./intelligence/groqClient.ts";
@@ -203,6 +203,19 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
       const what = feature === "documents" ? "the document upload link (a private, secure vault page where they upload their company verification documents such as a trade license)" : `the ${feature} feature`;
       return { note: `Nothing was sent - the customer is not registered yet. In your own words, briefly explain ${what}, say you will set it up right after a quick registration, then ask only the one next registration question.` };
     }
+    if (feature === "verification") {
+      // No card: the brain speaks the status naturally (owner rule, 8 Nov).
+      // Facts come from the records only - one row per document type, latest
+      // upload wins.
+      const [company] = await db.select({ id: companiesTable.id, status: companiesTable.verificationStatus }).from(companiesTable).where(eq(companiesTable.ownerUserId, featureUser.id)).limit(1);
+      const docRows = company
+        ? await db.select({ documentType: companyVerificationDocumentsTable.documentType, status: companyVerificationDocumentsTable.status }).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId, company.id)).orderBy(desc(companyVerificationDocumentsTable.updatedAt))
+        : [];
+      const seenTypes = new Set<string>();
+      const docFacts = docRows.filter(d => seenTypes.has(d.documentType) ? false : (seenTypes.add(d.documentType), true));
+      const docText = docFacts.length ? docFacts.map(d => `${String(d.documentType).replace(/_/g, " ")}: ${d.status}`).join(", ") : "none received yet";
+      return { note: `Nothing was sent. The customer's verification facts: account ${featureUser.status}; company review: ${company?.status ?? "no company details submitted"}; documents: ${docText}; email ${featureUser.emailVerifiedAt ? "confirmed" : "not confirmed"}. State these facts plainly in your own words - never invent a different status.` };
+    }
     const handled = await handleChatUi(phone, { interactive: { type: "list_reply", list_reply: { id: `udc:${feature}` } } } as ChatMessage);
     return { note: handled ? "The requested account information was just sent to the customer in chat. Do not repeat its contents; explain in your own words, in one or two short sentences, what was sent and the one next step." : "That feature is not available for this customer right now; say so plainly and offer the one next step." };
   }
@@ -304,6 +317,9 @@ function hasTradeIntent(text: string, history: BrainSession["history"]): boolean
 // Deterministic floor when the model keeps dumping fields after one correction.
 const FORM_DUMP_FALLBACK = "Hi! Happy to chat. What can I help you with today?";
 const FORM_DUMP_FALLBACK_INTENT = "Happy to help - let's take it one step at a time. What would you like to start with?";
+// Second consecutive floor: admit the stumble instead of parroting the same
+// line (owner saw the floor loop on his live test, 8 Nov).
+const FORM_DUMP_FALLBACK_RETRY = "Sorry, I'm not handling this chat well. Tell me in a few words what you need, and I'll take it one step at a time.";
 
 export type BrainTurnOutcome = { handled: boolean; reply: string | null };
 
@@ -410,9 +426,12 @@ export async function runBrainTurn(input: { phone: string; text: string; message
       }
       finalReply = retry.content;
     } else {
-      finalReply = intent ? FORM_DUMP_FALLBACK_INTENT : FORM_DUMP_FALLBACK;
+      const floors = Number(state.fields._floorCount ?? "0") + 1;
+      state.fields._floorCount = String(floors);
+      finalReply = floors >= 2 ? FORM_DUMP_FALLBACK_RETRY : intent ? FORM_DUMP_FALLBACK_INTENT : FORM_DUMP_FALLBACK;
     }
   }
+  if (finalReply && finalReply !== FORM_DUMP_FALLBACK && finalReply !== FORM_DUMP_FALLBACK_INTENT && finalReply !== FORM_DUMP_FALLBACK_RETRY) delete state.fields._floorCount;
 
   // Greeting guard: on a bare greeting the model must answer like a person -
   // no registration push, no verification push, no menu. Correct it once;
