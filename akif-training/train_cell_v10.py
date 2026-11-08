@@ -1,4 +1,4 @@
-# AKIF v10 - single-GPU SFT (T4). v6: OOM probe (mem prints + memory_summary) + non-reentrant checkpointing.
+# AKIF v10 - single-GPU SFT (T4). v7: fp32 embed/lm_head downcast fix (v6 probe found 1.24B fp32 frozen params = 5 GiB - the real OOM driver).
 # effective batch 8 (bs1 x accum8), 3 epochs. Data: v8 948 rows + reviewed selfplay v6 lessons.
 import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -74,6 +74,17 @@ model = get_peft_model(model, LoraConfig(  # v6: probe prints above; checkpointi
 for _n, _p in model.named_parameters():
     if _p.requires_grad and _p.dtype != torch.float32:
         _p.data = _p.data.to(torch.float32)
+
+# v7 FIX: prepare_model_for_kbit_training upcasts non-quantized frozen modules
+# (embed_tokens + untied lm_head, 1.24B params) to fp32 = ~5 GiB. That, not seq
+# len, was the OOM (v4/v5 identical 13.95 GiB). Cast them back to fp16 - frozen.
+_fixed = 0
+for _n, _m in model.named_modules():
+    if _n.endswith('embed_tokens') or _n.endswith('lm_head'):
+        for _p in _m.parameters(recurse=False):
+            if _p.dtype == torch.float32 and not _p.requires_grad:
+                _p.data = _p.data.to(torch.float16); _fixed += _p.numel()
+print(f"MEM after embed/lm_head fp16 fix ({_fixed} params): {torch.cuda.memory_allocated()/1e9:.2f} GiB", flush=True)
 
 cfg = SFTConfig(
     output_dir=OUT_DIR,
