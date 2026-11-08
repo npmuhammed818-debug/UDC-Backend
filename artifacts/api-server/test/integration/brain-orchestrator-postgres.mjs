@@ -179,6 +179,78 @@ try {
   assert.equal(out?.handled, true);
   pass("change_role is brain-reachable as a tool; the switch itself stays code-locked");
 
+  // Turn 11 (owner rule, 8 Nov): a bare greeting must never get a form-like
+  // dump of registration fields. The guard corrects the model once; the
+  // regenerated natural reply goes out.
+  const dumpPhone = "+1555000333";
+  let dumpCalls = 0;
+  chat = async (messages) => {
+    dumpCalls++;
+    if (dumpCalls === 1) return { content: "Hi! You can begin by sharing your name, business email, company name and registration country to start the registration process. (Send \"menu\" anytime to see all options.)", toolCalls: [] };
+    const note = messages.filter((m) => m.role === "system").at(-1)?.content ?? "";
+    assert.match(note, /several registration details at once/, "corrective note is given to the model");
+    return { content: "Hey! Good to see you here. What can I help you with today?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: dumpPhone, text: "hey", messageId: "m11" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(out?.reply, "Hey! Good to see you here. What can I help you with today?");
+  assert.equal(dumpCalls, 2, "exactly one regeneration");
+  pass("form-dump guard: an opener stacking registration fields is regenerated into a natural reply");
+
+  // Turn 11b: the model keeps dumping after the correction -> deterministic floor.
+  const dumpPhone2 = "+1555000444";
+  chat = async () => ({ content: "Please share your name and email and company to begin registration.", toolCalls: [] });
+  out = await runBrainTurn({ phone: dumpPhone2, text: "hello", messageId: "m11b" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(out?.reply, "Hi! Happy to chat. What can I help you with today?", "persistent dump gets the deterministic floor");
+  pass("form-dump guard: a persistent dump falls back to the fixed natural floor");
+
+  // Turn 11c: once the customer shows trade intent, collecting details is natural
+  // and the guard stays out of the way.
+  const intentPhone = "+1555000555";
+  chat = async () => ({ content: "Great, let's get you registered. What is your name, and which email should UDC use?", toolCalls: [] });
+  out = await runBrainTurn({ phone: intentPhone, text: "I want to register as a buyer", messageId: "m11c" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(out?.reply ?? "", /name/, "with intent the detail question goes through");
+  pass("form-dump guard: trade intent lets detail collection proceed");
+
+  // Turn 12: the session (menu-once lock, collected fields, history) lives
+  // across days, not hours.
+  [session] = await db.select().from(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`).orderBy(sql`${whatsappChatSessionsTable.updatedAt} DESC`).limit(1);
+  assert.ok(session?.expiresAt && session.expiresAt.getTime() > Date.now() + 20 * 24 * 3600 * 1000, "session outlives 20 days");
+  pass("conversation memory: the brain session persists across days");
+
+  // Turn 13: the whole recent conversation stays in context, so AKIF notices
+  // what was already said instead of restarting.
+  const longPhone = "+1555000666";
+  for (let i = 1; i <= 12; i++) {
+    chat = async () => ({ content: `Noted ${i}.`, toolCalls: [] });
+    out = await runBrainTurn({ phone: longPhone, text: `message ${i}`, messageId: `L${i}` }, chat);
+    assert.equal(out?.handled, true);
+  }
+  chat = async (messages) => {
+    const texts = messages.map((m) => m.content ?? "").join("\n");
+    assert.match(texts, /message 1\b/, "earliest message still in context after 12 turns");
+    assert.match(texts, /message 12\b/, "latest message in context");
+    return { content: "Still here!", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: longPhone, text: "message 13", messageId: "L13" }, chat);
+  assert.equal(out?.handled, true);
+  pass("conversation memory: full recent history reaches the model on every turn");
+
+  // Turn 14: menu-once holds across sessions and days - a fresh turn on a
+  // locked session still forbids the menu even after history scrolled.
+  chat = async (messages) => {
+    systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
+    return { content: "Noted, thanks!", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: menuPhone, text: "one more thing", messageId: "m14" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "menu stays locked on the persisted session");
+  [session] = await db.select().from(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`).orderBy(sql`${whatsappChatSessionsTable.updatedAt} DESC`).limit(1);
+  assert.equal(session?.data?.brain?.menuMentioned, true, "menu lock still persisted");
+  pass("menu-once: the lock persists across turns and reloads");
+
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
   await pool?.end().catch(() => {});
