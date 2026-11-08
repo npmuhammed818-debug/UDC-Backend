@@ -15,9 +15,9 @@ test("approved wording, no app or Upload documents menu", () => {
 });
 
 import { readFileSync } from "node:fs";
-test("first-contact notice return carries the approved Menu line outside the hashed notice", () => {
+test("first-contact notice carries no menu line and stays the hashed notice", () => {
   const src = readFileSync(new URL("../src/privacy/whatsappPrivacyGate.ts", import.meta.url), "utf8");
-  assert.match(src, /MENU_HINT = 'Send "Menu" anytime to see what I can do\.'/);
+  assert.doesNotMatch(src, /MENU_HINT|Send "Menu" anytime/);
   assert.equal((src.match(/return consentNoticeWithHint;/g) ?? []).length, 2);
   assert.match(src, /noticeText: consentNotice/);
 });
