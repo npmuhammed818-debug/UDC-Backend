@@ -16,10 +16,20 @@ from trl import SFTConfig, SFTTrainer
 BASE = "Qwen/Qwen3-8B"
 DATA = sorted(glob.glob("/kaggle/input/**/*sft_dataset_v8.jsonl", recursive=True))[-1]  # v8 948 rows (reviewed lessons already merged in v8)
 OUT_DIR = "/kaggle/working/akif-qlora-8b-v10"
-MAX_LEN = 2048
+MAX_LEN = 1024   # v3: T4 OOM at 2048 on the current image
 
 rows = [json.loads(l) for l in open(DATA)]
 print("TRAIN ROWS:", len(rows), flush=True)
+
+# v3 preflight: exact token lengths BEFORE any model/GPU work (owner: check few rows exceed 1024).
+_tok = AutoTokenizer.from_pretrained(BASE)
+_lens = [len(_tok(r["text"])["input_ids"]) for r in rows]
+_over = sum(1 for L in _lens if L > MAX_LEN)
+print(f"TOKEN LEN max={max(_lens)} p95={sorted(_lens)[int(0.95*len(_lens))]} OVER_{MAX_LEN}={_over}/{len(rows)}", flush=True)
+if _over > 0.15 * len(rows):
+    print(f"TOO MANY LONG ROWS ({_over}/{len(rows)} > 15%) - ABORTING BEFORE GPU WORK", flush=True)
+    raise SystemExit(1)
+
 tok = AutoTokenizer.from_pretrained(BASE)
 if tok.pad_token is None:
     tok.pad_token = tok.eos_token
