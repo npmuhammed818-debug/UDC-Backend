@@ -125,6 +125,7 @@ const requirements = [
   ['Generated API contracts, builds and dependency advisories', ['codegen', 'generated-contracts', 'release', 'dependency-audit'], 'Audit and current code checks; no guarantee against unknown vulnerabilities'],
   ['Exact migration compatibility, restricted grants/RLS and lock rollback', ['email-migrations', 'shipment-migrations', 'pg:whatsapp-webhook-retry'], 'Disposable PostgreSQL roles only; not hosted project permissions'],
   ['Selected new-table database backup/restore including vault and dedup', ['restore'], 'Real pinned pg_dump/pg_restore for 14 selected tables; excludes hosted Storage and full Supabase project restore'],
+  ['Role transition cannot turn a historical agent assignment into buyer/seller access', ['pg:role-transition', 'pg:full-mvp-lifecycle'], 'Real SQL/API regression: buyer->agent->completed deal->buyer loses every generic deal/tracking route; principals and current agents unchanged'],
   ['Actual canonical role activation / multi-role transition', [], 'Not implemented by the reviewed request-only design; requires owner-approved access/identity transition policy'],
   ['Live WhatsApp onboarding, natural multilingual guidance and complete human UAT', [], 'Requires approved staging number, real provider and authorized participants'],
   ['Real OTP inbox delivery, domain/provider readiness', [], 'Requires verified sender/domain and separately approved test mail'],
