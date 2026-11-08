@@ -1488,11 +1488,12 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         const emailReply = await handleEmailVerification(message.from,message.text.body);
         if (emailReply !== null) { await deliverWhatsAppReply(message.from,emailReply); continue; }
       }
-      // Explicit menu requests take precedence over AI guidance. Never open
-      // the menu for ordinary greetings, consent, or unrelated chat messages.
+      // Menu BUTTON taps take the fixed menu path. A TYPED "menu" (or "what
+      // can you do") goes to the brain like any other text: AKIF explains its
+      // options naturally instead of dumping the static list (owner rule, 8 Nov).
       const exitId=message.interactive?.list_reply?.id??message.interactive?.button_reply?.id;
       if(message.from&&exitId){try{if(await handlePhotoReviewButton(message.from,exitId))continue;if(await handleHumanHelpButton(message.from,exitId))continue;if(await handleExitReason(message.from,exitId))continue;}catch{await deliverWhatsAppReply(message.from,'Your private answer could not be saved. Please try again.');continue;}}
-      if(message.from && chatAction(message)==='menu'){
+      if(message.from && message.interactive && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
       }
@@ -1788,15 +1789,22 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // validator rejection falls through to the scripted chain below
       // unchanged.
       let brainFailed = false;
-      if (message.from && !hasPendingIntake && !dealActionDirect && isBrainOrchestratorEnabled()) {
-        const brain = await runBrainTurn({
-          phone: message.from,
-          text: message.text.body,
+      if (message.from && !dealActionDirect && isBrainOrchestratorEnabled()) {
+        const callBrain = () => runBrainTurn({
+          phone: message.from!,
+          text: message.text!.body!,
           messageId: message.id,
         }).catch((error) => {
           console.warn("AKIF brain turn failed; scripted chain takes over", { reason: error instanceof Error ? error.message : "unknown" });
           return null;
         });
+        let brain = await callBrain();
+        if (!brain?.handled) {
+          // One retry before any fallback: provider rate limits are the common
+          // failure and often clear within seconds.
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          brain = await callBrain();
+        }
         if (brain?.handled) {
           if (brain.reply) await deliverWhatsAppReply(message.from, brain.reply);
           continue;
@@ -1804,17 +1812,21 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         brainFailed = true;
       }
 
-      // Brain unavailable (for example provider rate limits): a feature request
-      // must still reach the real scripted feature - document upload links and
-      // verification status need no AI - instead of the generic busy note.
+      // Brain unavailable after a retry (for example provider rate limits):
+      // a feature request must still reach the real scripted feature -
+      // document upload links and verification status need no AI.
       if (brainFailed && message.from) {
         const featureIntent = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
           : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
         if (featureIntent) {
           try {
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature-rescue` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${featureIntent}` } } } as ChatMessage)) continue;
-          } catch { /* fall through to the guidance chain below */ }
+          } catch { /* fall through to the natural retry note below */ }
         }
+        // Everything else gets one natural line, never a form or a canned
+        // busy message (owner rule, 8 Nov).
+        await deliverWhatsAppReply(message.from, "Sorry, I missed that for a moment - could you say it again?");
+        continue;
       }
 
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
