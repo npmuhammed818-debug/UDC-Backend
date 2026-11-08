@@ -1778,6 +1778,30 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         || requestedDealPause(message.text.body) !== null
         || await isReplyToSavedDealMessage(message.from, message.context?.id)
       );
+      // Brain-led front door (owner direction, 7 Nov): Groq decides the
+      // conversation with AKIF features as tools, in its own words. Runs for
+      // every open text turn BEFORE the scripted guidance/intake chain: menus,
+      // forms, sign-in, OTP codes, deal commands and money paths above stay
+      // scripted and keep their gates. Buyer/seller inquiries belong to the
+      // brain (its tools collect the same fields through the same validators);
+      // direct deal commands never reach it. Env-gated; any failure or
+      // validator rejection falls through to the scripted chain below
+      // unchanged.
+      if (message.from && !hasPendingIntake && !dealActionDirect && isBrainOrchestratorEnabled()) {
+        const brain = await runBrainTurn({
+          phone: message.from,
+          text: message.text.body,
+          messageId: message.id,
+        }).catch((error) => {
+          console.warn("AKIF brain turn failed; scripted chain takes over", { reason: error instanceof Error ? error.message : "unknown" });
+          return null;
+        });
+        if (brain?.handled) {
+          if (brain.reply) await deliverWhatsAppReply(message.from, brain.reply);
+          continue;
+        }
+      }
+
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
         // Short follow-ups such as “and FOB” remain in the tutoring conversation.
         // Explicit trade commands still return to the authorized deal workflow.
@@ -1914,24 +1938,6 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               "AKIF queued WhatsApp research request",
             );
           }
-          continue;
-        }
-      }
-
-      // Brain-led front door (owner direction, 7 Nov): Groq decides the
-      // conversation with AKIF features as tools, in its own words. Runs only
-      // for open text turns: menus, forms, sign-in, OTP codes, deal mediation
-      // and money paths above stay scripted and keep their gates. Env-gated;
-      // any failure or validator rejection falls through to the scripted
-      // chain below unchanged.
-      if (message.from && !hasPendingIntake && isBrainOrchestratorEnabled()) {
-        const brain = await runBrainTurn({
-          phone: message.from,
-          text: message.text.body,
-          messageId: message.id,
-        }).catch(() => null);
-        if (brain?.handled) {
-          if (brain.reply) await deliverWhatsAppReply(message.from, brain.reply);
           continue;
         }
       }
