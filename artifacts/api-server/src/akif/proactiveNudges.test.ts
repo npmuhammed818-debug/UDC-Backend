@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { planNudges, isProactiveEnabled, type NudgeTarget } from "./proactiveNudges.ts";
+process.env.SUPABASE_DATABASE_URL ??= "postgres://localhost:5432/test";
+const { planNudges, isProactiveEnabled } = await import("./proactiveNudges.ts");
+type NudgeTarget = import("./proactiveNudges.ts").NudgeTarget;
 
 const NOW = new Date("2026-11-08T12:00:00Z");
 const day = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
