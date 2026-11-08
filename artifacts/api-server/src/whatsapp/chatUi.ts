@@ -319,7 +319,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     }
     await sendForm(phone,('profile_'+action) as FlowPurpose);return true;
   }
-  if(!user){await sendWhatsAppText(phone,'Please register before using this feature. Send Menu to choose your role.');return true;}
+  if(!user){await sendWhatsAppText(phone,'Please register before using this feature. Tell me whether you are a buyer, seller or agent, and I will get you started.');return true;}
   if(action==='profile'){
     const [company]=await db.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     await sendWhatsAppTextWithMenu(phone,[user.fullName,user.email,company?.companyName,company?.country,`Verification: ${user.status==='verified'?'verified':'pending'}`].filter(Boolean).join('\n'));
