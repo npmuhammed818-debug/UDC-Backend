@@ -333,7 +333,11 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
   }
   if(action==='verification'){const [company]=await db.select({id:companiesTable.id,status:companiesTable.verificationStatus}).from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
     // Outcome states only: AKIF never reads or describes the document contents.
-    const docs=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)):[];
+    // One line per document type, latest upload wins - a re-uploaded
+    // document must never read as two documents (owner rule, 8 Nov).
+    const docRows=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)).orderBy(desc(companyVerificationDocumentsTable.updatedAt)):[];
+    const seenTypes=new Set<string>();
+    const docs=docRows.filter(d=>seenTypes.has(d.documentType)?false:(seenTypes.add(d.documentType),true));
     const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF.';
     if(!company){
       const u=user as {status:string;emailVerifiedAt?:Date|string|null};
