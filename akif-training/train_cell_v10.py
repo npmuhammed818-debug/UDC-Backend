@@ -1,4 +1,4 @@
-# AKIF v10 - single-GPU SFT (T4). v5: MAX_LEN 800 + sdpa attention (v2/v4 OOM at 2048/1024 on current image).
+# AKIF v10 - single-GPU SFT (T4). v6: OOM probe (mem prints + memory_summary) + non-reentrant checkpointing.
 # effective batch 8 (bs1 x accum8), 3 epochs. Data: v8 948 rows + reviewed selfplay v6 lessons.
 import os
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -63,7 +63,11 @@ for _n, _b in model.named_buffers():
     if _b.dtype == torch.bfloat16:
         _b.data = _b.data.to(torch.float16)
 model = prepare_model_for_kbit_training(model)
-model = get_peft_model(model, LoraConfig(
+print(f"MEM after 4bit load: {torch.cuda.memory_allocated()/1e9:.2f} GiB", flush=True)
+_dtypes = {}
+for _n,_p in model.named_parameters(): _dtypes[str(_p.dtype)] = _dtypes.get(str(_p.dtype),0)+_p.numel()
+print("PARAM DTYPE COUNTS:", _dtypes, flush=True)
+model = get_peft_model(model, LoraConfig(  # v6: probe prints above; checkpointing non-reentrant below
     r=32, lora_alpha=32, lora_dropout=0.0, bias="none", task_type="CAUSAL_LM",
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
 ))
@@ -83,6 +87,7 @@ cfg = SFTConfig(
     save_strategy="no",              # adapter saved once at the end
     fp16=True,
     gradient_checkpointing=True,
+    gradient_checkpointing_kwargs={"use_reentrant": False},  # v6: PEFT-recommended; reentrant can hold extra refs
     max_length=MAX_LEN,
     packing=False,
     dataset_text_field="text",
@@ -93,8 +98,14 @@ trainer = SFTTrainer(model=model, args=cfg, train_dataset=ds, processing_class=t
 for _n, _p in trainer.model.named_parameters():
     if _p.requires_grad and _p.dtype != torch.float32:
         _p.data = _p.data.to(torch.float32)
+print(f"MEM before train: {torch.cuda.memory_allocated()/1e9:.2f} GiB", flush=True)
 t0 = time.time()
-trainer.train()
+try:
+    trainer.train()
+except torch.cuda.OutOfMemoryError:
+    print("OOM CAUGHT - memory summary follows", flush=True)
+    print(torch.cuda.memory_summary(), flush=True)
+    raise
 dt = time.time() - t0
 losses = [h["loss"] for h in trainer.state.log_history if "loss" in h]
 trainer.model.save_pretrained(OUT_DIR)
