@@ -22,6 +22,7 @@ import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerR
 import { recordPendingSellerOffer, sellerOfferSchema } from "./recordPendingSellerOffer.ts";
 import { guidanceHistoryIdentity } from "../whatsapp/guidanceSession.ts";
 import { deleteCustomerMemories, formatMemoriesForPrompt, recallCustomerMemories, saveCustomerMemory } from "./customerMemory.ts";
+import { admitBrainTurn, admitLlmCall, finishBrainTurn, finishLlmCall, type GuardVerdict } from "./llmGuards.ts";
 import { customerLocalTimeLine, factStorageBlock, isBrainMemoryWriteEnabled } from "./timeMemory.ts";
 import { formatSharedLessonsForPrompt, recallSharedLessons } from "./sharedLessons.ts";
 import { estimateCustomerEmotion, feelingEventFor, formatEmotionalContextForPrompt, recordAkifFeeling, FEELING_BASELINE } from "./emotionContext.ts";
@@ -357,7 +358,36 @@ const FORM_DUMP_FALLBACK_RETRY = "Sorry, I'm not handling this chat well. Tell m
 
 export type BrainTurnOutcome = { handled: boolean; reply: string | null };
 
+// Guard floors (code-level, like the form-dump floors above; not brain scripts).
+const GUARD_FLOORS: Record<Exclude<GuardVerdict, "ok">, string> = {
+  rate_limited: "You're messaging faster than I can keep up - give me a few minutes and send that again.",
+  daily_cap: "I've reached today's limit. A UDC person will follow up with you here.",
+  already_in_flight: "One moment - still answering your previous message.",
+  llm_busy: "It's busy on my side - please try again in a minute.",
+};
+
 export async function runBrainTurn(input: { phone: string; text: string; messageId?: string }, chat: typeof runGroqToolChat = runGroqToolChat): Promise<BrainTurnOutcome | null> {
+  const verdict = admitBrainTurn(input.phone);
+  if (verdict !== "ok") {
+    console.warn("AKIF brain turn stopped by guard", { reason: verdict });
+    return { handled: true, reply: GUARD_FLOORS[verdict] };
+  }
+  try {
+    return await runBrainTurnInner(input, chat);
+  } catch (err) {
+    const m = err instanceof Error && err.message.startsWith("llm_guard:") ? err.message.slice(10) as GuardVerdict : null;
+    if (m && m !== "ok") {
+      console.warn("AKIF LLM call stopped by guard", { reason: m });
+      return { handled: true, reply: GUARD_FLOORS[m] };
+    }
+    throw err;
+  } finally {
+    finishBrainTurn(input.phone);
+  }
+}
+
+
+async function runBrainTurnInner(input: { phone: string; text: string; messageId?: string }, chat: typeof runGroqToolChat = runGroqToolChat): Promise<BrainTurnOutcome | null> {
   if (!isBrainOrchestratorEnabled() || !isGroqConfigured()) return null;
   const text = input.text.trim();
   if (!text) return null;
@@ -425,7 +455,12 @@ export async function runBrainTurn(input: { phone: string; text: string; message
 
   let finalReply: string | null = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const turn = await chat(messages, [...BRAIN_TOOLS, FORGET_TOOL, ...(isBrainMemoryWriteEnabled() ? [REMEMBER_FACT_TOOL] : [])], TURN_TIMEOUT_MS);
+    const gv = admitLlmCall();
+    if (gv !== "ok") throw new Error(`llm_guard:${gv}`);
+    let turn;
+    try {
+      turn = await chat(messages, [...BRAIN_TOOLS, FORGET_TOOL, ...(isBrainMemoryWriteEnabled() ? [REMEMBER_FACT_TOOL] : [])], TURN_TIMEOUT_MS);
+    } finally { finishLlmCall(); }
     if (turn.toolCalls.length === 0) {
       finalReply = turn.content;
       break;
@@ -453,7 +488,11 @@ export async function runBrainTurn(input: { phone: string; text: string; message
     messages.push({ role: "system", content: intent
       ? "Your previous reply asked for several details at once. AKIF asks ONE thing at a time, like a person chatting - never a numbered list or a form. Reply again: acknowledge their message warmly and ask only the single next detail."
       : "Your previous reply asked for several registration details at once, but the customer never asked to register or trade - that reads like a form, not a chat. Reply again in AKIF's voice: answer their actual message (a greeting gets a warm greeting back), and ask at most one light question about what they need." });
-    const retry = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS).catch(() => null);
+    let retry = null;
+    const gv2 = admitLlmCall();
+    if (gv2 === "ok") {
+      try { retry = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS).catch(() => null); } finally { finishLlmCall(); }
+    }
     if (retry && retry.toolCalls.length === 0 && retry.content && formDumpFields(retry.content) < 2) {
       if (!isSafeConversationText(retry.content) || claimsUnverifiedFact(retry.content, {})) {
         console.warn("AKIF regenerated reply rejected by validators; falling back to scripted chain", { reason: "validator_rejected" });
@@ -478,7 +517,11 @@ export async function runBrainTurn(input: { phone: string; text: string; message
   if (finalReply && bareGreeting && /regist|verif/i.test(finalReply)) {
     console.warn("AKIF brain greeting pushed registration/menu; regenerating", { reason: "greeting_guard" });
     messages.push({ role: "system", content: "Your previous reply pushed registration, verification or the menu, but the customer only said hello. Reply again in AKIF's voice: a short, warm human greeting back, then at most one light question about what they need. Do not mention registration, verification, buying, selling or the menu." });
-    const retry = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS).catch(() => null);
+    let retry = null;
+    const gv2 = admitLlmCall();
+    if (gv2 === "ok") {
+      try { retry = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS).catch(() => null); } finally { finishLlmCall(); }
+    }
     if (retry && retry.toolCalls.length === 0 && retry.content && !/regist|verif|\bmenu\b/i.test(retry.content) && isSafeConversationText(retry.content)) {
       finalReply = retry.content;
     } else {
