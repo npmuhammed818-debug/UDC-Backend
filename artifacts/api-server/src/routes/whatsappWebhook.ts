@@ -1787,6 +1787,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // direct deal commands never reach it. Env-gated; any failure or
       // validator rejection falls through to the scripted chain below
       // unchanged.
+      let brainFailed = false;
       if (message.from && !hasPendingIntake && !dealActionDirect && isBrainOrchestratorEnabled()) {
         const brain = await runBrainTurn({
           phone: message.from,
@@ -1799,6 +1800,20 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         if (brain?.handled) {
           if (brain.reply) await deliverWhatsAppReply(message.from, brain.reply);
           continue;
+        }
+        brainFailed = true;
+      }
+
+      // Brain unavailable (for example provider rate limits): a feature request
+      // must still reach the real scripted feature - document upload links and
+      // verification status need no AI - instead of the generic busy note.
+      if (brainFailed && message.from) {
+        const featureIntent = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
+          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
+        if (featureIntent) {
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature-rescue` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${featureIntent}` } } } as ChatMessage)) continue;
+          } catch { /* fall through to the guidance chain below */ }
         }
       }
 

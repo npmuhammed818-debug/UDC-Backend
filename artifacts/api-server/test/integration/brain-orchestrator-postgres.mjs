@@ -205,14 +205,22 @@ try {
   assert.equal(out?.reply, "Hi! Happy to chat. What can I help you with today?", "persistent dump gets the deterministic floor");
   pass("form-dump guard: a persistent dump falls back to the fixed natural floor");
 
-  // Turn 11c: once the customer shows trade intent, collecting details is natural
-  // and the guard stays out of the way.
+  // Turn 11c: even with trade intent, one question at a time - a multi-field
+  // ask is corrected; a single-detail question goes through.
   const intentPhone = "+1555000555";
-  chat = async () => ({ content: "Great, let's get you registered. What is your name, and which email should UDC use?", toolCalls: [] });
+  let intentCalls = 0;
+  chat = async (messages) => {
+    intentCalls++;
+    if (intentCalls === 1) return { content: "Great, let's get you registered. What is your name, and which email should UDC use?", toolCalls: [] };
+    const note = messages.filter((m) => m.role === "system").at(-1)?.content ?? "";
+    assert.match(note, /ONE thing at a time/, "intent corrective note asks for one thing at a time");
+    return { content: "Great, let's get you registered. What is your name?", toolCalls: [] };
+  };
   out = await runBrainTurn({ phone: intentPhone, text: "I want to register as a buyer", messageId: "m11c" }, chat);
   assert.equal(out?.handled, true);
-  assert.match(out?.reply ?? "", /name/, "with intent the detail question goes through");
-  pass("form-dump guard: trade intent lets detail collection proceed");
+  assert.equal(out?.reply, "Great, let's get you registered. What is your name?");
+  assert.equal(intentCalls, 2, "one regeneration with intent");
+  pass("form-dump guard: with trade intent a multi-field ask becomes one question");
 
   // Turn 12: the session (menu-once lock, collected fields, history) lives
   // across days, not hours.
@@ -250,6 +258,55 @@ try {
   [session] = await db.select().from(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`).orderBy(sql`${whatsappChatSessionsTable.updatedAt} DESC`).limit(1);
   assert.equal(session?.data?.brain?.menuMentioned, true, "menu lock still persisted");
   pass("menu-once: the lock persists across turns and reloads");
+
+  // Turns 15-17: the owner's exact live test of 8 Nov 4:00-4:01pm IST.
+  // Turn 15: "My father died" - a plain condolence, no menu, no asks.
+  const griefPhone = "+1555000777";
+  chat = async () => ({ content: "I'm very sorry for your loss. My condolences to you and your family. If there's anything you need or any way I can help, just let me know.", toolCalls: [] });
+  out = await runBrainTurn({ phone: griefPhone, text: "My father died", messageId: "m15" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(out?.reply ?? "", /sorry for your loss/);
+  assert.doesNotMatch(out?.reply ?? "", /menu/i);
+  pass("repro turn 1: a grief message gets a plain condolence, no menu, no asks");
+
+  // Turn 16: "I wanna verify my company" - the model answers with the exact
+  // 5-item numbered form + menu repeat the owner saw. The guard must correct
+  // it to one question and the menu sentence must never leave.
+  let reproCalls = 0;
+  chat = async (messages) => {
+    reproCalls++;
+    if (reproCalls === 1) return { content: "Sure, let's update your registration. Please share:\n\n1. Your full name\n2. Business email you use for UDC\n3. Registered company name\n4. Country where the company is registered\n5. Registration number (if you have it)\n\nAfter that I'll send a private upload link for the required document. You can type \"menu\" anytime to see all options.", toolCalls: [] };
+    return { content: "Happy to help with verification! What is your full name?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: griefPhone, text: "I wanna verify my company", messageId: "m16" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(reproCalls, 2, "numbered form dump is regenerated once");
+  assert.equal(out?.reply, "Happy to help with verification! What is your full name?");
+  assert.doesNotMatch(out?.reply ?? "", /menu/i, "no menu repeat leaves");
+  assert.doesNotMatch(out?.reply ?? "", /\n\s*2\./, "no numbered list leaves");
+  pass("repro turn 2: numbered registration form + menu repeat is corrected to one question");
+
+  // Turn 16b: the model keeps dumping the numbered list after correction ->
+  // deterministic floor, still no menu, no list.
+  chat = async () => ({ content: "Please share:\n1. Your full name\n2. Business email\n3. Registered company name", toolCalls: [] });
+  out = await runBrainTurn({ phone: griefPhone, text: "can we do it now", messageId: "m16b" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(out?.reply, "Happy to help - let's take it one step at a time. What would you like to start with?");
+  pass("repro turn 2b: a persistent numbered dump gets the intent floor");
+
+  // Turn 17: the production failure mode - the brain session row is lost
+  // (expired, wiped, re-keyed) but the durable menu lock still forbids the
+  // menu forever.
+  await db.delete(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`);
+  chat = async (messages) => {
+    systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
+    return { content: "I am doing well, thanks! You can type \"Menu\" to see the next steps you can take.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: menuPhone, text: "how are you now", messageId: "m17" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "durable lock forbids the menu even with a fresh session");
+  assert.equal(out?.reply, "I am doing well, thanks!", "menu sentence stripped even after session loss");
+  pass("menu-once: the durable lock survives brain-session loss");
 
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
