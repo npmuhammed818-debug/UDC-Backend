@@ -30,6 +30,12 @@ export function isBrainOrchestratorEnabled(): boolean {
 
 const MAX_TOOL_ROUNDS = 4;
 const TURN_TIMEOUT_MS = 45_000;
+// Whole recent conversation stays in context so AKIF answers the actual
+// message, notices what was already said and never asks twice.
+const HISTORY_MESSAGES = 30;
+// Session lives 30 days: menu-once, collected fields and chat memory hold
+// across days, not just within one day.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 
 type BrainSession = {
   fields: Record<string, string>;
@@ -51,14 +57,14 @@ async function loadBrainSession(phone: string): Promise<{ key: string; state: Br
   if (!fresh) return { key, state: empty };
   try {
     const data = fresh.data as { brain?: BrainSession };
-    return { key, state: { fields: { ...(data.brain?.fields ?? {}) }, history: (data.brain?.history ?? []).slice(-8), menuMentioned: Boolean(data.brain?.menuMentioned) } };
+    return { key, state: { fields: { ...(data.brain?.fields ?? {}) }, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned) } };
   } catch {
     return { key, state: empty };
   }
 }
 
 async function saveBrainSession(key: string, state: BrainSession) {
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60_000);
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   const row = { phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: state } as never, lastMessageId: null, expiresAt, updatedAt: new Date() };
   await db.insert(sessions).values(row).onConflictDoUpdate({ target: sessions.phoneHash, set: { purpose: row.purpose, step: row.step, data: row.data, lastMessageId: row.lastMessageId, expiresAt: row.expiresAt, updatedAt: row.updatedAt } });
 }
@@ -200,7 +206,9 @@ function orchestratorSystem(sender: { registered: boolean; role?: string; status
     : "The customer is NOT registered yet.";
   return `${udcHandbookForRole(sender.role)}
 
-YOU ARE THE FRONT DOOR. Have a natural conversation in your own words - never recite menus, fixed scripts or numbered option lists. Decide yourself when a tool is needed.
+YOU ARE AKIF, UDC's assistant on WhatsApp - a person-like helper, never a form or a phone menu.
+
+HOW YOU CHAT: Read the whole conversation so far and answer the customer's actual last message. Never repeat yourself, never open with a list of details to fill in, never stack several questions into one message, never recite menus, fixed scripts or numbered option lists, and never ask again for anything the customer already told you. A greeting gets a warm greeting back, then at most one light question about what they need. You collect details one at a time, only when the customer shows they want to register, buy, sell or trade. Write short, warm messages in the customer's own language and tone - mirror how they write. Decide yourself when a tool is needed.
 
 MENU RULE: ${mayMentionMenu ? "Because this is the very start of the conversation, you may mention ONCE, in one short phrase, that the customer can send the word menu anytime to see every option." : "The menu was already mentioned once - NEVER mention, push or repeat the menu again."} The menu is never the way you help: when the customer asks for anything a tool covers (deals, shipment tracking, verification status, documents, profile, referrals, commissions, referral code, a meeting, a role change, a requirement or an offer), call the tool immediately and answer from its result - never direct the customer to a menu path.
 
@@ -210,6 +218,37 @@ NEVER: decide or quote prices, commissions, discounts, payment terms or money ou
 
 After a tool note says information was sent to the customer, add at most one short sentence. Keep every reply short, warm and in the customer's language. ${state}`;
 }
+
+// Form-dump guard (owner rule, 8 Nov): AKIF chats like a person. It must never
+// answer a greeting or small talk with a stack of registration fields to fill
+// in. Asking for several details is only natural once the customer has shown
+// they want to register, buy, sell or trade.
+const FIELD_ASKS: Array<[RegExp, string]> = [
+  [/\bname\b/i, "name"],
+  [/e-?mail/i, "email"],
+  [/company|business/i, "company"],
+  [/country/i, "country"],
+  [/registration (number|id)/i, "registration_number"],
+];
+const ASKING_WORDS = /share|sharing|provide|send|tell|give|let me know|begin|start|need|required|fill|\?/i;
+const TRADE_INTENT = /regist|sign[ -]?up|join|trad|buy|sell|offer|requirement|import|export|\bdeal|agent|supplier|buyer|seller/i;
+
+function fieldAskCount(reply: string): number {
+  const found = new Set<string>();
+  for (const sentence of reply.split(/(?<=[.!?])\s+/)) {
+    if (!ASKING_WORDS.test(sentence)) continue;
+    for (const [re, key] of FIELD_ASKS) if (re.test(sentence)) found.add(key);
+  }
+  return found.size;
+}
+
+function hasTradeIntent(text: string, history: BrainSession["history"]): boolean {
+  if (TRADE_INTENT.test(text)) return true;
+  return history.some((h) => h.role === "user" && TRADE_INTENT.test(h.content));
+}
+
+// Deterministic floor when the model keeps dumping fields after one correction.
+const FORM_DUMP_FALLBACK = "Hi! Happy to chat. What can I help you with today?";
 
 export type BrainTurnOutcome = { handled: boolean; reply: string | null };
 
@@ -296,6 +335,24 @@ export async function runBrainTurn(input: { phone: string; text: string; message
     return null;
   }
 
+  // Form-dump guard: without trade intent, a reply that asks for several
+  // registration details at once reads like a form. Correct the model once;
+  // if it still dumps, answer with the deterministic floor.
+  if (finalReply && fieldAskCount(finalReply) >= 2 && !hasTradeIntent(text, state.history)) {
+    console.warn("AKIF brain reply was a form dump without trade intent; regenerating", { reason: "form_dump_guard" });
+    messages.push({ role: "system", content: "Your previous reply asked for several registration details at once, but the customer never asked to register or trade - that reads like a form, not a chat. Reply again in AKIF's voice: answer their actual message (a greeting gets a warm greeting back), and ask at most one light question about what they need." });
+    const retry = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS).catch(() => null);
+    if (retry && retry.toolCalls.length === 0 && retry.content && fieldAskCount(retry.content) < 2) {
+      if (!isSafeConversationText(retry.content) || claimsUnverifiedFact(retry.content, {})) {
+        console.warn("AKIF regenerated reply rejected by validators; falling back to scripted chain", { reason: "validator_rejected" });
+        return null;
+      }
+      finalReply = retry.content;
+    } else {
+      finalReply = FORM_DUMP_FALLBACK;
+    }
+  }
+
   // Hard enforcement: the prompt rule is soft and models sometimes repeat the menu anyway. Strip menu-mentioning
   // sentences once the mention is used up; if nothing else remains, let the scripted chain answer instead.
   if (finalReply && !mayMentionMenu && /\bmenu\b/i.test(finalReply)) {
@@ -308,7 +365,7 @@ export async function runBrainTurn(input: { phone: string; text: string; message
   }
 
   if (finalReply && /\bmenu\b/i.test(finalReply)) state.menuMentioned = true;
-  state.history = [...state.history, { role: "user" as const, content: text.slice(0, 1000) }, ...(finalReply ? [{ role: "assistant" as const, content: finalReply.slice(0, 1000) }] : [])].slice(-8);
+  state.history = [...state.history, { role: "user" as const, content: text.slice(0, 1000) }, ...(finalReply ? [{ role: "assistant" as const, content: finalReply.slice(0, 1000) }] : [])].slice(-HISTORY_MESSAGES);
   await saveBrainSession(key, state).catch(() => undefined);
 
   if (!finalReply) return null;
