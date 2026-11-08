@@ -34,7 +34,7 @@ export async function runGroqChat(
       temperature: 0.3,
     }),
   });
-  if (!response.ok) throw new Error(`Groq returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Groq returned HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
   const raw = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const content = raw.choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error('Groq returned no text response');
@@ -84,7 +84,7 @@ export async function runGroqToolChat(
       temperature: 0.3,
     }),
   });
-  if (!response.ok) throw new Error(`Groq returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Groq returned HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
   const raw = await response.json() as {
     choices?: Array<{
       message?: {
