@@ -130,19 +130,21 @@ try {
   pass("provider failure returns null so the scripted chain runs unchanged");
 
   // Turn 8 (owner rule): the word "menu" may be surfaced exactly once, at the
-  // very start of a conversation; the session locks it afterwards.
+  // (owner rule, 8 Nov): the brain NEVER mentions the menu - the prompt
+  // carries the boundary and code strips menu sentences unconditionally.
   const menuPhone = "+1555000222";
   let systemSeen = "";
   chat = async (messages) => {
     systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
     return { content: "Hi! I am Akif, UDC's trade assistant. You can send the word menu anytime to see every option. What do you trade?", toolCalls: [] };
   };
-  out = await runBrainTurn({ phone: menuPhone, text: "hi", messageId: "m8" }, chat);
+  out = await runBrainTurn({ phone: menuPhone, text: "what do you trade in?", messageId: "m8" }, chat);
   assert.equal(out?.handled, true);
-  assert.match(systemSeen, /you may mention ONCE/, "first turn allows the one-time menu mention");
-  [session] = await db.select().from(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`).orderBy(sql`${whatsappChatSessionsTable.updatedAt} DESC`).limit(1);
-  assert.equal(session?.data?.brain?.menuMentioned, true, "menu mention locks the session flag");
-  pass("menu-once: first turn may mention the menu once; the session locks it");
+  assert.match(systemSeen, /never:/, "the prompt carries the boundaries");
+  assert.doesNotMatch(systemSeen, /you may mention ONCE/, "the prompt never offers a menu mention");
+  assert.doesNotMatch(out?.reply ?? "", /\bmenu\b/i, "menu sentence stripped in code");
+  assert.match(out?.reply ?? "", /What do you trade\?/, "the rest of the reply survives");
+  pass("menu boundary: no prompt nudge, menu sentences stripped in code");
 
   // Turn 9: next turn on the same session forbids any further menu mention.
   chat = async (messages) => {
@@ -151,8 +153,8 @@ try {
   };
   out = await runBrainTurn({ phone: menuPhone, text: "cardamom", messageId: "m9" }, chat);
   assert.equal(out?.handled, true);
-  assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "later turns forbid the menu");
-  pass("menu-once: later turns forbid any menu mention");
+  assert.match(systemSeen, /mention, push or recite a menu or an option list/, "every turn carries the menu boundary");
+  pass("menu boundary: the never-menu rule is in the prompt on every turn");
 
   // Turn 9b: the model disobeys the soft prompt rule and mentions the menu again anyway;
   // hard enforcement strips the menu sentence(s) from the outgoing reply.
@@ -247,18 +249,12 @@ try {
   assert.equal(out?.handled, true);
   pass("conversation memory: full recent history reaches the model on every turn");
 
-  // Turn 14: menu-once holds across sessions and days - a fresh turn on a
-  // locked session still forbids the menu even after history scrolled.
-  chat = async (messages) => {
-    systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
-    return { content: "Noted, thanks!", toolCalls: [] };
-  };
+  // Turn 14: the menu boundary holds across turns - a menu-only reply falls
+  // back instead of leaking the word, on any turn.
+  chat = async () => ({ content: "Just send menu to see everything!", toolCalls: [] });
   out = await runBrainTurn({ phone: menuPhone, text: "one more thing", messageId: "m14" }, chat);
-  assert.equal(out?.handled, true);
-  assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "menu stays locked on the persisted session");
-  [session] = await db.select().from(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`).orderBy(sql`${whatsappChatSessionsTable.updatedAt} DESC`).limit(1);
-  assert.equal(session?.data?.brain?.menuMentioned, true, "menu lock still persisted");
-  pass("menu-once: the lock persists across turns and reloads");
+  assert.equal(out, null, "a menu-only reply is refused outright");
+  pass("menu boundary: a menu-only reply never reaches the customer");
 
   // Turns 15-17: the owner's exact live test of 8 Nov 4:00-4:01pm IST.
   // Turn 15: "My father died" - a plain condolence, no menu, no asks.
@@ -295,19 +291,14 @@ try {
   assert.equal(out?.reply, "Happy to help - let's take it one step at a time. What would you like to start with?");
   pass("repro turn 2b: a persistent numbered dump gets the intent floor");
 
-  // Turn 17: the production failure mode - the brain session row is lost
-  // (expired, wiped, re-keyed) but the durable menu lock still forbids the
-  // menu forever.
+  // Turn 17: even with the brain session row lost (expired, wiped, re-keyed),
+  // the menu boundary still strips any menu sentence.
   await db.delete(whatsappChatSessionsTable).where(sql`${whatsappChatSessionsTable.purpose} = 'brain_orchestrator'`);
-  chat = async (messages) => {
-    systemSeen = messages.find((m) => m.role === "system")?.content ?? "";
-    return { content: "I am doing well, thanks! You can type \"Menu\" to see the next steps you can take.", toolCalls: [] };
-  };
+  chat = async () => ({ content: "I am doing well, thanks! You can type \"Menu\" to see the next steps you can take.", toolCalls: [] });
   out = await runBrainTurn({ phone: menuPhone, text: "how are you now", messageId: "m17" }, chat);
   assert.equal(out?.handled, true);
-  assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "durable lock forbids the menu even with a fresh session");
   assert.equal(out?.reply, "I am doing well, thanks!", "menu sentence stripped even after session loss");
-  pass("menu-once: the durable lock survives brain-session loss");
+  pass("menu boundary: the strip survives brain-session loss");
 
   // Turns 18-19 (owner rule, 8 Nov): money conversation with boundaries -
   // the brain READS stated deal terms and RELAYS the customer's words, but no
@@ -388,6 +379,40 @@ try {
   assert.ok(showFeature, "show_feature tool exists");
   assert.ok(!JSON.stringify(showFeature.function?.parameters).includes('"menu"'), "no menu option in show_feature");
   pass("typed menu has no tool path: the brain answers in its own words");
+
+  // Turn 22 (owner rule, 8 Nov): a bare greeting gets a human greeting back -
+  // no registration push, no menu. The guard regenerates a pushy first reply.
+  const greetPhone = "+1555000555";
+  let greetCalls = 0;
+  chat = async () => {
+    greetCalls++;
+    if (greetCalls === 1) return { content: "Hi! You can share your registration details to get verified, or tell me what you're looking to buy or sell. Send \"menu\" anytime to see all options.", toolCalls: [] };
+    return { content: "Hi! Good to hear from you. What's on your mind today?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: greetPhone, text: "Hy", messageId: "m22" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(greetCalls, 2, "pushy greeting is regenerated once");
+  assert.doesNotMatch(out?.reply ?? "", /regist|verif|\bmenu\b/i, "no registration push, no menu on a greeting");
+  pass("greeting guard: a pushy greeting is regenerated into a natural hello");
+
+  // Turn 23: a stubborn model gets the deterministic greeting floor.
+  chat = async () => ({ content: "Please register now and verify your company, send menu for options.", toolCalls: [] });
+  out = await runBrainTurn({ phone: "+1555000666", text: "Hello", messageId: "m23" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(out?.reply, "Hi! Good to hear from you. What can I do for you today?", "stubborn push gets the greeting floor");
+  pass("greeting guard: a stubborn push falls to the deterministic hello");
+
+  // Turn 24: the single menu mention is never spent on a greeting - the
+  // first substantive turn may still use it once, and a second turn may not.
+  const lockPhone = "+1555000777";
+  chat = async () => ({ content: "I can get you registered, check verification, track a shipment or send your document upload link - just tell me which.", toolCalls: [] });
+  out = await runBrainTurn({ phone: lockPhone, text: "what can you do?", messageId: "m24a" }, chat);
+  assert.equal(out?.handled, true);
+  chat = async () => ({ content: "Tell me what you need. Send \"menu\" anytime to see all options.", toolCalls: [] });
+  out = await runBrainTurn({ phone: lockPhone, text: "ok", messageId: "m24b" }, chat);
+  assert.equal(out?.handled, true);
+  assert.doesNotMatch(out?.reply ?? "", /\bmenu\b/i, "second-turn menu mention is stripped in code");
+  pass("menu-once: a repeat menu mention is stripped even when the model insists");
 
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
