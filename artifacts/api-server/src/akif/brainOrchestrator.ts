@@ -436,7 +436,11 @@ export async function runBrainTurn(input: { phone: string; text: string; message
   // Greeting guard: on a bare greeting the model must answer like a person -
   // no registration push, no verification push, no menu. Correct it once;
   // if it insists, answer with the deterministic floor (owner rule, 8 Nov).
-  if (finalReply && bareGreeting && state.history.length === 0 && /regist|verif|\bmenu\b/i.test(finalReply)) {
+  // A bare greeting gets a greeting back at ANY point in the conversation -
+  // with working memory, history is rarely empty, so the guard must not
+  // depend on it. Menu mentions are left to the menu strip below, which keeps
+  // the rest of a good answer intact (owner rule, 8 Nov).
+  if (finalReply && bareGreeting && /regist|verif/i.test(finalReply)) {
     console.warn("AKIF brain greeting pushed registration/menu; regenerating", { reason: "greeting_guard" });
     messages.push({ role: "system", content: "Your previous reply pushed registration, verification or the menu, but the customer only said hello. Reply again in AKIF's voice: a short, warm human greeting back, then at most one light question about what they need. Do not mention registration, verification, buying, selling or the menu." });
     const retry = await chat(messages, BRAIN_TOOLS, TURN_TIMEOUT_MS).catch(() => null);
