@@ -38,7 +38,7 @@ try {
   });
   const app = await import(directory + "/app.mjs");
   pool = app.pool;
-  const { runBrainTurn, isBrainOrchestratorEnabled } = app;
+  const { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } = app;
   const { db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
   const { readSunkReplies } = app;
 
@@ -365,6 +365,29 @@ try {
   assert.equal(out?.handled, true);
   assert.equal(readSunkReplies(sellerPhone).length, 1, "no second message reached the seller");
   pass("money boundary: a relay claiming approval is blocked before sending");
+
+  // Turn 20 (owner rule, 8 Nov): an UNREGISTERED customer asking for the
+  // vault link gets no card and no canned gate - the tool sends nothing and
+  // the brain explains the link and guides registration in its own words.
+  const guestPhone = "+1555000444";
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("show_feature", { feature: "documents" })] };
+    assert.match(tool.content, /Nothing was sent/, "unregistered: the tool sends nothing");
+    assert.match(tool.content, /private, secure vault page/, "note explains the vault link for the brain");
+    return { content: "The vault link is your private, secure page for uploading company documents like your trade license. I'll set it up right after a quick registration - are you a buyer, seller or agent?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: guestPhone, text: "Send me the vault link", messageId: "m20" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(out?.reply ?? "", /vault/);
+  assert.equal(readSunkReplies(guestPhone).length, 0, "no card or canned text was sent to the unregistered guest");
+  pass("unregistered vault-link ask: nothing sent by the tool, brain explains and guides registration");
+
+  // Turn 21: there is no menu tool - a typed "menu" is answered in words.
+  const showFeature = BRAIN_TOOLS.find((t) => t.function?.name === "show_feature");
+  assert.ok(showFeature, "show_feature tool exists");
+  assert.ok(!JSON.stringify(showFeature.function?.parameters).includes('"menu"'), "no menu option in show_feature");
+  pass("typed menu has no tool path: the brain answers in its own words");
 
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
