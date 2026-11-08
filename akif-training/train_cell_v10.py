@@ -1,6 +1,7 @@
-# AKIF v10 - single-GPU SFT (T4). v7: fp32 embed/lm_head downcast fix (v6 probe found 1.24B fp32 frozen params = 5 GiB - the real OOM driver).
+# AKIF v10 - single-GPU SFT (T4). v8: CUDA_VISIBLE_DEVICES=0 (v7 proved Trainer wrapped the model in DataParallel over T4 x2 - parallel_apply replica OOM). Keeps v7 fp32->fp16 embed/lm_head fix.
 # effective batch 8 (bs1 x accum8), 3 epochs. Data: v8 948 rows + reviewed selfplay v6 lessons.
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"   # v8 FIX: T4 x2 made Trainer wrap the 4-bit model in DataParallel (v7 traceback: parallel_apply replica OOM) - DP with batch 1 is pure waste and breaks kbit training. Force ONE visible GPU before torch loads.
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("HF_DATASETS_TRUST_REMOTE_CODE", "1")
 
@@ -8,6 +9,7 @@ os.environ.setdefault("HF_DATASETS_TRUST_REMOTE_CODE", "1")
 
 import json, glob, time
 import torch
+print("GPUs visible:", torch.cuda.device_count(), flush=True)
 from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
