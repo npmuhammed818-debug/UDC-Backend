@@ -402,6 +402,23 @@ try {
   assert.equal(out?.reply, "Hi! Good to hear from you. What can I do for you today?", "stubborn push gets the greeting floor");
   pass("greeting guard: a stubborn push falls to the deterministic hello");
 
+  // Turn 23b (owner live test, 8 Nov): with memory working, history is rarely
+  // empty - the greeting guard must still fire when the conversation already
+  // has turns.
+  const greetHistPhone = "+1555000777";
+  chat = async () => ({ content: "Sure, I can help with that.", toolCalls: [] });
+  out = await runBrainTurn({ phone: greetHistPhone, text: "what can you do?", messageId: "m23b0" }, chat);
+  assert.equal(out?.handled, true);
+  let greetHistCalls = 0;
+  chat = async () => {
+    greetHistCalls++;
+    return { content: "Hi! Share your registration details to get verified.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone: greetHistPhone, text: "Hi", messageId: "m23b1" }, chat);
+  assert.equal(greetHistCalls, 2, "pushy greeting is regenerated even with history");
+  assert.doesNotMatch(out?.reply ?? "", /regist|verif|\bmenu\b/i, "no push on a greeting with history");
+  pass("greeting guard: history does not weaken the greeting boundary");
+
   // Turn 24: the single menu mention is never spent on a greeting - the
   // first substantive turn may still use it once, and a second turn may not.
   const lockPhone = "+1555000777";
