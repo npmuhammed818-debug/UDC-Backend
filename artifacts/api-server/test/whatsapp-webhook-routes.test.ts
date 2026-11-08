@@ -130,7 +130,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
     rows.dealsTable = [{ id: "deal-a", dealNumber: "UDC-A", buyerUserId: "buyer", sellerUserId: "seller", status: "negotiation", productId: "copper", quantity: "100", unit: "MT", agreedPrice: "5900", currency: "USD", incoterm: "CIF", destination: "Jebel Ali" }, { id: "deal-b", dealNumber: "UDC-B", buyerUserId: "buyer", sellerUserId: "seller", status: "negotiation" }];
     rows.productsTable = [{ id: "copper", name: "Copper cathode" }];
-    rows.dealParticipantsTable = ["deal-a", "deal-b"].flatMap(dealId => ["buyer", "seller"].map(userId => ({ id: randomUUID(), dealId, userId, status: "active" })));
+    rows.dealParticipantsTable = ["deal-a", "deal-b"].flatMap(dealId => ["buyer", "seller"].map(userId => ({ id: randomUUID(), dealId, userId, participantRole: userId, status: "active" })));
     rows.whatsappUserContextsTable = [{ userId: "buyer", activeDealId: "deal-a" }];
   }
   try {
@@ -531,6 +531,29 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       rows.usersTable.find(r => r.id === "seller").status = "suspended";
       await message({ context: { id: "quoted-f" }, image: { id: "img-susp", mime_type: "image/jpeg" } });
       assert.equal(state.images?.length ?? 0, 0, "a suspended counterparty receives no relay");
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
+    });
+    await t.test("an agent participant never receives the automatic photo relay or a document grant", async () => {
+      reset(); seedDeal();
+      rows.usersTable.push({ id: "agent", phone: "10000000003", role: "agent", status: "verified" });
+      rows.dealParticipantsTable.push({ id: randomUUID(), dealId: "deal-b", userId: "agent", participantRole: "agent", status: "active" });
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-g", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-g" }, image: { id: "img-agent", mime_type: "image/jpeg", caption: "goods ready" } });
+      // The buyer/seller principal still receives the photo; the agent never does.
+      assert.equal(state.images?.length, 1);
+      assert.equal(state.images[0].to, "10000000002");
+      assert.ok(!state.images.some((i: any) => i.to === "10000000003"), "agent phone receives no relay");
+      const newDoc = rows.documentsTable.at(-1);
+      assert.ok(!rows.documentAccessTable.some(r => r.documentId === newDoc.id && r.userId === "agent"), "relay creates no agent document-access grant");
+      assert.ok(rows.documentAccessTable.some(r => r.documentId === newDoc.id && r.userId === "seller" && r.accessRole === "viewer"));
+      assert.ok(!rows.whatsappMessageContextsTable.some(r => r.kind === "deal_image_relay" && r.recipientUserId === "agent"));
+      // A principal whose account role changed to agent after the participant row
+      // was created is also excluded - authorization follows the current role.
+      reset(); seedDeal();
+      rows.usersTable.find(r => r.id === "seller").role = "agent";
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-h", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-h" }, image: { id: "img-rolechange", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0, "a participant whose account is no longer buyer/seller receives no relay");
       assert.match(state.sent.at(-1).body, /kept it in this deal/);
     });
     await t.test("media replies attach to the quoted deal, with an owner grant", async () => {
