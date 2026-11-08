@@ -34,5 +34,8 @@ export function scrubAadhaar(text: string): string {
   return text.replace(identifiersOrNumbers, (all, a, b, c) => (a && verhoeff(`${a}${b}${c}`) ? "[aadhaar removed]" : all));
 }
 
+// Country-neutral refusal: UDC never collects or stores national ID numbers
+// (Aadhaar or any other country's), and never redirects the sender to other
+// documents, menus, or uploads.
 export const AADHAAR_REFUSAL =
-  "UDC does not collect or store Aadhaar numbers or Aadhaar cards. Please don't send them. If we need to verify you, use another ID such as a passport, through a secure private upload link (send Menu, then Documents).";
+  "UDC never collects or stores national ID numbers or ID cards. Please don't send them - we can't accept them.";
