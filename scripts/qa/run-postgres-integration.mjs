@@ -27,6 +27,7 @@ const cases = [
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'p0-gates'],
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'redteam-pass4'],
   ['roletransition', 'UDC_ROLETRANSITION_QA_DATABASE_URL', 'role-transition'],
+  ['brainorchestrator', 'UDC_BRAINORCH_QA_DATABASE_URL', 'brain-orchestrator'],
   ['vault', 'UDC_VAULT_QA_DATABASE_URL', 'vault'],
   ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools'],
   ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools-pilot'],

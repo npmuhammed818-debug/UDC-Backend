@@ -80,6 +80,8 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/intelligence/hermesClient": "export const runConversationChat=async()=>({content:'',raw:{}});",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
+    "../akif/brainOrchestrator":
+      "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
     "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');return true;};export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",

@@ -36,7 +36,7 @@ async function sendIntakeBrainReply(phone:string,reply:string,voice?:GuidedVoice
   await sendWhatsAppTextWithMenu(phone,reply);
 }
 
-type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
+export type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
 const q=(name:string,label:string,options:Omit<Question,'name'|'label'>={}):Question=>({name,label,...options});
 export function guidedQuestions(purpose:FlowPurpose):Question[]{
   if(purpose.startsWith('profile_'))return [q('full_name','What is your full name?'),q('email',purpose==='profile_agent'?'What email should UDC use? Personal or business email is fine.':'What is your company email?',{kind:'email',max:254}),...(purpose==='profile_agent'?[]:[q('company_name','What is your registered company name?',{max:200}),q('country','In which country is your company registered?'),q('registration_number','What is your company registration number?',{optional:true,max:100})])];
@@ -83,7 +83,9 @@ function rejectionNote(item:Question,error:unknown){
   if(error instanceof z.ZodError)return item.kind==='email'?'That does not look like an email address. Please send it like name@yourcompany.com.':null;
   return error instanceof Error?error.message:null;
 }
-function validate(question:Question,text:string,purpose:FlowPurpose){
+// Exported so the brain orchestrator validates model-collected fields with the
+// exact same rules as the scripted form. One rule source, no drift.
+export function validate(question:Question,text:string,purpose:FlowPurpose){
   if(question.optional&&/^skip$/i.test(text))return '';
   if(text.length<1||text.length>(question.max??120))throw new Error('Please keep this answer within '+(question.max??120)+' characters.');
   if(question.kind==='email'){

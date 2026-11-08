@@ -25,6 +25,7 @@ import { crisisSafetyReply } from "../akif/crisisSafety";
 import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
+import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -1913,6 +1914,24 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               "AKIF queued WhatsApp research request",
             );
           }
+          continue;
+        }
+      }
+
+      // Brain-led front door (owner direction, 7 Nov): Groq decides the
+      // conversation with AKIF features as tools, in its own words. Runs only
+      // for open text turns: menus, forms, sign-in, OTP codes, deal mediation
+      // and money paths above stay scripted and keep their gates. Env-gated;
+      // any failure or validator rejection falls through to the scripted
+      // chain below unchanged.
+      if (message.from && !hasPendingIntake && isBrainOrchestratorEnabled()) {
+        const brain = await runBrainTurn({
+          phone: message.from,
+          text: message.text.body,
+          messageId: message.id,
+        }).catch(() => null);
+        if (brain?.handled) {
+          if (brain.reply) await deliverWhatsAppReply(message.from, brain.reply);
           continue;
         }
       }

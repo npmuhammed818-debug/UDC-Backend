@@ -13,7 +13,7 @@ test('Groq is inert without a key; config selects model name', () => {
   withEnv({ GROQ_API_KEY: undefined }, () => assert.equal(isGroqConfigured(), false));
   withEnv({ GROQ_API_KEY: 'gsk_synthetic', GROQ_MODEL: undefined }, () => {
     assert.equal(isGroqConfigured(), true);
-    assert.equal(groqModel(), 'llama-3.3-70b-versatile');
+    assert.equal(groqModel(), 'openai/gpt-oss-120b');
   });
 });
 
@@ -32,7 +32,7 @@ test('Groq request shape is OpenAI-compatible with a bearer token (mocked fetch)
       const headers = calls[0].init.headers as Record<string, string>;
       assert.equal(headers.authorization, 'Bearer gsk_synthetic');
       const body = JSON.parse(String(calls[0].init.body));
-      assert.equal(body.model, 'llama-3.3-70b-versatile');
+      assert.equal(body.model, 'openai/gpt-oss-120b');
       assert.deepEqual(body.messages, [{ role: 'system', content: 'rules' }, { role: 'user', content: 'hello' }]);
     });
   } finally { globalThis.fetch = original; }

@@ -177,6 +177,52 @@ export async function submitChatFlow(phone:string,raw:unknown){
   }catch(error){if(error instanceof z.ZodError)return 'Please check the required fields, email and positive quantities/prices, then open a new form from Menu.';throw error;}
 }
 
+// Brain-orchestrator registration path (owner direction, 7 Nov): the model
+// collects the details in its own words; this function applies the exact same
+// persistence rules as submitChatFlow's profile branch. Admin review, email
+// OTP and audit are unchanged; money and verification stay code-gated.
+export async function registerWhatsAppProfileDirect(phone:string,role:'buyer'|'seller'|'agent',rawInput:{full_name:string;email:string;company_name?:string;country?:string;registration_number?:string}):Promise<{ok:boolean;reply:string}>{
+  try{
+    const result=await db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'chat_profile:'+phone}))`);
+      const [existing]=await tx.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+      if(existing&&(!['buyer','seller','agent'].includes(existing.role)||['suspended','rejected'].includes(existing.status)))return {ok:false,reply:'Your account needs UDC review before this action.'};
+      const input=z.object({full_name:z.string().trim().min(2).max(120),email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),company_name:z.string().trim().max(200).optional(),country:z.string().trim().max(120).optional(),registration_number:z.string().trim().max(100).optional()}).parse(rawInput);
+      if(existing&&existing.role!==role)return {ok:false,reply:`Your account is already registered as ${existing.role}. UDC must review role changes.`};
+      if(role!=='agent'&&(!businessEmail(input.email,phone)||!input.company_name||!input.country))return {ok:false,reply:'Buyers and sellers need a company email, company name and country. Agents may use personal or business email.'};
+      const [emailOwner]=await tx.select({id:usersTable.id}).from(usersTable).where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1);
+      if(emailOwner&&emailOwner.id!==existing?.id)return {ok:false,reply:'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.'};
+      let user=existing;
+      if(existing){[user]=await tx.update(usersTable).set({fullName:input.full_name,email:input.email,country:input.country||null,...(existing.status==='verified' && (existing.email!==input.email || existing.fullName!==input.full_name || (existing.country||null)!==(input.country||null))?{status:'under_review'}:{}),updatedAt:new Date()}).where(eq(usersTable.id,existing.id)).returning();}
+      else{[user]=await tx.insert(usersTable).values({phone,fullName:input.full_name,email:input.email,country:input.country||null,role,status:'pending',passwordHash:await hashPassword(randomBytes(32).toString('base64url'))}).returning();}
+      if(isTesterPhone(phone)){[user]=await tx.update(usersTable).set({emailVerifiedAt:new Date(),verifiedEmail:input.email,updatedAt:new Date()}).where(eq(usersTable.id,user.id)).returning();}
+      if(input.company_name){
+        const [company]=await tx.select().from(companiesTable).where(eq(companiesTable.ownerUserId,user.id)).limit(1);
+        const fields={companyName:input.company_name,registrationNumber:input.registration_number||null,country:input.country||null};
+        if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
+        else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
+      }
+      let reply=role==='agent'?'Agent registration is saved for UDC review.':'Registration is saved. Verification is pending; company documents can be uploaded through a private, single-use link, and requirements or offers stay private until verification and review.';
+      if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+=' '+inviteNote;}
+      await tx.insert(auditLogsTable).values({actorUserId:user.id,action:'whatsapp_brain_registration_saved',entityType:'user',entityId:user.id,metadata:{purpose:'profile_'+role,channel:'whatsapp',via:'brain_orchestrator',requiresAdminReview:true}});
+      const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),or(eq(usersTable.status,'active'),eq(usersTable.status,'verified')))).limit(100);
+      if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'whatsapp_form_submitted',title:'WhatsApp submission needs review',body:'A registration or trade form was submitted in WhatsApp.',link:'/admin'})));
+      return {ok:true,reply,userId:user.id};
+    });
+    if(result.ok&&'userId' in result&&result.userId){
+      try{
+        if(isTesterPhone(phone))return {ok:true,reply:result.reply+' Email confirmed automatically (tester mode).'};
+        if(!(await emailAuth.status(result.userId)).emailVerified){await emailAuth.requestVerification(result.userId);return {ok:true,reply:result.reply+' A 6-digit code was emailed; it expires in 10 minutes and must be replied with here to confirm the email.'};}
+      }catch{/* email sending off or rate limited: user can send Verify email later */}
+      return {ok:true,reply:result.reply+' Email is not confirmed yet; a 6-digit email code confirms it.'};
+    }
+    return {ok:result.ok,reply:result.reply};
+  }catch(error){
+    if(error instanceof z.ZodError)return {ok:false,reply:'The details did not pass validation: check the email format and required fields and try again.'};
+    throw error;
+  }
+}
+
 async function companyDocument(phone:string,message:ChatMessage){
   if(!message.document?.id||!message.context?.id)return false;
   const [user]=await db.select().from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
