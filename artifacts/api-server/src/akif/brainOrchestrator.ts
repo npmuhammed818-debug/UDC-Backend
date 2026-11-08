@@ -21,7 +21,7 @@ import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerRequirement.ts";
 import { recordPendingSellerOffer, sellerOfferSchema } from "./recordPendingSellerOffer.ts";
 import { guidanceHistoryIdentity } from "../whatsapp/guidanceSession.ts";
-import { formatMemoriesForPrompt, recallCustomerMemories, saveCustomerMemory } from "./customerMemory.ts";
+import { deleteCustomerMemories, formatMemoriesForPrompt, recallCustomerMemories, saveCustomerMemory } from "./customerMemory.ts";
 import { customerLocalTimeLine, factStorageBlock, isBrainMemoryWriteEnabled } from "./timeMemory.ts";
 import { formatSharedLessonsForPrompt, recallSharedLessons } from "./sharedLessons.ts";
 import { estimateCustomerEmotion, feelingEventFor, formatEmotionalContextForPrompt, recordAkifFeeling, FEELING_BASELINE } from "./emotionContext.ts";
@@ -141,6 +141,8 @@ export const BRAIN_TOOLS: GroqToolDefinition[] = [
 // nothing is written, and the tool note says so honestly.
 const REMEMBER_FACT_TOOL: GroqToolDefinition = { type: "function", function: { name: "remember_fact", description: "Privately note one short fact about this customer for future chats (a preference, a name detail, context they asked you to keep). Only facts the customer stated in chat; never ID numbers, documents, passwords or payment details. Stored only when the customer has opted in to learning - if it cannot be stored, carry the fact in this chat only and never promise to remember it later.", parameters: z.toJSONSchema(z.object({ fact: z.string().max(300) })) } };
 
+const FORGET_TOOL: GroqToolDefinition = { type: "function", function: { name: "forget_everything", description: "Forget the customer: delete every long-term note AKIF holds about them and stop keeping new ones. Use it the moment the customer asks to be forgotten, erased or not remembered.", parameters: z.toJSONSchema(z.object({})) } };
+
 const INFO_FEATURES = new Set(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]);
 
 type ToolOutcome = { note: string; finalReply?: string };
@@ -256,6 +258,13 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     }
     await db.insert(auditLogsTable).values({ actorUserId: user.id, action: "whatsapp_brain_relay", entityType: "deal", entityId: deal.id, metadata: { channel: "whatsapp", via: "brain_orchestrator", dealNumber: deal.dealNumber, from: role } }).catch(() => undefined);
     return { note: `The customer's message was relayed to the ${otherRole} for deal ${deal.dealNumber}. Tell the customer you passed it on to the ${otherRole} and will come back here with their reply. Never share the ${otherRole}'s contact details.` };
+  }
+  if (name === "forget_everything") {
+    const [u] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+    if (!u) return { note: "This number has no account and no stored notes - nothing to delete. Say so plainly and warmly." };
+    await deleteCustomerMemories({ userId: u.id }).catch(() => undefined);
+    await db.update(usersTable).set({ akifLearningOptIn: false, updatedAt: new Date() }).where(eq(usersTable.id, u.id)).catch(() => undefined);
+    return { note: "All long-term notes for this customer were just deleted and no new ones will be kept. Confirm this warmly in your own words." };
   }
   if (name === "remember_fact") {
     if (!isBrainMemoryWriteEnabled()) return { note: "Long-term notes are not available; carry the fact in this chat only and never promise to remember it later." };
@@ -416,7 +425,7 @@ export async function runBrainTurn(input: { phone: string; text: string; message
 
   let finalReply: string | null = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const turn = await chat(messages, isBrainMemoryWriteEnabled() ? [...BRAIN_TOOLS, REMEMBER_FACT_TOOL] : BRAIN_TOOLS, TURN_TIMEOUT_MS);
+    const turn = await chat(messages, [...BRAIN_TOOLS, FORGET_TOOL, ...(isBrainMemoryWriteEnabled() ? [REMEMBER_FACT_TOOL] : [])], TURN_TIMEOUT_MS);
     if (turn.toolCalls.length === 0) {
       finalReply = turn.content;
       break;
