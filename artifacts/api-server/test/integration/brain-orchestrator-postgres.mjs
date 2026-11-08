@@ -30,7 +30,7 @@ const pass = (l) => { checks++; console.log("PASSED: " + l); };
 try {
   await build({
     stdin: {
-      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';`,
+      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
@@ -39,7 +39,8 @@ try {
   const app = await import(directory + "/app.mjs");
   pool = app.pool;
   const { runBrainTurn, isBrainOrchestratorEnabled } = app;
-  const { db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, eq, sql } = app;
+  const { db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
+  const { readSunkReplies } = app;
 
   assert.ok(isBrainOrchestratorEnabled(), "flag on");
   pass("orchestrator env flag reads on");
@@ -307,6 +308,63 @@ try {
   assert.match(systemSeen, /NEVER mention, push or repeat the menu again/, "durable lock forbids the menu even with a fresh session");
   assert.equal(out?.reply, "I am doing well, thanks!", "menu sentence stripped even after session loss");
   pass("menu-once: the durable lock survives brain-session loss");
+
+  // Turns 18-19 (owner rule, 8 Nov): money conversation with boundaries -
+  // the brain READS stated deal terms and RELAYS the customer's words, but no
+  // tool exists to accept, counter, discount or approve anything.
+  let [buyerUser] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+  if (!buyerUser) [buyerUser] = await db.insert(usersTable).values({ phone, role: "buyer", status: "approved", passwordHash: "qa" }).returning();
+  const sellerPhone = "+1555999001";
+  let [sellerUser] = await db.select().from(usersTable).where(eq(usersTable.phone, sellerPhone)).limit(1);
+  if (!sellerUser) [sellerUser] = await db.insert(usersTable).values({ phone: sellerPhone, role: "seller", status: "approved", passwordHash: "qa" }).returning();
+  const [product] = await db.insert(productsTable).values({ name: "Cardamom QA" }).returning();
+  await db.insert(dealsTable).values({ buyerUserId: buyerUser.id, sellerUserId: sellerUser.id, productId: product.id, quantity: "5", unit: "MT", agreedPrice: "500.00", currency: "USD", incoterm: "FOB", status: "negotiating" });
+
+  // Turn 18: the customer asks the price -> the brain reads the recorded terms.
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("read_deal_terms", {})] };
+    assert.match(tool.content, /500.00 USD/, "tool returns the recorded stated price");
+    assert.match(tool.content, /never change, accept, counter or approve/, "tool note carries the boundary");
+    return { content: "On your deal the stated price is 500 USD per MT, FOB. Want me to pass a message to the seller?", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "what is the price?", messageId: "m18" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(out?.reply ?? "", /500 USD/);
+  pass("money boundary: the brain answers price questions from recorded deal terms");
+
+  // Turn 19: the customer negotiates -> the brain relays their words to the
+  // seller. The reply sink (store mode) proves no real send can escape.
+  process.env.UDC_APP_ENV = "staging";
+  process.env.AKIF_WHATSAPP_REPLY_SINK = "store";
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("relay_to_other_party", { message: "I can do 450 per MT if you ship this week." })] };
+    assert.match(tool.content, /relayed to the seller/, "relay confirmed to the model");
+    return { content: "Done - I passed your message to the seller and will come back with their reply.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "tell the seller I can do 450 if he ships this week", messageId: "m19" }, chat);
+  assert.equal(out?.handled, true);
+  const sunk = readSunkReplies(sellerPhone);
+  assert.equal(sunk.length, 1, "exactly one relayed message to the seller");
+  assert.match(sunk[0]?.text ?? "", /I can do 450 per MT if you ship this week\./, "the seller gets the customer's own words");
+  assert.match(sunk[0]?.text ?? "", /passed on by AKIF/, "the relay is transparent about AKIF");
+  assert.doesNotMatch(sunk[0]?.text ?? "", /\+1555/, "no phone numbers leak");
+  const relays = await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_brain_relay'`);
+  assert.equal(relays.length, 1, "relay is audit-logged");
+  pass("money boundary: negotiation words are relayed to the seller, sink-stored, audited");
+
+  // Turn 19b: a relay that claims an approval is blocked before sending.
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("relay_to_other_party", { message: "Deal approved, payment is approved." })] };
+    assert.match(tool.content, /NOT sent/, "approval-claiming relay is refused");
+    return { content: "I can't send approval words - I can only pass your own message to the seller.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "tell him the deal is approved", messageId: "m19b" }, chat);
+  assert.equal(out?.handled, true);
+  assert.equal(readSunkReplies(sellerPhone).length, 1, "no second message reached the seller");
+  pass("money boundary: a relay claiming approval is blocked before sending");
 
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
