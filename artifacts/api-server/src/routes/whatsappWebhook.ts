@@ -1568,7 +1568,15 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Please tap it again.'); continue; }
       }
       if (message.from && message.text?.body) {
-        try { if (await handleChatUi(message.from, message, true)) continue; } catch { /* fall through to the brain */ }
+        try {
+          // Brain on: typed texts only feed an already-open native form - the
+          // brain does the talking. Brain off (outage switch): the full
+          // scripted chain still carries registration and forms as before.
+          const consumed = isBrainOrchestratorEnabled()
+            ? await handleChatUi(message.from, message, true)
+            : await handleChatUi(message.from, message);
+          if (consumed) continue;
+        } catch { /* fall through to the brain or the scripted chain */ }
       }
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {
