@@ -102,6 +102,20 @@ export function getImpexqStatus() {
   };
 }
 
+// Conservative per-process budget, below the provider's 10/minute and 100/day.
+// The provider remains the account-wide authority across restarts/instances.
+const callTimes: number[] = [];
+let dayKey = "";
+let dayCalls = 0;
+function reserveSandboxCall() {
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (day !== dayKey) { dayKey = day; dayCalls = 0; }
+  while (callTimes.length && callTimes[0] <= now - 60_000) callTimes.shift();
+  if (callTimes.length >= 8 || dayCalls >= 80) throw new Error("ImpexQ local sandbox budget reached");
+  callTimes.push(now); dayCalls++;
+}
+
 async function requestImpexq<T>(
   path: string,
   body: Record<string, unknown>,
@@ -111,6 +125,7 @@ async function requestImpexq<T>(
     throw new Error("IMPEXQ_API_KEY is not configured");
   }
 
+  reserveSandboxCall();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 

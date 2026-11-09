@@ -26,6 +26,7 @@ import { admitBrainTurn, admitLlmCall, finishBrainTurn, finishLlmCall, type Guar
 import { customerLocalTimeLine, factStorageBlock, isBrainMemoryWriteEnabled } from "./timeMemory.ts";
 import { formatSharedLessonsForPrompt, recallSharedLessons } from "./sharedLessons.ts";
 import { estimateCustomerEmotion, feelingEventFor, formatEmotionalContextForPrompt, recordAkifFeeling, FEELING_BASELINE } from "./emotionContext.ts";
+import { impexqBrainTools, runImpexqBrainTool } from "./intelligence/impexqBrainTool.ts";
 import type { FlowPurpose } from "../whatsapp/flowToken.ts";
 
 export function isBrainOrchestratorEnabled(): boolean {
@@ -151,6 +152,8 @@ type ToolOutcome = { note: string; finalReply?: string };
 async function executeTool(phone: string, name: string, argsJson: string, state: BrainSession): Promise<ToolOutcome> {
   let args: Record<string, unknown> = {};
   try { args = argsJson ? JSON.parse(argsJson) : {}; } catch { return { note: "Tool call had unreadable arguments; ask the customer to say the detail again in plain words." }; }
+
+  if (name === "trade_reference") return runImpexqBrainTool(args);
 
   if (name === "save_registration_details") {
     const role = roleSchema.safeParse(args.role);
@@ -459,7 +462,7 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
     if (gv !== "ok") throw new Error(`llm_guard:${gv}`);
     let turn;
     try {
-      turn = await chat(messages, [...BRAIN_TOOLS, FORGET_TOOL, ...(isBrainMemoryWriteEnabled() ? [REMEMBER_FACT_TOOL] : [])], TURN_TIMEOUT_MS);
+      turn = await chat(messages, [...BRAIN_TOOLS, ...impexqBrainTools(), FORGET_TOOL, ...(isBrainMemoryWriteEnabled() ? [REMEMBER_FACT_TOOL] : [])], TURN_TIMEOUT_MS);
     } finally { finishLlmCall(); }
     if (turn.toolCalls.length === 0) {
       finalReply = turn.content;
