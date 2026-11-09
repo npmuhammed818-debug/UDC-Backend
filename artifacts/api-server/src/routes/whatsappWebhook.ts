@@ -1,3 +1,4 @@
+import { runBackgroundTask } from "../lib/backgroundTask.ts";
 import {handleDocumentCheck} from '../whatsapp/documentCheck';
 import {handleDealReadSummary} from '../whatsapp/dealReadSummary';
 import {handleSellerReviewCard} from '../whatsapp/sellerReviewCard';
@@ -1821,7 +1822,16 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           brain = await callBrain();
         }
         if (brain?.handled) {
-          if (brain.reply) await deliverWhatsAppReply(message.from, brain.reply);
+          const delivered = brain.reply ? await deliverWhatsAppReply(message.from, brain.reply) : null;
+          if (brain.background && delivered?.delivered) {
+            const background = brain.background;
+            const phone = message.from;
+            runBackgroundTask(() => background(async reply => (await deliverWhatsAppReply(phone, reply)).delivered), () => {
+              console.warn("AKIF hands work failed", { reason: "background_failed" });
+            });
+          } else if (brain.cancelBackground) {
+            await brain.cancelBackground();
+          }
           continue;
         }
         brainFailed = true;

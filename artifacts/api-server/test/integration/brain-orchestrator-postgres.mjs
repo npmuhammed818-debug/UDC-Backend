@@ -431,6 +431,55 @@ try {
   assert.doesNotMatch(out?.reply ?? "", /\bmenu\b/i, "second-turn menu mention is stripped in code");
   pass("menu-once: a repeat menu mention is stripped even when the model insists");
 
+  // Hybrid proof: all models and sends below are synthetic and offline.
+  process.env.AKIF_BRAIN_HANDS_ENABLED="on";
+  const savedFetch=globalThis.fetch;
+  let releaseHands;
+  const handsWait=new Promise(resolve=>{releaseHands=resolve;});
+  const originalCall={id:"hybrid-call",name:"save_registration_details",argumentsJson:JSON.stringify({role:"seller",full_name:"Hybrid Synthetic"})};
+  globalThis.fetch=async(_url,init)=>{
+    const body=JSON.parse(String(init?.body??"{}"));
+    const sys=body.messages?.find(m=>m.role==="system")?.content??"";
+    if(sys.includes("AKIF's hands")) {
+      await handsWait;
+      return Response.json({choices:[{message:{content:null,tool_calls:[{id:originalCall.id,type:"function",function:{name:originalCall.name,arguments:originalCall.argumentsJson}}]}}]});
+    }
+    return Response.json({choices:[{message:{content:"A neutral synthetic reply."}}]});
+  };
+  try {
+    let brainCalls=0;
+    const hybridChat=async(messages)=>{
+      brainCalls++;
+      if(messages.some(m=>(m.content??"").startsWith("Background tool result data:")))return {content:"I have the name you gave me. What email do you use?",toolCalls:[]};
+      if(messages.some(m=>m.role==="tool"))return {content:"I am checking that while we talk.",toolCalls:[]};
+      return {content:null,toolCalls:[originalCall]};
+    };
+    const hp="+15550009991";
+    const first=await runBrainTurn({phone:hp,text:"Save my name as Hybrid Synthetic",messageId:"hyb1"},hybridChat);
+    assert.equal(typeof first.background,"function");
+    assert.match(first.reply,/checking/);
+    let delivered=0;
+    const ongoing=first.background(async()=>{delivered++;return true;});
+    await new Promise(r=>setTimeout(r,25));
+    const second=await runBrainTurn({phone:hp,text:"Are you still there?",messageId:"hyb2"},async(_messages,tools)=>{
+      assert.equal(tools.length,0,"no extra action starts while hands busy");
+      return {content:"Yes, I am here while the check runs.",toolCalls:[]};
+    });
+    assert.match(second.reply,/here/);assert.equal(delivered,0);
+    pass("hybrid returns initial reply and handles another chat while hands are pending");
+    releaseHands();await ongoing;await first.background(async()=>{throw Error("duplicate delivery");});
+    assert.equal(delivered,1);
+    const rows=await db.select().from(whatsappChatSessionsTable);
+    const hs=rows.find(r=>r.data?.brain?.fields?.full_name==="Hybrid Synthetic");
+    assert.ok(hs);assert.equal(hs.data.brain.fields._handsJob,undefined);
+    assert.ok(hs.data.brain.history.some(h=>h.content.includes("Are you still there?")));
+    pass("hybrid executes through field validator once, preserves concurrent chat, brain reports result");
+    const cancelled=await runBrainTurn({phone:"+15550009992",text:"Save a synthetic name",messageId:"hyb3"},hybridChat);
+    await cancelled.cancelBackground();
+    await cancelled.background(async()=>{throw Error("cancelled work delivered");});
+    pass("failed initial delivery cancels queued work before it starts");
+  } finally { globalThis.fetch=savedFetch;delete process.env.AKIF_BRAIN_HANDS_ENABLED; }
+
   console.log(`brain-orchestrator-postgres: ${checks} checks passed`);
 } finally {
   await pool?.end().catch(() => {});
