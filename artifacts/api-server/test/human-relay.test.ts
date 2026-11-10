@@ -107,7 +107,7 @@ test("reply admission is bounded per window", () => {
   assert.equal(admitHumanRelayReply(t0 + 61_000), true);
 });
 
-test("relay alert email fires when configured and stays silent otherwise", async () => {
+test("no per-message relay alert email is sent (owner direction, 10 Nov)", async () => {
   const prev = { alert: process.env.AKIF_RELAY_ALERT_EMAIL, key: process.env.RESEND_API_KEY, from: process.env.UDC_AUTH_EMAIL_FROM };
   const prevFetch = globalThis.fetch;
   const calls: Array<{ url: string; body: string }> = [];
@@ -116,33 +116,14 @@ test("relay alert email fires when configured and stays silent otherwise", async
       calls.push({ url: String(url), body: String(init?.body ?? "") });
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
-
-    resetHumanRelay();
-    delete process.env.AKIF_RELAY_ALERT_EMAIL;
-    enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "no alert" });
-    await new Promise((r) => setImmediate(r));
-    assert.equal(calls.length, 0);
-
     process.env.AKIF_RELAY_ALERT_EMAIL = "owner@example.com";
     process.env.RESEND_API_KEY = "re_test_123456789";
     process.env.UDC_AUTH_EMAIL_FROM = "UDC <alerts@updowncircle.site>";
-    enqueueHumanRelay({ phone: "+91 70220 32531", kind: "voice", text: "spoken hello" });
+    resetHumanRelay();
+    enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "need prices" });
+    enqueueHumanRelay({ phone: "917022032531", kind: "voice", text: "spoken hello" });
     await new Promise((r) => setImmediate(r));
-    assert.equal(calls.length, 1);
-    const payload = JSON.parse(calls[0].body);
-    assert.equal(calls[0].url, "https://api.resend.com/emails");
-    assert.deepEqual(payload.to, ["owner@example.com"]);
-    assert.equal(payload.from, "UDC <alerts@updowncircle.site>");
-    assert.match(payload.subject, /voice message from \+917022032531/);
-    assert.match(payload.text, /spoken hello/);
-    assert.doesNotMatch(payload.text, /Brain draft/);
-
-    enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "need prices", draft: "Draft reply the dev side may edit." });
-    await new Promise((r) => setImmediate(r));
-    assert.equal(calls.length, 2);
-    const withDraft = JSON.parse(calls[1].body);
-    assert.match(withDraft.text, /Brain draft \(not sent; the dev side may edit before replying\):/);
-    assert.match(withDraft.text, /Draft reply the dev side may edit\./);
+    assert.equal(calls.length, 0, "held messages never burn the email quota");
   } finally {
     globalThis.fetch = prevFetch;
     if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;
@@ -200,8 +181,7 @@ test("simple greeting detection is strict and fails closed", async () => {
   assert.equal(fallbackGreeting("malayalam").length > 0, true);
 });
 
-test("auto-answered relay item is not pending and the alert email says so", async () => {
-  const prev = { alert: process.env.AKIF_RELAY_ALERT_EMAIL, key: process.env.RESEND_API_KEY, from: process.env.UDC_AUTH_EMAIL_FROM };
+test("auto-answered relay item is not pending and no alert email goes out", async () => {
   const prevFetch = globalThis.fetch;
   const calls: Array<{ url: string; body: string }> = [];
   try {
@@ -211,23 +191,16 @@ test("auto-answered relay item is not pending and the alert email says so", asyn
     }) as typeof fetch;
     process.env.AKIF_RELAY_ALERT_EMAIL = "owner@example.com";
     process.env.RESEND_API_KEY = "re_test_123456789";
-    process.env.UDC_AUTH_EMAIL_FROM = "UDC <alerts@updowncircle.site>";
-
     resetHumanRelay();
     const { pendingHumanRelay } = await import("../src/akif/humanRelay.ts");
     enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "Hello", draft: "Hi! How can I help?", autoAnswered: true });
     await new Promise((r) => setImmediate(r));
     assert.equal(pendingHumanRelay().length, 0);
-    assert.equal(calls.length, 1);
-    const payload = JSON.parse(calls[0].body);
-    assert.match(payload.text, /Auto-answered as a simple greeting/);
-    assert.match(payload.text, /Hi! How can I help\?/);
-    assert.doesNotMatch(payload.text, /not sent; the dev side may edit/);
+    assert.equal(calls.length, 0, "auto-answered items never email either");
   } finally {
     globalThis.fetch = prevFetch;
-    if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;
-    if (prev.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = prev.key;
-    if (prev.from === undefined) delete process.env.UDC_AUTH_EMAIL_FROM; else process.env.UDC_AUTH_EMAIL_FROM = prev.from;
+    delete process.env.AKIF_RELAY_ALERT_EMAIL;
+    delete process.env.RESEND_API_KEY;
     resetHumanRelay();
   }
 });

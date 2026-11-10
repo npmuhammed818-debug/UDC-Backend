@@ -173,7 +173,12 @@ export async function submitChatFlow(phone:string,raw:unknown){
       // Owner rule (10 Nov): the code is asked right after the email, and the
       // registration-saved confirmation only comes after the code verifies
       // (emailVerification.ts), so registration never continues unverified.
-      if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return 'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.';}
+      if(!(await emailAuth.status(otpUserId)).emailVerified){
+        // Quota or provider failure (owner direction, 10 Nov): say a short
+        // honest line and let them retry later; registration must not break.
+        try{await emailAuth.requestVerification(otpUserId);}
+        catch{return 'Email codes are paused for a short while on our side. Your details are saved, please try again in some time.';}
+        return 'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.';}
     }catch{/* email sending off or rate limited: user can still send Verify email later */}
   }
   return saved.split('{{VERIFY_HINT}}').join(' To confirm your email, send Verify email.');
