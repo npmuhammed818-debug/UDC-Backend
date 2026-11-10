@@ -120,6 +120,6 @@ export function validateGuidanceReply(reply: string): boolean {
   if (/\b(?:no|not have|don.t have|do not have|without)\b[^.!?\n]{0,40}\b(?:website|founder|company)\b/i.test(reply)) return false;
   // Commission mechanics are not approved policy: no rates, percentages, timing or formulas.
   if (/\b(?:commissions?|referral (?:fee|bonus)s?|payouts?|brokerage)\b/i.test(reply) && /%|\bpercent|\busually\b|\btypically\b|\bpaid (?:after|when|on|within)\b|\bafter the deal\b|\bper (?:deal|trade|ton|mt)\b|\bof the deal\b/i.test(reply) && reply !== commissionAnswer) return false;
-  const urls = reply.match(/https?:\/\/[^\s<>]+/g) ?? [];
+  const urls: string[] = reply.match(/https?:\/\/[^\s<>]+/g) ?? [];
   return urls.every(url => url.replace(/[).,]+$/, '') === publicWebsite.replace(/\/$/, '') || url === publicWebsite);
 }
