@@ -28,7 +28,7 @@ import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -1658,7 +1658,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // Held voice notes (relay on, allowlisted sender) are transcribed like
       // any other and held with their transcript; raw audio is never kept or
       // relayed, and the crisis path still answers first.
-      if (message.from && typeof message.audio?.id === "string" && humanRelayActiveFor(message.from)) {
+      // An active intake (offer or requirement) belongs to the intake flow,
+      // not the relay - same skip as typed text (duplicate-question bug, 10 Nov).
+      const relayVoiceIntake = message.from && typeof message.audio?.id === "string" ? await loadWhatsAppIntakeDraft(message.from) : null;
+      const relayVoiceHasOpenIntake = Boolean(relayVoiceIntake && !relayVoiceIntake.stale);
+      if (message.from && typeof message.audio?.id === "string" && humanRelayActiveFor(message.from) && !relayVoiceHasOpenIntake) {
         if (!isAkifWorkerMediaEnabled()) {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
           continue;
@@ -1701,6 +1705,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+          } else if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text)) {
+            // Brain down, no draft: a spoken greeting still gets a spoken
+            // hello back in the customer's language (owner rule, 10 Nov).
+            const hello = fallbackGreeting(heard.language);
+            const sent = await deliverHumanRelayReply(message.from, hello, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "voice", fallback: true }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoGreetingsEnabled() && isMenuRequestText(heard.text) && menuAutoReplySafe(voiceReply)) {
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
@@ -2008,8 +2019,12 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         let autoAnswered = false;
         let autoNote: string | undefined;
         const autoReply = draft?.reply ?? null;
-        if (relayAutoGreetingsEnabled() && isSimpleGreetingText(combinedText) && greetingAutoReplySafe(autoReply)) {
-          const sent = await deliverHumanRelayReply(message.from, autoReply);
+        if (relayAutoGreetingsEnabled() && isSimpleGreetingText(combinedText)) {
+          // Greetings never depend on the brain: a safe draft wins, otherwise
+          // a rotating warm hello answers instead of holding (owner direction,
+          // 10 Nov launch).
+          const hello = greetingAutoReplySafe(autoReply) ? autoReply : fallbackGreeting();
+          const sent = await deliverHumanRelayReply(message.from, hello);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
@@ -2025,6 +2040,16 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
+        }
+        if (!autoAnswered && relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && !autoReply) {
+          // No brain draft at all (provider down): the scripted home menu
+          // still answers a typed "menu" the same as a tap.
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:menu` : undefined, text: { body: combinedText } } as ChatMessage)) {
+              autoAnswered = true;
+              autoNote = "Auto-answered by the scripted menu, no reply needed unless it looks wrong.";
+            }
+          } catch { /* fall through to the hold */ }
         }
         const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
         if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
@@ -2115,13 +2140,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // (owner report, 10 Nov launch). Variants rotate so repeats don't
         // read as a canned line.
         if (isSimpleGreetingText(message.text.body)) {
-          const greetings = [
-            "Hey, good to hear from you. What can I do for you?",
-            "Hi there, how can I help you today?",
-            "Hello, nice to hear from you. What are you looking for?",
-          ];
-          const pick = greetings[Math.floor(Date.now() / 1000) % greetings.length];
-          await deliverWhatsAppReply(message.from, pick);
+          await deliverWhatsAppReply(message.from, fallbackGreeting());
           continue;
         }
         // Menus stay automatic without the model: the scripted home menu
