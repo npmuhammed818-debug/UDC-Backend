@@ -39,6 +39,13 @@ export function isAcknowledgementText(text: string): boolean {
   return t.length > 0 && t.length <= 30 && ACK_WORDS.test(t);
 }
 
+/** Owner style rule (10 Nov): no hyphens or dashes as sentence breaks in any
+ *  bot/relay reply; commas or full stops read like a person texting. Only
+ *  letter-to-letter breaks are rewritten, so ranges like "10 - 15 kg" stay. */
+export function sanitizeRelayReplyText(text: string): string {
+  return text.replace(/(?<=[A-Za-z])\s+[-–—]\s+(?=[A-Za-z])/g, ", ").replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
+}
+
 export function ackEmojiFor(text: string): string {
   return /thank|thx|ty|nanni|shukriya/i.test(text) ? "🙏" : "👍";
 }
@@ -70,6 +77,23 @@ const SIMPLE_GREETING = new RegExp(
 export function isSimpleGreetingText(text: string): boolean {
   const t = text.trim();
   return t.length > 0 && t.length <= 60 && SIMPLE_GREETING.test(t);
+}
+
+const MENU_REQUEST = /^(?:(?:open|show|show me|show me the|send|send me)\s+)?(?:udc\s+)?menu[.!?]*$/i;
+
+/** Typed menu request - mirrors the scripted typed-action rule in chatUi. */
+export function isMenuRequestText(text: string): boolean {
+  return MENU_REQUEST.test(text.trim());
+}
+
+/** Menu explanations may say the word "menu" (the brain enforces menu-once);
+ *  links, emails and long numbers stay blocked. */
+export function menuAutoReplySafe(draft: string | null | undefined): draft is string {
+  if (!draft) return false;
+  const t = draft.trim();
+  if (t.length === 0 || t.length > 600) return false;
+  if (/https?:\/\/|www\.|\S+@\S+|\d{5,}/i.test(t)) return false;
+  return true;
 }
 
 /** The brain already validated the draft; this is the belt-and-braces check
