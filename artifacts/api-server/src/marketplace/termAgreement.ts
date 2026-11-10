@@ -1,4 +1,5 @@
 import { verifiedCounterparties } from "./verifiedCounterparties";
+import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
@@ -450,6 +451,7 @@ export async function respondToTerms(
   if(reply.nextMatchId)try{await requestTermsReview(reply.nextMatchId,reply.actorUserId,'automatic_rematch');}catch{
     await db.insert(auditLogsTable).values({actorUserId:reply.actorUserId,action:'rematch_proposal_delivery_needs_review',entityType:'match',entityId:reply.nextMatchId,metadata:{requiresAdminReview:true}});
     const admins=await db.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await db.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'rematch_delivery_failed',title:'Next offer needs delivery review',body:'The buyer requested another seller. The next exact proposal is saved but was not accepted by the messaging provider.',link:'/matches'})));
+    queueAdminReviewAlert("offer review");
     try{await sendWhatsAppText(phone,'The next offer could not be delivered just now. Your requirement is saved and UDC can resend the offer.');}catch{/* Do not claim delivery. */}
   }
 }
@@ -481,7 +483,8 @@ export async function presentInitialVerifiedOffer(requirementId:string){
   const id=randomUUID(),automatic=Boolean(immediate);
   await tx.insert(matchesTable).values({id,buyerRequestId:buyer.id,sellerListingId:chosen.offer.id,status:automatic?'approved':'suggested',matchScore:String(chosen.score)});
   await tx.insert(auditLogsTable).values({actorUserId:buyer.buyerUserId,action:'automatic_match_selected',entityType:'match',entityId:id,metadata:{buyerRequestId:buyer.id,sellerListingId:chosen.offer.id,automaticPresentation:automatic,dealApprovalRequired:true}});
-  if(!automatic){const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_needs_review',title:'Offer needs review before presentation',body:'Verified supply was found, but a requirement or offer condition needs review.',link:'/matches'})));}
+  if(!automatic){const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_needs_review',title:'Offer needs review before presentation',body:'Verified supply was found, but a requirement or offer condition needs review.',link:'/matches'})));
+    queueAdminReviewAlert("offer review");}
   return {id,buyerUserId:buyer.buyerUserId,automatic};
  },{isolationLevel:'serializable'});
  if(!selected)return false;
@@ -489,6 +492,7 @@ export async function presentInitialVerifiedOffer(requirementId:string){
   await db.insert(auditLogsTable).values({actorUserId:selected.buyerUserId,action:'match_proposal_delivery_needs_review',entityType:'match',entityId:selected.id,metadata:{requiresAdminReview:true}});
   const admins=await db.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));
   if(admins.length)await db.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_delivery_failed',title:'Offer delivery needs review',body:'The exact proposal is saved but could not be accepted by the messaging provider.',link:'/matches'})));
+    queueAdminReviewAlert("offer review");
  }
  return true;
 }

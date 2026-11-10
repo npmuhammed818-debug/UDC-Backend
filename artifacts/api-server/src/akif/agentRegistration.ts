@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { auditLogsTable, db, notificationsTable, usersTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
@@ -22,6 +23,7 @@ export async function registerWhatsAppAgent(phone: string, fullName?: string) {
     await tx.insert(auditLogsTable).values({actorUserId:agent.id,action:'agent_registration_requested',entityType:'user',entityId:agent.id,metadata:{channel:'whatsapp',requiresAdminReview:true}});
     const admins = await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['verified','active']))).limit(100);
     if(admins.length) await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'agent_registration_requested',title:'Agent registration needs review',body:'A WhatsApp agent registration is pending your review.',link:'/admin'})));
+    queueAdminReviewAlert("agent registration", fullName);
     return 'Your agent registration is pending UDC review. Agent deal access starts after approval.';
   });
 }
