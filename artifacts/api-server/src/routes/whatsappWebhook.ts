@@ -27,6 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { runConversationChat } from "../akif/intelligence/hermesClient";
 import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
@@ -182,7 +183,17 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
     const msg = error instanceof Error ? error.message : "";
     const httpStatus = /HTTP (\d{3})/i.exec(msg)?.[1];
     console.warn("AKIF relay draft turn failed", { reason: httpStatus ? `http_${httpStatus}` : (error instanceof Error ? error.name : "unknown") });
-    return null;
+    // Free fallback chain (owner direction, 10 Nov): a Groq free-tier 429 must
+    // not leave the held message draft-less. The conversation chain (self
+    // brain, then the Gemini-backed worker, then the older providers) answers
+    // without tools; tool-backed drafts still prefer the brain turn above.
+    try {
+      const convo = await runConversationChat(text, undefined, 20000);
+      const reply = convo?.content?.trim() || null;
+      return { reply, backgroundDiscarded: false, toolsUsed: [] };
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -1952,7 +1963,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // commands and money paths above have already kept their gates; only an
       // open chat turn from an allowlisted test number is held for a dev-side
       // answer instead of the brain or scripted chain answering it.
-      if (message.from && !dealActionDirect && humanRelayActiveFor(message.from)) {
+      // An active intake (offer or requirement) belongs to the intake flow,
+      // not the relay: holding its answers breaks the question order and
+      // doubles replies (owner report, 10 Nov). The brain/scripted chain
+      // below answers these turns directly.
+      if (message.from && !dealActionDirect && !hasPendingIntake && humanRelayActiveFor(message.from)) {
         // Acknowledgements (ok, thanks, noted): a reaction, no text reply, no
         // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
         if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {

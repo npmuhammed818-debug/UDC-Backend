@@ -31,7 +31,7 @@ export function relayAutoToolsEnabled(env: NodeJS.ProcessEnv = process.env): boo
   return (env.AKIF_RELAY_AUTO_TOOLS ?? "").trim() === "on";
 }
 
-const ACK_WORDS = /^(?:ok(?:ay)?|okie?s?|k+|thanks?(?:\s+you)?(?:\s+so\s+much)?|thankyou|thx|ty|noted|got\s?it|cool|great|nice|super|fine|hmm+|hmm\s+ok|👍+|🙏+|❤️+|❤|done)[\s!.,]*$/i;
+const ACK_WORDS = /^(?:ok(?:ay|ey)?|okie?s?|k+|thanks?(?:\s+you)?(?:\s+so\s+much)?|thankyou|thx|ty|noted|got\s?it|cool|great|nice|super|fine|hmm+|hmm\s+ok|👍+|🙏+|❤️+|❤|done)[\s!.,]*$/i;
 
 /** True only when the whole message is a bare acknowledgement. */
 export function isAcknowledgementText(text: string): boolean {
