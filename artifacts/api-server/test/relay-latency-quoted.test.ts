@@ -211,3 +211,30 @@ test('a voice item older than 20s overflows to any text worker', async () => {
     assert.equal(m.claimHumanRelay('akif-worker-6', later)?.id, voice.id, 'after 20s any text worker can take it');
   } finally { await unlink(output); }
 });
+
+test('a stale-covered oldest item never jams the phone queue behind it', async () => {
+  const { output } = await bundle('__latJam', `
+    export { enqueueHumanRelay, claimHumanRelay, answerClaimedHumanRelayItem } from '../src/akif/humanRelay';
+  `, {
+    db: "export const db={execute:async()=>({rows:[]})};",
+    orm: "export const sql=(parts,...values)=>({parts,values});",
+  }, [
+    [/^@workspace\/db$/, 'db'],
+    [/^drizzle-orm$/, 'orm'],
+  ]);
+  try {
+    const m = await import(output);
+    const t0 = Date.now();
+    const old = m.enqueueHumanRelay({ phone: '10000000050', kind: 'text', text: 'old question' });
+    old.at = new Date(t0 - 60_000).toISOString();
+    const mid = m.enqueueHumanRelay({ phone: '10000000050', kind: 'text', text: 'newer question' });
+    mid.at = new Date(t0 - 30_000).toISOString();
+    // The newer one gets answered first: the oldest becomes stale-covered.
+    const c = m.claimHumanRelay('worker-8');
+    m.answerClaimedHumanRelayItem(mid.id, 'worker-8', 'answer to the newer one');
+    assert.equal(m.claimHumanRelay('worker-8', t0 + 500), null, 'the stale oldest is not claimable');
+    // A fresh message afterwards must still be claimable (no jam).
+    const fresh = m.enqueueHumanRelay({ phone: '10000000050', kind: 'text', text: 'and one more thing' });
+    assert.equal(m.claimHumanRelay('worker-8', t0 + 1000)?.id, fresh.id, 'queue is not jammed behind the stale item');
+  } finally { await unlink(output); }
+});
