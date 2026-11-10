@@ -63,16 +63,16 @@ test('wake-on-arrival claim returns as soon as an item lands', async () => {
   try {
     const m = await import(output);
     const started = Date.now();
-    const waiting = m.claimHumanRelayWithWait('worker-1', 5000);
+    const waiting = m.claimHumanRelayWithWait('worker-8', 5000);
     setTimeout(() => m.enqueueHumanRelay({ phone: '10000000002', kind: 'text', text: 'is my order on the way' }), 300);
     const item = await waiting;
     assert.ok(item, 'the waiting claim picked the item up');
-    assert.equal(item.claimedBy, 'worker-1');
+    assert.equal(item.claimedBy, 'worker-8');
     const waited = Date.now() - started;
     assert.ok(waited < 2000, `pickup took ${waited}ms, expected well under a poll interval`);
 
     // Nothing pending: the wait expires on its own, quickly and cleanly.
-    const none = await m.claimHumanRelayWithWait('worker-2', 600);
+    const none = await m.claimHumanRelayWithWait('worker-9', 600);
     assert.equal(none, null);
   } finally { await unlink(output); }
 });
@@ -167,5 +167,47 @@ test('skip releases items back to the pool; nothing is silently dropped', async 
     assert.equal(m.releaseHumanRelayClaim('10000000020'), 1, 'one claim released');
     assert.equal(m.claimHumanRelay('2')?.id, voice.id, 'the skipped item is claimable again');
     assert.equal(m.pendingHumanRelay().some((i) => i.id === voice.id && !i.answeredAt), true, 'never marked answered');
+  } finally { await unlink(output); }
+});
+
+test('real worker ids (akif-worker-N) match their lanes by number', async () => {
+  const { output } = await bundle('__latIds', `
+    export { enqueueHumanRelay, claimHumanRelay } from '../src/akif/humanRelay';
+  `, {
+    db: "export const db={execute:async()=>({rows:[]})};",
+    orm: "export const sql=(parts,...values)=>({parts,values});",
+  }, [
+    [/^@workspace\/db$/, 'db'],
+    [/^drizzle-orm$/, 'orm'],
+  ]);
+  try {
+    const m = await import(output);
+    const voice = m.enqueueHumanRelay({ phone: '10000000030', kind: 'voice', text: '[voice note]' });
+    assert.equal(m.claimHumanRelay('akif-worker-6'), null, 'text worker 6 never sees voice');
+    assert.equal(m.claimHumanRelay('akif-worker-1')?.id, voice.id, 'voice worker 1 claims voice');
+    const text = m.enqueueHumanRelay({ phone: '10000000031', kind: 'text', text: 'how do I join' });
+    assert.equal(m.claimHumanRelay('akif-worker-1'), null, 'voice worker 1 never takes text');
+    assert.equal(m.claimHumanRelay('akif-worker-7'), null, 'ongoing lane skips first contact');
+    assert.equal(m.claimHumanRelay('akif-worker-4')?.id, text.id, 'intake worker 4 takes first contact');
+  } finally { await unlink(output); }
+});
+
+test('a voice item older than 20s overflows to any text worker', async () => {
+  const { output } = await bundle('__latOverflow', `
+    export { enqueueHumanRelay, claimHumanRelay } from '../src/akif/humanRelay';
+  `, {
+    db: "export const db={execute:async()=>({rows:[]})};",
+    orm: "export const sql=(parts,...values)=>({parts,values});",
+  }, [
+    [/^@workspace\/db$/, 'db'],
+    [/^drizzle-orm$/, 'orm'],
+  ]);
+  try {
+    const m = await import(output);
+    const voice = m.enqueueHumanRelay({ phone: '10000000040', kind: 'voice', text: '[voice note]' });
+    const t0 = Date.now();
+    assert.equal(m.claimHumanRelay('akif-worker-6', t0), null, 'fresh voice stays with the voice lane');
+    const later = t0 + 21_000;
+    assert.equal(m.claimHumanRelay('akif-worker-6', later)?.id, voice.id, 'after 20s any text worker can take it');
   } finally { await unlink(output); }
 });
