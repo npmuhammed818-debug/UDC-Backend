@@ -65,7 +65,14 @@ export function brainVoiceEnabled(env: NodeJS.ProcessEnv = process.env): boolean
 /** Dash sentence-breaks are never sent to customers (owner style rule, 10
  *  Nov). Shared by the relay reply cleaner and the main outbound cleaner. */
 export function stripDashBreaks(text: string): string {
-  return text.replace(/(?<=[A-Za-z])\s+[-–—]\s+(?=[A-Za-z])/g, ", ").replace(/,\s*,/g, ",");
+  return text
+    // Spaced dash breaks ("word - word", "word — word") become a comma.
+    .replace(/(?<=[A-Za-z0-9])\s+[-–—]\s+(?=[A-Za-z])/g, ", ")
+    // Unspaced em/en dashes ("word—word") too. Plain hyphens inside words
+    // (single-use, 6-digit) stay untouched.
+    .replace(/(?<=[A-Za-z0-9])[–—]\s*(?=[A-Za-z])/g, ", ")
+    .replace(/,\s*,/g, ",")
+    .replace(/,([.!?])/g, "$1");
 }
 
 export function sanitizeRelayReplyText(text: string): string {
@@ -380,7 +387,10 @@ export const RELAY_REPLY_STYLE_NOTE =
   "Sound like a warm, relaxed person texting: short, friendly, natural, a little casual. " +
   "Never stiff or formal, never the same phrasing twice. Answer first, one thing at a time. " +
   "Never ask what the thread or the customer note already knows; state known facts instead. " +
-  "Never mention AI models, drafts, staging or internal systems.";
+  "Never mention AI models, drafts, staging or internal systems. " +
+  "No dash symbols anywhere; break sentences with a comma or full stop. " +
+  "If they share grief or ask to pause business: one short warm reply about what they said, at most one gentle question, never Menu, never sales talk. " +
+  "When they need to send KYC, ID or bank documents, issue the secure single-use link with the doclink tool; never collect documents over chat.";
 
 /** Per-contact briefing from the relay owner to the reply workers (10 Nov:
  *  e.g. "no email needed for this customer, do not promise one"). Kept in
