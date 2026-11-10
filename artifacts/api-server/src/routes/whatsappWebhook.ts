@@ -1627,6 +1627,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           continue;
         }
         let relayVoiceStage: "download" | "transcription" = "download";
+        // Transcription + the brain turn below prepare a real reply, so the
+        // typing bubble is honest for the duration.
+        markReadAndTyping(message.from, message.id);
         try {
           const media = await downloadWhatsAppMedia(message.audio.id);
           relayVoiceStage = "transcription";
@@ -1884,6 +1887,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction - no reply needed unless it looks wrong.` });
           continue;
         }
+        // A real reply is being prepared now (auto answer or the held draft), so
+        // the typing bubble is honest here; acks above never reach this line.
+        markReadAndTyping(message.from, message.id);
         const draft = await buildHumanRelayDraft(message.from, message.text.body, message.id);
         let autoAnswered = false;
         let autoNote: string | undefined;
