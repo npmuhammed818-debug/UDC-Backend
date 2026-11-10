@@ -27,7 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
-import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, sanitizeRelayReplyText } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -102,7 +102,7 @@ function isEqual(left: string, right: string) {
 }
 
 function cleanHumanWhatsAppText(body: string) {
-  return body
+  return stripDashBreaks(body
     .replace(/```[\s\S]*?```/g, "")
     .replace(/[`*_~]/g, "")
     .replace(/_{2,}/g, " ")
@@ -113,7 +113,7 @@ function cleanHumanWhatsAppText(body: string) {
     .replace(/\s+([,.!?])/g, "$1")
     .replace(/([!?.,])\1{1,}/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .trim());
 }
 
 import { chooseChannel } from "../akif/voiceMoments.ts";
@@ -166,7 +166,6 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // out. Brain failure just means no draft - the message is still held.
 const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
 const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 3000) || 0);
-const relayBursts = new Map<string, { seq: number; texts: string[] }>();
 
 export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
   if (!isBrainOrchestratorEnabled()) return null;
@@ -1729,6 +1728,29 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             const voiceLanguage = pickVoiceLanguage({ mainLanguage: await guidanceMainLanguage(message.from), heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined });
             if (await handleChatUi(message.from, { id: message.id, text: { body: transcript } } as ChatMessage, false, { voiceNote: true, language: voiceLanguage })) continue;
           } catch { /* fall through to guidance, same as before voice intake existed */ }
+          // Brain-led voice answers (owner direction, 10 Nov): an open voice
+          // question gets AKIF's own answer like a typed message; the scripted
+          // guidance chain below stays the fallback. Reply stays text, so the
+          // brain path never spends TTS quota.
+          if (brainVoiceEnabled() && isBrainOrchestratorEnabled()) {
+            try {
+              const voiceBrain = await runBrainTurn({ phone: message.from, text: transcript, messageId: message.id });
+              if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
+                const voiceDelivered = await deliverWhatsAppReply(message.from, voiceBrain.reply);
+                if (voiceBrain.background && voiceDelivered?.delivered) {
+                  const background = voiceBrain.background;
+                  const phone = message.from;
+                  runBackgroundTask(() => background(async reply => (await deliverWhatsAppReply(phone, reply)).delivered), () => {
+                    console.warn("AKIF hands work failed", { reason: "background_failed" });
+                  });
+                } else if (voiceBrain.cancelBackground) {
+                  await voiceBrain.cancelBackground();
+                }
+                continue;
+              }
+              if (voiceBrain?.cancelBackground) await voiceBrain.cancelBackground();
+            } catch { /* scripted guidance below stays the fallback */ }
+          }
           voiceStage = 'answer';
           const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
@@ -1929,15 +1951,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Burst coalescing (owner feedback 10 Nov): rapid multi-bubble messages
         // become ONE brain turn and one reply. Wait out the burst; only the
         // newest bubble proceeds and its draft sees all the texts.
-        const burst = relayBursts.get(message.from) ?? { seq: 0, texts: [] as string[] };
-        burst.seq += 1;
-        burst.texts.push(message.text.body);
-        relayBursts.set(message.from, burst);
-        const myBurstSeq = burst.seq;
-        if (RELAY_BURST_MS > 0) await new Promise((r) => setTimeout(r, RELAY_BURST_MS));
-        if (relayBursts.get(message.from)?.seq !== myBurstSeq) continue; // a newer bubble takes the turn
-        relayBursts.delete(message.from);
-        const combinedText = burst.texts.join("\n");
+        const combinedText = await collectBurst(message.from, message.text.body, RELAY_BURST_MS);
+        if (combinedText === null) continue; // a newer bubble takes the turn
         // Slow-turn heads-up: if the reply takes more than a few seconds the
         // customer hears a short natural note first (owner feedback 10 Nov).
         const slowNotice = setTimeout(() => { void deliverHumanRelayReply(message.from!, "On it, one minute."); }, 5000);
@@ -1971,15 +1986,45 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       let brainFailed = false;
       if (message.from && !dealActionDirect && isBrainOrchestratorEnabled()) {
+        // Pure acks get a WhatsApp reaction, not a brain turn (owner direction,
+        // 10 Nov). Draft requests and replies to saved deal messages are deal
+        // actions and already excluded above.
+        if (brainAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
+          const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
+          if (reacted?.delivered) continue;
+        }
+        // Burst coalescing, same as the relay hold: rapid multi-bubble messages
+        // become ONE brain turn instead of the next bubble hitting the busy floor.
+        let brainText = message.text.body;
+        if (brainBurstMs() > 0) {
+          const combined = await collectBurst(message.from, message.text.body, brainBurstMs());
+          if (combined === null) continue; // a newer bubble takes the turn
+          brainText = combined;
+        }
+        // Slow-turn heads-up: if the reply takes more than a few seconds the
+        // customer hears a short natural note first (owner feedback, 10 Nov).
+        const slowNotice = brainSlowNudgeEnabled()
+          ? setTimeout(() => { void deliverWhatsAppReply(message.from!, "On it, one minute."); }, 5000)
+          : null;
+        try {
         const callBrain = () => runBrainTurn({
           phone: message.from!,
-          text: message.text!.body!,
+          text: brainText,
           messageId: message.id,
         }).catch((error) => {
           console.warn("AKIF brain turn failed; scripted chain takes over", { reason: error instanceof Error ? error.message : "unknown" });
           return null;
         });
         let brain = await callBrain();
+        if (brainBusyWaitEnabled()) {
+          // An in-flight previous turn clears within seconds; wait it out
+          // instead of answering with the busy floor (owner feedback, 10 Nov).
+          for (let attempt = 0; brain?.reply === BRAIN_BUSY_REPLY && attempt < 5; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            brain = await callBrain();
+          }
+          if (brain?.reply === BRAIN_BUSY_REPLY) brain = null; // never send the floor line
+        }
         if (!brain?.handled) {
           // One retry before any fallback: provider rate limits are the common
           // failure and often clear within seconds.
@@ -2000,6 +2045,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           continue;
         }
         brainFailed = true;
+        } finally {
+          if (slowNotice) clearTimeout(slowNotice);
+        }
       }
 
       // Brain unavailable after a retry (for example provider rate limits):
