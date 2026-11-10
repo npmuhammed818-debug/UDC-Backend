@@ -15,6 +15,7 @@ import {
   decodeRelayAudio,
   knownFactsForContact,
   replyAsksKnownDetail,
+  setRelayContactBriefing,
 } from "../akif/humanRelay";
 import { isBrainOrchestratorEnabled } from "../akif/brainOrchestrator";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
@@ -56,6 +57,23 @@ const askSchema = z
     text: z.string().min(1).max(2000),
   })
   .strict();
+
+const briefSchema = z
+  .object({
+    phone: z.string().min(8).max(24),
+    text: z.string().max(500),
+  })
+  .strict();
+
+// Relay-owner briefing for the reply workers about one contact (10 Nov).
+// Shown on pending and claim payloads at read time; never sent to customers.
+router.post("/akif-relay/brief", (req, res) => {
+  if (!writeAuthorized(req, res)) return;
+  const parsed = briefSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_brief" }); return; }
+  setRelayContactBriefing(parsed.data.phone, parsed.data.text);
+  res.set("Cache-Control", "no-store").json({ ok: true });
+});
 
 const claimSchema = z
   .object({
