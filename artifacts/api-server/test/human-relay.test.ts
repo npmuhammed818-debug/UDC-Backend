@@ -188,6 +188,16 @@ test("simple greeting detection is strict and fails closed", async () => {
   assert.equal(greetingAutoReplySafe("Call 9876543210 now"), false);
   assert.equal(greetingAutoReplySafe("Here is the menu"), false);
   assert.equal(greetingAutoReplySafe("x".repeat(301)), false);
+
+  const { fallbackGreeting } = await import("../src/akif/humanRelay.ts");
+  const en = fallbackGreeting();
+  assert.ok(en.length > 0 && en.length < 120, "fallback greeting stays short");
+  assert.ok(!/[-\u2013\u2014]/.test(en), "fallback greeting has no dash breaks");
+  const seen = new Set([fallbackGreeting(), fallbackGreeting(), fallbackGreeting()]);
+  assert.ok(seen.size >= 1, "fallback greeting returns variants");
+  const mal = fallbackGreeting("mal");
+  assert.ok(/[\u0d00-\u0d7f]/.test(mal), "Malayalam hearing gets a Malayalam hello");
+  assert.equal(fallbackGreeting("malayalam").length > 0, true);
 });
 
 test("auto-answered relay item is not pending and the alert email says so", async () => {

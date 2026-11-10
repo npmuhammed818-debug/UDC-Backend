@@ -117,6 +117,27 @@ const SIMPLE_GREETING = new RegExp(
   "i",
 );
 
+const FALLBACK_GREETINGS: Record<string, string[]> = {
+  english: [
+    "Hey, good to hear from you. What can I do for you?",
+    "Hi there, how can I help you today?",
+    "Hello, nice to hear from you. What are you looking for?",
+  ],
+  malayalam: [
+    "\u0d39\u0d3e\u0d2f\u0d4d, \u0d38\u0d28\u0d4d\u0d24\u0d4b\u0d37\u0d02. \u0d0e\u0d28\u0d4d\u0d24\u0d3e\u0d23\u0d4d \u0d35\u0d47\u0d23\u0d4d\u0d1f\u0d24\u0d4d?",
+    "\u0d39\u0d32\u0d4b, \u0d0e\u0d28\u0d4d\u0d24\u0d4d \u0d38\u0d39\u0d3e\u0d2f\u0d02 \u0d35\u0d47\u0d23\u0d02?",
+  ],
+};
+
+/** A warm hello that needs no model: for greeting auto-answers while the
+ *  brain is rate-limited or down. Variants rotate so repeats don't read as
+ *  a canned line. Malayalam when the customer's last heard language is Malayalam. */
+export function fallbackGreeting(language?: string | null): string {
+  const key = language && /mal/i.test(language) ? "malayalam" : "english";
+  const list = FALLBACK_GREETINGS[key];
+  return list[Math.floor(Date.now() / 1000) % list.length];
+}
+
 /** True only when the whole message is greeting words - nothing else. */
 export function isSimpleGreetingText(text: string): boolean {
   const t = text.trim();
