@@ -6,7 +6,7 @@ import { startGuidedDraftCleanup } from './whatsapp/guidedChat';
 import { startChatFlowSetup } from './whatsapp/setupFlows';
 import { startAcceptanceProbe } from "./akif/acceptanceProbe";
 import app from "./app";
-import { getAkifWorkerCapabilities, isAkifWorkerConfigured } from "./akif/intelligence/workerClient";
+import { getAkifWorkerCapabilities, isAkifWorkerConfigured, startAkifWorkerKeepWarm } from "./akif/intelligence/workerClient";
 import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
@@ -49,6 +49,7 @@ app.listen(port, (err) => {
   startEtaFollowupRunner();
   startShipmentWatchRunner();
   startShipmentNotificationRunner();
+  startAkifWorkerKeepWarm();
   if (isAkifWorkerConfigured()) {
     void getAkifWorkerCapabilities().then((worker) => {
       const gateway = worker.capabilities.llm_gateway as { configured?: boolean; model?: string; missing_configuration?: string | null } | undefined;
