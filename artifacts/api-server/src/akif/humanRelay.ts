@@ -15,8 +15,10 @@ export function decodeRelayAudio(audioBase64: string): Uint8Array | null {
   return bytes;
 }
 
-export function relayAutoGreetingsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.AKIF_RELAY_AUTO_GREETINGS ?? "").trim() === "on";
+// Owner direction, 10 Nov one-voice launch: workers are the only conversation
+// voice. Automatic greeting answers are off entirely; the env flag is inert.
+export function relayAutoGreetingsEnabled(_env: NodeJS.ProcessEnv = process.env): boolean {
+  return false;
 }
 
 // Owner-approved 10 Nov: acknowledgements (ok, thanks, noted) get a WhatsApp
@@ -28,8 +30,10 @@ export function relayAckReactionsEnabled(env: NodeJS.ProcessEnv = process.env): 
 // Owner-approved 10 Nov: when the brain actually used its tools for the
 // answer, that answer may go straight out (staging allowlist only) instead of
 // waiting on the human hold. Tool-less replies still hold.
-export function relayAutoToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.AKIF_RELAY_AUTO_TOOLS ?? "").trim() === "on";
+// Owner direction, 10 Nov one-voice launch: no auto-bot answer may race a
+// human worker. Tool-backed auto replies are off entirely; the env flag is inert.
+export function relayAutoToolsEnabled(_env: NodeJS.ProcessEnv = process.env): boolean {
+  return false;
 }
 
 const ACK_WORDS = /^(?:ok(?:ay|ey)?|okie?s?|k+|thanks?(?:\s+you)?(?:\s+so\s+much)?|thankyou|thx|ty|noted|got\s?it|cool|great|nice|super|fine|hmm+|hmm\s+ok|👍+|🙏+|❤️+|❤|done)[\s!.,]*$/i;
@@ -229,6 +233,9 @@ export type HumanRelayItem = {
   // Read-side only (claim/pending payloads): the number's recent held
   // history, so an answer builds on earlier turns instead of re-asking.
   context?: HumanRelayContextItem[];
+  // Read-side only (claim payload): every held item this claim covers. One
+  // claim is one customer turn - all of the contact's unanswered messages.
+  claimedItemIds?: string[];
   // Read-side only: the owner's reply style note for whoever answers.
   replyStyle?: string;
   // Read-side only: relay-owner briefing about this contact for the workers.
@@ -293,8 +300,10 @@ export function humanRelayActiveFor(phone: string, env: NodeJS.ProcessEnv = proc
 /** Brain fallback for a held relay item: after this many ms without a dev
  *  answer, a draft that already passes the auto-send gates is sent as the
  *  brain's answer (owner direction, 10 Nov). Default 0 = off. */
-export function relayFallbackMs(env: NodeJS.ProcessEnv = process.env): number {
-  return Math.max(0, Number(env.AKIF_RELAY_FALLBACK_MS ?? 0) || 0);
+export function relayFallbackMs(_env: NodeJS.ProcessEnv = process.env): number {
+  // Owner direction, 10 Nov one-voice launch: the fallback timer auto-sent a
+  // draft when no dev answered in time, racing the workers. Off entirely.
+  return 0;
 }
 
 /** "all" emails every held item (default); "holds" emails only items still
@@ -515,8 +524,20 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
     item.claimedBy = workerId;
     const claimedAt = new Date(now).toISOString();
     item.claimedAt = claimedAt;
+    // One voice per customer turn (owner direction, 10 Nov): every other
+    // unanswered message for this phone joins the same claim, so one worker
+    // sees the whole turn and no second worker can answer part of it.
+    const bundle: HumanRelayItem[] = [];
+    for (const other of items) {
+      if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
+      if (activeClaim(other)) continue;
+      other.claimedBy = workerId;
+      other.claimedAt = claimedAt;
+      bundle.push(other);
+      persist((p) => p.setClaim(other.id, workerId, claimedAt));
+    }
     persist((p) => p.setClaim(item.id, workerId, claimedAt));
-    return { ...item, context: recentHumanRelayContext(item.phone, item.id), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
+    return { ...item, claimedItemIds: [item.id, ...bundle.map((b) => b.id)], context: recentHumanRelayContext(item.phone, item.id), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
   }
   return null;
 }
@@ -528,8 +549,10 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string): H
   const item = items.find((i) => i.id === itemId);
   if (!item || item.answeredAt) return null;
   if (item.claimedBy !== workerId) return null;
-  item.answeredAt = new Date().toISOString();
-  persist((p) => p.markAnswered([item.id], item.answeredAt!));
+  // One reply per customer turn (owner direction, 10 Nov): the answer covers
+  // every message the customer sent in this burst, so they all close together.
+  markHumanRelayAnswered(item.phone);
+  noteHumanRelayReplySent(item.phone, workerId);
   return item;
 }
 
@@ -565,6 +588,31 @@ export function lastHeardLanguageFor(phone: string): string | undefined {
     if (items[i].phone === digits && items[i].heardLanguage) return items[i].heardLanguage;
   }
   return undefined;
+}
+
+/** One voice per contact (owner direction, 10 Nov): after a reply goes out
+ *  for a phone, a second send to the same phone is refused for this long.
+ *  In-memory by design; a restart simply clears the window. */
+const REPLY_COOLDOWN_MS = 20_000;
+const lastReplyAtByPhone = new Map<string, number>();
+const lastReplyByByPhone = new Map<string, string>();
+
+/** One worker, one customer at a time (owner direction, 10 Nov): a second
+ *  sender is refused inside the window, but the worker who just answered may
+ *  send follow-up bubbles to the same customer (multi-bubble is fine). */
+export function relayReplyCooldownActive(phone: string, workerId?: string, now = Date.now()): boolean {
+  const key = relayContactKey(phone);
+  const at = lastReplyAtByPhone.get(key);
+  if (at === undefined || now - at >= REPLY_COOLDOWN_MS) return false;
+  const by = lastReplyByByPhone.get(key);
+  if (workerId && by && workerId === by) return false;
+  return true;
+}
+
+export function noteHumanRelayReplySent(phone: string, workerId?: string, now = Date.now()): void {
+  const key = relayContactKey(phone);
+  lastReplyAtByPhone.set(key, now);
+  if (workerId) lastReplyByByPhone.set(key, workerId);
 }
 
 /** Bounded reply rate: one process, all relay replies share this window. */

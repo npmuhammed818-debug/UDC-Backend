@@ -8,6 +8,7 @@ import {
   hasActiveHumanRelayClaim,
   lastHeardLanguageFor,
   markHumanRelayAnswered, claimHumanRelay, answerClaimedHumanRelayItem,
+  relayReplyCooldownActive, noteHumanRelayReplySent,
   pendingHumanRelay,
   relayBodyAuthorized,
   relayReadAuthorized,
@@ -188,6 +189,13 @@ router.post("/akif-relay/reply", async (req, res) => {
     res.status(409).json({ ok: false, error: "claim_lost" });
     return;
   }
+  // One voice per contact (owner direction, 10 Nov): a reply went out for
+  // this phone moments ago, so a second send right now would read as two
+  // people answering. The worker retries after the short window.
+  if (relayReplyCooldownActive(phone, parsed.data!.workerId ?? undefined)) {
+    res.status(409).json({ ok: false, error: "reply_cooldown" });
+    return;
+  }
   // Outbound is locked to the same allowlist as inbound: in this phase that is
   // the owner's own number only.
   if (!humanRelayActiveFor(phone)) {
@@ -233,6 +241,7 @@ router.post("/akif-relay/reply", async (req, res) => {
     res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered: 1 });
     return;
   }
+  noteHumanRelayReplySent(phone, parsed.data!.workerId ?? undefined);
   const answered = markHumanRelayAnswered(phone);
   res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered });
 });

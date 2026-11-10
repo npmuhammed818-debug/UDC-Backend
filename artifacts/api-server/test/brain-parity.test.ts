@@ -57,7 +57,8 @@ test('relay-for-everyone: allowlist supports "all"', async () => {
   assert.equal(humanRelayActiveFor('919999988888', env({ AKIF_HUMAN_RELAY_NUMBERS: '917022032531' })), false);
   assert.equal(humanRelayActiveFor('917022032531', env({ AKIF_HUMAN_RELAY_NUMBERS: '917022032531' })), true);
   assert.equal(humanRelayActiveFor('919999988888', env({ AKIF_HUMAN_RELAY_NUMBERS: 'all', AKIF_HUMAN_RELAY_ENABLED: 'false' })), false);
-  assert.equal(relayFallbackMs(env({ AKIF_RELAY_FALLBACK_MS: '120000' })), 120000);
+  // One-voice launch (owner direction, 10 Nov): the fallback timer is off entirely, whatever the env says.
+  assert.equal(relayFallbackMs(env({ AKIF_RELAY_FALLBACK_MS: '120000' })), 0);
   assert.equal(relayFallbackMs(env({})), 0);
   assert.equal(relayAlertMode(env({})), 'all');
   assert.equal(relayAlertMode(env({ AKIF_RELAY_ALERT_MODE: 'holds' })), 'holds');
