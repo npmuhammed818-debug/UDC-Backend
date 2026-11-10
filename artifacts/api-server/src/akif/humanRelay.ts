@@ -227,6 +227,9 @@ export type HumanRelayItem = {
   autoNote?: string;
   claimedBy?: string | null;
   claimedAt?: string | null;
+  // The bot line this message quoted, when the customer swiped to reply
+  // (memory only, 10 Nov): workers see exactly what was answered.
+  quotedText?: string;
   // Registered account state at hold time (role, status, invite code) so a
   // human answering never asks what the system already knows.
   customerNote?: string;
@@ -372,6 +375,7 @@ export function enqueueHumanRelay(input: {
   autoAnswered?: boolean;
   autoNote?: string;
   customerNote?: string;
+  quotedText?: string;
 }): HumanRelayItem {
   pruneHumanRelay();
   const item: HumanRelayItem = {
@@ -387,6 +391,7 @@ export function enqueueHumanRelay(input: {
     autoAnswered: input.autoAnswered || undefined,
     autoNote: input.autoNote,
     customerNote: input.customerNote,
+    quotedText: input.quotedText,
   };
   itemSeqById.set(item.id, relaySeq++);
   items.push(item);
@@ -410,7 +415,7 @@ export function enqueueHumanRelay(input: {
  *  pending payload so every reply worker writes like a warm, relaxed person
  *  texting. Mechanics stay in code; this only shapes the voice. */
 export const RELAY_REPLY_STYLE_NOTE =
-  "Sound like a warm, relaxed person texting: short, friendly, natural, a little casual. " +
+  "Sound like a warm, relaxed person texting: short, friendly, natural, a little casual. Keep every bubble to one or two short lines. " +
   "Never stiff or formal, never robotic, never the same phrasing twice, no stock phrases. Answer first, one thing at a time. " +
   "Never ask what the thread or the customer note already knows; state known facts instead. " +
   "Never mention AI models, drafts, staging or internal systems. " +
@@ -565,20 +570,83 @@ export function humanRelayBacklogSize(): number {
 // claims held items one at a time. A claim is exclusive for CLAIM_TTL_MS and
 // per-number ordered: a phone's next item cannot be claimed while an older
 // item for that phone is unanswered or actively claimed.
-// 90s (owner direction, 10 Nov): a worker that dies mid-claim must never
-// strand a customer. Late answers from a lost claim hit the answered item or
-// the per-contact reply window, so a premature release cannot double-send.
-const CLAIM_TTL_MS = 90_000;
+// 20s (owner direction, 10 Nov): a worker that dies or stalls mid-claim must
+// never strand a customer - the claim auto-releases to the pool fast. Late
+// answers from a lost claim hit the answered item or the per-contact reply
+// window, so a premature release cannot double-send.
+const CLAIM_TTL_MS = 20_000;
+// Phone-only sends still hold other workers for the longer window: a second
+// worker's unitemized reply landing after the short claim TTL read as two
+// people answering (10 Nov launch).
+const PHONE_ONLY_HOLD_MS = 90_000;
 
-export function claimHumanRelay(workerId: string): HumanRelayItem | null {
+/** Voice notes are answered by voice (owner direction, 10 Nov): only the
+ *  voice-capable workers may claim a voice item. A voice item stranded under
+ *  a text-only worker was the launch-day delay bug. */
+export function voiceCapableWorkerIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.AKIF_VOICE_WORKER_IDS;
+  if (!raw || !raw.trim()) return ["1", "2"];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Worker lanes (owner direction, 10 Nov): 1-2 voice only, 3-5 first contact
+ *  (a customer's first message, or the first after the chat went idle), 6-7
+ *  ongoing chats. A lane that stays busy or silent for LANE_OVERFLOW_MS
+ *  overflows to any free text worker so no customer waits. */
+export function intakeWorkerIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.AKIF_INTAKE_WORKER_IDS;
+  if (!raw || !raw.trim()) return ["3", "4", "5"];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+export function ongoingWorkerIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  const raw = env.AKIF_ONGOING_WORKER_IDS;
+  if (!raw || !raw.trim()) return ["6", "7"];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+const LANE_OVERFLOW_MS = 20_000;
+
+/** True when a newer message from the same customer is already answered, so
+ *  this older one is stale: claiming or answering it would send a late,
+ *  out-of-order reply (owner direction, 10 Nov). */
+function hasNewerAnsweredSibling(item: HumanRelayItem): boolean {
+  return items.some((i) => i !== item && i.phone === item.phone && Boolean(i.answeredAt)
+    && Date.parse(i.at) > Date.parse(item.at));
+}
+
+export function claimHumanRelay(workerId: string, now = Date.now()): HumanRelayItem | null {
   pruneHumanRelay();
-  const now = Date.now();
+  const voiceWorkers = voiceCapableWorkerIds();
   const activeClaim = (i: HumanRelayItem) => Boolean(i.claimedBy && i.claimedAt && now - Date.parse(i.claimedAt) < CLAIM_TTL_MS);
   for (const item of items) {
     if (item.answeredAt || item.autoAnswered) continue;
     if (activeClaim(item)) continue;
-    const sticky = stickyWorkerFor(item.phone, now);
-    if (sticky && sticky !== workerId) continue;
+    if (hasNewerAnsweredSibling(item)) continue;
+    const isVoice = item.kind === "voice";
+    const inVoiceLane = voiceWorkers.includes(workerId);
+    // Voice items never overflow to text workers and voice workers never
+    // take text (owner direction, 10 Nov).
+    if (isVoice !== inVoiceLane) continue;
+    const rawSticky = stickyWorkerFor(item.phone, now);
+    // Sticky ownership binds only inside a compatible lane: a voice item
+    // ignores a text-only owner and a text chat ignores a voice-only or
+    // intake owner, so the ongoing lane (6-7) picks up continuing chats.
+    const sticky = rawSticky && (isVoice ? voiceWorkers.includes(rawSticky) : ongoingWorkerIds().includes(rawSticky))
+      ? rawSticky : undefined;
+    const itemAge = now - Date.parse(item.at);
+    const overflow = itemAge >= LANE_OVERFLOW_MS;
+    if (sticky && sticky !== workerId && !overflow) continue;
+    if (!isVoice && !overflow) {
+      const intake = intakeWorkerIds();
+      const ongoing = ongoingWorkerIds();
+      const known = inVoiceLane || intake.includes(workerId) || ongoing.includes(workerId);
+      if (known) {
+        // First contact (no recent reply) goes to the intake lane; a chat
+        // with a recent reply goes to the ongoing lane.
+        const isNew = !rawSticky;
+        if (isNew && !intake.includes(workerId)) continue;
+        if (!isNew && !ongoing.includes(workerId) && sticky !== workerId) continue;
+      }
+    }
     const blocked = items.some((i) => i !== item && i.phone === item.phone && !i.answeredAt && !i.autoAnswered
       && (Date.parse(i.at) < Date.parse(item.at) || activeClaim(i)));
     if (blocked) continue;
@@ -592,6 +660,9 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
     for (const other of items) {
       if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
       if (activeClaim(other)) continue;
+      // Voice workers take voice only, text workers take text only (owner
+      // direction, 10 Nov): a bundle never mixes the two lanes.
+      if ((other.kind === "voice") !== inVoiceLane) continue;
       other.claimedBy = workerId;
       other.claimedAt = claimedAt;
       bundle.push(other);
@@ -603,6 +674,21 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
   return null;
 }
 
+/** Wake-on-arrival pickup (owner feedback, 10 Nov): instead of each worker
+ *  polling on its own interval, the claim call stays open until an item this
+ *  worker may take arrives, so pickup is instant. The cap keeps the request
+ *  well under platform timeouts; an empty return just makes the worker
+ *  re-call. */
+export async function claimHumanRelayWithWait(workerId: string, waitMs: number, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<HumanRelayItem | null> {
+  const deadline = Date.now() + Math.max(0, Math.min(30_000, waitMs));
+  let item = claimHumanRelay(workerId);
+  while (!item && Date.now() < deadline) {
+    await sleep(500);
+    item = claimHumanRelay(workerId);
+  }
+  return item;
+}
+
 /** Answer one claimed item. Enforces claim ownership so two workers can
  *  never answer the same message. Returns the item, or null when the claim
  *  is missing, expired, owned by another worker, or already answered. */
@@ -610,11 +696,26 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string, re
   const item = items.find((i) => i.id === itemId);
   if (!item || item.answeredAt) return null;
   if (item.claimedBy !== workerId) return null;
+  // No late out-of-order replies (owner direction, 10 Nov): when a newer
+  // message from this customer is already answered, this older one is stale.
+  if (hasNewerAnsweredSibling(item)) return null;
   // One reply per customer message (owner direction, 10 Nov): each message in
   // the bundle gets its own bubble from the same worker, so only this item
   // closes; the rest of the claimed turn stays with this worker.
   item.answeredAt = new Date().toISOString();
+  // The newer reply covers every older still-open message from this customer:
+  // mark them covered so no worker sends a separate late answer.
+  const skipped: string[] = [];
+  for (const other of items) {
+    if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
+    if (Date.parse(other.at) >= Date.parse(item.at)) continue;
+    other.answeredAt = item.answeredAt;
+    other.autoAnswered = true;
+    other.autoNote = "covered by newer reply";
+    skipped.push(other.id);
+  }
   persist((p) => p.markAnswered([item.id], item.answeredAt!, replyText));
+  if (skipped.length) persist((p) => p.markAnswered(skipped, item.answeredAt!));
   noteHumanRelayReplySent(item.phone, workerId, replyText);
   return item;
 }
@@ -625,6 +726,7 @@ export function relayClaimStillValid(itemId: string, workerId: string): boolean 
   const item = items.find((i) => i.id === itemId);
   if (!item || item.answeredAt || item.autoAnswered) return false;
   if (item.claimedBy !== workerId || !item.claimedAt) return false;
+  if (hasNewerAnsweredSibling(item)) return false;
   return Date.now() - Date.parse(item.claimedAt) < CLAIM_TTL_MS;
 }
 
@@ -638,6 +740,23 @@ export function hasActiveHumanRelayClaim(phone: string): boolean {
   const digits = relayContactKey(phone);
   return items.some((i) => i.phone === digits && !i.answeredAt && !i.autoAnswered
     && Boolean(i.claimedBy && i.claimedAt && now - Date.parse(i.claimedAt) < CLAIM_TTL_MS));
+}
+
+/** Skip = release, never drop (owner direction, 10 Nov): a worker passing on
+ *  a customer's messages returns them to the pool, claimable again at once.
+ *  The old behaviour marked the whole phone answered and silently dropped
+ *  voice notes a text-only worker could not handle. */
+export function releaseHumanRelayClaim(phone: string): number {
+  const digits = relayContactKey(phone);
+  const ids: string[] = [];
+  for (const item of items) {
+    if (item.phone !== digits || item.answeredAt || item.autoAnswered || !item.claimedBy) continue;
+    item.claimedBy = undefined;
+    item.claimedAt = undefined;
+    ids.push(item.id);
+  }
+  if (ids.length) persist((p) => p.releaseClaims(ids));
+  return ids.length;
 }
 
 export function markHumanRelayAnswered(phone: string, replyText?: string): number {
@@ -737,7 +856,7 @@ export function relayReplyResetsConversation(phone: string, text: string): boole
 export function relayReplyCooldownActive(phone: string, workerId?: string, now = Date.now(), phoneOnly = false): boolean {
   const key = relayContactKey(phone);
   const at = lastReplyAtByPhone.get(key);
-  const windowMs = phoneOnly ? CLAIM_TTL_MS : REPLY_COOLDOWN_MS;
+  const windowMs = phoneOnly ? PHONE_ONLY_HOLD_MS : REPLY_COOLDOWN_MS;
   if (at === undefined || now - at >= windowMs) return false;
   const by = lastReplyByByPhone.get(key);
   if (workerId && by && workerId === by) return false;
@@ -851,6 +970,7 @@ export interface RelayPersistence {
   markAnswered(ids: string[], at: string, replyText?: string): Promise<void>;
   markPhoneAnswered(phone: string, at: string, replyText?: string): Promise<void>;
   setClaim(id: string, workerId: string, at: string): Promise<void>;
+  releaseClaims(ids: string[]): Promise<void>;
   deleteItems(ids: string[]): Promise<void>;
   deleteOlderThan(ttlMs: number): Promise<void>;
   deleteAll(): Promise<void>;
@@ -889,6 +1009,10 @@ async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
       },
       async setClaim(id, workerId, at) {
         await db.execute(sql`UPDATE akif_human_relay_items SET claimed_by = ${workerId}, claimed_at = ${at} WHERE id = ${id}`);
+      },
+      async releaseClaims(ids) {
+        if (!ids.length) return;
+        await db.execute(sql`UPDATE akif_human_relay_items SET claimed_by = NULL, claimed_at = NULL WHERE id IN (${idList(ids)})`);
       },
       async deleteItems(ids) {
         if (!ids.length) return;

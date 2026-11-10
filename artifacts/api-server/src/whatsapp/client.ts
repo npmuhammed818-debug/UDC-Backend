@@ -2,6 +2,7 @@ import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
 import { AsyncLocalStorage } from "node:async_hooks";
 import { replySinkEnabled, replySinkSendAllowed, recordSunkReply } from "./replySink.ts";
 import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
+import { recordOutboundMessage } from "./outboundLog.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
 // Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
@@ -187,7 +188,9 @@ export async function sendWhatsAppText(to: string, body: string) {
     throw new WhatsAppSendError(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
-  return readMessageAcknowledgement(response);
+  const ack = await readMessageAcknowledgement(response);
+  if (ack.delivered) recordOutboundMessage(ack.messageId, to, body);
+  return ack;
 }
 
 export type WhatsAppInteractive =
@@ -394,7 +397,9 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   });
   if(!sent)return unknownSubmission();
   if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}
-  return readMessageAcknowledgement(sent);
+  const ack = await readMessageAcknowledgement(sent);
+  if (ack.delivered) recordOutboundMessage(ack.messageId, to, "[voice note]");
+  return ack;
 }
 
 /**
