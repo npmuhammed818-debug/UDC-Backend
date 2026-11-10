@@ -9,9 +9,10 @@ async function withEnv(patch: Record<string, string | undefined>, fn: () => Prom
   try { await fn(); } finally { for (const key of Object.keys(patch)) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } }
 }
 
-test('Groq is inert without a key; config selects model name', () => {
+test('Groq is inert without a key or without AKIF_GROQ=on; config selects model name', () => {
   withEnv({ GROQ_API_KEY: undefined }, () => assert.equal(isGroqConfigured(), false));
-  withEnv({ GROQ_API_KEY: 'gsk_synthetic', GROQ_MODEL: undefined }, () => {
+  withEnv({ GROQ_API_KEY: 'gsk_synthetic', AKIF_GROQ: undefined }, () => assert.equal(isGroqConfigured(), false));
+  withEnv({ GROQ_API_KEY: 'gsk_synthetic', GROQ_MODEL: undefined, AKIF_GROQ: 'on' }, () => {
     assert.equal(isGroqConfigured(), true);
     assert.equal(groqModel(), 'openai/gpt-oss-120b');
   });
@@ -53,8 +54,8 @@ test('cheap slot order: Haiku first, Groq backup, existing chain last; all env-g
     return Response.json({ choices: [{ message: { content: 'groq backup reply' } }] });
   }) as typeof fetch;
   try {
-    // Anthropic down -> Groq answers.
-    await withEnv({ AKIF_BRAIN_MODEL_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'sk-ant-synthetic', GROQ_API_KEY: 'gsk_synthetic', GROQ_BASE_URL: 'https://groq.test/v1', ANTHROPIC_BASE_URL: 'https://anthropic.test' }, async () => {
+    // Anthropic down -> Groq answers (when explicitly re-enabled).
+    await withEnv({ AKIF_BRAIN_MODEL_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'sk-ant-synthetic', GROQ_API_KEY: 'gsk_synthetic', GROQ_BASE_URL: 'https://groq.test/v1', ANTHROPIC_BASE_URL: 'https://anthropic.test', AKIF_GROQ: 'on' }, async () => {
       const result = await runCheapModelChat('m', 's', 5000, async () => ({ content: 'chain' }));
       assert.equal(result.content, 'groq backup reply');
       assert.equal(cheapModelName(), 'claude-haiku-4-5');
@@ -63,9 +64,19 @@ test('cheap slot order: Haiku first, Groq backup, existing chain last; all env-g
     // Both down -> existing chain.
     urls.length = 0;
     globalThis.fetch = (async () => { urls.push('x'); throw new Error('all down'); }) as typeof fetch;
-    await withEnv({ AKIF_BRAIN_MODEL_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'sk-ant-synthetic', GROQ_API_KEY: 'gsk_synthetic' }, async () => {
+    await withEnv({ AKIF_BRAIN_MODEL_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'sk-ant-synthetic', GROQ_API_KEY: 'gsk_synthetic', AKIF_GROQ: 'on' }, async () => {
       const result = await runCheapModelChat('m', 's', 5000, async () => ({ content: 'chain last resort' }));
       assert.equal(result.content, 'chain last resort');
+    });
+    // Owner direction 10 Nov: with the key set but no AKIF_GROQ=on, Groq is
+    // skipped entirely and the existing chain answers.
+    urls.length = 0;
+    globalThis.fetch = (async (url: any) => { urls.push(String(url)); throw new Error('haiku down'); }) as typeof fetch;
+    await withEnv({ AKIF_BRAIN_MODEL_PROVIDER: undefined, ANTHROPIC_API_KEY: undefined, GROQ_API_KEY: 'gsk_synthetic', AKIF_GROQ: undefined }, async () => {
+      const result = await runCheapModelChat('m', 's', 5000, async () => ({ content: 'chain' }));
+      assert.equal(result.content, 'chain');
+      assert.equal(cheapModelName(), 'default-chain');
+      assert.deepEqual(urls, [], 'no Groq traffic while the kill switch is off');
     });
   } finally { globalThis.fetch = original; }
 });

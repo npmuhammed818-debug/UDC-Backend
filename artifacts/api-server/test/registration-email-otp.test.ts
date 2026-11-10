@@ -83,7 +83,7 @@ async function makeBundle(globalName: string, stdinContents: string, opts: { kno
   return { state, output };
 }
 
-test('quick agent registration asks for the OTP before confirming, and existing accounts never get a code', async () => {
+test('quick agent registration asks for the OTP before confirming, and only Sandra\'s existing account is exempt', async () => {
   const { state, output } = await makeBundle('__otpAgent', "export { registerWhatsAppAgent } from '../src/akif/agentRegistration';", { knownEmail: 'agent@example.invalid' });
   try {
     const m = await import(output);
@@ -94,11 +94,19 @@ test('quick agent registration asks for the OTP before confirming, and existing 
     assert.deepEqual(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 1);
     assert.equal(rows_agent(state).length, 1);
 
-    // Second call: the account now exists, so no new code is ever sent
-    // (Sandra-style existing-account exemption, owner rule 10 Nov).
+    // Second call: the account exists with an unverified email. Owner rule
+    // (10 Nov): OTP for everyone except Sandra, so a fresh code goes out.
     state.emailCalls.length = 0;
     const again = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent');
-    assert.match(again, /already pending UDC review/);
+    assert.match(again, /6-digit code/);
+    assert.equal(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 1);
+
+    // Sandra's existing account is the single exemption: no code, status reply.
+    state.emailCalls.length = 0;
+    state.rows.usersTable.push({ id: 'u-sandra', phone: '917028815509', email: 'trinitysandra2512@gmail.com', status: 'verified', role: 'agent' });
+    const sandra = await m.registerWhatsAppAgent('917028815509', 'Sandra Victor');
+    assert.match(sandra, /already approved/);
+    assert.doesNotMatch(sandra, /6-digit code/);
     assert.equal(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 0);
 
     // No email collected: registration saves with the classic reply, no code.

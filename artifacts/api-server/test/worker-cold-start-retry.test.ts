@@ -72,10 +72,10 @@ test('speech synthesis gets the same single cold-start retry', async () => {
 test('a worker 429 falls back to direct Groq STT immediately when configured', async () => {
   // Env must stay patched across awaits (withEnv restores when the promise is
   // created), so set and restore it by hand here.
-  const keys = ['AKIF_WORKER_URL', 'AKIF_WORKER_TOKEN', 'AKIF_WORKER_MEDIA_ENABLED', 'GROQ_API_KEY', 'ELEVENLABS_API_KEY', 'AKIF_AUDIO_DIRECT_STT'];
+  const keys = ['AKIF_WORKER_URL', 'AKIF_WORKER_TOKEN', 'AKIF_WORKER_MEDIA_ENABLED', 'GROQ_API_KEY', 'ELEVENLABS_API_KEY', 'AKIF_AUDIO_DIRECT_STT', 'AKIF_GROQ'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   process.env.AKIF_WORKER_URL = 'https://worker.test'; process.env.AKIF_WORKER_TOKEN = 'synthetic-token';
-  process.env.AKIF_WORKER_MEDIA_ENABLED = 'true'; process.env.GROQ_API_KEY = 'synthetic-groq-key';
+  process.env.AKIF_WORKER_MEDIA_ENABLED = 'true'; process.env.GROQ_API_KEY = 'synthetic-groq-key'; process.env.AKIF_GROQ = 'on';
   delete process.env.ELEVENLABS_API_KEY; delete process.env.AKIF_AUDIO_DIRECT_STT;
   let workerCalls = 0; let groqCalls = 0;
   try {
@@ -100,6 +100,26 @@ test('without direct STT keys the original worker error still surfaces', async (
   }, async () => {
     await assert.rejects(() => transcribeAkifAudioDetailed(audio), /akif_audio_http_500/);
   }, []));
+});
+
+test('Groq STT stays off without AKIF_GROQ=on even when a Groq key is set (owner direction 10 Nov)', async () => {
+  const keys = ['AKIF_WORKER_URL', 'AKIF_WORKER_TOKEN', 'AKIF_WORKER_MEDIA_ENABLED', 'GROQ_API_KEY', 'ELEVENLABS_API_KEY', 'AKIF_AUDIO_DIRECT_STT', 'AKIF_GROQ'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.AKIF_WORKER_URL = 'https://worker.test'; process.env.AKIF_WORKER_TOKEN = 'synthetic-token';
+  process.env.AKIF_WORKER_MEDIA_ENABLED = 'true'; process.env.GROQ_API_KEY = 'synthetic-groq-key';
+  delete process.env.AKIF_GROQ; delete process.env.ELEVENLABS_API_KEY; delete process.env.AKIF_AUDIO_DIRECT_STT;
+  let groqCalls = 0;
+  try {
+    await withFetch(async (url) => {
+      if (url.includes('api.groq.com')) { groqCalls++; return new Response(JSON.stringify({ text: 'x', language: 'en' }), { status: 200 }); }
+      return new Response('down', { status: 500 });
+    }, async () => {
+      await assert.rejects(() => transcribeAkifAudioDetailed(audio), /akif_audio_http_500/);
+    }, []);
+    assert.equal(groqCalls, 0, 'no Groq traffic while AKIF_GROQ is not on');
+  } finally {
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
 });
 
 test('direct fallback can be switched off with AKIF_AUDIO_DIRECT_STT=false', async () => {

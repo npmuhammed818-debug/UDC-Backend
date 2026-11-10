@@ -305,7 +305,7 @@ function directSttEnabled(): boolean {
 }
 
 function directSttConfigured(): boolean {
-  return directSttEnabled() && Boolean(process.env.ELEVENLABS_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim());
+  return directSttEnabled() && Boolean(process.env.ELEVENLABS_API_KEY?.trim() || (process.env.AKIF_GROQ === "on" && process.env.GROQ_API_KEY?.trim()));
 }
 
 const ELEVENLABS_STT_MODELS = new Set(["scribe_v1", "scribe_v1_experimental", "scribe_v2"]);
@@ -331,7 +331,8 @@ async function transcribeDirectElevenLabs(bytes: Uint8Array, mimeType: string): 
 const ISO_639_1_TO_3: Record<string, string> = { en: "eng", ml: "mal", ta: "tam", hi: "hin", ar: "ara" };
 
 async function transcribeDirectGroq(bytes: Uint8Array, mimeType: string): Promise<{ text: string; language: string | null }> {
-  const key = process.env.GROQ_API_KEY?.trim();
+  // Groq is off everywhere (owner direction 10 Nov) unless AKIF_GROQ=on.
+  const key = process.env.AKIF_GROQ === "on" ? process.env.GROQ_API_KEY?.trim() : undefined;
   if (!key) throw new Error("groq_not_configured");
   const base = mimeType.split(";")[0].toLowerCase();
   const suffix = ({ "audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/webm": ".webm", "audio/wav": ".wav", "audio/flac": ".flac" } as Record<string, string>)[base] ?? ".mp3";

@@ -8,8 +8,11 @@
 const DEFAULT_MODEL = 'openai/gpt-oss-120b';
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1';
 
+// Owner direction 10 Nov: Groq is OFF everywhere (chat, background guidance/
+// emotion calls, backups) until he says otherwise - the free tier is rate
+// limited and the workers answer everything. Set AKIF_GROQ=on to re-enable.
 export function isGroqConfigured(): boolean {
-  return Boolean(process.env.GROQ_API_KEY?.trim());
+  return process.env.AKIF_GROQ === "on" && Boolean(process.env.GROQ_API_KEY?.trim());
 }
 
 export function groqModel(): string {
