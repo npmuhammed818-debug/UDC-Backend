@@ -24,6 +24,7 @@ import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
 import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
+import { handleChatUi } from "../whatsapp/chatUi";
 import { emailRelayTarget } from "../channels/emailRelayChannel";
 import { saveEmailRelayDraft } from "../channels/emailRelayDraftStore";
 
@@ -74,6 +75,28 @@ router.post("/akif-relay/brief", (req, res) => {
   if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_brief" }); return; }
   setRelayContactBriefing(parsed.data.phone, parsed.data.text);
   res.set("Cache-Control", "no-store").json({ ok: true });
+});
+
+const docLinkSchema = z
+  .object({
+    phone: z.string().min(8).max(24),
+  })
+  .strict();
+
+// Workers issue the secure single-use document link themselves (owner
+// direction, 10 Nov): the scripted documents feature sends it, so the KYC/ID/
+// bank safety gates (15-minute single-use link, never over chat) stay in code.
+router.post("/akif-relay/doclink", async (req, res) => {
+  if (!writeAuthorized(req, res)) return;
+  const parsed = docLinkSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_doclink" }); return; }
+  try {
+    const handled = await handleChatUi(parsed.data.phone, { interactive: { type: "list_reply", list_reply: { id: "udc:documents" } } } as never);
+    if (!handled) { res.status(409).json({ ok: false, error: "doclink_unavailable" }); return; }
+    res.set("Cache-Control", "no-store").json({ ok: true });
+  } catch {
+    res.status(502).json({ ok: false, error: "doclink_failed" });
+  }
 });
 
 const claimSchema = z
