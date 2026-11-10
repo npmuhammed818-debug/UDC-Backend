@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { sendRelayHeldAlert } from "./relayAlertEmail.ts";
 
 // Human relay (staging tests only; owner direction, 9 Nov): open chat turns
 // from allowlisted test numbers are held in memory for a dev-side human answer
@@ -78,6 +79,8 @@ export function enqueueHumanRelay(input: {
     items.splice(items.indexOf(drop), 1);
   }
   while (items.length > MAX_ITEMS) items.shift();
+  // Fire-and-forget dev-side email alert; the relay never waits on email.
+  void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text });
   return item;
 }
 
