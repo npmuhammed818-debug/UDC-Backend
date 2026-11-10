@@ -148,3 +148,16 @@ test('sticky worker: the answering worker keeps the customer until idle', () => 
   const idleFuture = Date.now() + 11 * 60 * 1000;
   assert.equal(stickyWorkerFor(phoneA, idleFuture), undefined, 'stickiness expires when idle');
 });
+
+test('every voice note gets its own reply: a newer voice answer never closes older voice notes', () => {
+  const PH3 = '919999777444';
+  enqueueHumanRelay({ phone: PH3, kind: 'voice', text: 'voice one', draft: null });
+  enqueueHumanRelay({ phone: PH3, kind: 'voice', text: 'voice two', draft: null });
+  const claim = claimHumanRelay('1');
+  assert.ok(claim);
+  const ids = claim!.claimedItemIds ?? [];
+  assert.equal(ids.length, 2);
+  assert.ok(answerClaimedHumanRelayItem(ids[1], '1', undefined), 'newer voice note answers');
+  assert.equal(relayClaimStillValid(ids[0], '1'), true, 'the older voice note stays open for its own reply');
+  assert.ok(answerClaimedHumanRelayItem(ids[0], '1', undefined), 'older voice note still answers');
+});
