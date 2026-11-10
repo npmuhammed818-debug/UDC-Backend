@@ -247,8 +247,31 @@ export function humanRelayNumbers(env: NodeJS.ProcessEnv = process.env): string[
 }
 
 /** "all" (or "*") holds every number's open chat turns (relay-for-everyone mode). */
+/** Email-channel contacts ride the same queue keyed as "email:<address>"
+ *  (Phase A, synthetic only): no digit stripping, no schema change - the key
+ *  round-trips through the existing phone column. */
+export const EMAIL_RELAY_PREFIX = "email:";
+export function isEmailRelayContact(contact: string): boolean {
+  return contact.startsWith(EMAIL_RELAY_PREFIX) && canonicalRelayEmail(contact.slice(EMAIL_RELAY_PREFIX.length)) !== null;
+}
+function canonicalRelayEmail(address: string): string | null {
+  return /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(address) && !address.includes("..") ? address.toLowerCase() : null;
+}
+/** One key for one customer: digits for WhatsApp, "email:<address>" for email. */
+export function relayContactKey(phone: string): string {
+  return isEmailRelayContact(phone) ? EMAIL_RELAY_PREFIX + canonicalRelayEmail(phone.slice(EMAIL_RELAY_PREFIX.length)) : phone.replace(/\D/g, "");
+}
+/** Phase A gate for the email channel: staging synthetic pilot only, and only
+ *  while the reply sink is in store mode so no real send can happen. Mirrors
+ *  syntheticEmailRelayEnabled in channels/emailRelayChannel.ts (kept separate
+ *  to avoid a module cycle). */
+export function emailRelaySyntheticEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.UDC_APP_ENV === "staging" && env.UDC_EMAIL_PILOT_MODE === "synthetic" && env.AKIF_WHATSAPP_REPLY_SINK === "store";
+}
+
 export function humanRelayActiveFor(phone: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!humanRelayEnabled(env)) return false;
+  if (isEmailRelayContact(phone)) return emailRelaySyntheticEnabled(env);
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 8) return false;
   const raw = (env.AKIF_HUMAN_RELAY_NUMBERS ?? "").split(",").map((s) => s.trim().toLowerCase());
@@ -315,7 +338,7 @@ export function enqueueHumanRelay(input: {
   pruneHumanRelay();
   const item: HumanRelayItem = {
     id: randomUUID(),
-    phone: input.phone.replace(/\D/g, ""),
+    phone: relayContactKey(input.phone),
     at: new Date().toISOString(),
     kind: input.kind,
     text: input.text.slice(0, 4000),
@@ -357,7 +380,7 @@ export function pendingHumanRelay(): HumanRelayItem[] {
  *  payloads so whoever answers builds on earlier turns - never re-asks for a
  *  detail already given, never repeats a question just answered. */
 export function recentHumanRelayContext(phone: string, excludeId?: string, max = 8): HumanRelayContextItem[] {
-  const digits = phone.replace(/\D/g, "");
+  const digits = relayContactKey(phone);
   return items
     .filter((i) => i.phone === digits && i.id !== excludeId)
     .slice(-max)
@@ -423,13 +446,13 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string): H
 export function hasActiveHumanRelayClaim(phone: string): boolean {
   pruneHumanRelay();
   const now = Date.now();
-  const digits = phone.replace(/\D/g, "");
+  const digits = relayContactKey(phone);
   return items.some((i) => i.phone === digits && !i.answeredAt && !i.autoAnswered
     && Boolean(i.claimedBy && i.claimedAt && now - Date.parse(i.claimedAt) < CLAIM_TTL_MS));
 }
 
 export function markHumanRelayAnswered(phone: string): number {
-  const digits = phone.replace(/\D/g, "");
+  const digits = relayContactKey(phone);
   const at = new Date().toISOString();
   let n = 0;
   for (const item of items) {
@@ -443,7 +466,7 @@ export function markHumanRelayAnswered(phone: string): number {
 }
 
 export function lastHeardLanguageFor(phone: string): string | undefined {
-  const digits = phone.replace(/\D/g, "");
+  const digits = relayContactKey(phone);
   for (let i = items.length - 1; i >= 0; i--) {
     if (items[i].phone === digits && items[i].heardLanguage) return items[i].heardLanguage;
   }
