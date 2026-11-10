@@ -1773,6 +1773,12 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             continue;
           }
           req.log.info({ flow: "voice_message", stage: "transcription", outcome: "success", transcriptChars: transcript.length, languageDetected: Boolean(heard.language) }, "UDC voice input transcribed");
+          // Commission questions get the fixed honest answer in the heard
+          // language, voice in voice out, no brain turn (owner direction, 10 Nov).
+          if (isCommissionAskText(transcript)) {
+            await deliverAnswer(message.from, commissionAskReply(heard.language), true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true });
+            continue;
+          }
           // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
           // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.
           reactByMeaning(message.from, message.id, transcript);
@@ -1794,7 +1800,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             try {
               const voiceBrain = await runBrainTurn({ phone: message.from, text: transcript, messageId: message.id });
               if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
-                const voiceDelivered = await deliverWhatsAppReply(message.from, voiceBrain.reply);
+                const voiceDelivered = await deliverAnswer(message.from, voiceBrain.reply, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true, userText: transcript });
                 if (voiceBrain.background && voiceDelivered?.delivered) {
                   const background = voiceBrain.background;
                   const phone = message.from;
@@ -2094,6 +2100,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
           if (reacted?.delivered) continue;
         }
+        // Commission questions get the fixed honest answer immediately, no
+        // burst wait or brain turn (owner direction, 10 Nov).
+        if (isCommissionAskText(message.text.body)) { await deliverWhatsAppReply(message.from, commissionAskReply()); continue; }
         // Burst coalescing, same as the relay hold: rapid multi-bubble messages
         // become ONE brain turn instead of the next bubble hitting the busy floor.
         brainText = message.text.body;
