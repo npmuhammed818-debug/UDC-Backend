@@ -33,7 +33,20 @@ export type ReflectOnReplyInput = {
   // The reply came from the offline fallback, not from AKIF's own words.
   // Reflecting on it would teach the wrong thing, so nothing is learned.
   usedOfflineFallback?: boolean;
+  // Earlier customer messages, oldest first (owner critique, 10 Nov launch:
+  // a detail was re-asked 8 minutes after it was given). Lets reflection
+  // catch repeats across turns, not only inside one.
+  previousCustomerTexts?: string[];
 };
+
+const EMAIL_GIVEN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+const NAME_GIVEN = /\bmy (?:full )?name is\b/i;
+const ASKS_EMAIL = /\be-?mail\b/i;
+const ASKS_NAME = /\b(?:your (?:full )?name|full name)\b/i;
+// A reply that is ONLY a filler acknowledgement captures nothing the
+// customer just sent (owner critique, 10 Nov: "Full name" answered "Yes,
+// exactly.").
+const BARE_ACK = /^(?:yes|yeah|yep|exactly|ok(?:ay)?|sure|great|noted|got it|right)(?:[.,!\s]+(?:yes|yeah|yep|exactly|ok(?:ay)?|sure|great|noted|got it|right))*[.,!\s]*$/i;
 
 // Reflect on one finished reply. Returns at most one lesson (the most
 // important problem found) or null when the reply was clean. Pure and
@@ -69,6 +82,23 @@ export function reflectOnReply(input: ReflectOnReplyInput): Reflection | null {
       rule: "whatsapp-only",
       lesson:
         "I pointed the customer to an app, dashboard, portal or website. UDC works only inside this WhatsApp chat - Menu, buttons and links here. Next time never send the customer anywhere else.",
+    };
+  }
+  const earlierTexts = [...(input.previousCustomerTexts ?? []), input.customerText];
+  const gaveEmail = earlierTexts.some((t) => EMAIL_GIVEN.test(t));
+  const gaveName = earlierTexts.some((t) => NAME_GIVEN.test(t));
+  if ((gaveEmail && ASKS_EMAIL.test(reply) && reply.includes("?")) || (gaveName && ASKS_NAME.test(reply) && reply.includes("?"))) {
+    return {
+      rule: "re-asked-known-detail",
+      lesson:
+        "The customer had already given a detail earlier in the chat, but I asked for it again. Next time use what is already given and ask only for what is still missing.",
+    };
+  }
+  if (BARE_ACK.test(reply) && (EMAIL_GIVEN.test(input.customerText) || NAME_GIVEN.test(input.customerText) || /\bmy company\b/i.test(input.customerText))) {
+    return {
+      rule: "bare-ack-non-answer",
+      lesson:
+        "The customer sent real information and I replied with a bare acknowledgement that captured nothing. Next time confirm exactly what was received and ask the next question clearly.",
     };
   }
   if (reply.length > 120 && !/[.!?।…"')\]]\s*$/.test(reply)) {

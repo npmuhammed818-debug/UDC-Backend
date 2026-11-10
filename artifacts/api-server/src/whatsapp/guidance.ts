@@ -301,7 +301,7 @@ export async function answerGuidance(phone: string, text: string, messageId?: st
     // the same clean-or-nothing door, and recall offers it next time. A
     // reflection problem never blocks or changes this reply.
     try {
-      const reflection = reflectOnReply({ customerText: text, reply, replyWasReplaced, usedOfflineFallback });
+      const reflection = reflectOnReply({ customerText: text, reply, replyWasReplaced, usedOfflineFallback, previousCustomerTexts: history.filter((m) => m.role === 'user').slice(-8).map((m) => m.content) });
       if (reflection) {
         recordSelfLesson({ reflection, sourceText: `${text}\n${reply}` })
           .catch(() => { /* a lost lesson never blocks a reply */ });
