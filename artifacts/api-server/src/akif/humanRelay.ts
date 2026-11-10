@@ -106,7 +106,7 @@ export function relayAutoToolReplySafe(reply: string | null | undefined, toolsUs
 }
 
 const GREETING_PARTS = [
-  "hi+", "hello+", "hey+", "hai+", "hii+", "yo",
+  "hi+", "hy+", "hello+", "helo+", "hey+", "hai+", "hii+", "yo",
   "good\\s+(?:morning|afternoon|evening|night)",
   "namaste", "namaskaram", "salaam?", "assalamu\\s+alaikum",
   "how\\s+(?:are|r)\\s+(?:you|u)", "how'?s\\s+it\\s+going", "what'?s\\s+up", "sup",

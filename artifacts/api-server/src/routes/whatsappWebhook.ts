@@ -2033,6 +2033,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         continue;
       }
       let brainFailed = false;
+      let brainText = message.text.body;
       if (message.from && !dealActionDirect && isBrainOrchestratorEnabled()) {
         // Pure acks get a WhatsApp reaction, not a brain turn (owner direction,
         // 10 Nov). Draft requests and replies to saved deal messages are deal
@@ -2043,7 +2044,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         }
         // Burst coalescing, same as the relay hold: rapid multi-bubble messages
         // become ONE brain turn instead of the next bubble hitting the busy floor.
-        let brainText = message.text.body;
+        brainText = message.text.body;
         if (brainBurstMs() > 0) {
           const combined = await collectBurst(message.from, message.text.body, brainBurstMs());
           if (combined === null) continue; // a newer bubble takes the turn
@@ -2109,9 +2110,31 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature-rescue` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${featureIntent}` } } } as ChatMessage)) continue;
           } catch { /* fall through to the natural retry note below */ }
         }
-        // Everything else gets one natural line, never a form or a canned
-        // busy message (owner rule, 8 Nov).
-        await deliverWhatsAppReply(message.from, "Sorry, I missed that for a moment - could you say it again?");
+        // A greeting never needs the brain: when the provider is rate-limited
+        // the customer still gets a warm hello in seconds, not a retry note
+        // (owner report, 10 Nov launch). Variants rotate so repeats don't
+        // read as a canned line.
+        if (isSimpleGreetingText(message.text.body)) {
+          const greetings = [
+            "Hey, good to hear from you. What can I do for you?",
+            "Hi there, how can I help you today?",
+            "Hello, nice to hear from you. What are you looking for?",
+          ];
+          const pick = greetings[Math.floor(Date.now() / 1000) % greetings.length];
+          await deliverWhatsAppReply(message.from, pick);
+          continue;
+        }
+        // Menus stay automatic without the model: the scripted home menu
+        // answers a typed "menu" the same as a tap.
+        if (isMenuRequestText(message.text.body)) {
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:menu` : undefined, text: { body: message.text.body } } as ChatMessage)) continue;
+          } catch { /* fall through to the silent hold below */ }
+        }
+        // Everything else is held silently for the human relay team: no
+        // failure line, no canned note (owner direction, 10 Nov launch).
+        // Workers or the relay owner answer it from the queue.
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null });
         continue;
       }
 
