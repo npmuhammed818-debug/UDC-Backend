@@ -164,7 +164,7 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // carries its draft and tool results; any deferred background work is
 // cancelled, never started, because the dev side decides what actually goes
 // out. Brain failure just means no draft - the message is still held.
-async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean } | null> {
+export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean } | null> {
   if (!isBrainOrchestratorEnabled()) return null;
   try {
     const brain = await runBrainTurn({ phone, text, messageId });
@@ -1626,14 +1626,17 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           await deliverWhatsAppReply(message.from, "You’ve reached today’s voice note limit. Please type your message and I’ll keep helping.");
           continue;
         }
+        let relayVoiceStage: "download" | "transcription" = "download";
         try {
           const media = await downloadWhatsAppMedia(message.audio.id);
+          relayVoiceStage = "transcription";
           const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
           const relayVoiceCrisis = crisisSafetyReply(heard.text);
           if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
           const draft = heard.text.trim() ? await buildHumanRelayDraft(message.from, heard.text, message.id) : null;
           enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false });
-        } catch {
+        } catch (error) {
+          console.warn(`relay voice intake failed { stage: "${relayVoiceStage}", error: "${error instanceof Error ? error.message.slice(0, 120) : "unknown"}" }`);
           await deliverWhatsAppReply(message.from, "I couldn’t read that voice note just now. Please resend it or type your message.");
         }
         continue;
