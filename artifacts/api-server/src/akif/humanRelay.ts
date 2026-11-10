@@ -36,7 +36,7 @@ export function relayAutoToolsEnabled(_env: NodeJS.ProcessEnv = process.env): bo
   return false;
 }
 
-const ACK_WORDS = /^(?:ok(?:ay|ey)?|okie?s?|k+|thanks?(?:\s+you)?(?:\s+so\s+much)?|thankyou|thx|ty|noted|got\s?it|cool|great|nice|super|fine|hmm+|hmm\s+ok|👍+|🙏+|❤️+|❤|done)[\s!.,]*$/i;
+const ACK_WORDS = /^(?:ok(?:ay|ey)?|okie?s?|k+|thanks?(?:\s+you)?(?:\s+so\s+much)?|thankyou|thx|ty|noted|got\s?it|cool|great|nice|super|fine|hmm+|hmm\s+ok|i\s+see|i\s+c\b|understood?|makes\s+sense|sounds\s+good|right|ah+(?:\s+ok(?:ay)?)?|oh+(?:\s+ok(?:ay)?)?|done|👍+|🙏+|❤️+|❤)[\s!.,]*$/i;
 
 /** True only when the whole message is a bare acknowledgement. */
 export function isAcknowledgementText(text: string): boolean {
@@ -239,6 +239,10 @@ export type HumanRelayItem = {
   // Read-side only (claim payload): the bot's most recent lines to this
   // contact, so the worker continues the thread instead of restarting it.
   recentReplies?: string[];
+  // Read-side only (claim/pending payloads): the full thread for this
+  // contact, oldest first, customer and bot lines interleaved (owner
+  // direction, 10 Nov: read the whole conversation before replying).
+  thread?: HumanRelayThreadItem[];
   // Read-side only: the owner's reply style note for whoever answers.
   replyStyle?: string;
   // Read-side only: relay-owner briefing about this contact for the workers.
@@ -252,8 +256,19 @@ export type HumanRelayContextItem = {
   answered: boolean;
 };
 
+export type HumanRelayThreadItem = {
+  at: string;
+  from: "customer" | "akif";
+  text: string;
+};
+
 const items: HumanRelayItem[] = [];
 const replyWindow: number[] = [];
+// Insertion order for thread building: wall-clock timestamps often tie at
+// millisecond precision, so each held message and each sent line also gets
+// a sequence number.
+let relaySeq = 0;
+const itemSeqById = new Map<string, number>();
 
 export function humanRelayEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.AKIF_HUMAN_RELAY_ENABLED === "true";
@@ -373,6 +388,7 @@ export function enqueueHumanRelay(input: {
     autoNote: input.autoNote,
     customerNote: input.customerNote,
   };
+  itemSeqById.set(item.id, relaySeq++);
   items.push(item);
   const dropped: string[] = [];
   const forPhone = items.filter((i) => i.phone === item.phone);
@@ -399,7 +415,7 @@ export const RELAY_REPLY_STYLE_NOTE =
   "Never ask what the thread or the customer note already knows; state known facts instead. " +
   "Never mention AI models, drafts, staging or internal systems. " +
   "No dash symbols anywhere; break sentences with a comma or full stop. " +
-  "Continue the thread from its last topic like a real person: never restart with a generic greeting or opener, and never repeat a line already used in this chat (recentReplies shows what was already said). " +
+  "Read the whole thread first (thread shows every message from first to last), then continue from its last topic like a real person: never restart with a generic greeting or opener, and never repeat a line already used in this chat (recentReplies shows what was already said). " +
   "If they sent several messages, answer each one as its own bubble from you, one reply per message. " +
   "If they share grief or ask to pause business: one short warm reply about what they said, at most one gentle question, never Menu, never sales talk. " +
   "When they need to send KYC, ID or bank documents, issue the secure single-use link with the doclink tool; never collect documents over chat.";
@@ -425,19 +441,35 @@ export function relayBriefingForContact(phone: string): string | undefined {
 export function pendingHumanRelay(): HumanRelayItem[] {
   pruneHumanRelay();
   return items.filter((i) => !i.answeredAt)
-    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(i.phone) }));
+    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id), thread: relayThreadFor(i.phone), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(i.phone) }));
 }
 
 /** Recent held history for one number, oldest first: what the customer
  *  already said and which of it was answered. Attached to claim and pending
  *  payloads so whoever answers builds on earlier turns - never re-asks for a
  *  detail already given, never repeats a question just answered. */
-export function recentHumanRelayContext(phone: string, excludeId?: string, max = 8): HumanRelayContextItem[] {
+export function recentHumanRelayContext(phone: string, excludeId?: string, max = 60): HumanRelayContextItem[] {
   const digits = relayContactKey(phone);
   return items
     .filter((i) => i.phone === digits && i.id !== excludeId)
     .slice(-max)
     .map((i) => ({ at: i.at, kind: i.kind, text: i.text, answered: Boolean(i.answeredAt) }));
+}
+
+/** The full thread for one number, oldest first: customer lines and bot
+ *  replies interleaved. Attached to every claim and pending payload so the
+ *  worker reads the whole conversation before writing (owner, 10 Nov). */
+export function relayThreadFor(phone: string): HumanRelayThreadItem[] {
+  const digits = relayContactKey(phone);
+  const events: Array<HumanRelayThreadItem & { seq: number }> = [];
+  for (const i of items.filter((i) => i.phone === digits)) {
+    events.push({ at: i.at, from: "customer", text: i.text, seq: itemSeqById.get(i.id) ?? 0 });
+  }
+  for (const r of recentRepliesByPhone.get(digits) ?? []) {
+    events.push({ at: new Date(r.at).toISOString(), from: "akif", text: r.text, seq: r.seq ?? 0 });
+  }
+  events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.seq - b.seq);
+  return events.map(({ at, from, text }) => ({ at, from, text }));
 }
 
 /** Facts the customer already gave in this thread (owner feedback, 10 Nov:
@@ -543,7 +575,7 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
       persist((p) => p.setClaim(other.id, workerId, claimedAt));
     }
     persist((p) => p.setClaim(item.id, workerId, claimedAt));
-    return { ...item, claimedItemIds: [item.id, ...bundle.map((b) => b.id)], context: recentHumanRelayContext(item.phone, item.id), recentReplies: recentRelayRepliesFor(item.phone), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
+    return { ...item, claimedItemIds: [item.id, ...bundle.map((b) => b.id)], context: recentHumanRelayContext(item.phone, item.id), thread: relayThreadFor(item.phone), recentReplies: recentRelayRepliesFor(item.phone), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
   }
   return null;
 }
@@ -559,7 +591,7 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string, re
   // the bundle gets its own bubble from the same worker, so only this item
   // closes; the rest of the claimed turn stays with this worker.
   item.answeredAt = new Date().toISOString();
-  persist((p) => p.markAnswered([item.id], item.answeredAt!));
+  persist((p) => p.markAnswered([item.id], item.answeredAt!, replyText));
   noteHumanRelayReplySent(item.phone, workerId, replyText);
   return item;
 }
@@ -585,7 +617,7 @@ export function hasActiveHumanRelayClaim(phone: string): boolean {
     && Boolean(i.claimedBy && i.claimedAt && now - Date.parse(i.claimedAt) < CLAIM_TTL_MS));
 }
 
-export function markHumanRelayAnswered(phone: string): number {
+export function markHumanRelayAnswered(phone: string, replyText?: string): number {
   const digits = relayContactKey(phone);
   const at = new Date().toISOString();
   let n = 0;
@@ -595,7 +627,7 @@ export function markHumanRelayAnswered(phone: string): number {
       n++;
     }
   }
-  if (n) persist((p) => p.markPhoneAnswered(digits, at));
+  if (n) persist((p) => p.markPhoneAnswered(digits, at, replyText));
   return n;
 }
 
@@ -615,8 +647,8 @@ const lastReplyAtByPhone = new Map<string, number>();
 const lastReplyByByPhone = new Map<string, string>();
 // Recent bot lines per phone, so workers see what the chat already said and
 // the guard can block repeats and conversation resets (owner direction, 10 Nov).
-const recentRepliesByPhone = new Map<string, Array<{ at: number; text: string }>>();
-const RECENT_REPLIES_KEPT = 8;
+const recentRepliesByPhone = new Map<string, Array<{ at: number; text: string; seq?: number }>>();
+const RECENT_REPLIES_KEPT = 60;
 
 /** The last bot lines for a phone, oldest first. Shown on claim payloads. */
 export function recentRelayRepliesFor(phone: string): string[] {
@@ -627,23 +659,49 @@ const normReplyLine = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/gi, "")
 const GENERIC_RESET = /good to hear from you|what can i help you with|how (?:can|may) i help|welcome back|nice to hear from you/i;
 const GREETING_ONLY = /^(?:hey|hi+|hello+|namaste|good (?:morning|afternoon|evening)|dear)[\s!.,]*$/i;
 
+const REPLY_STOPWORDS = new Set(("a an the and or but so to of in on for with is are was were be been it its this that these those i you we they he she " +
+  "your my our their me him her us them do does did have has had will would can could should not no yes just only also very really much more most some any").split(" "));
+
+const stem = (w: string): string => w.replace(/(?:es|s)$/, "");
+const contentWords = (s: string): Set<string> => new Set(normReplyLine(s).split(" ").filter((w) => w.length > 2 && !REPLY_STOPWORDS.has(w)).map(stem));
+
 /** True when a reply repeats a recent bot line or resets the conversation
- *  with a generic opener although the thread already has bot replies. */
+ *  with a generic opener although the thread already has bot replies. Also
+ *  true when it mostly restates a recent answer's content in new words
+ *  (owner direction, 10 Nov: "I see" must never get the same answer again). */
 export function relayReplyResetsConversation(phone: string, text: string): boolean {
   const recent = recentRepliesByPhone.get(relayContactKey(phone)) ?? [];
   if (!recent.length) return false;
   const t = normReplyLine(text);
   if (t && recent.some((r) => normReplyLine(r.text) === t)) return true;
-  return GENERIC_RESET.test(text) || GREETING_ONLY.test(text.trim());
+  if (GENERIC_RESET.test(text) || GREETING_ONLY.test(text.trim())) return true;
+  const words = contentWords(text);
+  if (words.size >= 4) {
+    // Compare against the union of the last few bot lines: a restatement
+    // typically draws pieces from more than one of them.
+    const prev = new Set<string>();
+    for (const r of recent.slice(-6)) for (const w of contentWords(r.text)) prev.add(w);
+    if (prev.size) {
+      let shared = 0;
+      for (const w of words) if (prev.has(w)) shared++;
+      const fresh = words.size - shared;
+      if (shared / words.size >= 0.65 && fresh <= 3) return true;
+    }
+  }
+  return false;
 }
 
 /** One worker, one customer at a time (owner direction, 10 Nov): a second
  *  sender is refused inside the window, but the worker who just answered may
- *  send follow-up bubbles to the same customer (multi-bubble is fine). */
-export function relayReplyCooldownActive(phone: string, workerId?: string, now = Date.now()): boolean {
+ *  send follow-up bubbles to the same customer (multi-bubble is fine).
+ *  Phone-only sends (no itemId) hold other workers for the whole claim
+ *  window: late duplicates from a second worker landed after the short
+ *  window and read as two people answering. */
+export function relayReplyCooldownActive(phone: string, workerId?: string, now = Date.now(), phoneOnly = false): boolean {
   const key = relayContactKey(phone);
   const at = lastReplyAtByPhone.get(key);
-  if (at === undefined || now - at >= REPLY_COOLDOWN_MS) return false;
+  const windowMs = phoneOnly ? CLAIM_TTL_MS : REPLY_COOLDOWN_MS;
+  if (at === undefined || now - at >= windowMs) return false;
   const by = lastReplyByByPhone.get(key);
   if (workerId && by && workerId === by) return false;
   return true;
@@ -655,7 +713,7 @@ export function noteHumanRelayReplySent(phone: string, workerId?: string, text?:
   if (workerId) lastReplyByByPhone.set(key, workerId);
   if (text) {
     const list = recentRepliesByPhone.get(key) ?? [];
-    list.push({ at: now, text });
+    list.push({ at: now, text, seq: relaySeq++ });
     while (list.length > RECENT_REPLIES_KEPT) list.shift();
     recentRepliesByPhone.set(key, list);
   }
@@ -705,6 +763,11 @@ export function __clearRelayMemoryForTests(): void {
   items.length = 0;
   replyWindow.length = 0;
   burstState.clear();
+  recentRepliesByPhone.clear();
+  lastReplyAtByPhone.clear();
+  lastReplyByByPhone.clear();
+  itemSeqById.clear();
+  relaySeq = 0;
 }
 
 /** Test hook: clear all held items and the reply window. */
@@ -748,13 +811,14 @@ function relayRowToItem(r: RelayRow): HumanRelayItem {
 
 export interface RelayPersistence {
   upsertItem(item: HumanRelayItem): Promise<void>;
-  markAnswered(ids: string[], at: string): Promise<void>;
-  markPhoneAnswered(phone: string, at: string): Promise<void>;
+  markAnswered(ids: string[], at: string, replyText?: string): Promise<void>;
+  markPhoneAnswered(phone: string, at: string, replyText?: string): Promise<void>;
   setClaim(id: string, workerId: string, at: string): Promise<void>;
   deleteItems(ids: string[]): Promise<void>;
   deleteOlderThan(ttlMs: number): Promise<void>;
   deleteAll(): Promise<void>;
   fetchOpen(maxItems: number, ttlMs: number): Promise<HumanRelayItem[]>;
+  fetchRecent(maxItems: number, ttlMs: number): Promise<HumanRelayItem[]>;
 }
 
 type RelayDb = { execute: (query: unknown) => Promise<{ rows?: RelayRow[] }> };
@@ -772,12 +836,19 @@ async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
           VALUES (${i.id}, ${i.phone}, ${i.at}, ${i.kind}, ${i.text}, ${i.heardLanguage ?? null}, ${i.draft}, ${i.draftBackgroundDiscarded}, ${i.answeredAt}, ${Boolean(i.autoAnswered)}, ${i.autoNote ?? null}, ${i.claimedBy ?? null}, ${i.claimedAt ?? null}, ${i.customerNote ?? null})
           ON CONFLICT (id) DO NOTHING`);
       },
-      async markAnswered(ids, at) {
+      async markAnswered(ids, at, replyText) {
         if (!ids.length) return;
+        if (replyText !== undefined) {
+          await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at}, draft = ${replyText} WHERE id IN (${idList(ids)})`);
+          return;
+        }
         await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at} WHERE answered_at IS NULL AND id IN (${idList(ids)})`);
       },
-      async markPhoneAnswered(phone, at) {
+      async markPhoneAnswered(phone, at, replyText) {
         await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at} WHERE phone = ${phone} AND answered_at IS NULL`);
+        if (replyText !== undefined) {
+          await db.execute(sql`UPDATE akif_human_relay_items SET draft = ${replyText} WHERE id = (SELECT id FROM akif_human_relay_items WHERE phone = ${phone} AND answered_at IS NOT NULL ORDER BY at DESC LIMIT 1)`);
+        }
       },
       async setClaim(id, workerId, at) {
         await db.execute(sql`UPDATE akif_human_relay_items SET claimed_by = ${workerId}, claimed_at = ${at} WHERE id = ${id}`);
@@ -794,6 +865,10 @@ async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
       },
       async fetchOpen(maxItems, ttlMs) {
         const r = await db.execute(sql`SELECT * FROM akif_human_relay_items WHERE answered_at IS NULL AND at > now() - make_interval(secs => ${Math.floor(ttlMs / 1000)}) ORDER BY at ASC LIMIT ${maxItems}`);
+        return (r.rows ?? []).map(relayRowToItem);
+      },
+      async fetchRecent(maxItems, ttlMs) {
+        const r = await db.execute(sql`SELECT * FROM akif_human_relay_items WHERE at > now() - make_interval(secs => ${Math.floor(ttlMs / 1000)}) ORDER BY at ASC LIMIT ${maxItems}`);
         return (r.rows ?? []).map(relayRowToItem);
       },
     };
@@ -825,14 +900,28 @@ export async function hydrateHumanRelay(): Promise<number> {
   const p = await relayPersistence();
   if (!p) return 0;
   try {
-    const open = await p.fetchOpen(MAX_ITEMS, ITEM_TTL_MS);
+    const recent = await p.fetchRecent(MAX_ITEMS, ITEM_TTL_MS);
     let added = 0;
-    for (const row of open) {
+    for (const row of recent) {
       if (!items.some((i) => i.id === row.id)) { items.push(row); added += 1; }
+      // Rebuild the bot-line memory from the reply stored on each answered
+      // row, so the repeat guard and the thread survive a restart.
+      if (!itemSeqById.has(row.id)) itemSeqById.set(row.id, relaySeq++);
+      if (row.answeredAt && row.draft) {
+        const key = relayContactKey(row.phone);
+        const list = recentRepliesByPhone.get(key) ?? [];
+        if (!list.some((r) => r.text === row.draft)) {
+          list.push({ at: Date.parse(row.answeredAt), text: row.draft, seq: relaySeq++ });
+          list.sort((a, b) => a.at - b.at);
+          while (list.length > RECENT_REPLIES_KEPT) list.shift();
+          recentRepliesByPhone.set(key, list);
+        }
+      }
     }
     items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-    if (added > 0) console.info("AKIF relay queue restored after restart", { items: added });
-    return added;
+    const open = recent.filter((r) => !r.answeredAt).length;
+    if (added > 0) console.info("AKIF relay queue restored after restart", { items: added, open });
+    return recent.filter((r) => !r.answeredAt).length;
   } catch {
     return 0;
   }

@@ -192,7 +192,7 @@ router.post("/akif-relay/reply", async (req, res) => {
   // One voice per contact (owner direction, 10 Nov): a reply went out for
   // this phone moments ago, so a second send right now would read as two
   // people answering. The worker retries after the short window.
-  if (relayReplyCooldownActive(phone, parsed.data!.workerId ?? undefined)) {
+  if (relayReplyCooldownActive(phone, parsed.data!.workerId ?? undefined, Date.now(), !parsed.data!.itemId)) {
     res.status(409).json({ ok: false, error: "reply_cooldown" });
     return;
   }
@@ -254,7 +254,7 @@ router.post("/akif-relay/reply", async (req, res) => {
     return;
   }
   noteHumanRelayReplySent(phone, parsed.data!.workerId ?? undefined, text ?? (audio ? "[voice note]" : undefined));
-  const answered = markHumanRelayAnswered(phone);
+  const answered = markHumanRelayAnswered(phone, text ?? (audio ? "[voice note]" : undefined));
   res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered });
 });
 
