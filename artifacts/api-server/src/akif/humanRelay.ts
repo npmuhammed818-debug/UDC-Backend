@@ -42,8 +42,51 @@ export function isAcknowledgementText(text: string): boolean {
 /** Owner style rule (10 Nov): no hyphens or dashes as sentence breaks in any
  *  bot/relay reply; commas or full stops read like a person texting. Only
  *  letter-to-letter breaks are rewritten, so ranges like "10 - 15 kg" stay. */
+/** Non-relay parity flags (owner direction, 10 Nov): the brain front door for
+ *  real users gets the relay's burst coalescing, ack reactions, busy wait,
+ *  slow heads-up and voice answers. Each defaults OFF. */
+export function brainBurstMs(env: NodeJS.ProcessEnv = process.env): number {
+  return Number(env.AKIF_BRAIN_BURST_MS ?? 0) || 0;
+}
+export function brainAckReactionsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AKIF_BRAIN_ACK_REACTIONS === "on";
+}
+export function brainBusyWaitEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AKIF_BRAIN_BUSY_WAIT === "on";
+}
+export function brainSlowNudgeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AKIF_BRAIN_SLOW_NUDGE === "on";
+}
+export function brainVoiceEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AKIF_BRAIN_VOICE === "on";
+}
+
+/** Dash sentence-breaks are never sent to customers (owner style rule, 10
+ *  Nov). Shared by the relay reply cleaner and the main outbound cleaner. */
+export function stripDashBreaks(text: string): string {
+  return text.replace(/(?<=[A-Za-z])\s+[-–—]\s+(?=[A-Za-z])/g, ", ").replace(/,\s*,/g, ",");
+}
+
 export function sanitizeRelayReplyText(text: string): string {
-  return text.replace(/(?<=[A-Za-z])\s+[-–—]\s+(?=[A-Za-z])/g, ", ").replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
+  return stripDashBreaks(text).replace(/\s{2,}/g, " ").trim();
+}
+
+const burstState = new Map<string, { seq: number; texts: string[] }>();
+
+/** Rapid multi-bubble messages become ONE turn (owner feedback, 10 Nov): wait
+ *  out the burst window; the newest bubble proceeds with all the texts and
+ *  earlier bubbles resolve null. Shared by the relay hold and the brain front
+ *  door. */
+export async function collectBurst(phone: string, text: string, windowMs: number): Promise<string | null> {
+  const burst = burstState.get(phone) ?? { seq: 0, texts: [] as string[] };
+  burst.seq += 1;
+  burst.texts.push(text);
+  burstState.set(phone, burst);
+  const mySeq = burst.seq;
+  if (windowMs > 0) await new Promise((r) => setTimeout(r, windowMs));
+  if (burstState.get(phone)?.seq !== mySeq) return null; // a newer bubble takes the turn
+  burstState.delete(phone);
+  return burst.texts.join("\n");
 }
 
 export function ackEmojiFor(text: string): string {
@@ -266,4 +309,5 @@ export function validateRelayReplyText(text: unknown): string | null {
 export function resetHumanRelay(): void {
   items.length = 0;
   replyWindow.length = 0;
+  burstState.clear();
 }
