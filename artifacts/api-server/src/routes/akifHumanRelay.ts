@@ -8,7 +8,7 @@ import {
   hasActiveHumanRelayClaim,
   lastHeardLanguageFor,
   markHumanRelayAnswered, claimHumanRelay, answerClaimedHumanRelayItem,
-  relayReplyCooldownActive, noteHumanRelayReplySent,
+  relayReplyCooldownActive, noteHumanRelayReplySent, relayClaimStillValid, relayReplyResetsConversation,
   pendingHumanRelay,
   relayBodyAuthorized,
   relayReadAuthorized,
@@ -196,6 +196,18 @@ router.post("/akif-relay/reply", async (req, res) => {
     res.status(409).json({ ok: false, error: "reply_cooldown" });
     return;
   }
+  // Validate the claim BEFORE anything goes out (10 Nov voice+text double
+  // send): a stale or lost claim must stop the send, not just the bookkeeping.
+  if (parsed.data!.itemId && !relayClaimStillValid(parsed.data!.itemId, parsed.data!.workerId ?? "")) {
+    res.status(409).json({ ok: false, error: "claim_lost" });
+    return;
+  }
+  // Thread continuity guard (owner direction, 10 Nov): no restarts with a
+  // generic opener and no repeats of a line the chat already used.
+  if (text && relayReplyResetsConversation(phone, text)) {
+    res.status(409).json({ ok: false, error: "reply_resets_conversation", detail: "Continue the thread from its last topic instead of restarting, and never repeat a recent line." });
+    return;
+  }
   // Outbound is locked to the same allowlist as inbound: in this phase that is
   // the owner's own number only.
   if (!humanRelayActiveFor(phone)) {
@@ -236,12 +248,12 @@ router.post("/akif-relay/reply", async (req, res) => {
     return;
   }
   if (parsed.data!.itemId) {
-    const answeredItem = answerClaimedHumanRelayItem(parsed.data!.itemId, parsed.data!.workerId ?? "");
+    const answeredItem = answerClaimedHumanRelayItem(parsed.data!.itemId, parsed.data!.workerId ?? "", text ?? (audio ? "[voice note]" : undefined));
     if (!answeredItem) { res.status(409).json({ ok: false, error: "claim_lost" }); return; }
     res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered: 1 });
     return;
   }
-  noteHumanRelayReplySent(phone, parsed.data!.workerId ?? undefined);
+  noteHumanRelayReplySent(phone, parsed.data!.workerId ?? undefined, text ?? (audio ? "[voice note]" : undefined));
   const answered = markHumanRelayAnswered(phone);
   res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered });
 });

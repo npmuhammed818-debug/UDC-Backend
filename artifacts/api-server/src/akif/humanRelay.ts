@@ -236,6 +236,9 @@ export type HumanRelayItem = {
   // Read-side only (claim payload): every held item this claim covers. One
   // claim is one customer turn - all of the contact's unanswered messages.
   claimedItemIds?: string[];
+  // Read-side only (claim payload): the bot's most recent lines to this
+  // contact, so the worker continues the thread instead of restarting it.
+  recentReplies?: string[];
   // Read-side only: the owner's reply style note for whoever answers.
   replyStyle?: string;
   // Read-side only: relay-owner briefing about this contact for the workers.
@@ -392,10 +395,12 @@ export function enqueueHumanRelay(input: {
  *  texting. Mechanics stay in code; this only shapes the voice. */
 export const RELAY_REPLY_STYLE_NOTE =
   "Sound like a warm, relaxed person texting: short, friendly, natural, a little casual. " +
-  "Never stiff or formal, never the same phrasing twice. Answer first, one thing at a time. " +
+  "Never stiff or formal, never robotic, never the same phrasing twice, no stock phrases. Answer first, one thing at a time. " +
   "Never ask what the thread or the customer note already knows; state known facts instead. " +
   "Never mention AI models, drafts, staging or internal systems. " +
   "No dash symbols anywhere; break sentences with a comma or full stop. " +
+  "Continue the thread from its last topic like a real person: never restart with a generic greeting or opener, and never repeat a line already used in this chat (recentReplies shows what was already said). " +
+  "If they sent several messages, answer each one as its own bubble from you, one reply per message. " +
   "If they share grief or ask to pause business: one short warm reply about what they said, at most one gentle question, never Menu, never sales talk. " +
   "When they need to send KYC, ID or bank documents, issue the secure single-use link with the doclink tool; never collect documents over chat.";
 
@@ -538,7 +543,7 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
       persist((p) => p.setClaim(other.id, workerId, claimedAt));
     }
     persist((p) => p.setClaim(item.id, workerId, claimedAt));
-    return { ...item, claimedItemIds: [item.id, ...bundle.map((b) => b.id)], context: recentHumanRelayContext(item.phone, item.id), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
+    return { ...item, claimedItemIds: [item.id, ...bundle.map((b) => b.id)], context: recentHumanRelayContext(item.phone, item.id), recentReplies: recentRelayRepliesFor(item.phone), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
   }
   return null;
 }
@@ -546,15 +551,26 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
 /** Answer one claimed item. Enforces claim ownership so two workers can
  *  never answer the same message. Returns the item, or null when the claim
  *  is missing, expired, owned by another worker, or already answered. */
-export function answerClaimedHumanRelayItem(itemId: string, workerId: string): HumanRelayItem | null {
+export function answerClaimedHumanRelayItem(itemId: string, workerId: string, replyText?: string): HumanRelayItem | null {
   const item = items.find((i) => i.id === itemId);
   if (!item || item.answeredAt) return null;
   if (item.claimedBy !== workerId) return null;
-  // One reply per customer turn (owner direction, 10 Nov): the answer covers
-  // every message the customer sent in this burst, so they all close together.
-  markHumanRelayAnswered(item.phone);
-  noteHumanRelayReplySent(item.phone, workerId);
+  // One reply per customer message (owner direction, 10 Nov): each message in
+  // the bundle gets its own bubble from the same worker, so only this item
+  // closes; the rest of the claimed turn stays with this worker.
+  item.answeredAt = new Date().toISOString();
+  persist((p) => p.markAnswered([item.id], item.answeredAt!));
+  noteHumanRelayReplySent(item.phone, workerId, replyText);
   return item;
+}
+
+/** Pre-send validation (10 Nov): the route must check this BEFORE delivering.
+ *  Sending first and checking after let a stale claim's message go out. */
+export function relayClaimStillValid(itemId: string, workerId: string): boolean {
+  const item = items.find((i) => i.id === itemId);
+  if (!item || item.answeredAt || item.autoAnswered) return false;
+  if (item.claimedBy !== workerId || !item.claimedAt) return false;
+  return Date.now() - Date.parse(item.claimedAt) < CLAIM_TTL_MS;
 }
 
 /** Mark every held message for one number as answered. Returns how many. */
@@ -597,6 +613,29 @@ export function lastHeardLanguageFor(phone: string): string | undefined {
 const REPLY_COOLDOWN_MS = 20_000;
 const lastReplyAtByPhone = new Map<string, number>();
 const lastReplyByByPhone = new Map<string, string>();
+// Recent bot lines per phone, so workers see what the chat already said and
+// the guard can block repeats and conversation resets (owner direction, 10 Nov).
+const recentRepliesByPhone = new Map<string, Array<{ at: number; text: string }>>();
+const RECENT_REPLIES_KEPT = 8;
+
+/** The last bot lines for a phone, oldest first. Shown on claim payloads. */
+export function recentRelayRepliesFor(phone: string): string[] {
+  return (recentRepliesByPhone.get(relayContactKey(phone)) ?? []).map((r) => r.text);
+}
+
+const normReplyLine = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/gi, "").replace(/\s+/g, " ").trim();
+const GENERIC_RESET = /good to hear from you|what can i help you with|how (?:can|may) i help|welcome back|nice to hear from you/i;
+const GREETING_ONLY = /^(?:hey|hi+|hello+|namaste|good (?:morning|afternoon|evening)|dear)[\s!.,]*$/i;
+
+/** True when a reply repeats a recent bot line or resets the conversation
+ *  with a generic opener although the thread already has bot replies. */
+export function relayReplyResetsConversation(phone: string, text: string): boolean {
+  const recent = recentRepliesByPhone.get(relayContactKey(phone)) ?? [];
+  if (!recent.length) return false;
+  const t = normReplyLine(text);
+  if (t && recent.some((r) => normReplyLine(r.text) === t)) return true;
+  return GENERIC_RESET.test(text) || GREETING_ONLY.test(text.trim());
+}
 
 /** One worker, one customer at a time (owner direction, 10 Nov): a second
  *  sender is refused inside the window, but the worker who just answered may
@@ -610,10 +649,16 @@ export function relayReplyCooldownActive(phone: string, workerId?: string, now =
   return true;
 }
 
-export function noteHumanRelayReplySent(phone: string, workerId?: string, now = Date.now()): void {
+export function noteHumanRelayReplySent(phone: string, workerId?: string, text?: string, now = Date.now()): void {
   const key = relayContactKey(phone);
   lastReplyAtByPhone.set(key, now);
   if (workerId) lastReplyByByPhone.set(key, workerId);
+  if (text) {
+    const list = recentRepliesByPhone.get(key) ?? [];
+    list.push({ at: now, text });
+    while (list.length > RECENT_REPLIES_KEPT) list.shift();
+    recentRepliesByPhone.set(key, list);
+  }
 }
 
 /** Bounded reply rate: one process, all relay replies share this window. */
