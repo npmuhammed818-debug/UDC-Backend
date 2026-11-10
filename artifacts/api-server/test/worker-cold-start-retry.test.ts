@@ -68,3 +68,50 @@ test('speech synthesis gets the same single cold-start retry', async () => {
   assert.equal(calls, 2);
   assert.deepEqual(timeouts, [30_000, 60_000]);
 });
+
+test('a worker 429 falls back to direct Groq STT immediately when configured', async () => {
+  // Env must stay patched across awaits (withEnv restores when the promise is
+  // created), so set and restore it by hand here.
+  const keys = ['AKIF_WORKER_URL', 'AKIF_WORKER_TOKEN', 'AKIF_WORKER_MEDIA_ENABLED', 'GROQ_API_KEY', 'ELEVENLABS_API_KEY', 'AKIF_AUDIO_DIRECT_STT'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.AKIF_WORKER_URL = 'https://worker.test'; process.env.AKIF_WORKER_TOKEN = 'synthetic-token';
+  process.env.AKIF_WORKER_MEDIA_ENABLED = 'true'; process.env.GROQ_API_KEY = 'synthetic-groq-key';
+  delete process.env.ELEVENLABS_API_KEY; delete process.env.AKIF_AUDIO_DIRECT_STT;
+  let workerCalls = 0; let groqCalls = 0;
+  try {
+    await withFetch(async (url) => {
+      if (url.includes('worker.test')) { workerCalls++; return new Response('rate limited', { status: 429 }); }
+      if (url.includes('api.groq.com')) { groqCalls++; return new Response(JSON.stringify({ text: 'synthetic direct transcript', language: 'ml' }), { status: 200 }); }
+      throw new Error('unexpected url ' + url);
+    }, async () => {
+      const heard = await transcribeAkifAudioDetailed(audio);
+      assert.deepEqual(heard, { text: 'synthetic direct transcript', language: 'mal' }, 'Groq 639-1 language maps to 639-3');
+    }, []);
+    assert.equal(workerCalls, 1, 'no 15-second 429 waits when the direct fallback exists');
+    assert.equal(groqCalls, 1);
+  } finally {
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+});
+
+test('without direct STT keys the original worker error still surfaces', async () => {
+  await withEnv({ ...WORKER_ENV, GROQ_API_KEY: undefined, ELEVENLABS_API_KEY: undefined }, () => withFetch(async () => {
+    return new Response('down', { status: 500 });
+  }, async () => {
+    await assert.rejects(() => transcribeAkifAudioDetailed(audio), /akif_audio_http_500/);
+  }, []));
+});
+
+test('direct fallback can be switched off with AKIF_AUDIO_DIRECT_STT=false', async () => {
+  const keys = ['AKIF_WORKER_URL', 'AKIF_WORKER_TOKEN', 'AKIF_WORKER_MEDIA_ENABLED', 'GROQ_API_KEY', 'AKIF_AUDIO_DIRECT_STT'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  process.env.AKIF_WORKER_URL = 'https://worker.test'; process.env.AKIF_WORKER_TOKEN = 'synthetic-token';
+  process.env.AKIF_WORKER_MEDIA_ENABLED = 'true'; process.env.GROQ_API_KEY = 'synthetic-groq-key'; process.env.AKIF_AUDIO_DIRECT_STT = 'false';
+  try {
+    await withFetch(async () => new Response('down', { status: 500 }), async () => {
+      await assert.rejects(() => transcribeAkifAudioDetailed(audio), /akif_audio_http_500/);
+    }, []);
+  } finally {
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+});

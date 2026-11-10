@@ -174,9 +174,33 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
     const brain = await runBrainTurn({ phone, text, messageId });
     if (brain?.background) await brain.cancelBackground?.();
     return { reply: brain?.reply ?? null, backgroundDiscarded: Boolean(brain?.background), toolsUsed: brain?.toolsUsed ?? [] };
-  } catch {
+  } catch (error) {
+    // Sanitized reason only (HTTP status class or error name): the provider's
+    // error body is never logged. A silent null here was costing us the cause
+    // of empty held drafts (owner report, 10 Nov).
+    const msg = error instanceof Error ? error.message : "";
+    const httpStatus = /HTTP (\d{3})/i.exec(msg)?.[1];
+    console.warn("AKIF relay draft turn failed", { reason: httpStatus ? `http_${httpStatus}` : (error instanceof Error ? error.name : "unknown") });
     return null;
   }
+}
+
+/** One relay draft turn, with a busy wait for an in-flight previous turn and a
+ *  single retry when the turn failed or came back empty (a provider rate limit
+ *  on back-to-back turns produced held messages with no draft, 10 Nov). */
+export async function buildHumanRelayDraftWithRetry(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
+  let draft = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    draft = await buildHumanRelayDraft(phone, text, messageId);
+    if (draft?.reply !== BRAIN_BUSY_REPLY) break;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  if (!draft?.reply) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const retry = await buildHumanRelayDraft(phone, text, messageId);
+    if (retry?.reply) return retry;
+  }
+  return draft;
 }
 
 /** Send the dev-side answer. Voice requests use the normal voice path with its own honest text fallback. */
@@ -1643,7 +1667,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
           const relayVoiceCrisis = crisisSafetyReply(heard.text);
           if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
-          const draft = heard.text.trim() ? await buildHumanRelayDraft(message.from, heard.text, message.id) : null;
+          const draft = heard.text.trim() ? await buildHumanRelayDraftWithRetry(message.from, heard.text, message.id) : null;
           // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
           // only). Text even for a voice greeting, so the auto path never touches
           // TTS quota; anything beyond a plain greeting stays on the human hold.
@@ -1917,13 +1941,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Slow-turn heads-up: if the reply takes more than a few seconds the
         // customer hears a short natural note first (owner feedback 10 Nov).
         const slowNotice = setTimeout(() => { void deliverHumanRelayReply(message.from!, "On it, one minute."); }, 5000);
-        // Wait out any in-flight turn from the previous burst, then draft once.
-        let draft = null;
-        for (let attempt = 0; attempt < 6; attempt++) {
-          draft = await buildHumanRelayDraft(message.from, combinedText, message.id);
-          if (draft?.reply !== BRAIN_BUSY_REPLY) break;
-          await new Promise((r) => setTimeout(r, 3000));
-        }
+        // Wait out any in-flight turn from the previous burst, then draft once
+        // (with one retry when the turn itself failed or came back empty).
+        const draft = await buildHumanRelayDraftWithRetry(message.from, combinedText, message.id);
         clearTimeout(slowNotice);
         let autoAnswered = false;
         let autoNote: string | undefined;
