@@ -421,16 +421,35 @@ export async function fetchAkifSpeechStatus(): Promise<AkifSpeechStatus | null> 
 
 export async function synthesizeAkifSpeechTimed(text: string, conversational = false, language = "english"): Promise<{ bytes: Uint8Array; seconds: number | null }> {
   const config = workerConfig();
-  if (!config) throw new Error("akif_speech_not_configured");
-  const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/speech/synthesize`, {
-    method: "POST",
-    headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
-    body: JSON.stringify({ text, conversational, language }),
-    signal: AbortSignal.timeout(timeoutMs),
-  }), 30_000);
-  if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("akif_speech_size_invalid");
-  const seconds = Number(response.headers.get("x-audio-seconds"));
-  return { bytes, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null };
+  if (!config) {
+    // No paid speech worker configured: use the free Edge neural voice when
+    // enabled (owner direction, 10 Nov), else voice is simply unavailable.
+    const { freeTtsEnabled, synthesizeFreeTts } = await import("../freeTts.ts");
+    if (freeTtsEnabled()) {
+      const { normalizeVoiceLanguage } = await import("../voiceLanguage.ts");
+      return synthesizeFreeTts(text, normalizeVoiceLanguage(language) ?? "english");
+    }
+    throw new Error("akif_speech_not_configured");
+  }
+  try {
+    const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/speech/synthesize`, {
+      method: "POST",
+      headers: { "x-akif-worker-token": config.token, "content-type": "application/json" },
+      body: JSON.stringify({ text, conversational, language }),
+      signal: AbortSignal.timeout(timeoutMs),
+    }), 30_000);
+    if (!response.ok) throw new Error(`akif_speech_http_${response.status}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 2 * 1024 * 1024) throw new Error("akif_speech_size_invalid");
+    const seconds = Number(response.headers.get("x-audio-seconds"));
+    return { bytes, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null };
+  } catch (error) {
+    // Paid worker failed: fall back to the free Edge voice when enabled so a
+    // voice customer still gets voice (owner direction, 10 Nov).
+    const { freeTtsEnabled, synthesizeFreeTts } = await import("../freeTts.ts");
+    if (!freeTtsEnabled()) throw error;
+    console.warn(JSON.stringify({ event: "akif_speech_worker_failed_free_fallback" }));
+    const { normalizeVoiceLanguage } = await import("../voiceLanguage.ts");
+    return synthesizeFreeTts(text, normalizeVoiceLanguage(language) ?? "english");
+  }
 }
