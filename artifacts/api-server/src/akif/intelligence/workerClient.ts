@@ -282,10 +282,18 @@ export async function transcribeAkifAudioDetailed(input: { bytes: Uint8Array; mi
   const bytes = new Uint8Array(input.bytes.length); bytes.set(input.bytes);
   const body = new FormData();
   body.set("file", new Blob([bytes.buffer], { type: input.mimeType }), "voice");
-  const response = await withColdStartRetry((timeoutMs) => fetch(`${config.baseUrl}/media/audio/transcribe`, {
+  const call = (timeoutMs: number) => fetch(`${config.baseUrl}/media/audio/transcribe`, {
     method: "POST", headers: { "x-akif-worker-token": config.token }, body,
     signal: AbortSignal.timeout(timeoutMs),
-  }), 25_000);
+  });
+  let response = await withColdStartRetry(call, 25_000);
+  if (response.status === 429) {
+    // The free-tier worker answers 429 from the platform proxy while it
+    // wakes from suspension; one delayed retry rides out the wake window.
+    // 503 stays an immediate configuration fact (never retried).
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    response = await withColdStartRetry(call, 60_000);
+  }
   if (!response.ok) throw new Error(`akif_audio_http_${response.status}`);
   const result = await response.json() as { text?: unknown; language?: unknown };
   if (typeof result.text !== "string" || !result.text.trim()) throw new Error("akif_audio_empty");
