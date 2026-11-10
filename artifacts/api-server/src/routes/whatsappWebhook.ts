@@ -2109,6 +2109,20 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature-rescue` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${featureIntent}` } } } as ChatMessage)) continue;
           } catch { /* fall through to the natural retry note below */ }
         }
+        // A greeting never needs the brain: when the provider is rate-limited
+        // the customer still gets a warm hello in seconds, not a retry note
+        // (owner report, 10 Nov launch). Variants rotate so repeats don't
+        // read as a canned line.
+        if (isSimpleGreetingText(message.text.body)) {
+          const greetings = [
+            "Hey, good to hear from you. What can I do for you?",
+            "Hi there, how can I help you today?",
+            "Hello, nice to hear from you. What are you looking for?",
+          ];
+          const pick = greetings[Math.floor(Date.now() / 1000) % greetings.length];
+          await deliverWhatsAppReply(message.from, pick);
+          continue;
+        }
         // Everything else gets one natural line, never a form or a canned
         // busy message (owner rule, 8 Nov).
         await deliverWhatsAppReply(message.from, "Sorry, I missed that for a moment - could you say it again?");
