@@ -18,6 +18,7 @@ import {
   setRelayContactBriefing,
 } from "../akif/humanRelay";
 import { isBrainOrchestratorEnabled } from "../akif/brainOrchestrator";
+import { resendTransportConfigured } from "../auth/resendAuthProvider.ts";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
@@ -124,6 +125,9 @@ router.get("/akif-relay/status", (req, res) => {
     voiceNotesIn: isAkifWorkerMediaEnabled(),
     voiceReplies: voiceRepliesEnabled(),
     replySinkStore: replySinkEnabled(),
+    // Whether the registration email OTP transport (Resend) is fully
+    // configured; false means codes silently cannot go out (10 Nov OTP rule).
+    emailOtp: resendTransportConfigured(),
     realSendToRelayNumbers: numbers.filter((n) => replySinkSendAllowed(n)).length,
   });
 });
