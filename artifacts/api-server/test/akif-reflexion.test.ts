@@ -112,6 +112,19 @@ test("akif reflexion: one honest self-lesson from a real reply problem, clean-or
     assert.equal(dirty.status,'rejected');
     assert.equal(rows.akifSharedLessonsTable.length,1,'nothing leaky is ever stored');
 
+    // 9b. Launch-night critique (10 Nov): re-asking a detail already given
+    // is caught, across turns too.
+    assert.equal(m.reflectOnReply({customerText:'what next?',reply:'Sure, what is your email?',previousCustomerTexts:['My email id: trinitysandra2512@gmail.com']}).rule,'re-asked-known-detail');
+    assert.equal(m.reflectOnReply({customerText:'My full name is Sandra Victor',reply:'Thanks! And your full name?'}).rule,'re-asked-known-detail');
+    // A first-time ask is clean.
+    assert.equal(m.reflectOnReply({customerText:'I want to register',reply:'Happy to help. What is your email?'}),null);
+
+    // 9c. A bare acknowledgement to real information is caught.
+    assert.equal(m.reflectOnReply({customerText:'My full name is Sandra Victor',reply:'Yes, exactly.'}).rule,'bare-ack-non-answer');
+    assert.equal(m.reflectOnReply({customerText:'My email id: sandra@example.com',reply:'Great!'}).rule,'bare-ack-non-answer');
+    // A real acknowledgement question that moves the chat is clean.
+    assert.equal(m.reflectOnReply({customerText:'ok thanks',reply:'Welcome! Anything else I can help with?'}),null);
+
     // 10. Stored self-lessons come back through the normal recall path
     // (proof of "use it next time"): recallSharedLessons reads the same table.
     const found=rows.akifSharedLessonsTable.filter(r=>r.topic==='self-reflection'&&r.status==='approved');
