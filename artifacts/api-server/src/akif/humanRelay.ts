@@ -556,6 +556,8 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
   for (const item of items) {
     if (item.answeredAt || item.autoAnswered) continue;
     if (activeClaim(item)) continue;
+    const sticky = stickyWorkerFor(item.phone, now);
+    if (sticky && sticky !== workerId) continue;
     const blocked = items.some((i) => i !== item && i.phone === item.phone && !i.answeredAt && !i.autoAnswered
       && (Date.parse(i.at) < Date.parse(item.at) || activeClaim(i)));
     if (blocked) continue;
@@ -645,6 +647,20 @@ export function lastHeardLanguageFor(phone: string): string | undefined {
 const REPLY_COOLDOWN_MS = 20_000;
 const lastReplyAtByPhone = new Map<string, number>();
 const lastReplyByByPhone = new Map<string, string>();
+// Sticky ownership (owner direction, 10 Nov): once a worker answers a
+// customer, that worker keeps the customer until they go idle - one human
+// owns one conversation, so chats run in parallel without mixing.
+const STICKY_WORKER_MS = 10 * 60 * 1000;
+
+/** The worker who currently owns this customer, when their last reply is
+ *  recent. Undefined once they have been idle past the window. */
+export function stickyWorkerFor(phone: string, now = Date.now()): string | undefined {
+  const key = relayContactKey(phone);
+  const by = lastReplyByByPhone.get(key);
+  const at = lastReplyAtByPhone.get(key);
+  if (!by || at === undefined || now - at >= STICKY_WORKER_MS) return undefined;
+  return by;
+}
 // Recent bot lines per phone, so workers see what the chat already said and
 // the guard can block repeats and conversation resets (owner direction, 10 Nov).
 const recentRepliesByPhone = new Map<string, Array<{ at: number; text: string; seq?: number }>>();

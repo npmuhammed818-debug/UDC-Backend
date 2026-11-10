@@ -6,6 +6,7 @@ import {
   humanRelayEnabled,
   humanRelayNumbers,
   hasActiveHumanRelayClaim,
+  stickyWorkerFor,
   lastHeardLanguageFor,
   markHumanRelayAnswered, claimHumanRelay, answerClaimedHumanRelayItem,
   relayReplyCooldownActive, noteHumanRelayReplySent, relayClaimStillValid, relayReplyResetsConversation,
@@ -185,6 +186,11 @@ router.post("/akif-relay/reply", async (req, res) => {
   const { phone, voice } = parsed.data!;
   // A phone-only reply must not race a worker's active claim on that number:
   // the worker's answer and this one would both go out (10 Nov launch).
+  const stickyOwner = stickyWorkerFor(phone);
+  if (!parsed.data!.itemId && stickyOwner && stickyOwner !== (parsed.data!.workerId ?? "")) {
+    res.status(409).json({ ok: false, error: "customer_owned", detail: `${stickyOwner} owns this customer right now` });
+    return;
+  }
   if (!parsed.data!.itemId && hasActiveHumanRelayClaim(phone)) {
     res.status(409).json({ ok: false, error: "claim_lost" });
     return;
