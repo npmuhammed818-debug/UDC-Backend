@@ -1928,11 +1928,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         let autoAnswered = false;
         let autoNote: string | undefined;
         const autoReply = draft?.reply ?? null;
-        if (burst.texts.length === 1 && relayAutoGreetingsEnabled() && isSimpleGreetingText(combinedText) && greetingAutoReplySafe(autoReply)) {
+        if (relayAutoGreetingsEnabled() && isSimpleGreetingText(combinedText) && greetingAutoReplySafe(autoReply)) {
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
-        } else if (burst.texts.length === 1 && relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
+        } else if (relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
           // Typed "menu": the brain explains the options in its own words (owner
           // rule, 8 Nov) and the relay auto-sends that explanation, a hold here
           // would leave the menu question unanswered (owner feedback 10 Nov).
