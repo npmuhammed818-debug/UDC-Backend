@@ -1965,9 +1965,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // answer instead of the brain or scripted chain answering it.
       // An active intake (offer or requirement) belongs to the intake flow,
       // not the relay: holding its answers breaks the question order and
-      // doubles replies (owner report, 10 Nov). The brain/scripted chain
-      // below answers these turns directly.
-      if (message.from && !dealActionDirect && !hasPendingIntake && humanRelayActiveFor(message.from)) {
+      // doubles replies (owner report, 10 Nov). The skip covers any live
+      // intake draft, even a freshly opened one with no fields yet (the
+      // duplicate-question bug the owner hit, 10 Nov).
+      const hasOpenIntake = Boolean(pendingIntake && !pendingIntake.stale);
+      if (message.from && !dealActionDirect && !hasOpenIntake && humanRelayActiveFor(message.from)) {
         // Acknowledgements (ok, thanks, noted): a reaction, no text reply, no
         // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
         if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
