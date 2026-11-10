@@ -111,8 +111,9 @@ const GREETING_PARTS = [
   "namaste", "namaskaram", "salaam?", "assalamu\\s+alaikum",
   "how\\s+(?:are|r)\\s+(?:you|u)", "how'?s\\s+it\\s+going", "what'?s\\s+up", "sup",
 ];
+// A greeting may be addressed to the brand or the assistant ("hi UDC", "hello AKIF").
 const SIMPLE_GREETING = new RegExp(
-  `^\\s*(?:${GREETING_PARTS.join("|")})(?:[\\s,!.?…]+(?:${GREETING_PARTS.join("|")}))*[\\s,!.?…]*$`,
+  `^\\s*(?:${GREETING_PARTS.join("|")})(?:[\\s,!.?…]+(?:(?:${GREETING_PARTS.join("|")})|udc|akif))*[\\s,!.?…]*$`,
   "i",
 );
 
