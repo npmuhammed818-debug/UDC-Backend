@@ -535,6 +535,55 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.images?.length ?? 0, 0, "a suspended counterparty receives no relay");
       assert.match(state.sent.at(-1).body, /kept it in this deal/);
     });
+    await t.test("trade documents relay straight to the other side; KYC-looking and legal drafts never do", async () => {
+      // An invoice PDF in a deal room goes directly to the counterparty as a
+      // document, with a viewer grant, a relay context and an audit row.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-inv", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-inv" }, document: { id: "doc-inv", filename: "invoice.pdf", caption: "commercial invoice" } });
+      const relayed = state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link);
+      assert.equal(relayed.length, 1, "counterparty receives the document");
+      assert.match(String(relayed[0].body.link), /signed\.example/);
+      assert.match(state.sent.at(-1).body, /passed it straight to the other side/);
+      const invDoc = rows.documentsTable.at(-1);
+      assert.equal(invDoc.documentType, "invoice");
+      assert.equal(invDoc.status, "pending", "file record unchanged, UDC can still review later");
+      assert.ok(rows.documentAccessTable.some(r => r.documentId === invDoc.id && r.userId === "seller" && r.accessRole === "viewer"));
+      assert.ok(rows.auditLogsTable.some(r => r.action === "trade_document_auto_relayed" && r.entityId === invDoc.id));
+      assert.ok(rows.whatsappMessageContextsTable.some(r => r.kind === "deal_document_relay" && r.recipientUserId === "seller"));
+      const badSends = state.sent.filter((x: any) => x.to === "10000000001" && typeof x.body === "object" && x.body?.link);
+      assert.equal(badSends.length, 0, "sender is never relayed their own document");
+      // Bill of lading and SGS reports behave the same.
+      for (const [name, type] of [["bl.pdf", "BL"], ["sgs-report.pdf", "SGS"], ["packing-list.pdf", "packing_list"]] as const) {
+        reset(); seedDeal();
+        rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-t", dealId: "deal-b", recipientUserId: "buyer" }];
+        await message({ context: { id: "quoted-t" }, document: { id: "doc-t", filename: name } });
+        assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 1, name + " relays");
+        assert.equal(rows.documentsTable.at(-1).documentType, type);
+      }
+      // A PDF that reads as KYC/bank stays on the review path, never relayed.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-kyc", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-kyc" }, document: { id: "doc-kyc", filename: "bank-statement.pdf", caption: "my bank statement" } });
+      assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 0, "bank documents never auto-relay");
+      assert.match(state.sent.at(-1).body, /secure private upload link/, "KYC is redirected to the vault link, never stored from chat");
+      assert.ok(!rows.documentsTable.some(r => r.dealId === "deal-b"), "no chat-side record for a KYC file");
+      assert.ok(!rows.auditLogsTable.some(r => r.action === "trade_document_auto_relayed"));
+      // Legal/negotiation drafts keep their staged flow, never auto-relayed.
+      for (const name of ["LOI.pdf", "SPA.pdf", "NCNDA.pdf"]) {
+        reset(); seedDeal();
+        rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-l", dealId: "deal-b", recipientUserId: "buyer" }];
+        await message({ context: { id: "quoted-l" }, document: { id: "doc-l", filename: name } });
+        assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 0, name + " never auto-relays");
+      }
+      // Relay failure leaves the document stored and the sender hears the honest line.
+      reset(); seedDeal();
+      rows.dealParticipantsTable = rows.dealParticipantsTable.filter(r => !(r.dealId === "deal-b" && r.userId === "seller"));
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-solo", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-solo" }, document: { id: "doc-solo", filename: "invoice.pdf" } });
+      assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 0);
+      assert.match(state.sent.at(-1).body, /keep it here for review/);
+    });
     await t.test("an agent participant never receives the automatic photo relay or a document grant", async () => {
       reset(); seedDeal();
       rows.usersTable.push({ id: "agent", phone: "10000000003", role: "agent", status: "verified" });

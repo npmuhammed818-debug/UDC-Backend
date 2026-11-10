@@ -497,6 +497,9 @@ function inferDocumentType(filename?: string, caption?: string) {
   if (/bill of lading|\bbl\b/.test(value)) return "BL";
   if (/certificate of origin|\bco\b/.test(value)) return "CO";
   if (/coa|assay/.test(value)) return "COA";
+  if (/\binvoice\b/.test(value)) return "invoice";
+  if (/packing[\s_-]?list/.test(value)) return "packing_list";
+  if (/inspection/.test(value)) return "inspection_report";
   if (/\.(jpe?g|png|webp)$/i.test(filename ?? "")) return "image";
   return "trade_document";
 }
@@ -750,6 +753,63 @@ async function handleWhatsAppDealDocument(
     } catch { /* relay failure still leaves the photo stored in the deal */ }
   }
 
+  // Trade documents go straight to the other side of the same deal, no UDC
+  // review step first (owner direction, 10 Nov): invoice, packing list, bill
+  // of lading, inspection and certificates. Negotiation/legal drafts (LOI,
+  // ICPO, FCO, SCO, SPA, NCNDA) keep their staged flow with the hidden-party
+  // rules, and anything that reads as KYC/ID/bank NEVER auto-relays.
+  const TRADE_RELAY_TYPES = new Set(["SGS", "BL", "CO", "COA", "invoice", "packing_list", "inspection_report", "trade_document"]);
+  const KYC_WORDS = /passport|national[\s_-]?id|aadhaar|aadhar|pan[\s_-]?card|bank|kyc|visa|driving[\s_-]?licen[cs]e/i;
+  let tradeRelayedTo = 0;
+  if (TRADE_RELAY_TYPES.has(documentType) && !KYC_WORDS.test(`${document.filename ?? ""} ${document.caption ?? ""}`)) {
+    try {
+      const [dealRow] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+        .where(eq(dealsTable.id, dealId)).limit(1);
+      // Same recipient rule as the photo relay: the deal's buyer/seller
+      // principals only, never agents or stale-role accounts.
+      const counterparties = await db.select({
+        userId: dealParticipantsTable.userId,
+        phone: usersTable.phone,
+      }).from(dealParticipantsTable)
+        .innerJoin(usersTable, eq(usersTable.id, dealParticipantsTable.userId))
+        .where(and(
+          eq(dealParticipantsTable.dealId, dealId),
+          eq(dealParticipantsTable.status, "active"),
+          inArray(dealParticipantsTable.participantRole, ["buyer", "seller"]),
+          inArray(usersTable.role, ["buyer", "seller"]),
+          eq(usersTable.status, "verified"),
+          ne(dealParticipantsTable.userId, sender.id),
+        ));
+      const senderSide = sender.role === "buyer" ? "buyer" : sender.role === "seller" ? "seller" : "other side";
+      const relayCaption = `${documentType} from the ${senderSide} in deal ${dealRow?.dealNumber ?? "your deal"}.${document.caption ? ` Note: ${document.caption.slice(0, 300)}` : ""}`;
+      for (const side of counterparties) {
+        if (!side.phone) continue;
+        try {
+          const signedUrl = await createSignedDownloadUrl(objectPath);
+          const delivery = await sendWhatsAppDocument(side.phone, signedUrl, safeFilename, relayCaption);
+          if (delivery.delivered) {
+            tradeRelayedTo += 1;
+            await db.insert(documentAccessTable).values({
+              documentId: savedDocument.id, userId: side.userId, accessRole: "viewer",
+            }).onConflictDoNothing();
+            if ("messageId" in delivery && delivery.messageId) {
+              await db.insert(whatsappMessageContextsTable).values({
+                providerMessageId: delivery.messageId, dealId,
+                recipientUserId: side.userId, kind: "deal_document_relay",
+              }).onConflictDoNothing();
+            }
+          }
+        } catch { /* one failed recipient never blocks the others */ }
+      }
+      if (tradeRelayedTo > 0) {
+        await db.insert(auditLogsTable).values({
+          actorUserId: sender.id, action: "trade_document_auto_relayed", entityType: "document", entityId: savedDocument.id,
+          metadata: { dealId, documentType, recipients: tradeRelayedTo, channel: "whatsapp" },
+        });
+      }
+    } catch { /* relay failure still leaves the document stored in the deal */ }
+  }
+
   if (documentType !== "image") {
   void processDocumentIntelligence({
     documentId: savedDocument.id,
@@ -796,7 +856,9 @@ async function handleWhatsAppDealDocument(
       ? photoRelayedTo > 0
         ? `Got the photo and passed it to the other side in this deal.\n\n${SENSITIVE_UPLOAD_WARNING}`
         : `Got the photo and kept it in this deal. I could not pass it to the other side just now - I’ll keep it here.\n\n${SENSITIVE_UPLOAD_WARNING}`
-      : `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
+      : tradeRelayedTo > 0
+        ? `Got the ${documentType} and passed it straight to the other side in this deal.\n\n${SENSITIVE_UPLOAD_WARNING}`
+        : `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
     dealId,
     recipientUserId: sender.id,
   };
