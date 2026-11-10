@@ -27,7 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
-import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -1686,7 +1686,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
           }
-          enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote });
+          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote });
+          if (!voiceAutoAnswered && heldVoice.draft && relayFallbackReplySafe(heard.text, heldVoice.draft, draft?.toolsUsed ?? [])) {
+            scheduleRelayFallback(heldVoice, deliverHumanRelayReply);
+          }
         } catch (error) {
           console.warn(`relay voice intake failed { stage: "${relayVoiceStage}", error: "${error instanceof Error ? error.message.slice(0, 120) : "unknown"}" }`);
           await deliverWhatsAppReply(message.from, "I couldn’t read that voice note just now. Please resend it or type your message.");
@@ -1981,7 +1984,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
         }
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
+        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
+        if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
+          scheduleRelayFallback(heldText, deliverHumanRelayReply);
+        }
         continue;
       }
       let brainFailed = false;

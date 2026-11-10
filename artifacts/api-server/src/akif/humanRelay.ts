@@ -192,10 +192,52 @@ export function humanRelayNumbers(env: NodeJS.ProcessEnv = process.env): string[
     .filter((s) => s.length >= 8);
 }
 
+/** "all" (or "*") holds every number's open chat turns (relay-for-everyone mode). */
 export function humanRelayActiveFor(phone: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!humanRelayEnabled(env)) return false;
   const digits = phone.replace(/\D/g, "");
-  return digits.length >= 8 && humanRelayNumbers(env).includes(digits);
+  if (digits.length < 8) return false;
+  const raw = (env.AKIF_HUMAN_RELAY_NUMBERS ?? "").split(",").map((s) => s.trim().toLowerCase());
+  if (raw.includes("all") || raw.includes("*")) return true;
+  return humanRelayNumbers(env).includes(digits);
+}
+
+/** Brain fallback for a held relay item: after this many ms without a dev
+ *  answer, a draft that already passes the auto-send gates is sent as the
+ *  brain's answer (owner direction, 10 Nov). Default 0 = off. */
+export function relayFallbackMs(env: NodeJS.ProcessEnv = process.env): number {
+  return Math.max(0, Number(env.AKIF_RELAY_FALLBACK_MS ?? 0) || 0);
+}
+
+/** "all" emails every held item (default); "holds" emails only items still
+ *  waiting on a dev answer (cuts alert volume once auto-answers are trusted). */
+export function relayAlertMode(env: NodeJS.ProcessEnv = process.env): "all" | "holds" {
+  return (env.AKIF_RELAY_ALERT_MODE ?? "all").trim().toLowerCase() === "holds" ? "holds" : "all";
+}
+
+/** The auto-send gates, together: greeting-safe, menu-safe or tool-backed. */
+export function relayFallbackReplySafe(text: string, reply: string | null | undefined, toolsUsed: string[]): reply is string {
+  return (isSimpleGreetingText(text) && greetingAutoReplySafe(reply))
+    || (isMenuRequestText(text) && menuAutoReplySafe(reply))
+    || relayAutoToolReplySafe(reply, toolsUsed);
+}
+
+/** Sends the held draft after windowMs if no dev answered first. The safety
+ *  gates are evaluated by the caller before scheduling; the timer is lost on
+ *  restart (held items are memory-only by design). */
+export function scheduleRelayFallback(item: HumanRelayItem, deliver: (phone: string, reply: string) => Promise<{ delivered?: boolean } | null | undefined>, windowMs = relayFallbackMs()): void {
+  if (windowMs <= 0 || item.answeredAt || !item.draft) return;
+  const timer = setTimeout(() => {
+    const still = items.find((i) => i.id === item.id && !i.answeredAt);
+    if (!still || !still.draft) return;
+    void deliver(still.phone, still.draft).then((sent) => {
+      if (sent?.delivered) {
+        still.answeredAt = new Date().toISOString();
+        console.info("AKIF relay fallback auto-sent a held draft", { kind: still.kind });
+      }
+    }).catch(() => { /* the item stays held for the dev side */ });
+  }, windowMs);
+  timer.unref?.();
 }
 
 export function pruneHumanRelay(now = Date.now()): void {
@@ -232,7 +274,10 @@ export function enqueueHumanRelay(input: {
   }
   while (items.length > MAX_ITEMS) items.shift();
   // Fire-and-forget dev-side email alert; the relay never waits on email.
-  void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered), autoNote: input.autoNote });
+  // "holds" mode skips the email for auto-answered items (volume control).
+  if (!(relayAlertMode() === "holds" && input.autoAnswered)) {
+    void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered), autoNote: input.autoNote });
+  }
   return item;
 }
 
