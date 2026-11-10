@@ -11,11 +11,13 @@ import {
   relayBodyAuthorized,
   relayReadAuthorized,
   validateRelayReplyText,
+  decodeRelayAudio,
 } from "../akif/humanRelay";
 import { isBrainOrchestratorEnabled } from "../akif/brainOrchestrator";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
+import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
 
 const router: IRouter = Router();
@@ -23,10 +25,15 @@ const router: IRouter = Router();
 const replySchema = z
   .object({
     phone: z.string().min(8).max(24),
-    text: z.string().min(1).max(2000),
+    text: z.string().min(1).max(2000).optional(),
     voice: z.boolean().optional(),
+    // Dev-made voice note (owner-approved 10 Nov, allowlist only): the dev side
+    // renders audio itself and the bot sends it as a WhatsApp voice note, so a
+    // dev-side answer costs no TTS provider quota. Ogg/Opus only, 16 MB max.
+    audioBase64: z.string().min(8).max(23_000_000).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => v.text || v.audioBase64, { message: "text_or_audio_required" });
 
 const skipSchema = z
   .object({
@@ -96,12 +103,13 @@ router.get("/akif-relay/pending", (req, res) => {
 router.post("/akif-relay/reply", async (req, res) => {
   if (!writeAuthorized(req, res)) return;
   const parsed = replySchema.safeParse(req.body);
-  const text = parsed.success ? validateRelayReplyText(parsed.data.text) : null;
-  if (!parsed.success || text === null) {
+  const text = parsed.success && parsed.data.text ? validateRelayReplyText(parsed.data.text) : null;
+  const audio = parsed.success && parsed.data.audioBase64 ? decodeRelayAudio(parsed.data.audioBase64) : null;
+  if (!parsed.success || (text === null && audio === null) || (parsed.success && parsed.data.text && text === null) || (parsed.success && parsed.data.audioBase64 && audio === null)) {
     res.status(400).json({ ok: false, error: "invalid_reply" });
     return;
   }
-  const { phone, voice } = parsed.data;
+  const { phone, voice } = parsed.data!;
   // Outbound is locked to the same allowlist as inbound: in this phase that is
   // the owner's own number only.
   if (!humanRelayActiveFor(phone)) {
@@ -112,10 +120,12 @@ router.post("/akif-relay/reply", async (req, res) => {
   res.status(429).json({ ok: false, error: "reply_rate_limit" });
     return;
   }
-  const delivery = await deliverHumanRelayReply(phone, text, {
-    voice,
-    heardLanguage: lastHeardLanguageFor(phone),
-  });
+  const delivery = audio
+    ? await sendWhatsAppVoiceNote(phone, audio)
+    : await deliverHumanRelayReply(phone, text!, {
+        voice,
+        heardLanguage: lastHeardLanguageFor(phone),
+      });
   if (!delivery.delivered) {
     res.status(502).json({ ok: false, error: "delivery_failed", reason: delivery.reason });
     return;

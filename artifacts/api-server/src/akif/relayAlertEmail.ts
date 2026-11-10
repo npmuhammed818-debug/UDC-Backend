@@ -16,7 +16,7 @@ export function relayAlertEmailConfigured(env: NodeJS.ProcessEnv = process.env):
 }
 
 export async function sendRelayHeldAlert(
-  input: { phone: string; kind: "text" | "voice"; text: string; draft?: string | null; autoAnswered?: boolean },
+  input: { phone: string; kind: "text" | "voice"; text: string; draft?: string | null; autoAnswered?: boolean; autoNote?: string },
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   if (!relayAlertEmailConfigured(env)) return false;
@@ -38,7 +38,7 @@ export async function sendRelayHeldAlert(
             ? `\n\nBrain draft (not sent; the dev side may edit before replying):\n${input.draft.slice(0, 1000)}`
             : "") +
           (input.autoAnswered
-            ? `\n\nAuto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:\n${(input.draft ?? "").slice(0, 1000)}`
+            ? `\n\n${input.autoNote ?? "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"}${input.draft ? `\n${input.draft.slice(0, 1000)}` : ""}`
             : ""),
       }),
     });

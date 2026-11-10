@@ -5,8 +5,54 @@ import { sendRelayHeldAlert } from "./relayAlertEmail.ts";
 // more) may be auto-answered on staging for allowlisted numbers. Env-gated,
 // default OFF. Anything with trade, money, deals, questions or any doubt
 // stays on the human hold. Fail closed: only the exact patterns below count.
+/** Decoded Ogg bytes or null. Only real Ogg containers (Opus voice notes) pass. */
+export function decodeRelayAudio(audioBase64: string): Uint8Array | null {
+  let bytes: Uint8Array;
+  try { bytes = new Uint8Array(Buffer.from(audioBase64, "base64")); } catch { return null; }
+  if (bytes.length < 27 || bytes.length > 16 * 1024 * 1024) return null;
+  if (bytes[0] !== 0x4f || bytes[1] !== 0x67 || bytes[2] !== 0x67 || bytes[3] !== 0x53) return null; // "OggS"
+  return bytes;
+}
+
 export function relayAutoGreetingsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.AKIF_RELAY_AUTO_GREETINGS ?? "").trim() === "on";
+}
+
+// Owner-approved 10 Nov: acknowledgements (ok, thanks, noted) get a WhatsApp
+// reaction instead of a text reply - and no typing bubble, no hold wait.
+export function relayAckReactionsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.AKIF_RELAY_ACK_REACTIONS ?? "").trim() === "on";
+}
+
+// Owner-approved 10 Nov: when the brain actually used its tools for the
+// answer, that answer may go straight out (staging allowlist only) instead of
+// waiting on the human hold. Tool-less replies still hold.
+export function relayAutoToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.AKIF_RELAY_AUTO_TOOLS ?? "").trim() === "on";
+}
+
+const ACK_WORDS = /^(?:ok(?:ay)?|okie?s?|k+|thanks?(?:\s+you)?(?:\s+so\s+much)?|thankyou|thx|ty|noted|got\s?it|cool|great|nice|super|fine|hmm+|hmm\s+ok|👍+|🙏+|❤️+|❤|done)[\s!.,]*$/i;
+
+/** True only when the whole message is a bare acknowledgement. */
+export function isAcknowledgementText(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= 30 && ACK_WORDS.test(t);
+}
+
+export function ackEmojiFor(text: string): string {
+  return /thank|thx|ty|nanni|shukriya/i.test(text) ? "🙏" : "👍";
+}
+
+/** Auto-send check for tool-backed replies: the brain's own validators already
+ *  ran. Links and reference numbers are allowed ONLY when a tool really ran
+ *  (they come from tool output) - a tool-less reply with a link is exactly the
+ *  invented-link failure mode and never auto-sends. */
+export function relayAutoToolReplySafe(reply: string | null | undefined, toolsUsed: string[]): reply is string {
+  if (!reply || toolsUsed.length === 0) return false;
+  const t = reply.trim();
+  if (t.length === 0 || t.length > 600) return false;
+  if (/\bmenu\b/i.test(t)) return false;
+  return true;
 }
 
 const GREETING_PARTS = [
@@ -96,6 +142,7 @@ export function enqueueHumanRelay(input: {
   draft?: string | null;
   draftBackgroundDiscarded?: boolean;
   autoAnswered?: boolean;
+  autoNote?: string;
 }): HumanRelayItem {
   pruneHumanRelay();
   const item: HumanRelayItem = {
@@ -117,7 +164,7 @@ export function enqueueHumanRelay(input: {
   }
   while (items.length > MAX_ITEMS) items.shift();
   // Fire-and-forget dev-side email alert; the relay never waits on email.
-  void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered) });
+  void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered), autoNote: input.autoNote });
   return item;
 }
 

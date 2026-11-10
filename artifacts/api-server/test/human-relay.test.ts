@@ -221,3 +221,34 @@ test("auto-answered relay item is not pending and the alert email says so", asyn
     resetHumanRelay();
   }
 });
+
+test("acknowledgement detection and emoji choice are strict", async () => {
+  const { isAcknowledgementText, ackEmojiFor } = await import("../src/akif/humanRelay.ts");
+  for (const yes of ["Ok", "okay!", "thanks", "Thank you so much", "noted", "got it", "👍", "k"]) {
+    assert.equal(isAcknowledgementText(yes), true, `should ack: ${yes}`);
+  }
+  for (const no of ["", "ok send the link", "thanks but what about price", "okay 500 kg W320", "Damn", "hello"]) {
+    assert.equal(isAcknowledgementText(no), false, `should not ack: ${no.slice(0, 30)}`);
+  }
+  assert.equal(ackEmojiFor("thanks a lot"), "🙏");
+  assert.equal(ackEmojiFor("ok"), "👍");
+});
+
+test("tool-backed auto reply needs a real tool run; links need tools", async () => {
+  const { relayAutoToolReplySafe } = await import("../src/akif/humanRelay.ts");
+  assert.equal(relayAutoToolReplySafe(null, ["show_feature"]), false);
+  assert.equal(relayAutoToolReplySafe("Here is your link: https://updowncircle.site/upload/abc", []), false);
+  assert.equal(relayAutoToolReplySafe("Here is your link: https://updowncircle.site/upload/abc", ["show_feature"]), true);
+  assert.equal(relayAutoToolReplySafe("Short answer.", ["trade_reference"]), true);
+  assert.equal(relayAutoToolReplySafe("x".repeat(601), ["show_feature"]), false);
+  assert.equal(relayAutoToolReplySafe("Here is the menu", ["show_feature"]), false);
+});
+
+test("relay audio decoder accepts only real Ogg containers within 16 MB", async () => {
+  const { decodeRelayAudio } = await import("../src/akif/humanRelay.ts");
+  const ogg = Buffer.concat([Buffer.from("OggS"), Buffer.alloc(100, 1)]);
+  assert.ok(decodeRelayAudio(ogg.toString("base64")));
+  assert.equal(decodeRelayAudio(Buffer.from("not-ogg-at-all-not-ogg").toString("base64")), null);
+  assert.equal(decodeRelayAudio(Buffer.alloc(10).toString("base64")), null);
+  assert.equal(decodeRelayAudio("%%%not-base64%%%"), null);
+});
