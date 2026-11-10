@@ -307,7 +307,7 @@ function orchestratorSystem(sender: { registered: boolean; role?: string; status
 YOU ARE AKIF, UDC's assistant on WhatsApp. Your goal is to help each customer the way a good human assistant would in a chat: understand what they want, answer from what you know and what your tools return, and get things done for them.
 
 BOUNDARIES - you never:
-- invent facts, prices, statuses, documents or outcomes; anything not in the conversation or a tool result is unknown to you
+- invent facts, prices, statuses, documents, links, codes, upload URLs, reference numbers or outcomes; anything not in the conversation or a tool result is unknown to you
 - mention, push or recite a menu or an option list
 - put several questions, fields or a numbered or bulleted list in one message
 - repeat yourself or ask again for what the customer already told you
@@ -363,7 +363,7 @@ const FORM_DUMP_FALLBACK_INTENT = "Happy to help - let's take it one step at a t
 // line (owner saw the floor loop on his live test, 8 Nov).
 const FORM_DUMP_FALLBACK_RETRY = "Sorry, I'm not handling this chat well. Tell me in a few words what you need, and I'll take it one step at a time.";
 
-export type BrainTurnOutcome = { handled: boolean; reply: string | null; background?: (deliver: (reply: string) => Promise<boolean>) => Promise<void>; cancelBackground?: () => Promise<void> };
+export type BrainTurnOutcome = { handled: boolean; reply: string | null; toolsUsed?: string[]; background?: (deliver: (reply: string) => Promise<boolean>) => Promise<void>; cancelBackground?: () => Promise<void> };
 const handsJobs = new Map<string, { id: string; cancelled: boolean }>();
 
 // Guard floors (code-level, like the form-dump floors above; not brain scripts).
@@ -472,6 +472,7 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
   ];
 
   let finalReply: string | null = null;
+  const toolsUsed: string[] = [];
   let backgroundRequests: import("./intelligence/groqClient.ts").GroqToolCall[] | null = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const gv = admitLlmCall();
@@ -498,6 +499,7 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
     if (existingJob || interruptedJob) { finalReply = turn.content; break; }
     for (const call of turn.toolCalls) {
       const outcome = await executeTool(input.phone, call.name, call.argumentsJson, state);
+      toolsUsed.push(call.name);
       if (outcome.finalReply) finalReply = outcome.finalReply;
       messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content: outcome.note });
     }
@@ -586,7 +588,7 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
   if (backgroundRequests && !sessionSaved) return null;
 
   if (!finalReply) return null;
-  if (!backgroundRequests) return { handled: true, reply: finalReply };
+  if (!backgroundRequests) return { handled: true, reply: finalReply, toolsUsed };
   const job = { id: state.fields._handsJob, cancelled: false };
   handsJobs.set(input.phone, job);
   const requests = backgroundRequests;
@@ -647,5 +649,5 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
       } catch { console.warn("AKIF background work state unavailable",{reason:"save_failed"}); }
     } finally { if(handsJobs.get(input.phone)?.id===job.id)handsJobs.delete(input.phone); }
   });
-  return { handled:true,reply:finalReply,background: async deliver=>{deliverResult??=deliver;await start();}, cancelBackground:async()=>{clearTimeout(startDeadline);await cancelBackground();} };
+  return { handled:true,reply:finalReply,toolsUsed,background: async deliver=>{deliverResult??=deliver;await start();}, cancelBackground:async()=>{clearTimeout(startDeadline);await cancelBackground();} };
 }

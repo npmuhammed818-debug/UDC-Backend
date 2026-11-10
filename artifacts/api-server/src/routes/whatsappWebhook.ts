@@ -27,7 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
-import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -39,7 +39,7 @@ import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
-import { trackReplyFailures, markReadAndTyping } from "../whatsapp/client";
+import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
@@ -164,12 +164,12 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // carries its draft and tool results; any deferred background work is
 // cancelled, never started, because the dev side decides what actually goes
 // out. Brain failure just means no draft - the message is still held.
-export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean } | null> {
+export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
   if (!isBrainOrchestratorEnabled()) return null;
   try {
     const brain = await runBrainTurn({ phone, text, messageId });
     if (brain?.background) await brain.cancelBackground?.();
-    return { reply: brain?.reply ?? null, backgroundDiscarded: Boolean(brain?.background) };
+    return { reply: brain?.reply ?? null, backgroundDiscarded: Boolean(brain?.background), toolsUsed: brain?.toolsUsed ?? [] };
   } catch {
     return null;
   }
@@ -1449,7 +1449,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       if (!claimed) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
-      if (message.from) { senderOf.set(message.id, message.from); markReadAndTyping(message.from, message.id); }
+      if (message.from) { senderOf.set(message.id, message.from); if (humanRelayActiveFor(message.from)) { markRead(message.from, message.id); } else { markReadAndTyping(message.from, message.id); } }
       // Minimal text-only crisis first response before consent, trade, reactions or AI.
       // Captions are checked too, without downloading the attachment.
       const crisis = crisisSafetyReply([message.text?.body, message.document?.caption, message.image?.caption].filter(Boolean).join(" "));
@@ -1638,13 +1638,18 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // only). Text even for a voice greeting, so the auto path never touches
           // TTS quota; anything beyond a plain greeting stays on the human hold.
           let voiceAutoAnswered = false;
+          let voiceAutoNote: string | undefined;
           const voiceReply = draft?.reply ?? null;
           if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text) && greetingAutoReplySafe(voiceReply)) {
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
-            if (voiceAutoAnswered) console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" });
+            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+          } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(voiceReply, draft?.toolsUsed ?? [])) {
+            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
           }
-          enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered });
+          enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote });
         } catch (error) {
           console.warn(`relay voice intake failed { stage: "${relayVoiceStage}", error: "${error instanceof Error ? error.message.slice(0, 120) : "unknown"}" }`);
           await deliverWhatsAppReply(message.from, "I couldn’t read that voice note just now. Please resend it or type your message.");
@@ -1872,15 +1877,29 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // open chat turn from an allowlisted test number is held for a dev-side
       // answer instead of the brain or scripted chain answering it.
       if (message.from && !dealActionDirect && humanRelayActiveFor(message.from)) {
+        // Acknowledgements (ok, thanks, noted): a reaction, no text reply, no
+        // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
+        if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
+          const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction - no reply needed unless it looks wrong.` });
+          continue;
+        }
         const draft = await buildHumanRelayDraft(message.from, message.text.body, message.id);
         let autoAnswered = false;
+        let autoNote: string | undefined;
         const autoReply = draft?.reply ?? null;
         if (relayAutoGreetingsEnabled() && isSimpleGreetingText(message.text.body) && greetingAutoReplySafe(autoReply)) {
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) console.info("AKIF relay auto-answered a simple greeting", { kind: "text" });
+          if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+        } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(autoReply, draft?.toolsUsed ?? [])) {
+          // The brain really used its tools for this answer, so links and
+          // references in it come from tool output, not invention.
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
         }
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered });
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
         continue;
       }
       let brainFailed = false;
