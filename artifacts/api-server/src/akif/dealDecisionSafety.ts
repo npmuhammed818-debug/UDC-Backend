@@ -1,6 +1,7 @@
 import { containsContactDetails, violatesPrivateRelay } from "./dealConversationPrivacy.ts";
 import { contactsUnlocked } from "../deals/contactSharing.ts";
 import { triageBuyerRequirement } from "./buyerRequirementTriage.ts";
+import { leaksModelIdentity } from "./formDump.ts";
 
 export type DealConversationDecision = {
   intent: string;
@@ -162,7 +163,8 @@ export function looksLikeNewTradeIntake(text: string) {
 export function isSafeConversationText(text: string) {
   return Boolean(text.trim()) && !containsInternalLeak(text)
     && !looksLikeProviderDiagnostic(text) && !narratesCounterparty(text)
-    && !looksLikePrecisionChatter(text) && !looksStructured(text);
+    && !looksLikePrecisionChatter(text) && !looksStructured(text)
+    && !leaksModelIdentity(text);
 }
 
 export function normalizeModelDecision(input: {
