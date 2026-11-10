@@ -79,7 +79,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};export const guidanceMainLanguage=async()=>'';",
     "../akif/intelligence/hermesClient": "export const runConversationChat=async()=>({content:'',raw:{}});",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
-    "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
+    "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const warmAkifWorker=()=>{};export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
     "../akif/brainOrchestrator":
       "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",

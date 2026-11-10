@@ -248,6 +248,14 @@ export function isAkifWorkerMediaEnabled() {
   return process.env.AKIF_WORKER_MEDIA_ENABLED === "true" && isAkifWorkerConfigured();
 }
 
+/** Fire-and-forget wake ping: free-tier Render suspends the worker, and a
+ *  head start here is the difference between a warm transcription and a 429. */
+export function warmAkifWorker(): void {
+  const config = workerConfig();
+  if (!config || !isAkifWorkerMediaEnabled()) return;
+  void fetch(`${config.baseUrl}/capabilities`, { headers: { "x-akif-worker-token": config.token }, signal: AbortSignal.timeout(5_000) }).catch(() => undefined);
+}
+
 export function transcribeAkifImage(input: { mime_type: string; base64: string }) {
   return requestWorker<{ text: string }>("/media/image/transcribe", {
     method: "POST", body: input, timeoutMs: 30_000,
@@ -287,11 +295,11 @@ export async function transcribeAkifAudioDetailed(input: { bytes: Uint8Array; mi
     signal: AbortSignal.timeout(timeoutMs),
   });
   let response = await withColdStartRetry(call, 25_000);
-  if (response.status === 429) {
-    // The free-tier worker answers 429 from the platform proxy while it
-    // wakes from suspension; one delayed retry rides out the wake window.
-    // 503 stays an immediate configuration fact (never retried).
-    await new Promise((resolve) => setTimeout(resolve, 12_000));
+  // The free-tier worker answers 429 from the platform proxy while it wakes
+  // from suspension; delayed retries ride out the wake window, which can take
+  // over a minute. 503 stays an immediate configuration fact (never retried).
+  for (let attempt = 0; attempt < 2 && response.status === 429; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 15_000));
     response = await withColdStartRetry(call, 60_000);
   }
   if (!response.ok) throw new Error(`akif_audio_http_${response.status}`);

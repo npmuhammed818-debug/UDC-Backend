@@ -266,3 +266,11 @@ test("relay menu requests auto-send the brain's explanation, menu word allowed, 
   assert.equal(menuAutoReplySafe(""), false);
   assert.equal(menuAutoReplySafe(null), false);
 });
+
+test("relay reply sanitizer removes dash sentence breaks but keeps ranges and hyphenated words", async () => {
+  const { sanitizeRelayReplyText } = await import("../src/akif/humanRelay.ts");
+  assert.equal(sanitizeRelayReplyText("Nice choice! Best country depends on the nut - Vietnam and Ivory Coast are strong for cashew"), "Nice choice! Best country depends on the nut, Vietnam and Ivory Coast are strong for cashew");
+  assert.equal(sanitizeRelayReplyText("works 15 minutes - one tap uploads them all"), "works 15 minutes, one tap uploads them all");
+  assert.equal(sanitizeRelayReplyText("10 - 15 kg is fine"), "10 - 15 kg is fine");
+  assert.equal(sanitizeRelayReplyText("single-use link"), "single-use link");
+});

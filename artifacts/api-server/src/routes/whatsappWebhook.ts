@@ -27,7 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
-import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, sanitizeRelayReplyText } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -50,7 +50,7 @@ import { dealPaymentStatusReply, paymentStatusQuestion } from "../whatsapp/dealP
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
-import { isAkifWorkerMediaEnabled, transcribeAkifAudioDetailed } from "../akif/intelligence/workerClient";
+import { isAkifWorkerMediaEnabled, transcribeAkifAudioDetailed, warmAkifWorker } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
@@ -164,6 +164,10 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // carries its draft and tool results; any deferred background work is
 // cancelled, never started, because the dev side decides what actually goes
 // out. Brain failure just means no draft - the message is still held.
+const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
+const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 4000) || 0);
+const relayBursts = new Map<string, { seq: number; texts: string[] }>();
+
 export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
   if (!isBrainOrchestratorEnabled()) return null;
   try {
@@ -177,10 +181,11 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
 
 /** Send the dev-side answer. Voice requests use the normal voice path with its own honest text fallback. */
 export async function deliverHumanRelayReply(to: string, text: string, options: { voice?: boolean; heardLanguage?: string } = {}) {
+  const cleanedText = sanitizeRelayReplyText(text);
   if (options.voice) {
-    return deliverAnswer(to, text, true, { userText: text, heardLanguage: options.heardLanguage, explicitVoice: true, voiceNote: true });
+    return deliverAnswer(to, cleanedText, true, { userText: cleanedText, heardLanguage: options.heardLanguage, explicitVoice: true, voiceNote: true });
   }
-  return deliverWhatsAppReply(to, text);
+  return deliverWhatsAppReply(to, cleanedText);
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string, _withMenu = false) {
@@ -1628,8 +1633,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         }
         let relayVoiceStage: "download" | "transcription" = "download";
         // Transcription + the brain turn below prepare a real reply, so the
-        // typing bubble is honest for the duration.
+        // typing bubble is honest for the duration. Wake the worker first: a
+        // warm start here is the difference between a transcript and a 429.
         markReadAndTyping(message.from, message.id);
+        warmAkifWorker();
         try {
           const media = await downloadWhatsAppMedia(message.audio.id);
           relayVoiceStage = "transcription";
@@ -1888,35 +1895,58 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
         if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
           const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
-          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction - no reply needed unless it looks wrong.` });
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction, no reply needed unless it looks wrong.` });
           continue;
         }
         // A real reply is being prepared now (auto answer or the held draft), so
         // the typing bubble is honest here; acks above never reach this line.
         markReadAndTyping(message.from, message.id);
-        const draft = await buildHumanRelayDraft(message.from, message.text.body, message.id);
+        warmAkifWorker();
+        // Burst coalescing (owner feedback 10 Nov): rapid multi-bubble messages
+        // become ONE brain turn and one reply. Wait out the burst; only the
+        // newest bubble proceeds and its draft sees all the texts.
+        const burst = relayBursts.get(message.from) ?? { seq: 0, texts: [] as string[] };
+        burst.seq += 1;
+        burst.texts.push(message.text.body);
+        relayBursts.set(message.from, burst);
+        const myBurstSeq = burst.seq;
+        if (RELAY_BURST_MS > 0) await new Promise((r) => setTimeout(r, RELAY_BURST_MS));
+        if (relayBursts.get(message.from)?.seq !== myBurstSeq) continue; // a newer bubble takes the turn
+        relayBursts.delete(message.from);
+        const combinedText = burst.texts.join("\n");
+        // Slow-turn heads-up: if the reply takes more than a few seconds the
+        // customer hears a short natural note first (owner feedback 10 Nov).
+        const slowNotice = setTimeout(() => { void deliverHumanRelayReply(message.from!, "On it, one minute."); }, 5000);
+        // Wait out any in-flight turn from the previous burst, then draft once.
+        let draft = null;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          draft = await buildHumanRelayDraft(message.from, combinedText, message.id);
+          if (draft?.reply !== BRAIN_BUSY_REPLY) break;
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        clearTimeout(slowNotice);
         let autoAnswered = false;
         let autoNote: string | undefined;
         const autoReply = draft?.reply ?? null;
-        if (relayAutoGreetingsEnabled() && isSimpleGreetingText(message.text.body) && greetingAutoReplySafe(autoReply)) {
+        if (burst.texts.length === 1 && relayAutoGreetingsEnabled() && isSimpleGreetingText(combinedText) && greetingAutoReplySafe(autoReply)) {
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
-        } else if (relayAutoGreetingsEnabled() && isMenuRequestText(message.text.body) && menuAutoReplySafe(autoReply)) {
+          if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
+        } else if (burst.texts.length === 1 && relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
           // Typed "menu": the brain explains the options in its own words (owner
-          // rule, 8 Nov) and the relay auto-sends that explanation - a hold here
+          // rule, 8 Nov) and the relay auto-sends that explanation, a hold here
           // would leave the menu question unanswered (owner feedback 10 Nov).
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) { console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
+          if (autoAnswered) { console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation, no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(autoReply, draft?.toolsUsed ?? [])) {
           // The brain really used its tools for this answer, so links and
           // references in it come from tool output, not invention.
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
+          if (autoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
         }
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
         continue;
       }
       let brainFailed = false;

@@ -39,6 +39,13 @@ export function isAcknowledgementText(text: string): boolean {
   return t.length > 0 && t.length <= 30 && ACK_WORDS.test(t);
 }
 
+/** Owner style rule (10 Nov): no hyphens or dashes as sentence breaks in any
+ *  bot/relay reply; commas or full stops read like a person texting. Only
+ *  letter-to-letter breaks are rewritten, so ranges like "10 - 15 kg" stay. */
+export function sanitizeRelayReplyText(text: string): string {
+  return text.replace(/(?<=[A-Za-z])\s+[-–—]\s+(?=[A-Za-z])/g, ", ").replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
+}
+
 export function ackEmojiFor(text: string): string {
   return /thank|thx|ty|nanni|shukriya/i.test(text) ? "🙏" : "👍";
 }
