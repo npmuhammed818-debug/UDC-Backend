@@ -6,7 +6,7 @@ import {
   humanRelayEnabled,
   humanRelayNumbers,
   lastHeardLanguageFor,
-  markHumanRelayAnswered,
+  markHumanRelayAnswered, claimHumanRelay, answerClaimedHumanRelayItem,
   pendingHumanRelay,
   relayBodyAuthorized,
   relayReadAuthorized,
@@ -31,6 +31,10 @@ const replySchema = z
     // renders audio itself and the bot sends it as a WhatsApp voice note, so a
     // dev-side answer costs no TTS provider quota. Ogg/Opus only, 16 MB max.
     audioBase64: z.string().min(8).max(23_000_000).optional(),
+    // Pool mode: answer one claimed item instead of every held message for
+    // the phone. workerId must own the claim.
+    itemId: z.string().min(8).max(80).optional(),
+    workerId: z.string().min(1).max(80).optional(),
   })
   .strict()
   .refine((v) => v.text || v.audioBase64, { message: "text_or_audio_required" });
@@ -45,6 +49,12 @@ const askSchema = z
   .object({
     phone: z.string().min(8).max(24),
     text: z.string().min(1).max(2000),
+  })
+  .strict();
+
+const claimSchema = z
+  .object({
+    workerId: z.string().min(1).max(80),
   })
   .strict();
 
@@ -100,6 +110,18 @@ router.get("/akif-relay/pending", (req, res) => {
   res.set("Cache-Control", "no-store").json({ pending: pendingHumanRelay() });
 });
 
+// Pool mode (owner direction, 10 Nov): parallel reply workers claim the
+// oldest answerable held item. Claims are exclusive for a few minutes and
+// ordered per phone, so two workers never answer the same message and one
+// phone never gets parallel replies.
+router.post("/akif-relay/claim", async (req, res) => {
+  if (!writeAuthorized(req, res)) return;
+  const parsed = claimSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_claim" }); return; }
+  const item = claimHumanRelay(parsed.data.workerId);
+  res.set("Cache-Control", "no-store").json({ ok: true, item: item ?? null });
+});
+
 router.post("/akif-relay/reply", async (req, res) => {
   if (!writeAuthorized(req, res)) return;
   const parsed = replySchema.safeParse(req.body);
@@ -128,6 +150,12 @@ router.post("/akif-relay/reply", async (req, res) => {
       });
   if (!delivery.delivered) {
     res.status(502).json({ ok: false, error: "delivery_failed", reason: delivery.reason });
+    return;
+  }
+  if (parsed.data!.itemId) {
+    const answeredItem = answerClaimedHumanRelayItem(parsed.data!.itemId, parsed.data!.workerId ?? "");
+    if (!answeredItem) { res.status(409).json({ ok: false, error: "claim_lost" }); return; }
+    res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered: 1 });
     return;
   }
   const answered = markHumanRelayAnswered(phone);

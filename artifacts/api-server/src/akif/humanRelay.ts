@@ -175,6 +175,10 @@ export type HumanRelayItem = {
   draft: string | null;
   draftBackgroundDiscarded: boolean;
   answeredAt: string | null;
+  autoAnswered?: boolean;
+  autoNote?: string;
+  claimedBy?: string | null;
+  claimedAt?: string | null;
 };
 
 const items: HumanRelayItem[] = [];
@@ -289,6 +293,40 @@ export function pendingHumanRelay(): HumanRelayItem[] {
 export function humanRelayBacklogSize(): number {
   pruneHumanRelay();
   return items.length;
+}
+
+// Parallel relay workers (owner direction, 10 Nov): a pool of reply workers
+// claims held items one at a time. A claim is exclusive for CLAIM_TTL_MS and
+// per-number ordered: a phone's next item cannot be claimed while an older
+// item for that phone is unanswered or actively claimed.
+const CLAIM_TTL_MS = 5 * 60 * 1000;
+
+export function claimHumanRelay(workerId: string): HumanRelayItem | null {
+  pruneHumanRelay();
+  const now = Date.now();
+  const activeClaim = (i: HumanRelayItem) => Boolean(i.claimedBy && i.claimedAt && now - Date.parse(i.claimedAt) < CLAIM_TTL_MS);
+  for (const item of items) {
+    if (item.answeredAt || item.autoAnswered) continue;
+    if (activeClaim(item)) continue;
+    const blocked = items.some((i) => i !== item && i.phone === item.phone && !i.answeredAt && !i.autoAnswered
+      && (Date.parse(i.at) < Date.parse(item.at) || activeClaim(i)));
+    if (blocked) continue;
+    item.claimedBy = workerId;
+    item.claimedAt = new Date(now).toISOString();
+    return item;
+  }
+  return null;
+}
+
+/** Answer one claimed item. Enforces claim ownership so two workers can
+ *  never answer the same message. Returns the item, or null when the claim
+ *  is missing, expired, owned by another worker, or already answered. */
+export function answerClaimedHumanRelayItem(itemId: string, workerId: string): HumanRelayItem | null {
+  const item = items.find((i) => i.id === itemId);
+  if (!item || item.answeredAt) return null;
+  if (item.claimedBy !== workerId) return null;
+  item.answeredAt = new Date().toISOString();
+  return item;
 }
 
 /** Mark every held message for one number as answered. Returns how many. */
