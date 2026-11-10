@@ -176,7 +176,7 @@ test("relay alert email failure does not break enqueue", async () => {
 
 test("simple greeting detection is strict and fails closed", async () => {
   const { isSimpleGreetingText, greetingAutoReplySafe } = await import("../src/akif/humanRelay.ts");
-  for (const yes of ["Hi", "hello!", "hey", "Good morning", "Hello, how are you?", "how r u", "namaste", "What's up?"]) {
+  for (const yes of ["Hi", "hello!", "hey", "Good morning", "Hello, how are you?", "how r u", "namaste", "What's up?", "Hi UDC", "hello akif", "Hey UDC!"]) {
     assert.equal(isSimpleGreetingText(yes), true, `should greet: ${yes}`);
   }
   for (const no of ["", "Hi, I need 500 kg cashew", "hello price?", "Damn", "Also my father just died", "hi there what is the rate", "hello " + "x".repeat(80)]) {
