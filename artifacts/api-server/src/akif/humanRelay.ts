@@ -381,11 +381,9 @@ export function enqueueHumanRelay(input: {
   while (items.length > MAX_ITEMS) dropped.push(items.shift()!.id);
   persist((p) => p.upsertItem(item));
   if (dropped.length) persist((p) => p.deleteItems(dropped));
-  // Fire-and-forget dev-side email alert; the relay never waits on email.
-  // "holds" mode skips the email for auto-answered items (volume control).
-  if (!(relayAlertMode() === "holds" && input.autoAnswered)) {
-    void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered), autoNote: input.autoNote, customerNote: input.customerNote });
-  }
+  // No per-message alert email (owner direction, 10 Nov): the free email
+  // quota is for OTP/auth mail only. Workers poll the claim endpoint, so a
+  // held message never depends on email to get answered.
   return item;
 }
 
@@ -509,7 +507,10 @@ export function humanRelayBacklogSize(): number {
 // claims held items one at a time. A claim is exclusive for CLAIM_TTL_MS and
 // per-number ordered: a phone's next item cannot be claimed while an older
 // item for that phone is unanswered or actively claimed.
-const CLAIM_TTL_MS = 5 * 60 * 1000;
+// 90s (owner direction, 10 Nov): a worker that dies mid-claim must never
+// strand a customer. Late answers from a lost claim hit the answered item or
+// the per-contact reply window, so a premature release cannot double-send.
+const CLAIM_TTL_MS = 90_000;
 
 export function claimHumanRelay(workerId: string): HumanRelayItem | null {
   pruneHumanRelay();

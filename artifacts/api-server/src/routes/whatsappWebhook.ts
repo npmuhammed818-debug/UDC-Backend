@@ -1793,12 +1793,16 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               }
             } catch { /* fall through to the relay draft */ }
           }
-          // Commission questions get the fixed honest answer in the heard
-          // language, voice in voice out, no brain turn (owner direction, 10 Nov).
-          if (isCommissionAskText(heard.text)) {
-            const sent = await deliverHumanRelayReply(message.from, commissionAskReply(heard.language), { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
-            enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: Boolean(sent?.delivered), autoNote: "Auto-answered with the fixed commission answer, no reply needed unless it looks wrong. Sent:" });
-            continue;
+          // Explicit Menu is a system message (owner direction, 10 Nov):
+          // static menu out, no LLM, no worker wait. Commission asks and
+          // everything else hold for the workers.
+          if (isMenuRequestText(heard.text)) {
+            let menuSent = false;
+            try { await sendChatHome(message.from); menuSent = true; } catch { /* hold for a worker instead */ }
+            if (menuSent) {
+              enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
+              continue;
+            }
           }
           const draft = heard.text.trim() ? await buildHumanRelayDraftWithRetry(message.from, heard.text, message.id) : null;
           // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
@@ -2112,12 +2116,16 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             }
           } catch { /* fall through to the relay draft */ }
         }
-        // Commission questions get the fixed honest answer immediately, no
-        // burst wait or brain turn (owner direction, 10 Nov).
-        if (isCommissionAskText(message.text.body)) {
-          const sent = await deliverHumanRelayReply(message.from, commissionAskReply());
-          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(sent?.delivered), autoNote: "Auto-answered with the fixed commission answer, no reply needed unless it looks wrong. Sent:" });
-          continue;
+        // Explicit Menu is a system message (owner direction, 10 Nov): the
+        // static role menu goes straight out, no LLM, no worker wait.
+        // Commission asks and everything else hold for the workers.
+        if (isMenuRequestText(message.text.body)) {
+          let menuSent = false;
+          try { await sendChatHome(message.from); menuSent = true; } catch { /* hold for a worker instead */ }
+          if (menuSent) {
+            enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
+            continue;
+          }
         }
         // A real reply is being prepared now (auto answer or the held draft), so
         // the typing bubble is honest here; acks above never reach this line.
