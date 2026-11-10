@@ -4,6 +4,7 @@ import {
   enqueueHumanRelay, claimHumanRelay, answerClaimedHumanRelayItem,
   relayReplyCooldownActive, noteHumanRelayReplySent, relayClaimStillValid, relayReplyResetsConversation, recentRelayRepliesFor,
   isAcknowledgementText, relayThreadFor, markHumanRelayAnswered, __clearRelayMemoryForTests,
+  stickyWorkerFor,
 } from '../src/akif/humanRelay.ts';
 
 const PHONE = '919999777666';
@@ -112,4 +113,27 @@ test('claim and thread carry the full conversation, oldest first', () => {
   assert.equal(thread[3].from, 'customer');
   assert.equal(thread[3].text, 'what documents do you need');
   assert.equal(relayThreadFor(phone).length, 4);
+});
+
+test('sticky worker: the answering worker keeps the customer until idle', () => {
+  __clearRelayMemoryForTests();
+  const phoneA = '919999000111';
+  const phoneB = '919999000222';
+  // worker-1 answers customer A's first turn.
+  enqueueHumanRelay({ phone: phoneA, kind: 'text', text: 'hi, tell me about joining', draft: null });
+  const claimA = claimHumanRelay('worker-1')!;
+  answerClaimedHumanRelayItem(claimA.id, 'worker-1', 'Happy to help. Are you an agent, buyer or seller?');
+  assert.equal(stickyWorkerFor(phoneA), 'worker-1', 'worker-1 owns customer A now');
+  // Customer A replies: only worker-1 may take it.
+  enqueueHumanRelay({ phone: phoneA, kind: 'text', text: 'agent only', draft: null });
+  assert.equal(claimHumanRelay('worker-2'), null, 'worker-2 cannot take a sticky customer');
+  const again = claimHumanRelay('worker-1')!;
+  assert.equal(again.phone, phoneA, 'worker-1 keeps customer A');
+  // Parallel chats: worker-2 is free to own customer B.
+  enqueueHumanRelay({ phone: phoneB, kind: 'text', text: 'I want to sell cashew', draft: null });
+  const claimB = claimHumanRelay('worker-2')!;
+  assert.equal(claimB.phone, phoneB, 'worker-2 takes the free customer');
+  // After the sticky worker goes idle, anyone may pick the customer up.
+  const idleFuture = Date.now() + 11 * 60 * 1000;
+  assert.equal(stickyWorkerFor(phoneA, idleFuture), undefined, 'stickiness expires when idle');
 });
