@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { knownFactsForContact } from "./humanRelay";
 import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { auditLogsTable, db, notificationsTable, usersTable } from '@workspace/db';
@@ -19,7 +20,11 @@ export async function registerWhatsAppAgent(phone: string, fullName?: string) {
         ? 'Your agent account is already approved. You can submit introductions for UDC review.'
         : 'Your agent registration is already pending UDC review.';
     }
-    const [agent] = await tx.insert(usersTable).values({phone,fullName:fullName?.trim().slice(0,120) || 'WhatsApp Agent',role:'agent',status:'pending',passwordHash:await hashPassword(randomUUID())}).returning({id:usersTable.id});
+    // Registration must keep what the customer already gave in chat (owner
+    // feedback, 10 Nov): name and email collected in the relay thread land
+    // on the account instead of being lost and re-asked.
+    const known = knownFactsForContact(phone);
+    const [agent] = await tx.insert(usersTable).values({phone,fullName:fullName?.trim().slice(0,120) || known.name?.slice(0,120) || 'WhatsApp Agent',email:known.email ?? null,role:'agent',status:'pending',passwordHash:await hashPassword(randomUUID())}).returning({id:usersTable.id});
     await tx.insert(auditLogsTable).values({actorUserId:agent.id,action:'agent_registration_requested',entityType:'user',entityId:agent.id,metadata:{channel:'whatsapp',requiresAdminReview:true}});
     const admins = await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['verified','active']))).limit(100);
     if(admins.length) await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'agent_registration_requested',title:'Agent registration needs review',body:'A WhatsApp agent registration is pending your review.',link:'/admin'})));
