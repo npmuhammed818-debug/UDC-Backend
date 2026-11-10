@@ -165,7 +165,7 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // cancelled, never started, because the dev side decides what actually goes
 // out. Brain failure just means no draft - the message is still held.
 const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
-const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 4000) || 0);
+const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 3000) || 0);
 const relayBursts = new Map<string, { seq: number; texts: string[] }>();
 
 export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
