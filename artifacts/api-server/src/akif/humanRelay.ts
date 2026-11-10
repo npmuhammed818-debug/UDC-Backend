@@ -627,8 +627,10 @@ export function claimHumanRelay(workerId: string, now = Date.now()): HumanRelayI
   for (const item of items) {
     if (item.answeredAt || item.autoAnswered) continue;
     if (activeClaim(item)) continue;
-    if (hasNewerAnsweredSibling(item)) continue;
     const isVoice = item.kind === "voice";
+    // Stale guard applies to text only (owner direction, 10 Nov): voice items
+    // stay claimable by the voice lane with no stale exception.
+    if (!isVoice && hasNewerAnsweredSibling(item)) continue;
     const laneKey = workerLaneKey(workerId);
     const inVoiceLane = voiceWorkers.includes(laneKey);
     const itemAge = now - Date.parse(item.at);
@@ -658,7 +660,10 @@ export function claimHumanRelay(workerId: string, now = Date.now()): HumanRelayI
         if (!isNew && !ongoing.includes(laneKey) && sticky !== workerId) continue;
       }
     }
+    // A stale-covered older sibling can never be claimed, so it must not
+    // jam the phone's queue behind it.
     const blocked = items.some((i) => i !== item && i.phone === item.phone && !i.answeredAt && !i.autoAnswered
+      && !hasNewerAnsweredSibling(i)
       && (Date.parse(i.at) < Date.parse(item.at) || activeClaim(i)));
     if (blocked) continue;
     item.claimedBy = workerId;
@@ -711,7 +716,8 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string, re
   if (item.claimedBy !== workerId) return null;
   // No late out-of-order replies (owner direction, 10 Nov): when a newer
   // message from this customer is already answered, this older one is stale.
-  if (hasNewerAnsweredSibling(item)) return null;
+  // Voice items are exempt: every voice note gets its own reply.
+  if (item.kind !== "voice" && hasNewerAnsweredSibling(item)) return null;
   // One reply per customer message (owner direction, 10 Nov): each message in
   // the bundle gets its own bubble from the same worker, so only this item
   // closes; the rest of the claimed turn stays with this worker.
@@ -721,6 +727,7 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string, re
   const skipped: string[] = [];
   for (const other of items) {
     if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
+    if (other.kind !== item.kind) continue; // a text reply never covers a voice note, nor the reverse
     if (Date.parse(other.at) >= Date.parse(item.at)) continue;
     other.answeredAt = item.answeredAt;
     other.autoAnswered = true;
@@ -739,7 +746,7 @@ export function relayClaimStillValid(itemId: string, workerId: string): boolean 
   const item = items.find((i) => i.id === itemId);
   if (!item || item.answeredAt || item.autoAnswered) return false;
   if (item.claimedBy !== workerId || !item.claimedAt) return false;
-  if (hasNewerAnsweredSibling(item)) return false;
+  if (item.kind !== "voice" && hasNewerAnsweredSibling(item)) return false;
   return Date.now() - Date.parse(item.claimedAt) < CLAIM_TTL_MS;
 }
 
