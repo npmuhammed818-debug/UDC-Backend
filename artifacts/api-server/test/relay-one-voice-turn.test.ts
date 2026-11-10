@@ -99,11 +99,11 @@ test('claim and thread carry the full conversation, oldest first', () => {
   __clearRelayMemoryForTests();
   const phone = '919999555666';
   enqueueHumanRelay({ phone, kind: 'text', text: 'hello, I want to join', draft: null });
-  const first = claimHumanRelay('worker-1')!;
-  answerClaimedHumanRelayItem(first.id, 'worker-1', 'Happy to help you join. Are you an agent, buyer or seller?');
+  const first = claimHumanRelay('worker-8')!;
+  answerClaimedHumanRelayItem(first.id, 'worker-8', 'Happy to help you join. Are you an agent, buyer or seller?');
   enqueueHumanRelay({ phone, kind: 'text', text: 'agent only', draft: null });
   enqueueHumanRelay({ phone, kind: 'text', text: 'what documents do you need', draft: null });
-  const claim = claimHumanRelay('worker-1')!;
+  const claim = claimHumanRelay('worker-8')!;
   assert.equal((claim.claimedItemIds ?? []).length, 2, 'both new messages join the claim');
   const thread = claim.thread ?? [];
   assert.equal(thread.length, 4, 'full thread: question, answer, both new messages');

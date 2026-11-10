@@ -605,6 +605,13 @@ export function ongoingWorkerIds(env: NodeJS.ProcessEnv = process.env): string[]
 }
 const LANE_OVERFLOW_MS = 20_000;
 
+/** Lane matching is by worker number: the real workers identify as
+ *  "akif-worker-N", tests and scripts as plain numbers. */
+function workerLaneKey(workerId: string): string {
+  const m = workerId.match(/(\d+)\s*$/);
+  return m ? m[1] : workerId;
+}
+
 /** True when a newer message from the same customer is already answered, so
  *  this older one is stale: claiming or answering it would send a late,
  *  out-of-order reply (owner direction, 10 Nov). */
@@ -622,29 +629,33 @@ export function claimHumanRelay(workerId: string, now = Date.now()): HumanRelayI
     if (activeClaim(item)) continue;
     if (hasNewerAnsweredSibling(item)) continue;
     const isVoice = item.kind === "voice";
-    const inVoiceLane = voiceWorkers.includes(workerId);
-    // Voice items never overflow to text workers and voice workers never
-    // take text (owner direction, 10 Nov).
-    if (isVoice !== inVoiceLane) continue;
+    const laneKey = workerLaneKey(workerId);
+    const inVoiceLane = voiceWorkers.includes(laneKey);
+    const itemAge = now - Date.parse(item.at);
+    const overflow = itemAge >= LANE_OVERFLOW_MS;
+    // Voice workers never take text. Voice items prefer the voice lane, but
+    // after LANE_OVERFLOW_MS any free worker may take one so the customer
+    // gets at least a text reply (owner direction, 10 Nov).
+    if (!isVoice && inVoiceLane) continue;
+    if (isVoice && !inVoiceLane && !overflow) continue;
     const rawSticky = stickyWorkerFor(item.phone, now);
     // Sticky ownership binds only inside a compatible lane: a voice item
     // ignores a text-only owner and a text chat ignores a voice-only or
     // intake owner, so the ongoing lane (6-7) picks up continuing chats.
-    const sticky = rawSticky && (isVoice ? voiceWorkers.includes(rawSticky) : ongoingWorkerIds().includes(rawSticky))
+    const rawStickyKey = rawSticky ? workerLaneKey(rawSticky) : undefined;
+    const sticky = rawSticky && (isVoice ? voiceWorkers.includes(rawStickyKey!) : ongoingWorkerIds().includes(rawStickyKey!))
       ? rawSticky : undefined;
-    const itemAge = now - Date.parse(item.at);
-    const overflow = itemAge >= LANE_OVERFLOW_MS;
     if (sticky && sticky !== workerId && !overflow) continue;
     if (!isVoice && !overflow) {
       const intake = intakeWorkerIds();
       const ongoing = ongoingWorkerIds();
-      const known = inVoiceLane || intake.includes(workerId) || ongoing.includes(workerId);
+      const known = inVoiceLane || intake.includes(laneKey) || ongoing.includes(laneKey);
       if (known) {
         // First contact (no recent reply) goes to the intake lane; a chat
         // with a recent reply goes to the ongoing lane.
         const isNew = !rawSticky;
-        if (isNew && !intake.includes(workerId)) continue;
-        if (!isNew && !ongoing.includes(workerId) && sticky !== workerId) continue;
+        if (isNew && !intake.includes(laneKey)) continue;
+        if (!isNew && !ongoing.includes(laneKey) && sticky !== workerId) continue;
       }
     }
     const blocked = items.some((i) => i !== item && i.phone === item.phone && !i.answeredAt && !i.autoAnswered
@@ -660,9 +671,11 @@ export function claimHumanRelay(workerId: string, now = Date.now()): HumanRelayI
     for (const other of items) {
       if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
       if (activeClaim(other)) continue;
-      // Voice workers take voice only, text workers take text only (owner
-      // direction, 10 Nov): a bundle never mixes the two lanes.
-      if ((other.kind === "voice") !== inVoiceLane) continue;
+      // Voice workers take voice only, text workers take text only: a
+      // bundle never mixes the lanes, except that an overflowed voice item
+      // (>20s) may join a text worker's bundle.
+      if ((other.kind === "voice") !== inVoiceLane
+        && !(other.kind === "voice" && !inVoiceLane && now - Date.parse(other.at) >= LANE_OVERFLOW_MS)) continue;
       other.claimedBy = workerId;
       other.claimedAt = claimedAt;
       bundle.push(other);
