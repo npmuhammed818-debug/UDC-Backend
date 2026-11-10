@@ -8,7 +8,7 @@ import {
   hasActiveHumanRelayClaim,
   stickyWorkerFor,
   lastHeardLanguageFor,
-  markHumanRelayAnswered, claimHumanRelay, answerClaimedHumanRelayItem,
+  markHumanRelayAnswered, releaseHumanRelayClaim, claimHumanRelay, claimHumanRelayWithWait, answerClaimedHumanRelayItem,
   relayReplyCooldownActive, noteHumanRelayReplySent, relayClaimStillValid, relayReplyResetsConversation,
   pendingHumanRelay,
   relayBodyAuthorized,
@@ -104,6 +104,9 @@ router.post("/akif-relay/doclink", async (req, res) => {
 const claimSchema = z
   .object({
     workerId: z.string().min(1).max(80),
+    // Wake-on-arrival (owner feedback, 10 Nov): hold the call open until an
+    // item this worker may take arrives, capped server-side at 30s.
+    waitMs: z.number().int().min(0).max(30_000).optional(),
   })
   .strict();
 
@@ -170,7 +173,7 @@ router.post("/akif-relay/claim", async (req, res) => {
   if (!writeAuthorized(req, res)) return;
   const parsed = claimSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_claim" }); return; }
-  const item = claimHumanRelay(parsed.data.workerId);
+  const item = await claimHumanRelayWithWait(parsed.data.workerId, parsed.data.waitMs ?? 0);
   res.set("Cache-Control", "no-store").json({ ok: true, item: item ?? null });
 });
 
@@ -275,8 +278,11 @@ router.post("/akif-relay/skip", (req, res) => {
     res.status(403).json({ ok: false, error: "number_not_relay_allowlisted" });
     return;
   }
-  const skipped = markHumanRelayAnswered(parsed.data.phone);
-  res.set("Cache-Control", "no-store").json({ ok: true, skipped });
+  // Skip releases the worker's claim back to the pool; it never marks a
+  // message answered (owner direction, 10 Nov: a skipped voice note must
+  // reach a voice worker, never vanish).
+  const released = releaseHumanRelayClaim(parsed.data.phone);
+  res.set("Cache-Control", "no-store").json({ ok: true, released });
 });
 
 export default router;

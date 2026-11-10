@@ -13,20 +13,22 @@ test('one claim covers the whole customer turn, one reply closes it, cooldown ke
   enqueueHumanRelay({ phone: PHONE, kind: 'voice', text: 'first voice note', draft: null });
   enqueueHumanRelay({ phone: PHONE, kind: 'voice', text: 'second voice note', draft: null });
   enqueueHumanRelay({ phone: PHONE, kind: 'text', text: 'Waiting', draft: null });
-  const claim = claimHumanRelay('worker-a');
+  // Voice items belong to the voice lane (workers 1 and 2) only.
+  assert.equal(claimHumanRelay('worker-a'), null, 'a text worker never sees voice items');
+  const claim = claimHumanRelay('1');
   assert.ok(claim, 'a claim is returned');
   assert.equal(claim!.phone, PHONE);
-  assert.equal((claim!.claimedItemIds ?? []).length, 3, 'all three messages join the one claim');
+  assert.equal((claim!.claimedItemIds ?? []).length, 2, 'the voice messages join the one voice claim');
   // A second worker gets nothing for this phone while the turn is claimed.
   const other = claimHumanRelay('worker-b');
   assert.ok(!other || other.phone !== PHONE, 'no overlapping worker on the same customer');
   // One reply answers the whole turn.
-  const answered = answerClaimedHumanRelayItem(claim!.id, 'worker-a');
+  const answered = answerClaimedHumanRelayItem(claim!.id, '1');
   assert.ok(answered, 'the claimed item answers');
   assert.equal(claimHumanRelay('worker-b'), null, 'nothing left for this phone');
   // A different sender is inside the cooldown; the same worker may multi-bubble.
   assert.equal(relayReplyCooldownActive(PHONE, 'worker-b'), true);
-  assert.equal(relayReplyCooldownActive(PHONE, 'worker-a'), false);
+  assert.equal(relayReplyCooldownActive(PHONE, '1'), false);
 });
 
 test('cooldown expires and same-worker bubbles are allowed inside it', () => {
@@ -119,20 +121,29 @@ test('sticky worker: the answering worker keeps the customer until idle', () => 
   __clearRelayMemoryForTests();
   const phoneA = '919999000111';
   const phoneB = '919999000222';
-  // worker-1 answers customer A's first turn.
+  // Intake lane (3-5) answers customer A's first turn.
   enqueueHumanRelay({ phone: phoneA, kind: 'text', text: 'hi, tell me about joining', draft: null });
-  const claimA = claimHumanRelay('worker-1')!;
-  answerClaimedHumanRelayItem(claimA.id, 'worker-1', 'Happy to help. Are you an agent, buyer or seller?');
-  assert.equal(stickyWorkerFor(phoneA), 'worker-1', 'worker-1 owns customer A now');
-  // Customer A replies: only worker-1 may take it.
+  assert.equal(claimHumanRelay('6'), null, 'the ongoing lane never takes a first message');
+  const claimA = claimHumanRelay('3')!;
+  answerClaimedHumanRelayItem(claimA.id, '3', 'Happy to help. Are you an agent, buyer or seller?');
+  // Customer A replies: the chat is ongoing now, so the ongoing lane owns it.
   enqueueHumanRelay({ phone: phoneA, kind: 'text', text: 'agent only', draft: null });
-  assert.equal(claimHumanRelay('worker-2'), null, 'worker-2 cannot take a sticky customer');
-  const again = claimHumanRelay('worker-1')!;
-  assert.equal(again.phone, phoneA, 'worker-1 keeps customer A');
-  // Parallel chats: worker-2 is free to own customer B.
+  assert.equal(claimHumanRelay('3'), null, 'the intake lane leaves ongoing chats');
+  const again = claimHumanRelay('6')!;
+  assert.equal(again.phone, phoneA, 'the ongoing lane picks up the continuing chat');
+  answerClaimedHumanRelayItem(again.id, '6', 'Great, agents are welcome.');
+  assert.equal(stickyWorkerFor(phoneA), '6', 'worker 6 owns customer A now');
+  // Customer A replies again: only the sticky worker may take it.
+  enqueueHumanRelay({ phone: phoneA, kind: 'text', text: 'how do I start', draft: null });
+  assert.equal(claimHumanRelay('7'), null, 'worker 7 cannot take a sticky customer');
+  const kept = claimHumanRelay('6')!;
+  assert.equal(kept.phone, phoneA, 'worker 6 keeps customer A');
+  // Parallel chats: worker 7 is free to own customer B (B already has a recent reply).
+  noteHumanRelayReplySent(phoneB, '7', 'earlier reply');
   enqueueHumanRelay({ phone: phoneB, kind: 'text', text: 'I want to sell cashew', draft: null });
-  const claimB = claimHumanRelay('worker-2')!;
-  assert.equal(claimB.phone, phoneB, 'worker-2 takes the free customer');
+  assert.equal(claimHumanRelay('6'), null, 'worker 6 cannot take a sticky customer');
+  const claimB = claimHumanRelay('7')!;
+  assert.equal(claimB.phone, phoneB, 'worker 7 keeps their own customer');
   // After the sticky worker goes idle, anyone may pick the customer up.
   const idleFuture = Date.now() + 11 * 60 * 1000;
   assert.equal(stickyWorkerFor(phoneA, idleFuture), undefined, 'stickiness expires when idle');

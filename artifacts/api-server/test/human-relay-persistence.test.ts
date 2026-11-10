@@ -26,6 +26,7 @@ function fakeStore() {
     async markAnswered(ids, at, replyText) { calls.push("markAnswered"); for (const r of rows) if (ids.includes(r.id)) { r.answeredAt = at; if (replyText !== undefined) r.draft = replyText; } },
     async markPhoneAnswered(phone, at, replyText) { calls.push("markPhoneAnswered"); for (const r of rows) if (r.phone === phone && !r.answeredAt) r.answeredAt = at; if (replyText !== undefined) { const mine = rows.filter((r) => r.phone === phone && r.answeredAt); const last = mine[mine.length - 1]; if (last) last.draft = replyText; } },
     async setClaim(id, workerId, at) { calls.push("setClaim"); const r = rows.find((x) => x.id === id); if (r) { r.claimedBy = workerId; r.claimedAt = at; } },
+    async releaseClaims(ids) { calls.push("releaseClaims"); for (const r of rows) if (ids.includes(r.id)) { r.claimedBy = undefined; r.claimedAt = undefined; } },
     async deleteItems(ids) { calls.push("deleteItems"); for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i].id)) rows.splice(i, 1); },
     async deleteOlderThan(ttlMs) { calls.push("deleteOlderThan"); const cutoff = Date.now() - ttlMs; for (let i = rows.length - 1; i >= 0; i--) if (Date.parse(rows[i].at) < cutoff) rows.splice(i, 1); },
     async deleteAll() { calls.push("deleteAll"); rows.length = 0; },

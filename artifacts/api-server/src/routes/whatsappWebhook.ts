@@ -68,6 +68,7 @@ import { armExplicitVoice, consumeExplicitVoice, getLastAnswer, hasExplicitVoice
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { reserveTranscription } from "../akif/voiceLimits.ts";
 import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppImage, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
+import { quotedOutboundFor } from "../whatsapp/outboundLog.ts";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
@@ -208,6 +209,9 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
  *  single retry when the turn failed or came back empty (a provider rate limit
  *  on back-to-back turns produced held messages with no draft, 10 Nov). */
 export async function buildHumanRelayDraftWithRetry(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
+  // Drafts are off with the orchestrator (owner direction 10 Nov): without
+  // this guard every held message waited out a dead 5s retry before enqueue.
+  if (!isBrainOrchestratorEnabled()) return null;
   let draft = null;
   for (let attempt = 0; attempt < 6; attempt++) {
     draft = await buildHumanRelayDraft(phone, text, messageId);
@@ -1837,7 +1841,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF brain-first answered", { kind: "voice" }); voiceAutoNote = "Answered directly by AKIF - no reply needed unless it looks wrong. Sent:"; }
           }
-          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from) });
+          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           if (!voiceAutoAnswered && heldVoice.draft && relayFallbackReplySafe(heard.text, heldVoice.draft, draft?.toolsUsed ?? [])) {
             scheduleRelayFallback(heldVoice, deliverHumanRelayReply);
           }
@@ -2191,7 +2195,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             }
           } catch { /* fall through to the hold */ }
         }
-        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from) });
+        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
         if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
           scheduleRelayFallback(heldText, deliverHumanRelayReply);
         }
@@ -2301,7 +2305,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Everything else is held silently for the human relay team: no
         // failure line, no canned note (owner direction, 10 Nov launch).
         // Workers or the relay owner answer it from the queue.
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null, customerNote: await relayCustomerNote(message.from) });
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
         continue;
       }
 
