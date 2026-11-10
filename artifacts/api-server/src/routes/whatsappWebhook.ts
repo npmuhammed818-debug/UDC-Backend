@@ -29,7 +29,7 @@ import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, emailGivenInRelay } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
@@ -231,12 +231,21 @@ async function relayCustomerNote(phone: string): Promise<string | undefined> {
     if (!u) {
       // Registration must remember what the customer already gave in chat
       // (owner feedback, 10 Nov): never re-ask a detail on record.
-      const givenEmail = emailGivenInRelay(phone);
+      // Registration must remember everything the customer already gave in
+      // this thread (owner feedback, 10 Nov): the note lists the known facts
+      // so no answer ever re-asks them.
+      const facts = knownFactsForContact(phone);
+      const knownBits = [
+        facts.name ? `name ${facts.name}` : "",
+        facts.email ? `email ${facts.email}` : "",
+        facts.company ? `company ${facts.company}` : "",
+        facts.role ? `role ${facts.role}` : "",
+      ].filter(Boolean);
       // Owner rule (10 Nov): agents register with any email and no company
       // details; buyers and sellers keep the company-email rule. Workers see
       // this on every unregistered note so nobody demands the wrong thing.
       const rules = "agents may use any email and need no company details, buyers/sellers need a company email, company name and country";
-      return (givenEmail ? `not registered, email already given: ${givenEmail}` : "not registered") + "; " + rules;
+      return (knownBits.length ? `not registered, known in thread: ${knownBits.join(", ")}` : "not registered") + "; " + rules;
     }
     const parts = [`registered ${u.role}`, `account ${u.status}`, u.emailVerifiedAt ? "email confirmed" : "email not confirmed"];
     if (u.role === "agent") parts.push(`invite code ${agentReferralCode(u.id)}`);
