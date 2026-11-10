@@ -64,6 +64,15 @@ export type GroqToolChatMessage = {
 
 export type GroqToolCall = { id: string; name: string; argumentsJson: string };
 
+/** Smaller free-tier model with its own rate-limit bucket: when the main
+ *  model is capped (429) the brain stays alive on the fallback model
+ *  (launch night, 10 Nov). GROQ_FALLBACK_MODEL overrides; empty disables. */
+export function groqFallbackModel(): string {
+  const raw = process.env.GROQ_FALLBACK_MODEL;
+  if (raw !== undefined) return raw.trim();
+  return 'openai/gpt-oss-20b';
+}
+
 export async function runGroqToolChat(
   messages: GroqToolChatMessage[],
   tools: GroqToolDefinition[],
@@ -72,18 +81,24 @@ export async function runGroqToolChat(
   const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) throw new Error('Groq is not configured');
   const baseUrl = (process.env.GROQ_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, '');
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  const call = (model: string) => fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     signal: AbortSignal.timeout(timeoutMs),
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
-      model: groqModel(),
+      model,
       messages,
       tools,
       tool_choice: 'auto',
       temperature: 0.3,
     }),
   });
+  let response = await call(groqModel());
+  const fallback = groqFallbackModel();
+  if (response.status === 429 && fallback && fallback !== groqModel()) {
+    console.warn('Groq main model rate-limited; retrying on the fallback model', { model: groqModel(), fallback });
+    response = await call(fallback);
+  }
   if (!response.ok) throw new Error(`Groq returned HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
   const raw = await response.json() as {
     choices?: Array<{
