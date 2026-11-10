@@ -515,6 +515,27 @@ export function knownFactsForContact(phone: string): RelayKnownFacts {
 /** Guard (owner direction, 10 Nov): a reply must never ask for something the
  *  customer already answered. Returns the known detail it re-asks, or null.
  *  Confirmation questions count as asking; state the fact instead. */
+/** Brain-first answering (owner direction, 10 Nov): when the brain
+ *  orchestrator is on and a model is configured, safe brain replies are
+ *  delivered directly and only failures hold for human workers. Effective
+ *  only with the orchestrator on; default on so the key is the only flip. */
+export function relayBrainFirstEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AKIF_BRAIN_FIRST !== "off";
+}
+
+/** A brain reply safe to send with no human review: short, no invented
+ *  links (links only from real tool output), no OTP/code talk, and not
+ *  asking for a detail the customer already gave. */
+export function brainFirstReplySafe(phone: string, reply: string | null, toolsUsed: string[]): reply is string {
+  if (!reply) return false;
+  const t = reply.trim();
+  if (!t || t.length > 600) return false;
+  if (/https?:\/\//i.test(t) && !toolsUsed.length) return false;
+  if (/\botp\b|one[- ]time (?:code|password)|verification code/i.test(t)) return false;
+  if (replyAsksKnownDetail(t, knownFactsForContact(phone))) return false;
+  return true;
+}
+
 export function replyAsksKnownDetail(reply: string, facts: RelayKnownFacts): string | null {
   const asks = reply.includes("?") || /\b(?:tell me|share|send me|give me|may i have|can i have)\b/i.test(reply);
   if (!asks) return null;
