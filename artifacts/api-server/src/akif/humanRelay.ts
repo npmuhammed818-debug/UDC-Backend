@@ -224,6 +224,8 @@ export type HumanRelayItem = {
   context?: HumanRelayContextItem[];
   // Read-side only: the owner's reply style note for whoever answers.
   replyStyle?: string;
+  // Read-side only: relay-owner briefing about this contact for the workers.
+  workerBriefing?: string;
 };
 
 export type HumanRelayContextItem = {
@@ -380,10 +382,28 @@ export const RELAY_REPLY_STYLE_NOTE =
   "Never ask what the thread or the customer note already knows; state known facts instead. " +
   "Never mention AI models, drafts, staging or internal systems.";
 
+/** Per-contact briefing from the relay owner to the reply workers (10 Nov:
+ *  e.g. "no email needed for this customer, do not promise one"). Kept in
+ *  memory only - briefings are ephemeral instructions, not customer data, and
+ *  a redeploy simply clears them. Shown at READ time on pending and claim
+ *  payloads, so it reaches a worker even for an item already held. */
+const contactBriefings = new Map<string, string>();
+
+export function setRelayContactBriefing(phone: string, text: string): void {
+  const key = relayContactKey(phone);
+  const clean = text.trim().slice(0, 500);
+  if (clean) contactBriefings.set(key, clean);
+  else contactBriefings.delete(key);
+}
+
+export function relayBriefingForContact(phone: string): string | undefined {
+  return contactBriefings.get(relayContactKey(phone));
+}
+
 export function pendingHumanRelay(): HumanRelayItem[] {
   pruneHumanRelay();
   return items.filter((i) => !i.answeredAt)
-    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id), replyStyle: RELAY_REPLY_STYLE_NOTE }));
+    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(i.phone) }));
 }
 
 /** Recent held history for one number, oldest first: what the customer
@@ -486,7 +506,7 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
     const claimedAt = new Date(now).toISOString();
     item.claimedAt = claimedAt;
     persist((p) => p.setClaim(item.id, workerId, claimedAt));
-    return { ...item, context: recentHumanRelayContext(item.phone, item.id), replyStyle: RELAY_REPLY_STYLE_NOTE };
+    return { ...item, context: recentHumanRelayContext(item.phone, item.id), replyStyle: RELAY_REPLY_STYLE_NOTE, workerBriefing: relayBriefingForContact(item.phone) };
   }
   return null;
 }
@@ -586,6 +606,7 @@ export function __clearRelayMemoryForTests(): void {
 /** Test hook: clear all held items and the reply window. */
 export function resetHumanRelay(): void {
   __clearRelayMemoryForTests();
+  contactBriefings.clear();
   persist((p) => p.deleteAll());
 }
 
