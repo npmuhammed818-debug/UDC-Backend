@@ -27,6 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { fixFormDumpReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
 import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
@@ -190,8 +191,8 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
     // without tools; tool-backed drafts still prefer the brain turn above.
     try {
       const convo = await runConversationChat(text, undefined, 20000);
-      const reply = convo?.content?.trim() || null;
-      return { reply, backgroundDiscarded: false, toolsUsed: [] };
+      const raw = convo?.content?.trim() || null;
+      return { reply: raw ? fixFormDumpReply(raw, text) : null, backgroundDiscarded: false, toolsUsed: [] };
     } catch {
       return null;
     }
