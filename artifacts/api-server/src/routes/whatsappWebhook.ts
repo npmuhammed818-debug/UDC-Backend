@@ -27,7 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
-import { enqueueHumanRelay, humanRelayActiveFor } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -1634,7 +1634,17 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const relayVoiceCrisis = crisisSafetyReply(heard.text);
           if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
           const draft = heard.text.trim() ? await buildHumanRelayDraft(message.from, heard.text, message.id) : null;
-          enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false });
+          // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
+          // only). Text even for a voice greeting, so the auto path never touches
+          // TTS quota; anything beyond a plain greeting stays on the human hold.
+          let voiceAutoAnswered = false;
+          const voiceReply = draft?.reply ?? null;
+          if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text) && greetingAutoReplySafe(voiceReply)) {
+            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" });
+          }
+          enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered });
         } catch (error) {
           console.warn(`relay voice intake failed { stage: "${relayVoiceStage}", error: "${error instanceof Error ? error.message.slice(0, 120) : "unknown"}" }`);
           await deliverWhatsAppReply(message.from, "I couldn’t read that voice note just now. Please resend it or type your message.");
@@ -1863,7 +1873,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // answer instead of the brain or scripted chain answering it.
       if (message.from && !dealActionDirect && humanRelayActiveFor(message.from)) {
         const draft = await buildHumanRelayDraft(message.from, message.text.body, message.id);
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false });
+        let autoAnswered = false;
+        const autoReply = draft?.reply ?? null;
+        if (relayAutoGreetingsEnabled() && isSimpleGreetingText(message.text.body) && greetingAutoReplySafe(autoReply)) {
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) console.info("AKIF relay auto-answered a simple greeting", { kind: "text" });
+        }
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered });
         continue;
       }
       let brainFailed = false;

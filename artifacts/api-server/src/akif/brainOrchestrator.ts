@@ -154,6 +154,8 @@ type ToolOutcome = { note: string; finalReply?: string };
 async function executeTool(phone: string, name: string, argsJson: string, state: BrainSession): Promise<ToolOutcome> {
   let args: Record<string, unknown> = {};
   try { args = argsJson ? JSON.parse(argsJson) : {}; } catch { return { note: "Tool call had unreadable arguments; ask the customer to say the detail again in plain words." }; }
+  // Observability: name only - never arguments, so no customer detail reaches the logs.
+  console.info("AKIF brain tool executed", { name });
 
   if (name === "trade_reference") return runImpexqBrainTool(args);
 
