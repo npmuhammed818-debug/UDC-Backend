@@ -232,7 +232,11 @@ async function relayCustomerNote(phone: string): Promise<string | undefined> {
       // Registration must remember what the customer already gave in chat
       // (owner feedback, 10 Nov): never re-ask a detail on record.
       const givenEmail = emailGivenInRelay(phone);
-      return givenEmail ? `not registered, email already given: ${givenEmail}` : "not registered";
+      // Owner rule (10 Nov): agents register with any email and no company
+      // details; buyers and sellers keep the company-email rule. Workers see
+      // this on every unregistered note so nobody demands the wrong thing.
+      const rules = "agents may use any email and need no company details, buyers/sellers need a company email, company name and country";
+      return (givenEmail ? `not registered, email already given: ${givenEmail}` : "not registered") + "; " + rules;
     }
     const parts = [`registered ${u.role}`, `account ${u.status}`, u.emailVerifiedAt ? "email confirmed" : "email not confirmed"];
     if (u.role === "agent") parts.push(`invite code ${agentReferralCode(u.id)}`);
