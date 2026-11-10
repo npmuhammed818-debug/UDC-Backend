@@ -5,6 +5,7 @@ import { startAutomaticMatching } from './marketplace/automaticMatching';
 import { startGuidedDraftCleanup } from './whatsapp/guidedChat';
 import { startChatFlowSetup } from './whatsapp/setupFlows';
 import { startAcceptanceProbe } from "./akif/acceptanceProbe";
+import { hydrateHumanRelay } from "./akif/humanRelay.ts";
 import app from "./app";
 import { getAkifWorkerCapabilities, isAkifWorkerConfigured, startAkifWorkerKeepWarm } from "./akif/intelligence/workerClient";
 import { logger } from "./lib/logger";
@@ -30,6 +31,9 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+// Restore the held relay queue before accepting traffic: a deploy must not
+// drop customer messages still waiting on a human answer (10 Nov).
+void hydrateHumanRelay().catch(() => 0).then(() => {
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -103,4 +107,5 @@ app.listen(port, (err) => {
       logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
     }
   });
+});
 });

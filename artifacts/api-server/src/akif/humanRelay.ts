@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { sql } from "drizzle-orm";
 import { sendRelayHeldAlert } from "./relayAlertEmail.ts";
 
 // Owner-approved 10 Nov: simple greetings (hi/hello/how are you and nothing
@@ -276,6 +277,7 @@ export function scheduleRelayFallback(item: HumanRelayItem, deliver: (phone: str
     void deliver(still.phone, still.draft).then((sent) => {
       if (sent?.delivered) {
         still.answeredAt = new Date().toISOString();
+        persist((p) => p.markAnswered([still.id], still.answeredAt!));
         console.info("AKIF relay fallback auto-sent a held draft", { kind: still.kind });
       }
     }).catch(() => { /* the item stays held for the dev side */ });
@@ -284,7 +286,9 @@ export function scheduleRelayFallback(item: HumanRelayItem, deliver: (phone: str
 }
 
 export function pruneHumanRelay(now = Date.now()): void {
-  while (items.length && now - Date.parse(items[0].at) > ITEM_TTL_MS) items.shift();
+  let pruned = 0;
+  while (items.length && now - Date.parse(items[0].at) > ITEM_TTL_MS) { items.shift(); pruned += 1; }
+  if (pruned) persist((p) => p.deleteOlderThan(ITEM_TTL_MS));
 }
 
 export function enqueueHumanRelay(input: {
@@ -309,14 +313,21 @@ export function enqueueHumanRelay(input: {
     draft: input.draft ?? null,
     draftBackgroundDiscarded: input.draftBackgroundDiscarded ?? false,
     answeredAt: input.autoAnswered ? new Date().toISOString() : null,
+    autoAnswered: input.autoAnswered || undefined,
+    autoNote: input.autoNote,
+    customerNote: input.customerNote,
   };
   items.push(item);
+  const dropped: string[] = [];
   const forPhone = items.filter((i) => i.phone === item.phone);
   if (forPhone.length > MAX_PER_PHONE) {
     const drop = forPhone.find((i) => i.answeredAt) ?? forPhone[0];
     items.splice(items.indexOf(drop), 1);
+    dropped.push(drop.id);
   }
-  while (items.length > MAX_ITEMS) items.shift();
+  while (items.length > MAX_ITEMS) dropped.push(items.shift()!.id);
+  persist((p) => p.upsertItem(item));
+  if (dropped.length) persist((p) => p.deleteItems(dropped));
   // Fire-and-forget dev-side email alert; the relay never waits on email.
   // "holds" mode skips the email for auto-answered items (volume control).
   if (!(relayAlertMode() === "holds" && input.autoAnswered)) {
@@ -352,7 +363,9 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
       && (Date.parse(i.at) < Date.parse(item.at) || activeClaim(i)));
     if (blocked) continue;
     item.claimedBy = workerId;
-    item.claimedAt = new Date(now).toISOString();
+    const claimedAt = new Date(now).toISOString();
+    item.claimedAt = claimedAt;
+    persist((p) => p.setClaim(item.id, workerId, claimedAt));
     return item;
   }
   return null;
@@ -366,6 +379,7 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string): H
   if (!item || item.answeredAt) return null;
   if (item.claimedBy !== workerId) return null;
   item.answeredAt = new Date().toISOString();
+  persist((p) => p.markAnswered([item.id], item.answeredAt!));
   return item;
 }
 
@@ -383,13 +397,15 @@ export function hasActiveHumanRelayClaim(phone: string): boolean {
 
 export function markHumanRelayAnswered(phone: string): number {
   const digits = phone.replace(/\D/g, "");
+  const at = new Date().toISOString();
   let n = 0;
   for (const item of items) {
     if (!item.answeredAt && item.phone === digits) {
-      item.answeredAt = new Date().toISOString();
+      item.answeredAt = at;
       n++;
     }
   }
+  if (n) persist((p) => p.markPhoneAnswered(digits, at));
   return n;
 }
 
@@ -440,9 +456,139 @@ export function validateRelayReplyText(text: unknown): string | null {
   return trimmed;
 }
 
-/** Test hook: clear all held items and the reply window. */
-export function resetHumanRelay(): void {
+/** Test hook: clear only the in-memory queue (simulates a process restart). */
+export function __clearRelayMemoryForTests(): void {
   items.length = 0;
   replyWindow.length = 0;
   burstState.clear();
+}
+
+/** Test hook: clear all held items and the reply window. */
+export function resetHumanRelay(): void {
+  __clearRelayMemoryForTests();
+  persist((p) => p.deleteAll());
+}
+
+// Durable queue (owner-approved migration 20261110_akif_human_relay_items, 10
+// Nov): every mutation above also writes through to the DB, and a fresh boot
+// hydrates open items from it, so a deploy or restart no longer drops held
+// customer messages (two were lost on the #509 deploy). The in-memory array
+// stays the single-instance hot path; the DB module is imported lazily so
+// tests keep running without a database.
+type RelayRow = {
+  id: string; phone: string; at: Date | string; kind: string; text: string;
+  heard_language: string | null; draft: string | null; draft_background_discarded: boolean;
+  answered_at: Date | string | null; auto_answered: boolean; auto_note: string | null;
+  claimed_by: string | null; claimed_at: Date | string | null; customer_note: string | null;
+};
+
+function relayRowToItem(r: RelayRow): HumanRelayItem {
+  return {
+    id: r.id,
+    phone: r.phone,
+    at: new Date(r.at).toISOString(),
+    kind: r.kind === "voice" ? "voice" : "text",
+    text: r.text,
+    heardLanguage: r.heard_language ?? undefined,
+    draft: r.draft,
+    draftBackgroundDiscarded: Boolean(r.draft_background_discarded),
+    answeredAt: r.answered_at ? new Date(r.answered_at).toISOString() : null,
+    autoAnswered: r.auto_answered || undefined,
+    autoNote: r.auto_note ?? undefined,
+    claimedBy: r.claimed_by,
+    claimedAt: r.claimed_at ? new Date(r.claimed_at).toISOString() : null,
+    customerNote: r.customer_note ?? undefined,
+  };
+}
+
+export interface RelayPersistence {
+  upsertItem(item: HumanRelayItem): Promise<void>;
+  markAnswered(ids: string[], at: string): Promise<void>;
+  markPhoneAnswered(phone: string, at: string): Promise<void>;
+  setClaim(id: string, workerId: string, at: string): Promise<void>;
+  deleteItems(ids: string[]): Promise<void>;
+  deleteOlderThan(ttlMs: number): Promise<void>;
+  deleteAll(): Promise<void>;
+  fetchOpen(maxItems: number, ttlMs: number): Promise<HumanRelayItem[]>;
+}
+
+type RelayDb = { execute: (query: unknown) => Promise<{ rows?: RelayRow[] }> };
+
+async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
+  try {
+    const mod = (await import("@workspace/db")) as { db?: RelayDb };
+    const db = mod.db;
+    if (!db) return null;
+    const idList = (ids: string[]) => sql.join(ids.map((id) => sql`${id}`), sql`, `);
+    return {
+      async upsertItem(i) {
+        await db.execute(sql`INSERT INTO akif_human_relay_items
+          (id, phone, at, kind, text, heard_language, draft, draft_background_discarded, answered_at, auto_answered, auto_note, claimed_by, claimed_at, customer_note)
+          VALUES (${i.id}, ${i.phone}, ${i.at}, ${i.kind}, ${i.text}, ${i.heardLanguage ?? null}, ${i.draft}, ${i.draftBackgroundDiscarded}, ${i.answeredAt}, ${Boolean(i.autoAnswered)}, ${i.autoNote ?? null}, ${i.claimedBy ?? null}, ${i.claimedAt ?? null}, ${i.customerNote ?? null})
+          ON CONFLICT (id) DO NOTHING`);
+      },
+      async markAnswered(ids, at) {
+        if (!ids.length) return;
+        await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at} WHERE answered_at IS NULL AND id IN (${idList(ids)})`);
+      },
+      async markPhoneAnswered(phone, at) {
+        await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at} WHERE phone = ${phone} AND answered_at IS NULL`);
+      },
+      async setClaim(id, workerId, at) {
+        await db.execute(sql`UPDATE akif_human_relay_items SET claimed_by = ${workerId}, claimed_at = ${at} WHERE id = ${id}`);
+      },
+      async deleteItems(ids) {
+        if (!ids.length) return;
+        await db.execute(sql`DELETE FROM akif_human_relay_items WHERE id IN (${idList(ids)})`);
+      },
+      async deleteOlderThan(ttlMs) {
+        await db.execute(sql`DELETE FROM akif_human_relay_items WHERE at < now() - make_interval(secs => ${Math.floor(ttlMs / 1000)})`);
+      },
+      async deleteAll() {
+        await db.execute(sql`DELETE FROM akif_human_relay_items`);
+      },
+      async fetchOpen(maxItems, ttlMs) {
+        const r = await db.execute(sql`SELECT * FROM akif_human_relay_items WHERE answered_at IS NULL AND at > now() - make_interval(secs => ${Math.floor(ttlMs / 1000)}) ORDER BY at ASC LIMIT ${maxItems}`);
+        return (r.rows ?? []).map(relayRowToItem);
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+let persistencePromise: Promise<RelayPersistence | null> | null = null;
+function relayPersistence(): Promise<RelayPersistence | null> {
+  if (!persistencePromise) persistencePromise = defaultRelayPersistence().catch(() => null);
+  return persistencePromise;
+}
+
+/** Test hook: swap DB persistence for a fake (or null to disable). */
+export function __setRelayPersistenceForTests(fake: RelayPersistence | null): void {
+  persistencePromise = Promise.resolve(fake);
+}
+
+function persist(run: (p: RelayPersistence) => Promise<void>): void {
+  void relayPersistence()
+    .then((p) => (p ? run(p) : undefined))
+    .catch((error) => console.warn("AKIF relay persistence write failed", { reason: error instanceof Error ? error.name : "unknown" }));
+}
+
+/** Restore still-open held items from the DB after a restart. Returns how
+ *  many were restored; 0 when there is no DB or nothing open. */
+export async function hydrateHumanRelay(): Promise<number> {
+  const p = await relayPersistence();
+  if (!p) return 0;
+  try {
+    const open = await p.fetchOpen(MAX_ITEMS, ITEM_TTL_MS);
+    let added = 0;
+    for (const row of open) {
+      if (!items.some((i) => i.id === row.id)) { items.push(row); added += 1; }
+    }
+    items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    if (added > 0) console.info("AKIF relay queue restored after restart", { items: added });
+    return added;
+  } catch {
+    return 0;
+  }
 }
