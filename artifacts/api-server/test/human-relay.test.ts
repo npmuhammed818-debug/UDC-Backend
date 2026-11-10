@@ -135,6 +135,14 @@ test("relay alert email fires when configured and stays silent otherwise", async
     assert.equal(payload.from, "UDC <alerts@updowncircle.site>");
     assert.match(payload.subject, /voice message from \+917022032531/);
     assert.match(payload.text, /spoken hello/);
+    assert.doesNotMatch(payload.text, /Brain draft/);
+
+    enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "need prices", draft: "Draft reply the dev side may edit." });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.length, 2);
+    const withDraft = JSON.parse(calls[1].body);
+    assert.match(withDraft.text, /Brain draft \(not sent; the dev side may edit before replying\):/);
+    assert.match(withDraft.text, /Draft reply the dev side may edit\./);
   } finally {
     globalThis.fetch = prevFetch;
     if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;
@@ -157,6 +165,54 @@ test("relay alert email failure does not break enqueue", async () => {
     await new Promise((r) => setImmediate(r));
     assert.equal(item.answeredAt, null);
     assert.equal(pendingHumanRelay().length, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;
+    if (prev.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = prev.key;
+    if (prev.from === undefined) delete process.env.UDC_AUTH_EMAIL_FROM; else process.env.UDC_AUTH_EMAIL_FROM = prev.from;
+    resetHumanRelay();
+  }
+});
+
+test("simple greeting detection is strict and fails closed", async () => {
+  const { isSimpleGreetingText, greetingAutoReplySafe } = await import("../src/akif/humanRelay.ts");
+  for (const yes of ["Hi", "hello!", "hey", "Good morning", "Hello, how are you?", "how r u", "namaste", "What's up?"]) {
+    assert.equal(isSimpleGreetingText(yes), true, `should greet: ${yes}`);
+  }
+  for (const no of ["", "Hi, I need 500 kg cashew", "hello price?", "Damn", "Also my father just died", "hi there what is the rate", "hello " + "x".repeat(80)]) {
+    assert.equal(isSimpleGreetingText(no), false, `should hold: ${no.slice(0, 30)}`);
+  }
+  assert.equal(greetingAutoReplySafe(null), false);
+  assert.equal(greetingAutoReplySafe("Doing well, thanks! How can I help?"), true);
+  assert.equal(greetingAutoReplySafe("See https://example.com"), false);
+  assert.equal(greetingAutoReplySafe("Call 9876543210 now"), false);
+  assert.equal(greetingAutoReplySafe("Here is the menu"), false);
+  assert.equal(greetingAutoReplySafe("x".repeat(301)), false);
+});
+
+test("auto-answered relay item is not pending and the alert email says so", async () => {
+  const prev = { alert: process.env.AKIF_RELAY_ALERT_EMAIL, key: process.env.RESEND_API_KEY, from: process.env.UDC_AUTH_EMAIL_FROM };
+  const prevFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: string }> = [];
+  try {
+    globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
+      calls.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    process.env.AKIF_RELAY_ALERT_EMAIL = "owner@example.com";
+    process.env.RESEND_API_KEY = "re_test_123456789";
+    process.env.UDC_AUTH_EMAIL_FROM = "UDC <alerts@updowncircle.site>";
+
+    resetHumanRelay();
+    const { pendingHumanRelay } = await import("../src/akif/humanRelay.ts");
+    enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "Hello", draft: "Hi! How can I help?", autoAnswered: true });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(pendingHumanRelay().length, 0);
+    assert.equal(calls.length, 1);
+    const payload = JSON.parse(calls[0].body);
+    assert.match(payload.text, /Auto-answered as a simple greeting/);
+    assert.match(payload.text, /Hi! How can I help\?/);
+    assert.doesNotMatch(payload.text, /not sent; the dev side may edit/);
   } finally {
     globalThis.fetch = prevFetch;
     if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;

@@ -1,6 +1,42 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { sendRelayHeldAlert } from "./relayAlertEmail.ts";
 
+// Owner-approved 10 Nov: simple greetings (hi/hello/how are you and nothing
+// more) may be auto-answered on staging for allowlisted numbers. Env-gated,
+// default OFF. Anything with trade, money, deals, questions or any doubt
+// stays on the human hold. Fail closed: only the exact patterns below count.
+export function relayAutoGreetingsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.AKIF_RELAY_AUTO_GREETINGS ?? "").trim() === "on";
+}
+
+const GREETING_PARTS = [
+  "hi+", "hello+", "hey+", "hai+", "hii+", "yo",
+  "good\\s+(?:morning|afternoon|evening|night)",
+  "namaste", "namaskaram", "salaam?", "assalamu\\s+alaikum",
+  "how\\s+(?:are|r)\\s+(?:you|u)", "how'?s\\s+it\\s+going", "what'?s\\s+up", "sup",
+];
+const SIMPLE_GREETING = new RegExp(
+  `^\\s*(?:${GREETING_PARTS.join("|")})(?:[\\s,!.?…]+(?:${GREETING_PARTS.join("|")}))*[\\s,!.?…]*$`,
+  "i",
+);
+
+/** True only when the whole message is greeting words - nothing else. */
+export function isSimpleGreetingText(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= 60 && SIMPLE_GREETING.test(t);
+}
+
+/** The brain already validated the draft; this is the belt-and-braces check
+ *  before anything auto-sends: short, no links, emails, long numbers, no menu. */
+export function greetingAutoReplySafe(draft: string | null | undefined): draft is string {
+  if (!draft) return false;
+  const t = draft.trim();
+  if (t.length === 0 || t.length > 300) return false;
+  if (/https?:\/\/|www\.|\S+@\S+|\d{5,}/i.test(t)) return false;
+  if (/\bmenu\b/i.test(t)) return false;
+  return true;
+}
+
 // Human relay (staging tests only; owner direction, 9 Nov): open chat turns
 // from allowlisted test numbers are held in memory for a dev-side human answer
 // instead of AKIF answering straight away. Deal commands, menus, forms, money
@@ -59,6 +95,7 @@ export function enqueueHumanRelay(input: {
   heardLanguage?: string;
   draft?: string | null;
   draftBackgroundDiscarded?: boolean;
+  autoAnswered?: boolean;
 }): HumanRelayItem {
   pruneHumanRelay();
   const item: HumanRelayItem = {
@@ -70,7 +107,7 @@ export function enqueueHumanRelay(input: {
     heardLanguage: input.heardLanguage,
     draft: input.draft ?? null,
     draftBackgroundDiscarded: input.draftBackgroundDiscarded ?? false,
-    answeredAt: null,
+    answeredAt: input.autoAnswered ? new Date().toISOString() : null,
   };
   items.push(item);
   const forPhone = items.filter((i) => i.phone === item.phone);
@@ -80,7 +117,7 @@ export function enqueueHumanRelay(input: {
   }
   while (items.length > MAX_ITEMS) items.shift();
   // Fire-and-forget dev-side email alert; the relay never waits on email.
-  void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text });
+  void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered) });
   return item;
 }
 
