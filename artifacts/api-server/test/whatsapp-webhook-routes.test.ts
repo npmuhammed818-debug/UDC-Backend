@@ -187,6 +187,38 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply='Reply AGREE';state.guidanceCalls=[];
       await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
     });
+    await t.test('one-voice rule: with the relay active and the brain off, no automatic reply of any kind goes out',async()=>{
+      const oldEnabled=process.env.AKIF_HUMAN_RELAY_ENABLED,oldNumbers=process.env.AKIF_HUMAN_RELAY_NUMBERS;
+      process.env.AKIF_HUMAN_RELAY_ENABLED='true';process.env.AKIF_HUMAN_RELAY_NUMBERS='all';
+      try{
+        // A learning question that WOULD auto-answer: held silently, guidance never called.
+        reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
+        state.guidanceReply='DLC means Documentary Letter of Credit.';
+        await message({text:{body:'What is dlc?'}});
+        assert.equal(state.sent.length,0,'no scripted or model reply reaches the customer');
+        assert.deepEqual(state.guidanceCalls,[],'the guidance chain is never invoked for a relay customer');
+        // The robotic intro / busy fallback / refusal class: provider failure still sends nothing.
+        state.guidanceFailure=true;
+        await message({text:{body:'Can you prepare an LOI for me?'}});
+        assert.equal(state.sent.length,0,'no fallback, intro or refusal line on failure');
+        state.guidanceFailure=false;state.guidanceReply=undefined;
+        // Greeting: no canned hello.
+        await message({text:{body:'Hy'}});
+        assert.equal(state.sent.length,0,'no automatic greeting');
+        // Commission ask: no direct fixed answer, held for a worker.
+        await message({text:{body:'What is my commission?'}});
+        assert.equal(state.sent.length,0,'no automatic commission reply');
+        // A relay-free customer keeps the old scripted safety net.
+        process.env.AKIF_HUMAN_RELAY_NUMBERS='99999999999';
+        reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
+        state.guidanceReply='DLC means Documentary Letter of Credit.';
+        await message({text:{body:'What is dlc?'}});
+        assert.equal(state.sent.at(-1)?.body,state.guidanceReply,'non-relay customers keep the scripted answers');
+      } finally {
+        if(oldEnabled===undefined)delete process.env.AKIF_HUMAN_RELAY_ENABLED;else process.env.AKIF_HUMAN_RELAY_ENABLED=oldEnabled;
+        if(oldNumbers===undefined)delete process.env.AKIF_HUMAN_RELAY_NUMBERS;else process.env.AKIF_HUMAN_RELAY_NUMBERS=oldNumbers;
+      }
+    });
     await t.test("voice behaviour: voice in gives voice out, no text copy, long voice gets a text offer, critical stays text",async()=>{
       reset();state.voice=[];state.voiceState='voice';state.voiceFail=false;state.voiceSeconds=5;state.noticeRecorded=0;
       const previous=process.env.AKIF_VOICE_REPLIES;process.env.AKIF_VOICE_REPLIES="on";

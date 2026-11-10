@@ -725,7 +725,9 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string, re
   // The newer reply covers every older still-open message from this customer:
   // mark them covered so no worker sends a separate late answer.
   const skipped: string[] = [];
-  for (const other of items) {
+  // Voice notes never cover each other (owner direction, 10 Nov): every voice
+  // note gets its own reply, so only text replies can cover older text.
+  for (const other of item.kind === "voice" ? [] : items) {
     if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
     if (other.kind !== item.kind) continue; // a text reply never covers a voice note, nor the reverse
     if (Date.parse(other.at) >= Date.parse(item.at)) continue;

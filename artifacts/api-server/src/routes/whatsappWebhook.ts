@@ -1732,12 +1732,15 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
         try {
           if (await handleChatUi(message.from, message, true)) continue;
-          if (!isBrainOrchestratorEnabled()) {
+          // One-voice rule (owner, 10 Nov): when the human relay covers this
+          // customer, no scripted or fallback reply ever goes out - the turn
+          // falls through to the relay hold below and a worker answers.
+          if (!isBrainOrchestratorEnabled() && !humanRelayActiveFor(message.from)) {
             const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
             if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
           }
         } catch {
-          if (!isBrainOrchestratorEnabled()) { await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly."); continue; }
+          if (!isBrainOrchestratorEnabled() && !humanRelayActiveFor(message.from)) { await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly."); continue; }
         }
       }
       // Interactive taps keep the fixed feature path. Typed texts only
@@ -2213,7 +2216,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         }
         // Commission questions get the fixed honest answer immediately, no
         // burst wait or brain turn (owner direction, 10 Nov).
-        if (isCommissionAskText(message.text.body)) { await deliverWhatsAppReply(message.from, commissionAskReply()); continue; }
+        if (isCommissionAskText(message.text.body)) {
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          continue;
+        }
         // Burst coalescing, same as the relay hold: rapid multi-bubble messages
         // become ONE brain turn instead of the next bubble hitting the busy floor.
         brainText = message.text.body;
@@ -2287,7 +2293,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // (owner report, 10 Nov launch). Variants rotate so repeats don't
         // read as a canned line.
         if (isSimpleGreetingText(message.text.body)) {
-          await deliverWhatsAppReply(message.from, fallbackGreeting());
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: fallbackGreeting(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           continue;
         }
         // Menus stay automatic without the model: the scripted home menu
@@ -2297,9 +2303,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:menu` : undefined, text: { body: message.text.body } } as ChatMessage)) continue;
           } catch { /* fall through to the silent hold below */ }
         }
-        // Commission questions never need the model either.
+        // Commission questions never need the model either: held for a
+        // worker with the approved fixed wording pre-loaded as the draft.
         if (isCommissionAskText(message.text.body)) {
-          await deliverWhatsAppReply(message.from, commissionAskReply());
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           continue;
         }
         // Everything else is held silently for the human relay team: no

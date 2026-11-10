@@ -244,6 +244,12 @@ router.post("/akif-relay/reply", async (req, res) => {
     res.status(400).json({ ok: false, error: "invalid_reply" });
     return;
   }
+  // Never mark a message answered with nothing sent (owner, 10 Nov): a text
+  // reply must carry real words.
+  if (!emailTo && !audio && !(text && text.trim())) {
+    res.status(400).json({ ok: false, error: "invalid_reply" });
+    return;
+  }
   const delivery = emailTo
     ? await saveEmailRelayDraft({ to: emailTo, text: text ?? "" })
     : audio

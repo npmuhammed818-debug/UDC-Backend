@@ -172,20 +172,18 @@ test("launch simulation: agent, seller and buyer chats both directions with late
         assert.equal(r.status, 200); assert.equal(state.sent.length, 1);
         assert.equal(state.sent[0].body, "Happy to help with that.");
       });
-      await t.test("agent commission question gets the fixed answer instantly, no brain turn", async () => {
+      await t.test("agent commission question holds for a worker with the fixed wording pre-loaded, no brain turn", async () => {
         reset(); seedUsers(); state.brainCalls = [];
         const r = await sendText(AGENT, "How much commission do I get per referral?"); latText.push(r.ms);
         assert.equal(state.brainCalls.length, 0, "commission never reaches the model");
-        assert.equal(state.sent.length, 1);
-        assert.match(state.sent[0].body, /deal by deal/);
-        assert.ok(r.ms < 1500, "commission answer is near-instant, got " + r.ms + "ms");
+        assert.equal(state.sent.length, 0, "one-voice rule: no automatic commission reply");
+        assert.ok(r.ms < 1500, "hold decision is near-instant, got " + r.ms + "ms");
       });
-      await t.test("Malayalam commission question gets the Malayalam fixed answer", async () => {
+      await t.test("Malayalam commission question holds silently for a worker", async () => {
         reset(); seedUsers(); state.brainCalls = [];
         const r = await sendText(AGENT, "\u0d15\u0d2e\u0d4d\u0d2e\u0d40\u0d37\u0d7b \u0d0e\u0d24\u0d4d\u0d30?"); latText.push(r.ms);
         assert.equal(state.brainCalls.length, 0);
-        assert.equal(state.sent.length, 1);
-        assert.match(state.sent[0].body, /\u0d15\u0d2e\u0d4d\u0d2e\u0d40\u0d37\u0d7b|deal/);
+        assert.equal(state.sent.length, 0, "one-voice rule: no automatic commission reply");
       });
       await t.test("seller offer and buyer requirement each get one brain answer", async () => {
         reset(); seedUsers(); state.brainLatency = 800;
@@ -214,17 +212,17 @@ test("launch simulation: agent, seller and buyer chats both directions with late
         assert.doesNotMatch(String(state.sent[0].body), /previous message/);
         state.brainMode = "answer";
       });
-      await t.test("Groq 429 (brain down): normal question holds silently, greeting still answers", async () => {
+      await t.test("Groq 429 (brain down): question, greeting and commission all hold silently for workers, nothing automatic", async () => {
         reset(); seedUsers(); state.brainMode = "fail"; state.brainLatency = 800;
         let r = await sendText(AGENT, "How is monsoon affecting cardamom prices?"); latText.push(r.ms);
         assert.equal(state.sent.length, 0, "no failure line or canned note");
         assert.ok(r.ms < 10000, "hold decision under 10s, got " + r.ms + "ms");
         reset(); seedUsers(); state.brainMode = "fail";
         r = await sendText(AGENT, "Hy"); latText.push(r.ms);
-        assert.equal(state.sent.length, 1, "greeting fallback answers without the model");
+        assert.equal(state.sent.length, 0, "one-voice rule: a greeting holds for a worker, no canned line");
         reset(); seedUsers(); state.brainMode = "fail"; state.brainCalls = [];
         r = await sendText(AGENT, "What is my commission?"); latText.push(r.ms);
-        assert.match(state.sent[0].body, /deal by deal/, "commission answered even with the brain down");
+        assert.equal(state.sent.length, 0, "one-voice rule: a commission ask holds for a worker, no canned answer");
         state.brainMode = "answer";
       });
       // ---- voice turns ----
