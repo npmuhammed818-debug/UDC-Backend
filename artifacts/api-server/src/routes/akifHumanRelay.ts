@@ -5,6 +5,7 @@ import {
   humanRelayActiveFor,
   humanRelayEnabled,
   humanRelayNumbers,
+  hasActiveHumanRelayClaim,
   lastHeardLanguageFor,
   markHumanRelayAnswered, claimHumanRelay, answerClaimedHumanRelayItem,
   pendingHumanRelay,
@@ -132,6 +133,12 @@ router.post("/akif-relay/reply", async (req, res) => {
     return;
   }
   const { phone, voice } = parsed.data!;
+  // A phone-only reply must not race a worker's active claim on that number:
+  // the worker's answer and this one would both go out (10 Nov launch).
+  if (!parsed.data!.itemId && hasActiveHumanRelayClaim(phone)) {
+    res.status(409).json({ ok: false, error: "claim_lost" });
+    return;
+  }
   // Outbound is locked to the same allowlist as inbound: in this phase that is
   // the owner's own number only.
   if (!humanRelayActiveFor(phone)) {

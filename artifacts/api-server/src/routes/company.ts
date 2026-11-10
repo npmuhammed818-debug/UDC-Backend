@@ -1,4 +1,5 @@
 import { Router, raw, type IRouter, type Response } from "express";
+import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod/v4";
@@ -144,6 +145,7 @@ router.post("/company", requireAuth, async (req, res) => {
       })
       .returning(companySelection);
 
+    queueAdminReviewAlert("company verification", input.company_name);
     res.status(201).json({ company });
   } catch (error) {
     if (validationResponse(res, error)) return;

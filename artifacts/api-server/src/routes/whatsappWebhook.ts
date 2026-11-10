@@ -28,7 +28,8 @@ import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
+import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -166,7 +167,7 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // cancelled, never started, because the dev side decides what actually goes
 // out. Brain failure just means no draft - the message is still held.
 const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
-const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 3000) || 0);
+const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 1500) || 0);
 // Delay ack fires only when the reply is genuinely slow, never as a per-message ack (owner feedback, 10 Nov).
 const RELAY_SLOW_NUDGE_MS = Math.max(0, Number(process.env.AKIF_RELAY_SLOW_NUDGE_MS ?? 12000) || 0);
 
@@ -216,6 +217,18 @@ export async function buildHumanRelayDraftWithRetry(phone: string, text: string,
 }
 
 /** Send the dev-side answer. Voice requests use the normal voice path with its own honest text fallback. */
+/** Registered account state for relay humans: role, status and (for agents)
+ *  the invite code, so an answer never asks what the system already knows. */
+async function relayCustomerNote(phone: string): Promise<string | undefined> {
+  try {
+    const [u] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status, emailVerifiedAt: usersTable.emailVerifiedAt }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+    if (!u) return "not registered";
+    const parts = [`registered ${u.role}`, `account ${u.status}`, u.emailVerifiedAt ? "email confirmed" : "email not confirmed"];
+    if (u.role === "agent") parts.push(`invite code ${agentReferralCode(u.id)}`);
+    return parts.join(", ");
+  } catch { return undefined; }
+}
+
 export async function deliverHumanRelayReply(to: string, text: string, options: { voice?: boolean; heardLanguage?: string } = {}) {
   const cleanedText = sanitizeRelayReplyText(text);
   if (options.voice) {
@@ -1694,6 +1707,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               }
             } catch { /* fall through to the relay draft */ }
           }
+          // Commission questions get the fixed honest answer in the heard
+          // language, voice in voice out, no brain turn (owner direction, 10 Nov).
+          if (isCommissionAskText(heard.text)) {
+            const sent = await deliverHumanRelayReply(message.from, commissionAskReply(heard.language), { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: Boolean(sent?.delivered), autoNote: "Auto-answered with the fixed commission answer, no reply needed unless it looks wrong. Sent:" });
+            continue;
+          }
           const draft = heard.text.trim() ? await buildHumanRelayDraftWithRetry(message.from, heard.text, message.id) : null;
           // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
           // only). Text even for a voice greeting, so the auto path never touches
@@ -1721,7 +1741,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
           }
-          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote });
+          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from) });
           if (!voiceAutoAnswered && heldVoice.draft && relayFallbackReplySafe(heard.text, heldVoice.draft, draft?.toolsUsed ?? [])) {
             scheduleRelayFallback(heldVoice, deliverHumanRelayReply);
           }
@@ -1753,6 +1773,12 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             continue;
           }
           req.log.info({ flow: "voice_message", stage: "transcription", outcome: "success", transcriptChars: transcript.length, languageDetected: Boolean(heard.language) }, "UDC voice input transcribed");
+          // Commission questions get the fixed honest answer in the heard
+          // language, voice in voice out, no brain turn (owner direction, 10 Nov).
+          if (isCommissionAskText(transcript)) {
+            await deliverAnswer(message.from, commissionAskReply(heard.language), true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true });
+            continue;
+          }
           // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
           // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.
           reactByMeaning(message.from, message.id, transcript);
@@ -1774,7 +1800,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             try {
               const voiceBrain = await runBrainTurn({ phone: message.from, text: transcript, messageId: message.id });
               if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
-                const voiceDelivered = await deliverWhatsAppReply(message.from, voiceBrain.reply);
+                const voiceDelivered = await deliverAnswer(message.from, voiceBrain.reply, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true, userText: transcript });
                 if (voiceBrain.background && voiceDelivered?.delivered) {
                   const background = voiceBrain.background;
                   const phone = message.from;
@@ -2000,6 +2026,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             }
           } catch { /* fall through to the relay draft */ }
         }
+        // Commission questions get the fixed honest answer immediately, no
+        // burst wait or brain turn (owner direction, 10 Nov).
+        if (isCommissionAskText(message.text.body)) {
+          const sent = await deliverHumanRelayReply(message.from, commissionAskReply());
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(sent?.delivered), autoNote: "Auto-answered with the fixed commission answer, no reply needed unless it looks wrong. Sent:" });
+          continue;
+        }
         // A real reply is being prepared now (auto answer or the held draft), so
         // the typing bubble is honest here; acks above never reach this line.
         markReadAndTyping(message.from, message.id);
@@ -2051,7 +2084,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             }
           } catch { /* fall through to the hold */ }
         }
-        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote });
+        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from) });
         if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
           scheduleRelayFallback(heldText, deliverHumanRelayReply);
         }
@@ -2067,6 +2100,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
           if (reacted?.delivered) continue;
         }
+        // Commission questions get the fixed honest answer immediately, no
+        // burst wait or brain turn (owner direction, 10 Nov).
+        if (isCommissionAskText(message.text.body)) { await deliverWhatsAppReply(message.from, commissionAskReply()); continue; }
         // Burst coalescing, same as the relay hold: rapid multi-bubble messages
         // become ONE brain turn instead of the next bubble hitting the busy floor.
         brainText = message.text.body;
@@ -2093,8 +2129,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         if (brainBusyWaitEnabled()) {
           // An in-flight previous turn clears within seconds; wait it out
           // instead of answering with the busy floor (owner feedback, 10 Nov).
-          for (let attempt = 0; brain?.reply === BRAIN_BUSY_REPLY && attempt < 5; attempt++) {
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+          for (let attempt = 0; brain?.reply === BRAIN_BUSY_REPLY && attempt < 3; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
             brain = await callBrain();
           }
           if (brain?.reply === BRAIN_BUSY_REPLY) brain = null; // never send the floor line
@@ -2150,10 +2186,15 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:menu` : undefined, text: { body: message.text.body } } as ChatMessage)) continue;
           } catch { /* fall through to the silent hold below */ }
         }
+        // Commission questions never need the model either.
+        if (isCommissionAskText(message.text.body)) {
+          await deliverWhatsAppReply(message.from, commissionAskReply());
+          continue;
+        }
         // Everything else is held silently for the human relay team: no
         // failure line, no canned note (owner direction, 10 Nov launch).
         // Workers or the relay owner answer it from the queue.
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null });
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null, customerNote: await relayCustomerNote(message.from) });
         continue;
       }
 

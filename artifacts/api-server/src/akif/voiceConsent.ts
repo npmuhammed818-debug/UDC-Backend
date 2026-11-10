@@ -1,5 +1,5 @@
 // Plain words the owner can approve or change. Shown once as text before the first voice reply.
-export const VOICE_NOTICE = "Voice replies use ElevenLabs. Send \"text only\" to switch them off.";
+export const VOICE_NOTICE = "I can reply by voice. Send 'text only' to switch voice off.";
 export const TEXT_ONLY_CONFIRMATION = "Okay, I'll reply in text only. Send \"voice on\" if you want voice replies again.";
 export const VOICE_ON_CONFIRMATION = "Voice replies are on again for voice notes. Send \"text only\" to stop them.";
 

@@ -211,7 +211,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
         await message({text:{body:"voice please"}});assert.match(state.sent.at(-1).body,/answer your next question in voice/);
         await message({text:{body:"What is dlc?"}});assert.equal(state.voice.length,v+1,"explicit request gives one voice reply");
         state.voiceState='needs_notice';await message({audio:{id:'voice-first'}});
-        assert.equal(state.noticeRecorded,1);assert.equal(state.sent.at(-1).body,"Voice replies use ElevenLabs. Send \"text only\" to switch them off.");
+        assert.equal(state.noticeRecorded,1);assert.equal(state.sent.at(-1).body,"I can reply by voice. Send 'text only' to switch voice off.");
       }finally{if(previous===undefined)delete process.env.AKIF_VOICE_REPLIES;else process.env.AKIF_VOICE_REPLIES=previous;state.voiceState=undefined;}
     });
     await t.test("24h window evidence accepts only signed, consented, verified inbound messages",async()=>{
