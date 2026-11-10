@@ -13,6 +13,8 @@ import {
   relayReadAuthorized,
   validateRelayReplyText,
   decodeRelayAudio,
+  knownFactsForContact,
+  replyAsksKnownDetail,
 } from "../akif/humanRelay";
 import { isBrainOrchestratorEnabled } from "../akif/brainOrchestrator";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
@@ -150,6 +152,16 @@ router.post("/akif-relay/reply", async (req, res) => {
   if (!admitHumanRelayReply()) {
   res.status(429).json({ ok: false, error: "reply_rate_limit" });
     return;
+  }
+  // Memory guard (owner direction, 10 Nov): never ask for something the
+  // customer already answered in this thread. The worker rewrites it as a
+  // statement instead.
+  if (text) {
+    const asks = replyAsksKnownDetail(text, knownFactsForContact(phone));
+    if (asks) {
+      res.status(409).json({ ok: false, error: "asks_known_detail", detail: asks });
+      return;
+    }
   }
   // Email channel (Phase A, synthetic only): the answer is saved as a
   // review draft, never sent. Voice does not apply to email.

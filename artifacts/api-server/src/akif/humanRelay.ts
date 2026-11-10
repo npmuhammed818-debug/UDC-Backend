@@ -222,6 +222,8 @@ export type HumanRelayItem = {
   // Read-side only (claim/pending payloads): the number's recent held
   // history, so an answer builds on earlier turns instead of re-asking.
   context?: HumanRelayContextItem[];
+  // Read-side only: the owner's reply style note for whoever answers.
+  replyStyle?: string;
 };
 
 export type HumanRelayContextItem = {
@@ -369,10 +371,19 @@ export function enqueueHumanRelay(input: {
   return item;
 }
 
+/** Worker style note (owner direction, 10 Nov): attached to every claim and
+ *  pending payload so every reply worker writes like a warm, relaxed person
+ *  texting. Mechanics stay in code; this only shapes the voice. */
+export const RELAY_REPLY_STYLE_NOTE =
+  "Sound like a warm, relaxed person texting: short, friendly, natural, a little casual. " +
+  "Never stiff or formal, never the same phrasing twice. Answer first, one thing at a time. " +
+  "Never ask what the thread or the customer note already knows; state known facts instead. " +
+  "Never mention AI models, drafts, staging or internal systems.";
+
 export function pendingHumanRelay(): HumanRelayItem[] {
   pruneHumanRelay();
   return items.filter((i) => !i.answeredAt)
-    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id) }));
+    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id), replyStyle: RELAY_REPLY_STYLE_NOTE }));
 }
 
 /** Recent held history for one number, oldest first: what the customer
@@ -385,6 +396,59 @@ export function recentHumanRelayContext(phone: string, excludeId?: string, max =
     .filter((i) => i.phone === digits && i.id !== excludeId)
     .slice(-max)
     .map((i) => ({ at: i.at, kind: i.kind, text: i.text, answered: Boolean(i.answeredAt) }));
+}
+
+/** Facts the customer already gave in this thread (owner feedback, 10 Nov:
+ *  "the bot has no memory"). Parsed conservatively from held turns and the
+ *  latest customer note; anything uncertain stays undefined and may be asked.
+ */
+export type RelayKnownFacts = { email?: string; name?: string; company?: string; role?: string };
+
+export function knownFactsForContact(phone: string): RelayKnownFacts {
+  const digits = relayContactKey(phone);
+  const facts: RelayKnownFacts = {};
+  for (const item of items.filter((i) => i.phone === digits)) {
+    const t = item.text;
+    if (!facts.email) {
+      const m = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(t);
+      if (m) facts.email = m[0];
+    }
+    if (!facts.name) {
+      const m = /(?:my (?:full )?name is[:\s]+|full name[:\s]+)([A-Za-z][A-Za-z .'-]{1,60})/i.exec(t);
+      if (m) facts.name = m[1].trim().replace(/[.!,]+$/, "");
+    }
+    if (!facts.company) {
+      const m = /(?:my company(?: name)? is[:\s]+|company name[:\s]+)([A-Za-z0-9][A-Za-z0-9 &.,'()-]{1,80})/i.exec(t);
+      if (m) facts.company = m[1].trim().replace(/[.!,]+$/, "");
+    }
+    if (!facts.role) {
+      const m = /^(agent|buyer|seller)(?: only)?[.!\s]*$/i.exec(t.trim());
+      if (m) facts.role = m[1].toLowerCase();
+    }
+    const note = item.customerNote ?? "";
+    if (!facts.role) {
+      const m = /registered (agent|buyer|seller)/.exec(note);
+      if (m) facts.role = m[1];
+    }
+    if (!facts.email) {
+      const m = /email already given: (\S+)/.exec(note);
+      if (m) facts.email = m[1];
+    }
+  }
+  return facts;
+}
+
+/** Guard (owner direction, 10 Nov): a reply must never ask for something the
+ *  customer already answered. Returns the known detail it re-asks, or null.
+ *  Confirmation questions count as asking; state the fact instead. */
+export function replyAsksKnownDetail(reply: string, facts: RelayKnownFacts): string | null {
+  const asks = reply.includes("?") || /\b(?:tell me|share|send me|give me|may i have|can i have)\b/i.test(reply);
+  if (!asks) return null;
+  if (facts.email && /\be-?mails?\b|email id|mail id/i.test(reply)) return "email";
+  if (facts.name && /\b(?:full name|your name)\b/i.test(reply)) return "full name";
+  if (facts.company && /\bcompany(?: name)?\b/i.test(reply)) return "company name";
+  if (facts.role && /\b(?:buyer|seller|agent)\b/i.test(reply) && /\b(?:register|joining|join|which one|role|as a)\b/i.test(reply)) return "role";
+  return null;
 }
 
 /** An email address the customer already sent in a held message, if any.
@@ -422,7 +486,7 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
     const claimedAt = new Date(now).toISOString();
     item.claimedAt = claimedAt;
     persist((p) => p.setClaim(item.id, workerId, claimedAt));
-    return { ...item, context: recentHumanRelayContext(item.phone, item.id) };
+    return { ...item, context: recentHumanRelayContext(item.phone, item.id), replyStyle: RELAY_REPLY_STYLE_NOTE };
   }
   return null;
 }
