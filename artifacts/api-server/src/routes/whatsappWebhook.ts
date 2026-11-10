@@ -166,6 +166,8 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // out. Brain failure just means no draft - the message is still held.
 const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
 const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 3000) || 0);
+// Delay ack fires only when the reply is genuinely slow, never as a per-message ack (owner feedback, 10 Nov).
+const RELAY_SLOW_NUDGE_MS = Math.max(0, Number(process.env.AKIF_RELAY_SLOW_NUDGE_MS ?? 12000) || 0);
 
 export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
   if (!isBrainOrchestratorEnabled()) return null;
@@ -1666,6 +1668,17 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
           const relayVoiceCrisis = crisisSafetyReply(heard.text);
           if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
+          // Feature requests reach the real scripted feature directly, same as text.
+          const voiceFeature = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(heard.text) ? "documents"
+            : /\b(verify|verification|verified|verifying)\b/i.test(heard.text) ? "verification" : null;
+          if (voiceFeature) {
+            try {
+              if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${voiceFeature}` } } } as ChatMessage)) {
+                enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: `Auto-handled by the ${voiceFeature} feature, no reply needed unless it looks wrong.` });
+                continue;
+              }
+            } catch { /* fall through to the relay draft */ }
+          }
           const draft = heard.text.trim() ? await buildHumanRelayDraftWithRetry(message.from, heard.text, message.id) : null;
           // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
           // only). Text even for a voice greeting, so the auto path never touches
@@ -1947,6 +1960,18 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction, no reply needed unless it looks wrong.` });
           continue;
         }
+        // Feature requests reach the real scripted feature directly: the link
+        // or status IS the reply, so no draft, nudge or fallback runs for them.
+        const relayFeature = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
+          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
+        if (relayFeature) {
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${relayFeature}` } } } as ChatMessage)) {
+              enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: true, autoNote: `Auto-handled by the ${relayFeature} feature, no reply needed unless it looks wrong.` });
+              continue;
+            }
+          } catch { /* fall through to the relay draft */ }
+        }
         // A real reply is being prepared now (auto answer or the held draft), so
         // the typing bubble is honest here; acks above never reach this line.
         markReadAndTyping(message.from, message.id);
@@ -1958,11 +1983,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         if (combinedText === null) continue; // a newer bubble takes the turn
         // Slow-turn heads-up: if the reply takes more than a few seconds the
         // customer hears a short natural note first (owner feedback 10 Nov).
-        const slowNotice = setTimeout(() => { void deliverHumanRelayReply(message.from!, "On it, one minute."); }, 5000);
+        const slowNotice = RELAY_SLOW_NUDGE_MS > 0 ? setTimeout(() => { void deliverHumanRelayReply(message.from!, "On it, one minute."); }, RELAY_SLOW_NUDGE_MS) : null;
         // Wait out any in-flight turn from the previous burst, then draft once
         // (with one retry when the turn itself failed or came back empty).
         const draft = await buildHumanRelayDraftWithRetry(message.from, combinedText, message.id);
-        clearTimeout(slowNotice);
+        if (slowNotice) clearTimeout(slowNotice);
         let autoAnswered = false;
         let autoNote: string | undefined;
         const autoReply = draft?.reply ?? null;
@@ -2010,7 +2035,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Slow-turn heads-up: if the reply takes more than a few seconds the
         // customer hears a short natural note first (owner feedback, 10 Nov).
         const slowNotice = brainSlowNudgeEnabled()
-          ? setTimeout(() => { void deliverWhatsAppReply(message.from!, "On it, one minute."); }, 5000)
+          ? setTimeout(() => { void deliverWhatsAppReply(message.from!, "On it, one minute."); }, RELAY_SLOW_NUDGE_MS || 12000)
           : null;
         try {
         const callBrain = () => runBrainTurn({
