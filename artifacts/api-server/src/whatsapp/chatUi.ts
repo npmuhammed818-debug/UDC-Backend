@@ -170,7 +170,10 @@ export async function submitChatFlow(phone:string,raw:unknown){
   }
   if(otpUserId){
     try{
-      if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return saved.split('{{VERIFY_HINT}}').join('')+'\n\nI sent a 6-digit code to your email. Reply here with the code to confirm it. It expires in 10 minutes.';}
+      // Owner rule (10 Nov): the code is asked right after the email, and the
+      // registration-saved confirmation only comes after the code verifies
+      // (emailVerification.ts), so registration never continues unverified.
+      if(!(await emailAuth.status(otpUserId)).emailVerified){await emailAuth.requestVerification(otpUserId);return 'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.';}
     }catch{/* email sending off or rate limited: user can still send Verify email later */}
   }
   return saved.split('{{VERIFY_HINT}}').join(' To confirm your email, send Verify email.');
@@ -212,7 +215,7 @@ export async function registerWhatsAppProfileDirect(phone:string,role:'buyer'|'s
     if(result.ok&&'userId' in result&&result.userId){
       try{
         if(isTesterPhone(phone))return {ok:true,reply:result.reply+' Email confirmed automatically (tester mode).'};
-        if(!(await emailAuth.status(result.userId)).emailVerified){await emailAuth.requestVerification(result.userId);return {ok:true,reply:result.reply+' A 6-digit code was emailed; it expires in 10 minutes and must be replied with here to confirm the email.'};}
+        if(!(await emailAuth.status(result.userId)).emailVerified){await emailAuth.requestVerification(result.userId);return {ok:true,reply:'A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.'};}
       }catch{/* email sending off or rate limited: user can send Verify email later */}
       return {ok:true,reply:result.reply+' Email is not confirmed yet; a 6-digit email code confirms it.'};
     }

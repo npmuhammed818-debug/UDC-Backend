@@ -23,10 +23,10 @@ export async function handleEmailVerification(
   try {
     await emailAuth.ipBudget(`whatsapp:${phone}`, request ? "send" : "check");
     const { rows } = await db.execute(
-      sql`select id,email,status from users where phone=${phone}`,
+      sql`select id,email,status,role from users where phone=${phone}`,
     );
     const user = rows[0] as
-      { id: string; email: string | null; status: string } | undefined;
+      { id: string; email: string | null; status: string; role: string } | undefined;
     if (!user?.email)
       return "Register your email with UDC first, then send Verify email.";
     if (["suspended", "rejected"].includes(user.status))
@@ -47,6 +47,13 @@ export async function handleEmailVerification(
     if (!id)
       return "That code is invalid or expired. Send Verify email to request another.";
     await emailAuth.verify(user.id, id, confirm![1]);
+    // Registration only counts as saved once the email code verifies (owner
+    // rule, 10 Nov), so a still-pending registration is confirmed here.
+    if (user.status === "pending") {
+      return user.role === "agent"
+        ? "Your email is verified and your agent registration is now saved for UDC review. Type Menu to check your verification status."
+        : "Your email is verified and your registration is now saved for UDC review. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF. You can submit your requirement or offer now; it stays private until verification and review.";
+    }
     return "Your email ownership is verified. Company approval is a separate UDC review.";
   } catch (error) {
     if (error instanceof EmailAuthError && error.kind === "rate_limited")
