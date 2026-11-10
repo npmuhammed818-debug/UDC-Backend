@@ -20,12 +20,14 @@ import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
 import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
+import { emailRelayTarget } from "../channels/emailRelayChannel";
+import { saveEmailRelayDraft } from "../channels/emailRelayDraftStore";
 
 const router: IRouter = Router();
 
 const replySchema = z
   .object({
-    phone: z.string().min(8).max(24),
+    phone: z.string().min(8).max(280),
     text: z.string().min(1).max(2000).optional(),
     voice: z.boolean().optional(),
     // Dev-made voice note (owner-approved 10 Nov, allowlist only): the dev side
@@ -149,7 +151,16 @@ router.post("/akif-relay/reply", async (req, res) => {
   res.status(429).json({ ok: false, error: "reply_rate_limit" });
     return;
   }
-  const delivery = audio
+  // Email channel (Phase A, synthetic only): the answer is saved as a
+  // review draft, never sent. Voice does not apply to email.
+  const emailTo = emailRelayTarget(phone);
+  if (emailTo && text === null) {
+    res.status(400).json({ ok: false, error: "invalid_reply" });
+    return;
+  }
+  const delivery = emailTo
+    ? await saveEmailRelayDraft({ to: emailTo, text: text ?? "" })
+    : audio
     ? await sendWhatsAppVoiceNote(phone, audio)
     : await deliverHumanRelayReply(phone, text!, {
         voice,
