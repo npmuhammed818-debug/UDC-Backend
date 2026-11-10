@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 // unchanged.
 import { z } from "zod/v4";
 import { and, eq } from "drizzle-orm";
-import { db, usersTable, companiesTable, companyVerificationDocumentsTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable } from "@workspace/db";
+import { db, usersTable, companiesTable, companyVerificationDocumentsTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable, shipmentsTable, shipmentTrackingEventsTable, whatsappUserContextsTable, dealParticipantsTable } from "@workspace/db";
 import { desc, or } from "drizzle-orm";
 import { sendWhatsAppText } from "../whatsapp/client.ts";
 import { runGroqToolChat, type GroqToolChatMessage, type GroqToolDefinition } from "./intelligence/groqClient.ts";
@@ -133,7 +133,8 @@ export const BRAIN_TOOLS: GroqToolDefinition[] = [
   { type: "function", function: { name: "submit_requirement", description: "Submit the collected buyer requirement for UDC review, only when all required fields are saved and the customer confirms.", parameters: z.toJSONSchema(z.object({})) } },
   { type: "function", function: { name: "save_offer_details", description: "Save seller offer details the customer stated (product, quantity, unit, price, currency, origin, incoterm, optional specification, availability, destination, payment terms). Registered sellers only.", parameters: z.toJSONSchema(z.object(tradeFields)) } },
   { type: "function", function: { name: "submit_offer", description: "Submit the collected seller offer for UDC review, only when all required fields are saved and the customer confirms.", parameters: z.toJSONSchema(z.object({})) } },
-  { type: "function", function: { name: "show_feature", description: "Show the customer one of their own account features: deals (their deals; for agents their assigned deals), track (shipment tracking), verification (their verification status), documents (document upload links), profile (their saved details), change_role (request to switch buyer/seller/agent role; UDC reviews it), referrals (their referrals), commissions (their commission records), invite (their referral code), meeting (how to request a meeting). There is NO menu feature: when the customer asks for the menu or what you can do, answer in your own words instead of calling any tool.", parameters: z.toJSONSchema(z.object({ feature: z.enum(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]) })) } },
+  { type: "function", function: { name: "show_feature", description: "Show the customer one of their own account features: deals (their deals; for agents their assigned deals), track (shipment tracking), verification (their verification status), documents (document upload links), profile (their saved details), change_role (request to switch buyer/seller/agent role; UDC reviews it), referrals (their referrals), commissions (their commission records), invite (their referral code), meeting (how to request a meeting). Never use this for order or shipment STATUS questions - those belong to track_shipment, which reads the real status. There is NO menu feature: when the customer asks for the menu or what you can do, answer in your own words instead of calling any tool.", parameters: z.toJSONSchema(z.object({ feature: z.enum(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]) })) } },
+  { type: "function", function: { name: "track_shipment", description: "Answer an order or shipment status question with the real recorded status of the customer's own deal shipment: deal stage, shipment status, carrier, reference, route, recorded ETA and the latest recorded milestones. Read-only: use it whenever the customer asks where their order or shipment is, asks you to track it, or asks for a delivery status. Never invent a status - if there is nothing recorded, the tool says so and you say so plainly.", parameters: z.toJSONSchema(z.object({})) } },
   { type: "function", function: { name: "read_deal_terms", description: "Read the stated terms of the customer's own current deal (product, quantity, stated price, currency, incoterm, status). Read-only: use it to answer price or term questions with the real recorded terms. Never invent terms.", parameters: z.toJSONSchema(z.object({})) } },
   { type: "function", function: { name: "relay_to_other_party", description: "Pass the customer's message to the other party of their deal (buyer<->seller) here in WhatsApp. Use it when the customer wants to negotiate, ask the other side something, or send them an offer. You relay the customer's words only - you never accept, counter, discount or approve anything yourself, and you never share contact details.", parameters: z.toJSONSchema(z.object({ message: z.string().max(1000) })) } },
   { type: "function", function: { name: "human_help", description: "Hand the conversation to a UDC person when the customer asks for a human or the situation needs one.", parameters: z.toJSONSchema(z.object({})) } },
@@ -235,6 +236,68 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     }
     const handled = await handleChatUi(phone, { interactive: { type: "list_reply", list_reply: { id: `udc:${feature}` } } } as ChatMessage);
     return { note: handled ? "The requested account information was just sent to the customer in chat. Do not repeat its contents; explain in your own words, in one or two short sentences, what was sent and the one next step." : "That feature is not available for this customer right now; say so plainly and offer the one next step." };
+  }
+  if (name === "track_shipment") {
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+    if (!user) return { note: "This customer is not registered; there is no shipment on record. Say so plainly." };
+    // Resolve the deal: the WhatsApp-active deal when membership verifies,
+    // otherwise the customer's latest own deal (buyer/seller). Agents only see
+    // deals they participate in; membership is checked on every call.
+    let deal: typeof dealsTable.$inferSelect | undefined;
+    const [context] = await db.select({ activeDealId: whatsappUserContextsTable.activeDealId }).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId, user.id)).limit(1);
+    if (context?.activeDealId) {
+      const own = user.role === "agent"
+        ? await db.select({ deal: dealsTable }).from(dealsTable)
+            .innerJoin(dealParticipantsTable, eq(dealParticipantsTable.dealId, dealsTable.id))
+            .where(and(eq(dealsTable.id, context.activeDealId), eq(dealParticipantsTable.userId, user.id),
+              eq(dealParticipantsTable.participantRole, "agent"), eq(dealParticipantsTable.status, "active"))).limit(1)
+        : await db.select({ deal: dealsTable }).from(dealsTable)
+            .where(and(eq(dealsTable.id, context.activeDealId), or(eq(dealsTable.buyerUserId, user.id), eq(dealsTable.sellerUserId, user.id)))).limit(1);
+      deal = own[0]?.deal;
+    }
+    if (!deal && user.role !== "agent") {
+      const [latest] = await db.select().from(dealsTable).where(or(eq(dealsTable.buyerUserId, user.id), eq(dealsTable.sellerUserId, user.id))).orderBy(desc(dealsTable.createdAt)).limit(1);
+      deal = latest;
+    }
+    if (!deal) return { note: "No deal on record for this customer yet, so there is nothing to track. Say so plainly and do not invent a status." };
+    const shipments = await db.select({
+      id: shipmentsTable.id, carrier: shipmentsTable.carrier, trackingNumber: shipmentsTable.trackingNumber,
+      status: shipmentsTable.status, origin: shipmentsTable.origin, destination: shipmentsTable.destination,
+      estimatedArrival: shipmentsTable.estimatedArrival, updatedAt: shipmentsTable.updatedAt,
+    }).from(shipmentsTable).where(eq(shipmentsTable.dealId, deal.id)).orderBy(desc(shipmentsTable.updatedAt)).limit(2);
+    const date = (v: unknown) => {
+      const time = v instanceof Date ? v : new Date(String(v));
+      return Number.isFinite(time.valueOf()) ? time.toISOString().slice(0, 16).replace("T", " ") + " UTC" : "";
+    };
+    const parts = [`Deal ${deal.dealNumber}, stage ${deal.status}.`];
+    if (!shipments.length) {
+      parts.push("No shipment has been recorded for this deal yet. Say so plainly; do not invent one.");
+    }
+    for (const [index, shipment] of shipments.entries()) {
+      const bits = [`Shipment ${index + 1} status: ${shipment.status || "not recorded"}`];
+      if (user.role !== "agent") {
+        if (shipment.carrier) bits.push(`carrier ${shipment.carrier}`);
+        if (shipment.trackingNumber) bits.push(`reference ${shipment.trackingNumber}`);
+        if (shipment.origin || shipment.destination) bits.push(`route ${shipment.origin || "unknown"} to ${shipment.destination || "unknown"}`);
+      }
+      if (shipment.estimatedArrival) bits.push(`recorded ETA ${date(shipment.estimatedArrival)}`);
+      if (shipment.updatedAt) bits.push(`last UDC update ${date(shipment.updatedAt)}`);
+      parts.push(bits.join(", ") + ".");
+    }
+    if (shipments.length) {
+      const events = await db.select({
+        shipmentId: shipmentTrackingEventsTable.shipmentId, kind: shipmentTrackingEventsTable.kind,
+        shipmentStatus: shipmentTrackingEventsTable.shipmentStatus, location: shipmentTrackingEventsTable.location,
+        occurredAt: shipmentTrackingEventsTable.occurredAt,
+      }).from(shipmentTrackingEventsTable).where(eq(shipmentTrackingEventsTable.dealId, deal.id))
+        .orderBy(desc(shipmentTrackingEventsTable.occurredAt)).limit(20);
+      const visible = events.filter((event) => shipments.some((s) => s.id === event.shipmentId)).slice(0, 3);
+      for (const event of visible) {
+        parts.push(`Milestone: ${event.kind}${event.shipmentStatus ? " (" + event.shipmentStatus + ")" : ""}${event.location && user.role !== "agent" ? " at " + event.location : ""} on ${date(event.occurredAt)}.`);
+      }
+      parts.push("These are UDC-recorded updates, not live carrier GPS.");
+    }
+    return { note: parts.join(" ") };
   }
   if (name === "read_deal_terms") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
