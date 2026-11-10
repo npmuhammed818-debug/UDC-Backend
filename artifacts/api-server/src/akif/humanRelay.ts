@@ -219,6 +219,16 @@ export type HumanRelayItem = {
   // Registered account state at hold time (role, status, invite code) so a
   // human answering never asks what the system already knows.
   customerNote?: string;
+  // Read-side only (claim/pending payloads): the number's recent held
+  // history, so an answer builds on earlier turns instead of re-asking.
+  context?: HumanRelayContextItem[];
+};
+
+export type HumanRelayContextItem = {
+  at: string;
+  kind: "text" | "voice";
+  text: string;
+  answered: boolean;
 };
 
 const items: HumanRelayItem[] = [];
@@ -338,7 +348,30 @@ export function enqueueHumanRelay(input: {
 
 export function pendingHumanRelay(): HumanRelayItem[] {
   pruneHumanRelay();
-  return items.filter((i) => !i.answeredAt);
+  return items.filter((i) => !i.answeredAt)
+    .map((i) => ({ ...i, context: recentHumanRelayContext(i.phone, i.id) }));
+}
+
+/** Recent held history for one number, oldest first: what the customer
+ *  already said and which of it was answered. Attached to claim and pending
+ *  payloads so whoever answers builds on earlier turns - never re-asks for a
+ *  detail already given, never repeats a question just answered. */
+export function recentHumanRelayContext(phone: string, excludeId?: string, max = 8): HumanRelayContextItem[] {
+  const digits = phone.replace(/\D/g, "");
+  return items
+    .filter((i) => i.phone === digits && i.id !== excludeId)
+    .slice(-max)
+    .map((i) => ({ at: i.at, kind: i.kind, text: i.text, answered: Boolean(i.answeredAt) }));
+}
+
+/** An email address the customer already sent in a held message, if any.
+ *  Folded into the customer note so registration never asks twice. */
+export function emailGivenInRelay(phone: string): string | undefined {
+  for (const turn of recentHumanRelayContext(phone).reverse()) {
+    const found = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(turn.text);
+    if (found) return found[0];
+  }
+  return undefined;
 }
 
 export function humanRelayBacklogSize(): number {
@@ -366,7 +399,7 @@ export function claimHumanRelay(workerId: string): HumanRelayItem | null {
     const claimedAt = new Date(now).toISOString();
     item.claimedAt = claimedAt;
     persist((p) => p.setClaim(item.id, workerId, claimedAt));
-    return item;
+    return { ...item, context: recentHumanRelayContext(item.phone, item.id) };
   }
   return null;
 }

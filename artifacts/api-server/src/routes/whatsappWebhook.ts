@@ -29,7 +29,7 @@ import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, emailGivenInRelay } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
@@ -228,7 +228,12 @@ export async function buildHumanRelayDraftWithRetry(phone: string, text: string,
 async function relayCustomerNote(phone: string): Promise<string | undefined> {
   try {
     const [u] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status, emailVerifiedAt: usersTable.emailVerifiedAt }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
-    if (!u) return "not registered";
+    if (!u) {
+      // Registration must remember what the customer already gave in chat
+      // (owner feedback, 10 Nov): never re-ask a detail on record.
+      const givenEmail = emailGivenInRelay(phone);
+      return givenEmail ? `not registered, email already given: ${givenEmail}` : "not registered";
+    }
     const parts = [`registered ${u.role}`, `account ${u.status}`, u.emailVerifiedAt ? "email confirmed" : "email not confirmed"];
     if (u.role === "agent") parts.push(`invite code ${agentReferralCode(u.id)}`);
     return parts.join(", ");
