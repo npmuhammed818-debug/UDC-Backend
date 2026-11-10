@@ -27,6 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { enqueueHumanRelay, humanRelayActiveFor } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -155,6 +156,31 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
     await deliverWhatsAppReply(to, VOICE_TEXT_OFFER);
   }
   return { delivered: true as const };
+}
+
+// Human relay (staging tests; default OFF): an allowlisted test number's open
+// chat turns are held in memory for a dev-side answer instead of AKIF
+// answering straight away. The brain still runs silently so the held message
+// carries its draft and tool results; any deferred background work is
+// cancelled, never started, because the dev side decides what actually goes
+// out. Brain failure just means no draft - the message is still held.
+async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean } | null> {
+  if (!isBrainOrchestratorEnabled()) return null;
+  try {
+    const brain = await runBrainTurn({ phone, text, messageId });
+    if (brain?.background) await brain.cancelBackground?.();
+    return { reply: brain?.reply ?? null, backgroundDiscarded: Boolean(brain?.background) };
+  } catch {
+    return null;
+  }
+}
+
+/** Send the dev-side answer. Voice requests use the normal voice path with its own honest text fallback. */
+export async function deliverHumanRelayReply(to: string, text: string, options: { voice?: boolean; heardLanguage?: string } = {}) {
+  if (options.voice) {
+    return deliverAnswer(to, text, true, { userText: text, heardLanguage: options.heardLanguage, explicitVoice: true, voiceNote: true });
+  }
+  return deliverWhatsAppReply(to, text);
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string, _withMenu = false) {
@@ -1588,6 +1614,30 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           if (consumed) continue;
         } catch { /* fall through to the brain or the scripted chain */ }
       }
+      // Held voice notes (relay on, allowlisted sender) are transcribed like
+      // any other and held with their transcript; raw audio is never kept or
+      // relayed, and the crisis path still answers first.
+      if (message.from && typeof message.audio?.id === "string" && humanRelayActiveFor(message.from)) {
+        if (!isAkifWorkerMediaEnabled()) {
+          await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
+          continue;
+        }
+        if (!reserveTranscription(message.from)) {
+          await deliverWhatsAppReply(message.from, "You’ve reached today’s voice note limit. Please type your message and I’ll keep helping.");
+          continue;
+        }
+        try {
+          const media = await downloadWhatsAppMedia(message.audio.id);
+          const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
+          const relayVoiceCrisis = crisisSafetyReply(heard.text);
+          if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
+          const draft = heard.text.trim() ? await buildHumanRelayDraft(message.from, heard.text, message.id) : null;
+          enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false });
+        } catch {
+          await deliverWhatsAppReply(message.from, "I couldn’t read that voice note just now. Please resend it or type your message.");
+        }
+        continue;
+      }
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
@@ -1804,6 +1854,15 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // direct deal commands never reach it. Env-gated; any failure or
       // validator rejection falls through to the scripted chain below
       // unchanged.
+      // Human relay hold (default OFF). Menus, forms, consent, crisis, deal
+      // commands and money paths above have already kept their gates; only an
+      // open chat turn from an allowlisted test number is held for a dev-side
+      // answer instead of the brain or scripted chain answering it.
+      if (message.from && !dealActionDirect && humanRelayActiveFor(message.from)) {
+        const draft = await buildHumanRelayDraft(message.from, message.text.body, message.id);
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false });
+        continue;
+      }
       let brainFailed = false;
       if (message.from && !dealActionDirect && isBrainOrchestratorEnabled()) {
         const callBrain = () => runBrainTurn({
