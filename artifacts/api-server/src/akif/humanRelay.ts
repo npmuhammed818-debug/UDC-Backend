@@ -129,6 +129,21 @@ const FALLBACK_GREETINGS: Record<string, string[]> = {
   ],
 };
 
+const COMMISSION_ASK = /commission|commissions|\u0d15\u0d2e\u0d4d\u0d2e\u0d40\u0d37\u0d7b/i;
+
+/** A commission question gets the fixed safe answer, never a role question
+ *  or invented numbers (owner direction, 10 Nov launch). */
+export function isCommissionAskText(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && t.length <= 300 && COMMISSION_ASK.test(t);
+}
+
+export function commissionAskReply(language?: string | null): string {
+  return language && /mal/i.test(language)
+    ? "കമ്മീഷൻ deal ഓരോന്നിലും തീരുന്നത്. Deal close ആകുമ്പോൾ exact terms ഞങ്ങളുടെ team നിങ്ങളോട് നേരിട്ട് confirm ചെയ്യും. അതൊന്നും യാന്ത്രികമായി കിട്ടില്ല."
+    : "Commission is decided deal by deal. When a deal closes through UDC, our team confirms the exact terms with you directly. Nothing is fixed in advance or paid automatically.";
+}
+
 /** A warm hello that needs no model: for greeting auto-answers while the
  *  brain is rate-limited or down. Variants rotate so repeats don't read as
  *  a canned line. Malayalam when the customer's last heard language is Malayalam. */
@@ -200,6 +215,9 @@ export type HumanRelayItem = {
   autoNote?: string;
   claimedBy?: string | null;
   claimedAt?: string | null;
+  // Registered account state at hold time (role, status, invite code) so a
+  // human answering never asks what the system already knows.
+  customerNote?: string;
 };
 
 const items: HumanRelayItem[] = [];
@@ -278,6 +296,7 @@ export function enqueueHumanRelay(input: {
   draftBackgroundDiscarded?: boolean;
   autoAnswered?: boolean;
   autoNote?: string;
+  customerNote?: string;
 }): HumanRelayItem {
   pruneHumanRelay();
   const item: HumanRelayItem = {
@@ -301,7 +320,7 @@ export function enqueueHumanRelay(input: {
   // Fire-and-forget dev-side email alert; the relay never waits on email.
   // "holds" mode skips the email for auto-answered items (volume control).
   if (!(relayAlertMode() === "holds" && input.autoAnswered)) {
-    void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered), autoNote: input.autoNote });
+    void sendRelayHeldAlert({ phone: item.phone, kind: item.kind, text: item.text, draft: item.draft, autoAnswered: Boolean(input.autoAnswered), autoNote: input.autoNote, customerNote: input.customerNote });
   }
   return item;
 }
@@ -351,6 +370,17 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string): H
 }
 
 /** Mark every held message for one number as answered. Returns how many. */
+/** True when an open item for this phone is under an active worker claim.
+ *  Phone-only relay replies must not race that worker (double-reply bug,
+ *  10 Nov launch). */
+export function hasActiveHumanRelayClaim(phone: string): boolean {
+  pruneHumanRelay();
+  const now = Date.now();
+  const digits = phone.replace(/\D/g, "");
+  return items.some((i) => i.phone === digits && !i.answeredAt && !i.autoAnswered
+    && Boolean(i.claimedBy && i.claimedAt && now - Date.parse(i.claimedAt) < CLAIM_TTL_MS));
+}
+
 export function markHumanRelayAnswered(phone: string): number {
   const digits = phone.replace(/\D/g, "");
   let n = 0;

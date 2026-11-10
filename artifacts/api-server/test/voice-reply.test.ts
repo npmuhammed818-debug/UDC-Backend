@@ -76,7 +76,7 @@ test("'text only' and 'voice on' commands are exact, notice stays plain and ment
   for (const t of ["text only", "Text only.", "stop voice", "No voice replies", "TEXT ONLY please", "\"text only\""]) assert.equal(parseVoiceCommand(t), "text_only", t);
   for (const t of ["voice on", "Turn on voice replies"]) assert.equal(parseVoiceCommand(t), "voice_on", t);
   for (const t of ["what does text only mean for FOB", "I want the text only version of the contract", "voice note about rice", "", undefined]) assert.equal(parseVoiceCommand(t as string), null, String(t));
-  assert.ok(VOICE_NOTICE.includes("ElevenLabs") && VOICE_NOTICE.includes("text only") && VOICE_NOTICE.length < 320);
+  assert.ok(!/elevenlabs|gemini|groq|openai/i.test(VOICE_NOTICE) && VOICE_NOTICE.includes("text only") && VOICE_NOTICE.length < 320);
   assert.ok(TEXT_ONLY_CONFIRMATION.includes("text only"));
 });
 

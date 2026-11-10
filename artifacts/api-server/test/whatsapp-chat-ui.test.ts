@@ -154,7 +154,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         state.modelOutput=JSON.stringify({fields:{email:'qa-voice@example.invalid'},requirements:{},reply:'Thanks! Please review your details.'});
         assert.equal(await m.handleChatUi(p,voice('The best email is qa-voice@example.invalid'),false,{voiceNote:true,language:'english'}),true);
         assert.equal(state.voice.length,1,'the brain reply is spoken when the gates pass');
-        assert.ok(state.sent.slice(-3).some((x:any)=>/Voice replies use/.test(String(x?.body))),'the one-time voice notice is sent as text');
+        assert.ok(state.sent.slice(-3).some((x:any)=>/reply by voice/.test(String(x?.body))),'the one-time voice notice is sent as text');
         assert.ok(!state.sent.slice(-2).some((x:any)=>String(x?.body).includes('Thanks! Please review')),'a spoken reply is never doubled as text');
         // A spoken correction at the review screen: the brain note is spoken, the correction lands.
         state.modelOutput=JSON.stringify({fields:{email:'qa-voice-fixed@example.invalid'},requirements:{},reply:'Done, I have updated your email.'});
@@ -162,7 +162,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         assert.equal(state.voice.length,2,'the review-screen brain note is spoken too');
         const draft=rows.whatsappChatSessionsTable.find((r:any)=>r.purpose==='profile_buyer'&&String(r.data.email??'').includes('qa-voice'));
         assert.equal(draft.data.email,'qa-voice-fixed@example.invalid','the spoken correction is written back');
-        assert.ok(!state.sent.slice(-4).some((x:any)=>/Voice replies use/.test(String(x?.body))&&x!==state.sent.at(-3)),'the notice is not repeated');
+        assert.ok(!state.sent.slice(-4).some((x:any)=>/reply by voice/.test(String(x?.body))&&x!==state.sent.at(-3)),'the notice is not repeated');
         // Synthesis failure falls back to the exact same text reply.
         state.failSynth=true;
         state.modelOutput=JSON.stringify({fields:{company_name:'QA Voice Exports Ltd'},requirements:{},reply:'Noted, company name updated.'});

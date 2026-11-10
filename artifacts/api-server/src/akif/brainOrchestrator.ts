@@ -14,6 +14,7 @@ import { desc, or } from "drizzle-orm";
 import { sendWhatsAppText } from "../whatsapp/client.ts";
 import { runGroqToolChat, type GroqToolChatMessage, type GroqToolDefinition } from "./intelligence/groqClient.ts";
 import { udcHandbookForRole } from "./udcHandbook.ts";
+import { agentReferralCode } from "../referrals/invitation.ts";
 import { isSafeConversationText } from "./dealDecisionSafety.ts";
 import { claimsUnverifiedFact } from "./conversationPolicy.ts";
 import { guidedQuestions, validate as validateGuidedAnswer, type Question } from "../whatsapp/guidedChat.ts";
@@ -357,9 +358,9 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
   return { note: "Unknown tool." };
 }
 
-function orchestratorSystem(sender: { registered: boolean; role?: string; status?: string; emailVerified: boolean; companyStatus?: string; country?: string | null }): string {
+function orchestratorSystem(sender: { registered: boolean; role?: string; status?: string; emailVerified: boolean; companyStatus?: string; country?: string | null; inviteCode?: string }): string {
   const state = sender.registered
-    ? `The customer is registered as ${sender.role} (account ${sender.status}, email ${sender.emailVerified ? "confirmed" : "not confirmed"}, company review: ${sender.companyStatus ?? "no company"}).`
+    ? `The customer is registered as ${sender.role} (account ${sender.status}, email ${sender.emailVerified ? "confirmed" : "not confirmed"}, company review: ${sender.companyStatus ?? "no company"}${sender.inviteCode ? ", invite code " + sender.inviteCode : ""}).`
     : "The customer is not registered yet.";
   // Time awareness (env-gated AKIF_BRAIN_TIME_AWARE, off by default; owner
   // feature yes, 8 Nov): manner only - facts, deals and safety never change
@@ -477,6 +478,7 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
     emailVerified: Boolean(user?.emailVerifiedAt),
     companyStatus,
     country: user?.country,
+    inviteCode: user?.role === "agent" ? agentReferralCode(user.id) : undefined,
   };
 
   const { key, state, found } = await loadBrainSession(input.phone);

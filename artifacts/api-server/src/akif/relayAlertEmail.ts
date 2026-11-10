@@ -16,7 +16,7 @@ export function relayAlertEmailConfigured(env: NodeJS.ProcessEnv = process.env):
 }
 
 export async function sendRelayHeldAlert(
-  input: { phone: string; kind: "text" | "voice"; text: string; draft?: string | null; autoAnswered?: boolean; autoNote?: string },
+  input: { phone: string; kind: "text" | "voice"; text: string; draft?: string | null; autoAnswered?: boolean; autoNote?: string; customerNote?: string },
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   if (!relayAlertEmailConfigured(env)) return false;
@@ -33,7 +33,7 @@ export async function sendRelayHeldAlert(
         subject: `UDC relay: new ${input.kind} message from +${input.phone}`,
         text:
           `A ${input.kind} message is held in the human relay (staging test).\n\n` +
-          `From: +${input.phone}\nAt: ${new Date().toISOString()}\n\n${input.text.slice(0, 1500)}` +
+          `From: +${input.phone}\nAt: ${new Date().toISOString()}${input.customerNote ? `\nCustomer: ${input.customerNote}` : ""}\n\n${input.text.slice(0, 1500)}` +
           (input.draft && !input.autoAnswered
             ? `\n\nBrain draft (not sent; the dev side may edit before replying):\n${input.draft.slice(0, 1000)}`
             : "") +
