@@ -106,3 +106,62 @@ test("reply admission is bounded per window", () => {
   assert.equal(admitHumanRelayReply(t0 + 10), false);
   assert.equal(admitHumanRelayReply(t0 + 61_000), true);
 });
+
+test("relay alert email fires when configured and stays silent otherwise", async () => {
+  const prev = { alert: process.env.AKIF_RELAY_ALERT_EMAIL, key: process.env.RESEND_API_KEY, from: process.env.UDC_AUTH_EMAIL_FROM };
+  const prevFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: string }> = [];
+  try {
+    globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
+      calls.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    resetHumanRelay();
+    delete process.env.AKIF_RELAY_ALERT_EMAIL;
+    enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "no alert" });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.length, 0);
+
+    process.env.AKIF_RELAY_ALERT_EMAIL = "owner@example.com";
+    process.env.RESEND_API_KEY = "re_test_123456789";
+    process.env.UDC_AUTH_EMAIL_FROM = "UDC <alerts@updowncircle.site>";
+    enqueueHumanRelay({ phone: "+91 70220 32531", kind: "voice", text: "spoken hello" });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls.length, 1);
+    const payload = JSON.parse(calls[0].body);
+    assert.equal(calls[0].url, "https://api.resend.com/emails");
+    assert.deepEqual(payload.to, ["owner@example.com"]);
+    assert.equal(payload.from, "UDC <alerts@updowncircle.site>");
+    assert.match(payload.subject, /voice message from \+917022032531/);
+    assert.match(payload.text, /spoken hello/);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;
+    if (prev.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = prev.key;
+    if (prev.from === undefined) delete process.env.UDC_AUTH_EMAIL_FROM; else process.env.UDC_AUTH_EMAIL_FROM = prev.from;
+    resetHumanRelay();
+  }
+});
+
+test("relay alert email failure does not break enqueue", async () => {
+  const prev = { alert: process.env.AKIF_RELAY_ALERT_EMAIL, key: process.env.RESEND_API_KEY, from: process.env.UDC_AUTH_EMAIL_FROM };
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = (async () => new Response("bad", { status: 500 })) as typeof fetch;
+    process.env.AKIF_RELAY_ALERT_EMAIL = "owner@example.com";
+    process.env.RESEND_API_KEY = "re_test_123456789";
+    process.env.UDC_AUTH_EMAIL_FROM = "UDC <alerts@updowncircle.site>";
+    resetHumanRelay();
+    const item = enqueueHumanRelay({ phone: "917022032531", kind: "text", text: "still held" });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(item.answeredAt, null);
+    assert.equal(pendingHumanRelay().length, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
+    if (prev.alert === undefined) delete process.env.AKIF_RELAY_ALERT_EMAIL; else process.env.AKIF_RELAY_ALERT_EMAIL = prev.alert;
+    if (prev.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = prev.key;
+    if (prev.from === undefined) delete process.env.UDC_AUTH_EMAIL_FROM; else process.env.UDC_AUTH_EMAIL_FROM = prev.from;
+    resetHumanRelay();
+  }
+});
