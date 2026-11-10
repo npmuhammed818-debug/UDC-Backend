@@ -27,7 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
-import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe } from "../akif/humanRelay";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
@@ -1647,6 +1647,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+          } else if (relayAutoGreetingsEnabled() && isMenuRequestText(heard.text) && menuAutoReplySafe(voiceReply)) {
+            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a menu request", { kind: "voice" }); voiceAutoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(voiceReply, draft?.toolsUsed ?? [])) {
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
@@ -1898,6 +1902,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+        } else if (relayAutoGreetingsEnabled() && isMenuRequestText(message.text.body) && menuAutoReplySafe(autoReply)) {
+          // Typed "menu": the brain explains the options in its own words (owner
+          // rule, 8 Nov) and the relay auto-sends that explanation - a hold here
+          // would leave the menu question unanswered (owner feedback 10 Nov).
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(autoReply, draft?.toolsUsed ?? [])) {
           // The brain really used its tools for this answer, so links and
           // references in it come from tool output, not invention.

@@ -72,6 +72,23 @@ export function isSimpleGreetingText(text: string): boolean {
   return t.length > 0 && t.length <= 60 && SIMPLE_GREETING.test(t);
 }
 
+const MENU_REQUEST = /^(?:(?:open|show|show me|show me the|send|send me)\s+)?(?:udc\s+)?menu[.!?]*$/i;
+
+/** Typed menu request - mirrors the scripted typed-action rule in chatUi. */
+export function isMenuRequestText(text: string): boolean {
+  return MENU_REQUEST.test(text.trim());
+}
+
+/** Menu explanations may say the word "menu" (the brain enforces menu-once);
+ *  links, emails and long numbers stay blocked. */
+export function menuAutoReplySafe(draft: string | null | undefined): draft is string {
+  if (!draft) return false;
+  const t = draft.trim();
+  if (t.length === 0 || t.length > 600) return false;
+  if (/https?:\/\/|www\.|\S+@\S+|\d{5,}/i.test(t)) return false;
+  return true;
+}
+
 /** The brain already validated the draft; this is the belt-and-braces check
  *  before anything auto-sends: short, no links, emails, long numbers, no menu. */
 export function greetingAutoReplySafe(draft: string | null | undefined): draft is string {

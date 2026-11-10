@@ -252,3 +252,17 @@ test("relay audio decoder accepts only real Ogg containers within 16 MB", async 
   assert.equal(decodeRelayAudio(Buffer.alloc(10).toString("base64")), null);
   assert.equal(decodeRelayAudio("%%%not-base64%%%"), null);
 });
+
+test("relay menu requests auto-send the brain's explanation, menu word allowed, links still blocked", async () => {
+  const { isMenuRequestText, menuAutoReplySafe } = await import("../src/akif/humanRelay.ts");
+  assert.equal(isMenuRequestText("Menu"), true);
+  assert.equal(isMenuRequestText("menu"), true);
+  assert.equal(isMenuRequestText("Show me the menu"), true);
+  assert.equal(isMenuRequestText("send udc menu!"), true);
+  assert.equal(isMenuRequestText("menu please"), false);
+  assert.equal(isMenuRequestText("what can you do"), false);
+  assert.equal(menuAutoReplySafe("You can check your documents, deals and profile from the menu - what do you need?"), true);
+  assert.equal(menuAutoReplySafe("Here is your link: https://updowncircle.site/upload/X1"), false);
+  assert.equal(menuAutoReplySafe(""), false);
+  assert.equal(menuAutoReplySafe(null), false);
+});
