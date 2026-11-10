@@ -27,6 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
 import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, emailGivenInRelay } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
@@ -171,6 +172,11 @@ const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 150
 // Delay ack fires only when the reply is genuinely slow, never as a per-message ack (owner feedback, 10 Nov).
 const RELAY_SLOW_NUDGE_MS = Math.max(0, Number(process.env.AKIF_RELAY_SLOW_NUDGE_MS ?? 12000) || 0);
 
+// Identity for the no-tools fallback chain (10 Nov): with no system prompt the
+// fallback model introduced itself as another provider's product in a held
+// draft. AKIF always identifies as AKIF from UDC.
+const RELAY_FALLBACK_SYSTEM = "You are AKIF, UpDownCircle (UDC)'s AI trade assistant on WhatsApp. Text like a warm, capable trade coordinator: short, casual, one thing at a time, no menus. Never name or claim any other AI model, provider or company. If asked who you are, say you are AKIF, UDC's AI assistant.";
+
 export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
   if (!isBrainOrchestratorEnabled()) return null;
   try {
@@ -189,9 +195,9 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
     // brain, then the Gemini-backed worker, then the older providers) answers
     // without tools; tool-backed drafts still prefer the brain turn above.
     try {
-      const convo = await runConversationChat(text, undefined, 20000);
-      const reply = convo?.content?.trim() || null;
-      return { reply, backgroundDiscarded: false, toolsUsed: [] };
+      const convo = await runConversationChat(text, RELAY_FALLBACK_SYSTEM, 20000);
+      const raw = convo?.content?.trim() || null;
+      return { reply: raw ? fixRelayFallbackReply(raw, text) : null, backgroundDiscarded: false, toolsUsed: [] };
     } catch {
       return null;
     }
