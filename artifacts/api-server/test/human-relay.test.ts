@@ -257,3 +257,22 @@ test("relay reply sanitizer removes dash sentence breaks but keeps ranges and hy
   assert.equal(sanitizeRelayReplyText("10 - 15 kg is fine"), "10 - 15 kg is fine");
   assert.equal(sanitizeRelayReplyText("single-use link"), "single-use link");
 });
+
+test("brain-first reply safety: short safe answers pass, risky ones hold", async () => {
+  const { brainFirstReplySafe, relayBrainFirstEnabled, __clearRelayMemoryForTests, enqueueHumanRelay } = await import("../src/akif/humanRelay.ts");
+  __clearRelayMemoryForTests();
+  const phone = "919999888777";
+  assert.equal(brainFirstReplySafe(phone, "Happy to help you join. Are you an agent, buyer or seller?", []), true);
+  assert.equal(brainFirstReplySafe(phone, null, []), false, "no draft no send");
+  assert.equal(brainFirstReplySafe(phone, "", []), false);
+  assert.equal(brainFirstReplySafe(phone, "x".repeat(601), []), false, "overlong holds");
+  assert.equal(brainFirstReplySafe(phone, "Open https://evil.example/x", []), false, "invented link holds");
+  assert.equal(brainFirstReplySafe(phone, "Here is your link: https://updowncircle.site/upload/abc", ["show_feature"]), true, "tool link passes");
+  assert.equal(brainFirstReplySafe(phone, "Share the OTP you received", []), false, "OTP talk never auto-sends");
+  // known detail: the customer already gave their email, asking again holds
+  enqueueHumanRelay({ phone, kind: "text", text: "my email is raju@example.com", draft: null });
+  assert.equal(brainFirstReplySafe(phone, "What is your email id?", []), false, "re-asking a known detail holds");
+  assert.equal(relayBrainFirstEnabled({}), true, "default on so the key is the only flip");
+  assert.equal(relayBrainFirstEnabled({ AKIF_BRAIN_FIRST: "off" }), false, "kill switch");
+  __clearRelayMemoryForTests();
+});

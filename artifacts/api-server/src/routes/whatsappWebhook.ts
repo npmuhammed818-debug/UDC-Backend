@@ -29,7 +29,7 @@ import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
@@ -1814,22 +1814,28 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text) && greetingAutoReplySafe(voiceReply)) {
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
-            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", voiceReply!); console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text)) {
             // Brain down, no draft: a spoken greeting still gets a spoken
             // hello back in the customer's language (owner rule, 10 Nov).
             const hello = fallbackGreeting(heard.language);
             const sent = await deliverHumanRelayReply(message.from, hello, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
             voiceAutoAnswered = Boolean(sent?.delivered);
-            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "voice", fallback: true }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", hello); console.info("AKIF relay auto-answered a simple greeting", { kind: "voice", fallback: true }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoGreetingsEnabled() && isMenuRequestText(heard.text) && menuAutoReplySafe(voiceReply)) {
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
-            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered a menu request", { kind: "voice" }); voiceAutoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", voiceReply!); console.info("AKIF relay auto-answered a menu request", { kind: "voice" }); voiceAutoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(voiceReply, draft?.toolsUsed ?? [])) {
             const sent = await deliverHumanRelayReply(message.from, voiceReply);
             voiceAutoAnswered = Boolean(sent?.delivered);
-            if (voiceAutoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
+          } else if (relayBrainFirstEnabled() && isBrainOrchestratorEnabled() && brainFirstReplySafe(message.from, voiceReply, draft?.toolsUsed ?? []) && !relayReplyResetsConversation(message.from, voiceReply!)) {
+            // Brain-first for voice notes too: voice-in still gets voice-out
+            // in the customer's language through the normal voice rules.
+            const sent = await deliverHumanRelayReply(message.from, voiceReply, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF brain-first answered", { kind: "voice" }); voiceAutoNote = "Answered directly by AKIF - no reply needed unless it looks wrong. Sent:"; }
           }
           const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from) });
           if (!voiceAutoAnswered && heldVoice.draft && relayFallbackReplySafe(heard.text, heldVoice.draft, draft?.toolsUsed ?? [])) {
@@ -2153,20 +2159,27 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const hello = greetingAutoReplySafe(autoReply) ? autoReply : fallbackGreeting();
           const sent = await deliverHumanRelayReply(message.from, hello);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) { console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", hello); console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
           // Typed "menu": the brain explains the options in its own words (owner
           // rule, 8 Nov) and the relay auto-sends that explanation, a hold here
           // would leave the menu question unanswered (owner feedback 10 Nov).
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) { console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation, no reply needed unless it looks wrong. Sent:"; }
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", autoReply!); console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation, no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(autoReply, draft?.toolsUsed ?? [])) {
           // The brain really used its tools for this answer, so links and
           // references in it come from tool output, not invention.
           const sent = await deliverHumanRelayReply(message.from, autoReply);
           autoAnswered = Boolean(sent?.delivered);
-          if (autoAnswered) { console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", autoReply!); console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
+        } else if (relayBrainFirstEnabled() && isBrainOrchestratorEnabled() && brainFirstReplySafe(message.from, autoReply, draft?.toolsUsed ?? []) && !relayReplyResetsConversation(message.from, autoReply!)) {
+          // Brain-first (owner direction, 10 Nov): with the orchestrator on, a
+          // safe brain answer goes straight out and only failures, unsafe or
+          // repetitive drafts hold for the human workers.
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", autoReply!); console.info("AKIF brain-first answered", { kind: "text" }); autoNote = "Answered directly by AKIF, no reply needed unless it looks wrong. Sent:"; }
         }
         if (!autoAnswered && relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && !autoReply) {
           // No brain draft at all (provider down): the scripted home menu
