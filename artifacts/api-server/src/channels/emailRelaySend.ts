@@ -1,5 +1,5 @@
 import { EMAIL_RELAY_MAILBOX } from "./emailRelayChannel.ts";
-import { buildRelayEmailPayload, sendRelayEmail, smtpConfigFromEnv, type EmailThreadContext, type SendMailFn, type SmtpConfig } from "./emailOutbound.ts";
+import { buildRelayEmailPayload, outboundDepsFromEnv, sendRelayEmail, type EmailThreadContext, type OutboundDeps } from "./emailOutbound.ts";
 // saveEmailRelayDraft is imported lazily in recordDraft so unit tests never load the db layer.
 
 /**
@@ -64,7 +64,7 @@ export function emailRelaySendDbPorts(): EmailRelaySendPorts {
 export async function sendEmailRelayAnswer(
   input: { to: string; text: string },
   ports: EmailRelaySendPorts,
-  deps: { config: SmtpConfig | null; sendMail?: SendMailFn },
+  deps: OutboundDeps,
 ): Promise<{ delivered: boolean; reason?: string }> {
   const thread = await ports.findLatestLiveThread(input.to);
   if (!thread) {
@@ -82,6 +82,6 @@ export async function sendEmailRelayAnswer(
   }
 }
 
-export function emailRelaySendDepsFromEnv(env: NodeJS.ProcessEnv = process.env): { config: SmtpConfig | null } {
-  return { config: smtpConfigFromEnv(env) };
+export function emailRelaySendDepsFromEnv(env: NodeJS.ProcessEnv = process.env): OutboundDeps {
+  return outboundDepsFromEnv(env);
 }

@@ -28,7 +28,7 @@ import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
 import { handleChatUi } from "../whatsapp/chatUi";
 import { emailRelayTarget, liveEmailRelayEnabled } from "../channels/emailRelayChannel";
-import { buildRelayEmailPayload, sendRelayEmail, smtpConfigFromEnv } from "../channels/emailOutbound";
+import { buildRelayEmailPayload, outboundDepsFromEnv, sendRelayEmail } from "../channels/emailOutbound";
 import { emailRelaySendDbPorts, sendEmailRelayAnswer } from "../channels/emailRelaySend";
 
 const router: IRouter = Router();
@@ -240,7 +240,7 @@ router.post("/akif-relay/email-send", async (req, res) => {
         references: Array.isArray(claim?.metadata?.references) ? claim.metadata.references.filter((v): v is string => typeof v === "string") : undefined,
       },
     );
-    const { id } = await sendRelayEmail(payload, { config: smtpConfigFromEnv() });
+    const { id } = await sendRelayEmail(payload, outboundDepsFromEnv());
     await db.execute(sql`update audit_logs set metadata = metadata || ${JSON.stringify({ state: "sent", sentAt: new Date().toISOString(), messageId: id })}::jsonb where id = ${parsed.data.draftId}`);
     res.set("Cache-Control", "no-store").json({ ok: true, sent: true, messageId: id });
   } catch (err) {
@@ -335,7 +335,7 @@ router.post("/akif-relay/reply", async (req, res) => {
     return;
   }
   const delivery = emailTo
-    ? await sendEmailRelayAnswer({ to: emailTo, text: text ?? "" }, emailRelaySendDbPorts(), { config: smtpConfigFromEnv() })
+    ? await sendEmailRelayAnswer({ to: emailTo, text: text ?? "" }, emailRelaySendDbPorts(), outboundDepsFromEnv())
     : audio
     ? await sendWhatsAppVoiceNote(phone, audio)
     : await deliverHumanRelayReply(phone, text!, {

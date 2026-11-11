@@ -64,9 +64,10 @@ export function smtpConfigFromEnv(env: NodeJS.ProcessEnv = process.env): SmtpCon
 /** Send the exact payload. Tests inject sendMail; production uses Titan SMTP. */
 export async function sendRelayEmail(
   payload: RelayEmailPayload,
-  deps: { config: SmtpConfig | null; sendMail?: SendMailFn },
+  deps: OutboundDeps,
 ): Promise<{ id: string }> {
   if (deps.sendMail) return deps.sendMail(payload);
+  if (deps.resendApiKey) return sendViaResend(payload, deps.resendApiKey, deps.fetchImpl);
   if (!deps.config) throw new Error("smtp_not_configured");
   const transporter = createTransport({
     host: deps.config.host,
@@ -90,4 +91,49 @@ export async function sendRelayEmail(
   } finally {
     transporter.close();
   }
+}
+
+const MAX_RECEIPT_BYTES = 4_096;
+
+/** Resend HTTP transport: used when UDC_EMAIL_OUTBOUND=resend (the live
+ *  choice while the service plan blocks SMTP ports). The from domain must be
+ *  verified in Resend (updowncircle.site, DNS verified 11 Nov). */
+async function sendViaResend(payload: RelayEmailPayload, apiKey: string, fetchImpl: typeof fetch = fetch): Promise<{ id: string }> {
+  if (!/^re_[A-Za-z0-9_-]{8,}$/.test(apiKey)) throw new Error("resend_not_configured");
+  const response = await fetchImpl("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const status = response.status;
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`email_send_failed_resend_${status}`);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("email_send_failed");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_RECEIPT_BYTES) throw new Error("email_send_failed");
+    chunks.push(value);
+  }
+  const receipt = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { id?: string };
+  if (!receipt.id) throw new Error("email_send_failed");
+  return { id: receipt.id };
+}
+
+export type OutboundDeps = { config: SmtpConfig | null; resendApiKey?: string; sendMail?: SendMailFn; fetchImpl?: typeof fetch };
+
+/** Transport choice from env: UDC_EMAIL_OUTBOUND=resend uses the Resend HTTP
+ *  API (works where SMTP ports are blocked); anything else uses Titan SMTP. */
+export function outboundDepsFromEnv(env: NodeJS.ProcessEnv = process.env): OutboundDeps {
+  const useResend = (env.UDC_EMAIL_OUTBOUND ?? "").trim().toLowerCase() === "resend";
+  return {
+    config: smtpConfigFromEnv(env),
+    resendApiKey: useResend ? (env.RESEND_API_KEY ?? "").trim() : undefined,
+  };
 }
