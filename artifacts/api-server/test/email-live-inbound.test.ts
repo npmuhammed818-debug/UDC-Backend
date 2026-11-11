@@ -35,9 +35,15 @@ function event(overrides: Partial<EmailEvidence> = {}): EmailEvidence {
 
 const noAccount = { resolveAccount: async () => null };
 
-test("live gate needs staging plus the mailbox password", async () => {
-  assert.equal(await receiveLiveEmailRelay(event(), noAccount, { ...ENV, UDC_APP_ENV: "production" }), "disabled");
+test("the live gate is the mailbox password alone - the launch service runs as production", async () => {
   assert.equal(await receiveLiveEmailRelay(event(), noAccount, { ...ENV, UDC_EMAIL_IMAP_PASS: "" }), "disabled");
+  assert.equal(await receiveLiveEmailRelay(event(), noAccount, { ...ENV, UDC_EMAIL_IMAP_PASS: undefined }), "disabled");
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  // UDC_APP_ENV=production with the password set is exactly the launch
+  // configuration: the email must be held, not refused.
+  const status = await receiveLiveEmailRelay(event(), noAccount, { ...ENV, UDC_APP_ENV: "production" });
+  assert.equal(status, "held_for_human_relay");
 });
 
 test("a live email with a clean document stores it privately and still reaches the workers", async () => {
