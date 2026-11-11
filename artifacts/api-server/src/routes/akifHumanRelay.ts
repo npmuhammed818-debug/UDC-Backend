@@ -161,6 +161,10 @@ router.get("/akif-relay/status", (req, res) => {
     // (var missing vs saved empty) - never the password itself.
     emailLiveInbound: liveEmailRelayEnabled(),
     emailLiveInboundVar: typeof process.env.UDC_EMAIL_IMAP_PASS !== "string" ? "missing" : process.env.UDC_EMAIL_IMAP_PASS.length > 0 ? "set" : "empty",
+    // Not a secret: which environment name the process actually runs as, so a
+    // typo'd or wrong UDC_APP_ENV (the other half of the email gate) is
+    // visible without dashboard access.
+    appEnv: process.env.UDC_APP_ENV ?? null,
     realSendToRelayNumbers: numbers.filter((n) => replySinkSendAllowed(n)).length,
   });
 });
