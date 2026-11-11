@@ -373,4 +373,22 @@ router.post("/akif-relay/skip", (req, res) => {
   res.set("Cache-Control", "no-store").json({ ok: true, released });
 });
 
+// Dismiss (owner direction, 10 Nov): mark an item handled WITHOUT any reply -
+// for spam/vendor mail that reached the queue. Unlike skip it never returns
+// the item to the pool.
+router.post("/akif-relay/dismiss", (req, res) => {
+  if (!writeAuthorized(req, res)) return;
+  const parsed = z.object({ phone: z.string().min(3).max(120), itemId: z.string().uuid().optional(), workerId: z.string().min(1).max(80).optional(), reason: z.string().max(200).optional() }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_dismiss" }); return; }
+  if (!humanRelayActiveFor(parsed.data.phone)) { res.status(403).json({ ok: false, error: "number_not_relay_allowlisted" }); return; }
+  if (parsed.data.itemId) {
+    const done = answerClaimedHumanRelayItem(parsed.data.itemId, parsed.data.workerId ?? "", parsed.data.reason ?? "dismissed");
+    if (!done) { res.status(409).json({ ok: false, error: "claim_lost" }); return; }
+    res.set("Cache-Control", "no-store").json({ ok: true, dismissed: 1 });
+    return;
+  }
+  const dismissed = markHumanRelayAnswered(parsed.data.phone, parsed.data.reason ?? "dismissed");
+  res.set("Cache-Control", "no-store").json({ ok: true, dismissed });
+});
+
 export default router;

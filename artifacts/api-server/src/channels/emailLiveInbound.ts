@@ -20,6 +20,27 @@ import type { EmailEvidence } from "./emailPilot.ts";
 const POLL_MS = 60_000;
 const MAX_PER_CYCLE = 10;
 
+/** Go-live floor (owner direction, 10 Nov): only mail sent after the channel
+ *  was approved (7:37 PM PST) may reach the workers. Older mail - the whole
+ *  historic inbox - is marked read and never queued. */
+export const EMAIL_LIVE_NOT_BEFORE = Date.parse("2026-11-11T03:37:00.000Z");
+
+/** Bulk/promo/vendor mail never reaches the worker queue (owner direction,
+ *  10 Nov): it is marked read and claimed as processed, silently. */
+export function bulkMailReason(parsed: { headers?: Map<string, unknown>; date?: Date }, from: string): string | null {
+  const header = (name: string) => String(parsed.headers?.get(name) ?? "").toLowerCase();
+  if (header("list-unsubscribe") !== "" || header("list-id") !== "") return "list_mail";
+  if (["bulk", "list", "junk"].includes(header("precedence"))) return "bulk_precedence";
+  const auto = header("auto-submitted");
+  if (auto !== "" && auto !== "no") return "auto_submitted";
+  const local = from.split("@")[0]?.toLowerCase() ?? "";
+  // Machine senders only - a real supplier may well write from sales@ or
+  // info@, so human-plausible local parts are never filtered here.
+  if (/^(no[-_.]?reply|donotreply|do[-_.]not[-_.]reply|bounce|mailer[-_.]?daemon|newsletter|notifications?|promo|marketing|digest)$/.test(local)) return "vendor_sender";
+  if (parsed.date && parsed.date.getTime() < EMAIL_LIVE_NOT_BEFORE) return "before_go_live";
+  return null;
+}
+
 export type LiveEmailClaim = { state: string; meta?: Record<string, unknown> };
 
 export type LiveEmailInboundPorts = EmailRelayPorts & {
@@ -54,6 +75,7 @@ type ParsedMail = {
   replyTo?: { value: Array<{ address?: string }> };
   subject?: string;
   text?: string;
+  date?: Date;
   headers?: Map<string, unknown>;
   attachments?: Array<{ contentId?: string; filename?: string; contentType?: string; content: Buffer }>;
 };
@@ -98,10 +120,11 @@ export async function pollLiveEmailInbox(
   ports: LiveEmailInboundPorts,
   env: NodeJS.ProcessEnv = process.env,
   parse: (source: Buffer) => Promise<ParsedMail>,
-): Promise<{ seen: number; held: number; errors: number }> {
+): Promise<{ seen: number; held: number; ignored: number; errors: number }> {
   const client = await ports.connect();
   let seen = 0;
   let held = 0;
+  let ignored = 0;
   let errors = 0;
   try {
     const lock = await client.getMailboxLock("INBOX");
@@ -130,7 +153,11 @@ export async function pollLiveEmailInbox(
             });
           }
           let state = "processed";
-          if (event) {
+          const ignoreReason = event ? bulkMailReason(parsed, event.from) : null;
+          if (ignoreReason) {
+            ignored += 1;
+            state = `ignored_${ignoreReason}`;
+          } else if (event) {
             const status = await receiveLiveEmailRelay(event, ports, env);
             if (status === "disabled" || status === "invalid") state = "failed";
             else if (status === "held_for_human_relay" || status === "held_attachment_store_failed") held += 1;
@@ -148,7 +175,7 @@ export async function pollLiveEmailInbox(
   } finally {
     await client.logout().catch(() => {});
   }
-  return { seen, held, errors };
+  return { seen, held, ignored, errors };
 }
 
 /** Production ports: real IMAP + audit_logs claims + protected store. */
