@@ -209,10 +209,16 @@ export function startEmailLiveInboundRunner(env: NodeJS.ProcessEnv = process.env
     busy = true;
     try {
       const { simpleParser } = await import("mailparser");
-      await pollLiveEmailInbox(livePorts(env), env, (source) => simpleParser(source) as Promise<ParsedMail>);
-    } catch {
+      // Counts only: never the password, addresses' contents, or bodies.
+      const { logger } = await import("../lib/logger.ts");
+      const result = await pollLiveEmailInbox(livePorts(env), env, (source) => simpleParser(source) as Promise<ParsedMail>);
+      logger.info({ emailLiveInbound: true, ...result }, "email live inbound poll");
+    } catch (err) {
       // A failed cycle (mailbox down, password wrong) never crashes the
-      // service; the next cycle retries and unseen mail stays unread.
+      // service; the next cycle retries and unseen mail stays unread. The
+      // error name only, never message text that could carry credentials.
+      const { logger } = await import("../lib/logger.ts");
+      logger.warn({ emailLiveInbound: true, errorName: (err as Error)?.name ?? "unknown" }, "email live inbound poll failed");
     } finally {
       busy = false;
     }
