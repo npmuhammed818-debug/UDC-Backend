@@ -206,6 +206,9 @@ importers:
       msedge-tts:
         specifier: ^2.1.1
         version: 2.1.1(debug@4.4.3)
+      nodemailer:
+        specifier: ^10.4.0
+        version: 10.4.0
       pdf-lib:
         specifier: 1.17.1
         version: 1.17.1
@@ -2803,6 +2806,10 @@ packages:
 
   nodemailer@10.3.1:
     resolution: {integrity: sha512-uF0AFsJC07Y1vdW7p580DKAnh7rAO+4UPSSB3mDCPNDufoiaOebV6JmrzpxB14OjEEEiBsNdYoM2Y+fN8M7BBA==}
+    engines: {node: '>=20.0.0'}
+
+  nodemailer@10.4.0:
+    resolution: {integrity: sha512-fyy6r4Q5euRJ9Qr3Cts9K7SZrfe9zmz9oLOYiAR02MEJRDRci+99y0OoYBYBgpLffOqkkjXrB/d26VfiMje/kA==}
     engines: {node: '>=20.0.0'}
 
   npm-run-path@6.0.0:
@@ -5741,6 +5748,8 @@ snapshots:
   node-releases@2.0.51: {}
 
   nodemailer@10.3.1: {}
+
+  nodemailer@10.4.0: {}
 
   npm-run-path@6.0.0:
     dependencies:
