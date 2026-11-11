@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { canonicalEmail, safeEmailAttachment, type EmailEvidence } from "./emailPilot.ts";
+import { attachmentContent } from "./emailAttachmentIntake.ts";
 import { EMAIL_RELAY_PREFIX, enqueueHumanRelay, isEmailRelayContact, relayContactKey } from "../akif/humanRelay.ts";
 
 /**
@@ -24,11 +25,13 @@ export function syntheticEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env)
 }
 
 /** Same HMAC fixture gate as emailSyntheticReceiver: a synthetic envelope is
- *  not provider evidence and never authenticates a live sender. */
+ *  not provider evidence and never authenticates a live sender. The raw cap is
+ *  larger than the pilot receiver's because signed fixtures may carry small
+ *  attachment content (base64) for the confidential-document intake. */
 export function verifySyntheticRelaySignature(raw: string, timestamp: string, signature: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const secret = env.UDC_EMAIL_SYNTHETIC_DELIVERY_SECRET;
   if (!secret || secret.length < 32) return false;
-  if (raw.length > 30000 || !/^\d{13}$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp)) > 120000 || !/^[a-f0-9]{64}$/.test(signature)) return false;
+  if (raw.length > 2_000_000 || !/^\d{13}$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp)) > 120000 || !/^[a-f0-9]{64}$/.test(signature)) return false;
   const expected = createHmac("sha256", secret).update(timestamp + "\n" + raw).digest("hex");
   return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
@@ -36,6 +39,9 @@ export function verifySyntheticRelaySignature(raw: string, timestamp: string, si
 export type EmailRelayPorts = {
   /** Registered account for this verified address, when one exists. */
   resolveAccount(address: string): Promise<{ role: string; status: string; verified: boolean } | null>;
+  /** Confidential-document intake: files go straight to the protected store,
+   *  never to workers. Without it, attachment emails stay in private review. */
+  storeEmailAttachments?(input: { from: string; messageId: string; attachments: EmailEvidence["attachments"]; synthetic: boolean }): Promise<{ stored: number }>;
 };
 
 function validEvent(event: EmailEvidence): boolean {
@@ -57,11 +63,22 @@ export async function receiveSyntheticEmailRelay(event: EmailEvidence, ports: Em
   if (!event.eventId || !event.messageId || !event.threadId
     || [event.messageId, event.threadId, event.subject].some((v) => /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(v))
     || event.subject.length > 180 || event.text.length > 6000 || !event.text.trim()) return "invalid";
-  // Documents by email stay on the private review path: never folded into a
-  // customer-facing relay turn sight unseen (matches processEmailPilot).
+  // Documents by email (owner direction, 10 Nov): confidential files go
+  // straight to the protected store - never to workers or chat - while the
+  // message text still enters the relay queue so the same worker system
+  // answers, exactly like WhatsApp. Content-less fixtures keep the old
+  // private-review behavior.
+  let documentsNote = "";
   if (event.attachments.length) {
     if (event.attachments.length > 5 || event.attachments.some((a) => !safeEmailAttachment(a))) return "unsafe_attachment";
-    return "private_attachment_review_required";
+    if (!event.attachments.every((a) => attachmentContent(a))) return "private_attachment_review_required";
+    if (!ports.storeEmailAttachments) return "attachment_store_unavailable";
+    try {
+      const { stored } = await ports.storeEmailAttachments({ from, messageId: event.messageId, attachments: event.attachments, synthetic: true });
+      documentsNote = `; received ${stored} confidential document(s) by email, stored privately - never shown in chat or to workers`;
+    } catch {
+      return "attachment_store_failed";
+    }
   }
   const account = await ports.resolveAccount(from);
   // The worker note states what the system knows, including the owner rule
@@ -73,7 +90,7 @@ export async function receiveSyntheticEmailRelay(event: EmailEvidence, ports: Em
     phone: emailRelayContact(from),
     kind: "text",
     text: `Subject: ${event.subject}\n\n${event.text.trim()}`.slice(0, 4000),
-    customerNote: `channel email; ${note}`,
+    customerNote: `channel email${documentsNote}; ${note}`,
   });
   return "held_for_human_relay";
 }

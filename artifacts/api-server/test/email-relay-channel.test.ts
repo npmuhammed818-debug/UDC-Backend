@@ -109,3 +109,122 @@ test("the relay allowlist admits email contacts only under the synthetic gate", 
 test("emailRelayContact builds the key form", () => {
   assert.equal(emailRelayContact("Sandra@Trinity.example"), "email:sandra@trinity.example");
 });
+
+const PDF_BYTES = Buffer.from("%PDF-1.4 fake confidential loi fixture bytes");
+const PDF_B64 = PDF_BYTES.toString("base64");
+
+function docEvent(overrides: Record<string, unknown> = {}) {
+  return event({
+    subject: "LOI and company docs",
+    text: "Hello, attaching our LOI as discussed.",
+    attachments: [
+      { id: "a1", name: "loi.pdf", type: "application/pdf", bytes: PDF_BYTES.length, contentB64: PDF_B64 } as never,
+    ],
+    ...overrides,
+  });
+}
+
+test("confidential documents go straight to the protected store, never to workers", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const uploads: Array<{ path: string; bytes: Buffer; type: string }> = [];
+  const records: Array<Record<string, unknown>> = [];
+  const ports = {
+    resolveAccount: async () => null,
+    storeEmailAttachments: async (input: { from: string; messageId: string; attachments: Array<{ id: string; name: string; type: string; bytes: number }>; synthetic: boolean }) => {
+      const { storeConfidentialEmailAttachments } = await import("../src/channels/emailAttachmentIntake.ts");
+      return storeConfidentialEmailAttachments(input, {
+        upload: async (path, bytes, type) => { uploads.push({ path, bytes, type }); },
+        record: async (metadata) => { records.push(metadata); },
+      });
+    },
+  };
+  const status = await receiveSyntheticEmailRelay(docEvent(), ports, ENV);
+  assert.equal(status, "held_for_human_relay");
+
+  assert.equal(uploads.length, 1, "the file reached the protected store");
+  assert.match(uploads[0].path, /^email-intake\/[a-f0-9]{24}\/[a-f0-9-]+-loi\.pdf$/);
+  assert.deepEqual(uploads[0].bytes, PDF_BYTES, "stored bytes are exactly the sent bytes");
+  assert.equal(uploads[0].type, "application/pdf");
+
+  assert.equal(records.length, 1, "one metadata-only audit row");
+  assert.equal(records[0].state, "stored_private");
+  assert.equal(records[0].synthetic, true);
+  assert.equal(records[0].name, "loi.pdf");
+  assert.ok(!("contentB64" in records[0]) && !("content" in records[0]), "no content in the record");
+
+  const claimed = claimHumanRelay("worker-test");
+  assert.ok(claimed, "the message text still enters the same worker queue");
+  assert.match(claimed?.text ?? "", /Subject: LOI and company docs/);
+  assert.match(claimed?.text ?? "", /attaching our LOI/);
+  assert.match(claimed?.customerNote ?? "", /received 1 confidential document\(s\) by email, stored privately/);
+  assert.ok(!(claimed?.customerNote ?? "").includes(PDF_B64), "workers never see content");
+  assert.ok(!(claimed?.text ?? "").includes(PDF_B64), "content never enters the relay text");
+});
+
+test("a failed store fails closed: nothing is queued and nothing is half-stored", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const ports = {
+    resolveAccount: async () => null,
+    storeEmailAttachments: async () => { throw new Error("bucket down"); },
+  };
+  const status = await receiveSyntheticEmailRelay(docEvent(), ports, ENV);
+  assert.equal(status, "attachment_store_failed");
+  assert.equal(claimHumanRelay("worker-test"), null, "no partial intake reaches workers");
+});
+
+test("attachments without content keep the old private-review path", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const ports = {
+    resolveAccount: async () => null,
+    storeEmailAttachments: async () => { throw new Error("must not be called"); },
+  };
+  const status = await receiveSyntheticEmailRelay(
+    event({ attachments: [{ id: "a1", name: "loi.pdf", type: "application/pdf", bytes: 1024 }] }),
+    ports,
+    ENV,
+  );
+  assert.equal(status, "private_attachment_review_required");
+  assert.equal(claimHumanRelay("worker-test"), null);
+});
+
+test("a byte-count mismatch between declared size and content is rejected", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const ports = {
+    resolveAccount: async () => null,
+    storeEmailAttachments: async () => { throw new Error("must not be called"); },
+  };
+  const status = await receiveSyntheticEmailRelay(
+    event({ attachments: [{ id: "a1", name: "loi.pdf", type: "application/pdf", bytes: 5, contentB64: PDF_B64 } as never] }),
+    ports,
+    ENV,
+  );
+  assert.equal(status, "private_attachment_review_required", "treated as content-less, never stored");
+  assert.equal(claimHumanRelay("worker-test"), null);
+});
+
+test("without a store port, attachment emails stay out of the queue", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const status = await receiveSyntheticEmailRelay(docEvent(), noAccount, ENV);
+  assert.equal(status, "attachment_store_unavailable");
+  assert.equal(claimHumanRelay("worker-test"), null);
+});
+
+test("unsafe attachment types are rejected even with content", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const ports = {
+    resolveAccount: async () => null,
+    storeEmailAttachments: async () => { throw new Error("must not be called"); },
+  };
+  const status = await receiveSyntheticEmailRelay(
+    event({ attachments: [{ id: "a1", name: "x.exe", type: "application/x-msdownload", bytes: PDF_BYTES.length, contentB64: PDF_B64 } as never] }),
+    ports,
+    ENV,
+  );
+  assert.equal(status, "unsafe_attachment");
+});
