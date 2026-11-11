@@ -7,7 +7,7 @@ import {
 } from "../src/akif/humanRelay.ts";
 import { receiveLiveEmailRelay } from "../src/channels/emailRelayChannel.ts";
 import { liveEmailToEvent, pollLiveEmailInbox, type LiveImapClient } from "../src/channels/emailLiveInbound.ts";
-import { buildRelayEmailPayload, sendRelayEmail, smtpConfigFromEnv } from "../src/channels/emailOutbound.ts";
+import { buildRelayEmailPayload, outboundDepsFromEnv, sendRelayEmail, smtpConfigFromEnv } from "../src/channels/emailOutbound.ts";
 import { sendEmailRelayAnswer } from "../src/channels/emailRelaySend.ts";
 import type { EmailEvidence } from "../src/channels/emailPilot.ts";
 
@@ -240,6 +240,29 @@ test("sendRelayEmail delivers the exact approved payload and refuses a missing m
   assert.deepEqual(Object.keys(calls[0]).sort(), ["from", "subject", "text", "to"], "only the approved fields go out");
 
   await assert.rejects(() => sendRelayEmail(payload, { config: null }), /smtp_not_configured/);
+
+  // Resend transport: chosen only by UDC_EMAIL_OUTBOUND=resend, posts the
+  // exact payload, and a bad key is refused before any network call.
+  const resendDeps = outboundDepsFromEnv({ UDC_EMAIL_OUTBOUND: "resend", RESEND_API_KEY: "re_abcdefgh123", UDC_EMAIL_IMAP_PASS: "x" });
+  assert.equal(resendDeps.resendApiKey, "re_abcdefgh123");
+  assert.equal(outboundDepsFromEnv({ UDC_EMAIL_IMAP_PASS: "x" }).resendApiKey, undefined, "smtp stays the default");
+  const resendCalls: Array<Record<string, unknown>> = [];
+  const fetchImpl = async (_url: unknown, init: { body: string }) => {
+    resendCalls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ id: "re_msg_1" }), { status: 200 });
+  };
+  const viaResend = await sendRelayEmail(payload, { ...resendDeps, fetchImpl: fetchImpl as never });
+  assert.equal(viaResend.id, "re_msg_1");
+  assert.equal(resendCalls[0].from, "udc@updowncircle.site");
+  await assert.rejects(
+    () => sendRelayEmail(payload, { config: null, resendApiKey: "bad", fetchImpl: fetchImpl as never }),
+    /resend_not_configured/,
+  );
+  const failFetch = async () => new Response("no", { status: 403 });
+  await assert.rejects(
+    () => sendRelayEmail(payload, { config: null, resendApiKey: "re_abcdefgh123", fetchImpl: failFetch as never }),
+    /email_send_failed_resend_403/,
+  );
 
   const config = smtpConfigFromEnv({ UDC_EMAIL_IMAP_PASS: "  secret  " });
   assert.deepEqual(config, { host: "smtp.titan.email", port: 465, secure: true, user: "udc@updowncircle.site", pass: "secret" });
