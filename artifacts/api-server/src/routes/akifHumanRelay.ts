@@ -27,7 +27,7 @@ import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
 import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
 import { handleChatUi } from "../whatsapp/chatUi";
-import { emailRelayTarget } from "../channels/emailRelayChannel";
+import { emailRelayTarget, liveEmailRelayEnabled } from "../channels/emailRelayChannel";
 import { saveEmailRelayDraft } from "../channels/emailRelayDraftStore";
 import { buildRelayEmailPayload, sendRelayEmail } from "../channels/emailOutbound";
 
@@ -157,6 +157,9 @@ router.get("/akif-relay/status", (req, res) => {
     // Whether the registration email OTP transport (Resend) is fully
     // configured; false means codes silently cannot go out (10 Nov OTP rule).
     emailOtp: resendTransportConfigured(),
+    // Whether the live mailbox poller is switched on (the env var exists);
+    // never the password itself.
+    emailLiveInbound: liveEmailRelayEnabled(),
     realSendToRelayNumbers: numbers.filter((n) => replySinkSendAllowed(n)).length,
   });
 });
