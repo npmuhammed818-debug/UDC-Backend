@@ -173,7 +173,7 @@ test("one poll cycle claims, holds, marks seen, and never processes one email tw
   });
 
   const first = await pollLiveEmailInbox(ports, ENV, parse);
-  assert.deepEqual(first, { seen: 1, held: 1, errors: 0 });
+  assert.deepEqual(first, { seen: 1, held: 1, ignored: 0, errors: 0 });
   assert.deepEqual(seenAdded, [11]);
   assert.equal([...claims.rows.values()][0].state, "processed");
   assert.match(claimHumanRelay("w")?.text ?? "", /First offer text/);
@@ -181,7 +181,7 @@ test("one poll cycle claims, holds, marks seen, and never processes one email tw
   // Second poll: the claim row says processed, so it is only marked seen.
   resetHumanRelay();
   const second = await pollLiveEmailInbox(ports, ENV, parse);
-  assert.deepEqual(second, { seen: 0, held: 0, errors: 0 });
+  assert.deepEqual(second, { seen: 0, held: 0, ignored: 0, errors: 0 });
   assert.equal(claimHumanRelay("w"), null, "no duplicate relay item");
 });
 
@@ -205,9 +205,9 @@ test("bulk mail is ignored but still marked seen", async () => {
     attachments: [],
   });
   const result = await pollLiveEmailInbox(ports, ENV, parse);
-  assert.deepEqual(result, { seen: 1, held: 0, errors: 0 });
+  assert.deepEqual(result, { seen: 1, held: 0, ignored: 1, errors: 0 });
   assert.equal(claimHumanRelay("w"), null);
-  assert.equal([...claims.rows.values()][0].state, "processed");
+  assert.equal([...claims.rows.values()][0].state, "ignored_bulk_precedence");
 });
 
 test("the approved send payload threads under the customer's email and only leaves from the udc mailbox", () => {
@@ -239,4 +239,35 @@ test("sendRelayEmail posts the exact approved payload and refuses a bad key", as
   assert.deepEqual(Object.keys(calls[0].body).sort(), ["from", "subject", "text", "to"], "only the approved fields go out");
 
   await assert.rejects(() => sendRelayEmail(payload, { apiKey: "not-a-key", fetchImpl: fetchImpl as never }), /resend_not_configured/);
+});
+
+test("the bulk filter ignores promos, noreply senders and historic mail, but never a real customer", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const seenAdded: number[] = [];
+  const claims = fakeClaims();
+  const mk = (uid: number) => ({ uid, source: Buffer.from("x") });
+  const ports = {
+    ...noAccount,
+    connect: async () => fakeImap([mk(21), mk(22), mk(23), mk(24), mk(25)], seenAdded),
+    ...claims,
+  };
+  const mails: Record<number, object> = {
+    21: { messageId: "<p1>", from: { value: [{ address: "hamia@17track.com" }] }, to: { value: [{ address: "udc@updowncircle.site" }] }, subject: "Promo", text: "Buy now", date: new Date("2026-11-11T04:00:00Z"), headers: new Map([["list-unsubscribe", "<mailto:x>"]]), attachments: [] },
+    22: { messageId: "<p2>", from: { value: [{ address: "no-reply@bounce.17track.net" }] }, to: { value: [{ address: "udc@updowncircle.site" }] }, subject: "Receipt", text: "Track", date: new Date("2026-11-11T04:00:00Z"), headers: new Map(), attachments: [] },
+    23: { messageId: "<p3>", from: { value: [{ address: "donotreply@go4worldbusiness.com" }] }, to: { value: [{ address: "udc@updowncircle.site" }] }, subject: "Leads", text: "New leads", date: new Date("2026-11-11T04:00:00Z"), headers: new Map(), attachments: [] },
+    24: { messageId: "<p4>", from: { value: [{ address: "feedback@exportersindia.com" }] }, to: { value: [{ address: "udc@updowncircle.site" }] }, subject: "Old", text: "Old mail", date: new Date("2026-11-04T14:18:00Z"), headers: new Map(), attachments: [] },
+    25: { messageId: "<p5>", from: { value: [{ address: "fatima@realsupplier.com" }] }, to: { value: [{ address: "udc@updowncircle.site" }] }, subject: "Copper cathodes", text: "We can supply 500MT.", date: new Date("2026-11-11T04:00:00Z"), headers: new Map(), attachments: [] },
+  };
+  const parse = async (source: Buffer) => mails[Number(source.readUInt32BE?.(0) ?? 0)] ?? null;
+  // map uid -> mail via fetchOne source marker: fakeImap sources are all "x", so key off order instead
+  let call = 0;
+  const orderedParse = async () => mails[[21, 22, 23, 24, 25][call++]] as never;
+  const result = await pollLiveEmailInbox(ports, ENV, orderedParse);
+  assert.deepEqual(result, { seen: 5, held: 1, ignored: 4, errors: 0 });
+  const states = [...claims.rows.values()].map((r) => r.state);
+  assert.deepEqual(states.filter((s) => s.startsWith("ignored_")).sort(), ["ignored_before_go_live", "ignored_list_mail", "ignored_vendor_sender", "ignored_vendor_sender"]);
+  const claimed = claimHumanRelay("w");
+  assert.match(claimed?.text ?? "", /Copper cathodes/, "the real supplier reaches the workers");
+  assert.equal(claimHumanRelay("w2"), null, "nothing else was held");
 });

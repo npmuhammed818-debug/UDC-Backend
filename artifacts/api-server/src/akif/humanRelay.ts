@@ -310,7 +310,10 @@ export function emailRelaySyntheticEnabled(env: NodeJS.ProcessEnv = process.env)
 
 export function humanRelayActiveFor(phone: string, env: NodeJS.ProcessEnv = process.env): boolean {
   if (!humanRelayEnabled(env)) return false;
-  if (isEmailRelayContact(phone)) return emailRelaySyntheticEnabled(env);
+  // Email contacts are active under the synthetic pilot OR once the live
+  // mailbox is switched on (owner yes, 10 Nov). Mirrors liveEmailRelayEnabled
+  // in channels/emailRelayChannel.ts (kept separate to avoid a module cycle).
+  if (isEmailRelayContact(phone)) return emailRelaySyntheticEnabled(env) || (typeof env.UDC_EMAIL_IMAP_PASS === "string" && env.UDC_EMAIL_IMAP_PASS.length > 0);
   const digits = phone.replace(/\D/g, "");
   if (digits.length < 8) return false;
   const raw = (env.AKIF_HUMAN_RELAY_NUMBERS ?? "").split(",").map((s) => s.trim().toLowerCase());
