@@ -28,8 +28,8 @@ import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
 import { handleChatUi } from "../whatsapp/chatUi";
 import { emailRelayTarget, liveEmailRelayEnabled } from "../channels/emailRelayChannel";
-import { saveEmailRelayDraft } from "../channels/emailRelayDraftStore";
-import { buildRelayEmailPayload, sendRelayEmail } from "../channels/emailOutbound";
+import { buildRelayEmailPayload, sendRelayEmail, smtpConfigFromEnv } from "../channels/emailOutbound";
+import { emailRelaySendDbPorts, sendEmailRelayAnswer } from "../channels/emailRelaySend";
 
 const router: IRouter = Router();
 
@@ -174,9 +174,10 @@ router.get("/akif-relay/pending", (req, res) => {
   res.set("Cache-Control", "no-store").json({ pending: pendingHumanRelay() });
 });
 
-// Email channel: pending review drafts (worker answers, never sent yet).
-// The agent polls these, renders each as an image for the owner's preview,
-// and only after his yes calls email-send for that exact draft.
+// Email channel: pending review drafts. Worker answers to inbound customer
+// mail auto-send now (owner direction, 10 Nov); drafts remain only for mail
+// UDC starts itself, which still waits for his yes on a rendered preview
+// before the agent calls email-send for that exact draft.
 router.get("/akif-relay/email-drafts", async (req, res) => {
   if (!readAuthorized(req, res)) return;
   try {
@@ -202,9 +203,9 @@ router.get("/akif-relay/email-drafts", async (req, res) => {
   }
 });
 
-// Email channel: send ONE approved draft. Never called automatically - only
-// by the agent after the owner's yes on the rendered preview of this exact
-// draft. From udc@updowncircle.site only (owner rule, 10 Nov).
+// Email channel: send ONE approved draft. Only for mail UDC starts itself,
+// and only called by the agent after the owner's yes on the rendered preview
+// of this exact draft. From udc@updowncircle.site only (owner rule, 10 Nov).
 router.post("/akif-relay/email-send", async (req, res) => {
   if (!writeAuthorized(req, res)) return;
   const parsed = z.object({ draftId: z.string().uuid() }).strict().safeParse(req.body ?? {});
@@ -239,11 +240,11 @@ router.post("/akif-relay/email-send", async (req, res) => {
         references: Array.isArray(claim?.metadata?.references) ? claim.metadata.references.filter((v): v is string => typeof v === "string") : undefined,
       },
     );
-    const { id } = await sendRelayEmail(payload, { apiKey: process.env.RESEND_API_KEY ?? "" });
-    await db.execute(sql`update audit_logs set metadata = metadata || ${JSON.stringify({ state: "sent", sentAt: new Date().toISOString(), resendId: id })}::jsonb where id = ${parsed.data.draftId}`);
-    res.set("Cache-Control", "no-store").json({ ok: true, sent: true, resendId: id });
-  } catch {
-    res.status(502).json({ ok: false, error: "email_send_failed" });
+    const { id } = await sendRelayEmail(payload, { config: smtpConfigFromEnv() });
+    await db.execute(sql`update audit_logs set metadata = metadata || ${JSON.stringify({ state: "sent", sentAt: new Date().toISOString(), messageId: id })}::jsonb where id = ${parsed.data.draftId}`);
+    res.set("Cache-Control", "no-store").json({ ok: true, sent: true, messageId: id });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: "email_send_failed", reason: (err instanceof Error ? err.message : "send_failed").slice(0, 140) });
   }
 });
 
@@ -319,8 +320,9 @@ router.post("/akif-relay/reply", async (req, res) => {
       return;
     }
   }
-  // Email channel (Phase A, synthetic only): the answer is saved as a
-  // review draft, never sent. Voice does not apply to email.
+  // Email channel: the answer is sent as a threaded reply from the mailbox
+  // (auto-send, owner direction 10 Nov); synthetic fixtures still just save
+  // a draft. Voice does not apply to email.
   const emailTo = emailRelayTarget(phone);
   if (emailTo && text === null) {
     res.status(400).json({ ok: false, error: "invalid_reply" });
@@ -333,7 +335,7 @@ router.post("/akif-relay/reply", async (req, res) => {
     return;
   }
   const delivery = emailTo
-    ? await saveEmailRelayDraft({ to: emailTo, text: text ?? "" })
+    ? await sendEmailRelayAnswer({ to: emailTo, text: text ?? "" }, emailRelaySendDbPorts(), { config: smtpConfigFromEnv() })
     : audio
     ? await sendWhatsAppVoiceNote(phone, audio)
     : await deliverHumanRelayReply(phone, text!, {
