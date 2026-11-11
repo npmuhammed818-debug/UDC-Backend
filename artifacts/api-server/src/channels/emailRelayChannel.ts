@@ -26,10 +26,12 @@ export function syntheticEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env)
 
 /** Live inbound (owner yes, 10 Nov): the real udc@updowncircle.site mailbox is
  *  polled when its IMAP password is present. His adding that one env var is
- *  the switch; removing it turns the inbox back off. Outbound still never
- *  sends automatically - every answer waits for his preview approval. */
+ *  the switch; removing it turns the inbox back off. No app-env check: the
+ *  launch service runs as "production" and this is a live channel, not a
+ *  synthetic door. Outbound still never sends automatically - every answer
+ *  waits for his preview approval. */
 export function liveEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.UDC_APP_ENV === "staging" && typeof env.UDC_EMAIL_IMAP_PASS === "string" && env.UDC_EMAIL_IMAP_PASS.length > 0;
+  return typeof env.UDC_EMAIL_IMAP_PASS === "string" && env.UDC_EMAIL_IMAP_PASS.length > 0;
 }
 
 /** Same HMAC fixture gate as emailSyntheticReceiver: a synthetic envelope is
