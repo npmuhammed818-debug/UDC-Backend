@@ -7,7 +7,8 @@ import {
 } from "../src/akif/humanRelay.ts";
 import { receiveLiveEmailRelay } from "../src/channels/emailRelayChannel.ts";
 import { liveEmailToEvent, pollLiveEmailInbox, type LiveImapClient } from "../src/channels/emailLiveInbound.ts";
-import { buildRelayEmailPayload, sendRelayEmail } from "../src/channels/emailOutbound.ts";
+import { buildRelayEmailPayload, sendRelayEmail, smtpConfigFromEnv } from "../src/channels/emailOutbound.ts";
+import { sendEmailRelayAnswer } from "../src/channels/emailRelaySend.ts";
 import type { EmailEvidence } from "../src/channels/emailPilot.ts";
 
 const ENV = {
@@ -226,19 +227,72 @@ test("the approved send payload threads under the customer's email and only leav
   assert.equal(bare.headers, undefined);
 });
 
-test("sendRelayEmail posts the exact approved payload and refuses a bad key", async () => {
-  const calls: Array<{ body: Record<string, unknown> }> = [];
-  const fetchImpl = async (_url: unknown, init: { body: string }) => {
-    calls.push({ body: JSON.parse(init.body) });
-    return new Response(JSON.stringify({ id: "re_123" }), { status: 200 });
+test("sendRelayEmail delivers the exact approved payload and refuses a missing mailbox password", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const sendMail = async (payload: Record<string, unknown>) => {
+    calls.push(payload);
+    return { id: "<sent-1@smtp.example>" };
   };
   const payload = buildRelayEmailPayload({ to: "a@b.example", text: "approved words" }, {});
-  const result = await sendRelayEmail(payload, { apiKey: "re_abcdefgh123", fetchImpl: fetchImpl as never });
-  assert.equal(result.id, "re_123");
-  assert.equal(calls[0].body.from, "udc@updowncircle.site");
-  assert.deepEqual(Object.keys(calls[0].body).sort(), ["from", "subject", "text", "to"], "only the approved fields go out");
+  const result = await sendRelayEmail(payload, { config: null, sendMail: sendMail as never });
+  assert.equal(result.id, "<sent-1@smtp.example>");
+  assert.equal(calls[0].from, "udc@updowncircle.site");
+  assert.deepEqual(Object.keys(calls[0]).sort(), ["from", "subject", "text", "to"], "only the approved fields go out");
 
-  await assert.rejects(() => sendRelayEmail(payload, { apiKey: "not-a-key", fetchImpl: fetchImpl as never }), /resend_not_configured/);
+  await assert.rejects(() => sendRelayEmail(payload, { config: null }), /smtp_not_configured/);
+
+  const config = smtpConfigFromEnv({ UDC_EMAIL_IMAP_PASS: "  secret  " });
+  assert.deepEqual(config, { host: "smtp.titan.email", port: 465, secure: true, user: "udc@updowncircle.site", pass: "secret" });
+  assert.equal(smtpConfigFromEnv({}), null, "no mailbox password, no outbound");
+});
+
+test("a worker answer auto-sends to a live customer and only drafts for synthetic items", async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const recorded: Array<{ to: string; messageId: string }> = [];
+  const drafts: Array<{ to: string }> = [];
+  const ports = (thread: Record<string, unknown> | null) => ({
+    findLatestLiveThread: async () => thread,
+    recordSent: async (input: { to: string; text: string; messageId: string }) => { recorded.push(input); },
+    recordDraft: async (input: { to: string; text: string }) => { drafts.push(input); },
+  });
+  const sendMail = async (payload: Record<string, unknown>) => {
+    sent.push(payload);
+    return { id: "<auto-1@smtp.example>" };
+  };
+
+  // Live customer (poller claim exists): real threaded send, audit recorded.
+  const live = await sendEmailRelayAnswer(
+    { to: "buyer@example.com", text: "How much butter oil do you need?" },
+    ports({ subject: "butter oil", messageId: "<m9@buyer.example>", references: ["<m9@buyer.example>"] }) as never,
+    { config: null, sendMail: sendMail as never },
+  );
+  assert.deepEqual(live, { delivered: true });
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].to, ["buyer@example.com"]);
+  assert.equal(sent[0].from, "udc@updowncircle.site");
+  assert.equal(sent[0].subject, "Re: butter oil");
+  assert.equal(recorded.length, 1);
+  assert.equal(drafts.length, 0);
+
+  // Synthetic fixture (no live claim): draft only, nothing real leaves.
+  const syn = await sendEmailRelayAnswer(
+    { to: "fixture@example.com", text: "hello" },
+    ports(null) as never,
+    { config: null, sendMail: sendMail as never },
+  );
+  assert.deepEqual(syn, { delivered: true });
+  assert.equal(sent.length, 1, "no second send");
+  assert.equal(drafts.length, 1);
+
+  // SMTP failure: not delivered, reason carried, nothing recorded as sent.
+  const fail = await sendEmailRelayAnswer(
+    { to: "buyer@example.com", text: "retry me" },
+    ports({ subject: "s" }) as never,
+    { config: null },
+  );
+  assert.equal(fail.delivered, false);
+  assert.match(fail.reason ?? "", /smtp_not_configured/);
+  assert.equal(recorded.length, 1, "no sent record on failure");
 });
 
 test("the bulk filter ignores promos, noreply senders and historic mail, but never a real customer", async () => {
