@@ -2,6 +2,7 @@ import {Router} from 'express';
 import {requireRole} from '../auth/middleware';
 import {receiveSyntheticEmail} from '../channels/emailSyntheticReceiver';
 import {receiveSyntheticEmailRelay,verifySyntheticRelaySignature} from '../channels/emailRelayChannel';
+import {storeConfidentialEmailAttachments} from '../channels/emailAttachmentIntake';
 import {emailAccount} from '../channels/emailAccount';
 const router=Router();
 /** Admin QA only. No publicly reachable live provider or mailbox endpoint. */
@@ -22,7 +23,7 @@ router.post('/admin/email-channel/synthetic-relay-receive',requireRole('admin'),
  let event;try{event=JSON.parse(req.body.raw)?.event;}catch{res.json({status:'invalid',syntheticOnly:true,sent:false});return;}
  try{
   const account=emailAccount();
-  res.json({status:await receiveSyntheticEmailRelay(event,{resolveAccount:async address=>{const p=account?await account.repository.resolve(address):null;return p?{role:p.role,status:p.status,verified:p.status==='verified'}:null;}}),syntheticOnly:true,sent:false});
+  res.json({status:await receiveSyntheticEmailRelay(event,{resolveAccount:async address=>{const p=account?await account.repository.resolve(address):null;return p?{role:p.role,status:p.status,verified:p.status==='verified'}:null;},storeEmailAttachments:input=>storeConfidentialEmailAttachments(input)}),syntheticOnly:true,sent:false});
  }catch{res.sendStatus(503);}
 });
 export default router;
