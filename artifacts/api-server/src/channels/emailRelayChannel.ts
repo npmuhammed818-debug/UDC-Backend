@@ -24,6 +24,14 @@ export function syntheticEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env)
   return env.UDC_APP_ENV === "staging" && env.UDC_EMAIL_PILOT_MODE === "synthetic" && env.AKIF_WHATSAPP_REPLY_SINK === "store";
 }
 
+/** Live inbound (owner yes, 10 Nov): the real udc@updowncircle.site mailbox is
+ *  polled when its IMAP password is present. His adding that one env var is
+ *  the switch; removing it turns the inbox back off. Outbound still never
+ *  sends automatically - every answer waits for his preview approval. */
+export function liveEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.UDC_APP_ENV === "staging" && typeof env.UDC_EMAIL_IMAP_PASS === "string" && env.UDC_EMAIL_IMAP_PASS.length > 0;
+}
+
 /** Same HMAC fixture gate as emailSyntheticReceiver: a synthetic envelope is
  *  not provider evidence and never authenticates a live sender. The raw cap is
  *  larger than the pilot receiver's because signed fixtures may carry small
@@ -55,6 +63,18 @@ function validEvent(event: EmailEvidence): boolean {
 
 export async function receiveSyntheticEmailRelay(event: EmailEvidence, ports: EmailRelayPorts, env: NodeJS.ProcessEnv = process.env): Promise<string> {
   if (!syntheticEmailRelayEnabled(env)) return "disabled";
+  return receiveEmailRelay(event, ports, "synthetic");
+}
+
+/** Live mailbox intake. Unlike the synthetic fixture path, a real customer
+ *  always reaches the workers: documents that cannot be stored are noted as
+ *  not stored instead of dropping the whole email. */
+export async function receiveLiveEmailRelay(event: EmailEvidence, ports: EmailRelayPorts, env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  if (!liveEmailRelayEnabled(env)) return "disabled";
+  return receiveEmailRelay(event, ports, "live");
+}
+
+async function receiveEmailRelay(event: EmailEvidence, ports: EmailRelayPorts, mode: "synthetic" | "live"): Promise<string> {
   if (!validEvent(event)) return "invalid";
   const from = canonicalEmail(event.from);
   if (!from || from === EMAIL_RELAY_MAILBOX || event.to.length !== 1 || canonicalEmail(event.to[0]) !== EMAIL_RELAY_MAILBOX || event.cc.length
@@ -69,15 +89,29 @@ export async function receiveSyntheticEmailRelay(event: EmailEvidence, ports: Em
   // answers, exactly like WhatsApp. Content-less fixtures keep the old
   // private-review behavior.
   let documentsNote = "";
+  let storeFailed = false;
   if (event.attachments.length) {
-    if (event.attachments.length > 5 || event.attachments.some((a) => !safeEmailAttachment(a))) return "unsafe_attachment";
-    if (!event.attachments.every((a) => attachmentContent(a))) return "private_attachment_review_required";
-    if (!ports.storeEmailAttachments) return "attachment_store_unavailable";
-    try {
-      const { stored } = await ports.storeEmailAttachments({ from, messageId: event.messageId, attachments: event.attachments, synthetic: true });
-      documentsNote = `; received ${stored} confidential document(s) by email, stored privately - never shown in chat or to workers`;
-    } catch {
-      return "attachment_store_failed";
+    const clean = event.attachments.length <= 5 && event.attachments.every((a) => safeEmailAttachment(a) && attachmentContent(a));
+    if (!clean) {
+      // Synthetic fixtures fail closed; a live customer still reaches the
+      // workers, with the document simply not stored.
+      if (mode === "synthetic") {
+        if (event.attachments.length > 5 || event.attachments.some((a) => !safeEmailAttachment(a))) return "unsafe_attachment";
+        return "private_attachment_review_required";
+      }
+      documentsNote = `; sent ${event.attachments.length} document(s) we could not store (only PDF/JPG/PNG up to 20MB) - NOT stored, worker should offer a resend`;
+    } else if (!ports.storeEmailAttachments) {
+      if (mode === "synthetic") return "attachment_store_unavailable";
+      documentsNote = `; sent ${event.attachments.length} document(s) - NOT stored (store unavailable), worker should offer a resend`;
+    } else {
+      try {
+        const { stored } = await ports.storeEmailAttachments({ from, messageId: event.messageId, attachments: event.attachments, synthetic: mode === "synthetic" });
+        documentsNote = `; received ${stored} confidential document(s) by email, stored privately - never shown in chat or to workers`;
+      } catch {
+        if (mode === "synthetic") return "attachment_store_failed";
+        storeFailed = true;
+        documentsNote = `; sent ${event.attachments.length} document(s) - NOT stored (store error), worker should offer a resend`;
+      }
     }
   }
   const account = await ports.resolveAccount(from);
@@ -92,7 +126,7 @@ export async function receiveSyntheticEmailRelay(event: EmailEvidence, ports: Em
     text: `Subject: ${event.subject}\n\n${event.text.trim()}`.slice(0, 4000),
     customerNote: `channel email${documentsNote}; ${note}`,
   });
-  return "held_for_human_relay";
+  return storeFailed ? "held_attachment_store_failed" : "held_for_human_relay";
 }
 
 /** Validate and normalize a worker's email answer target. Returns the bare

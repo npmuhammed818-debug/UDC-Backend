@@ -29,6 +29,7 @@ import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook"
 import { handleChatUi } from "../whatsapp/chatUi";
 import { emailRelayTarget } from "../channels/emailRelayChannel";
 import { saveEmailRelayDraft } from "../channels/emailRelayDraftStore";
+import { buildRelayEmailPayload, sendRelayEmail } from "../channels/emailOutbound";
 
 const router: IRouter = Router();
 
@@ -163,6 +164,79 @@ router.get("/akif-relay/status", (req, res) => {
 router.get("/akif-relay/pending", (req, res) => {
   if (!readAuthorized(req, res)) return;
   res.set("Cache-Control", "no-store").json({ pending: pendingHumanRelay() });
+});
+
+// Email channel: pending review drafts (worker answers, never sent yet).
+// The agent polls these, renders each as an image for the owner's preview,
+// and only after his yes calls email-send for that exact draft.
+router.get("/akif-relay/email-drafts", async (req, res) => {
+  if (!readAuthorized(req, res)) return;
+  try {
+    const { desc, sql } = await import("drizzle-orm");
+    const { db, auditLogsTable } = await import("@workspace/db");
+    const rows = await db
+      .select({ id: auditLogsTable.id, metadata: auditLogsTable.metadata, at: auditLogsTable.createdAt })
+      .from(auditLogsTable)
+      .where(sql`${auditLogsTable.action} = 'email_relay_draft' and ${auditLogsTable.metadata}->>'state' = 'drafted_not_sent'`)
+      .orderBy(desc(auditLogsTable.createdAt))
+      .limit(20);
+    res.set("Cache-Control", "no-store").json({
+      drafts: rows.map((row) => ({
+        id: row.id,
+        to: String(row.metadata?.to ?? ""),
+        from: String(row.metadata?.from ?? ""),
+        text: String(row.metadata?.text ?? ""),
+        at: row.at,
+      })),
+    });
+  } catch {
+    res.status(503).json({ ok: false, error: "drafts_unavailable" });
+  }
+});
+
+// Email channel: send ONE approved draft. Never called automatically - only
+// by the agent after the owner's yes on the rendered preview of this exact
+// draft. From udc@updowncircle.site only (owner rule, 10 Nov).
+router.post("/akif-relay/email-send", async (req, res) => {
+  if (!writeAuthorized(req, res)) return;
+  const parsed = z.object({ draftId: z.string().uuid() }).strict().safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_body" }); return; }
+  try {
+    const { desc, sql } = await import("drizzle-orm");
+    const { db, auditLogsTable } = await import("@workspace/db");
+    const [draft] = await db
+      .select({ id: auditLogsTable.id, metadata: auditLogsTable.metadata })
+      .from(auditLogsTable)
+      .where(sql`${auditLogsTable.id} = ${parsed.data.draftId} and ${auditLogsTable.action} = 'email_relay_draft'`)
+      .limit(1);
+    if (!draft || draft.metadata?.state !== "drafted_not_sent") {
+      res.status(409).json({ ok: false, error: "draft_not_pending" });
+      return;
+    }
+    const to = String(draft.metadata?.to ?? "");
+    const text = String(draft.metadata?.text ?? "");
+    if (!to || !text.trim()) { res.status(400).json({ ok: false, error: "invalid_draft" }); return; }
+    // Thread under the newest live intake from this customer, when one exists.
+    const [claim] = await db
+      .select({ metadata: auditLogsTable.metadata })
+      .from(auditLogsTable)
+      .where(sql`${auditLogsTable.action} = 'email_live_claim' and ${auditLogsTable.metadata}->>'from' = ${to}`)
+      .orderBy(desc(auditLogsTable.createdAt))
+      .limit(1);
+    const payload = buildRelayEmailPayload(
+      { to, text },
+      {
+        subject: typeof claim?.metadata?.subject === "string" ? claim.metadata.subject : undefined,
+        messageId: typeof claim?.metadata?.messageId === "string" ? claim.metadata.messageId : undefined,
+        references: Array.isArray(claim?.metadata?.references) ? claim.metadata.references.filter((v): v is string => typeof v === "string") : undefined,
+      },
+    );
+    const { id } = await sendRelayEmail(payload, { apiKey: process.env.RESEND_API_KEY ?? "" });
+    await db.execute(sql`update audit_logs set metadata = metadata || ${JSON.stringify({ state: "sent", sentAt: new Date().toISOString(), resendId: id })}::jsonb where id = ${parsed.data.draftId}`);
+    res.set("Cache-Control", "no-store").json({ ok: true, sent: true, resendId: id });
+  } catch {
+    res.status(502).json({ ok: false, error: "email_send_failed" });
+  }
 });
 
 // Pool mode (owner direction, 10 Nov): parallel reply workers claim the
