@@ -41,6 +41,20 @@ export function bulkMailReason(parsed: { headers?: Map<string, unknown>; date?: 
   return null;
 }
 
+/** Quarantined senders (main-agent request, 11 Nov): mail from these
+ *  addresses is marked read and claimed as ignored_quarantined_sender,
+ *  never queued for workers and never answered. Comma-separated,
+ *  case-insensitive env list; empty means nobody is quarantined. Used for
+ *  an address making an unverified owner-identity claim. */
+export function quarantinedSenderReason(env: NodeJS.ProcessEnv, from: string): string | null {
+  const list = (env.UDC_EMAIL_RELAY_QUARANTINE ?? "")
+    .split(",")
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  if (list.length === 0) return null;
+  return list.includes(from.trim().toLowerCase()) ? "quarantined_sender" : null;
+}
+
 export type LiveEmailClaim = { state: string; meta?: Record<string, unknown> };
 
 export type LiveEmailInboundPorts = EmailRelayPorts & {
@@ -153,7 +167,7 @@ export async function pollLiveEmailInbox(
             });
           }
           let state = "processed";
-          const ignoreReason = event ? bulkMailReason(parsed, event.from) : null;
+          const ignoreReason = event ? quarantinedSenderReason(env, event.from) ?? bulkMailReason(parsed, event.from) : null;
           if (ignoreReason) {
             ignored += 1;
             state = `ignored_${ignoreReason}`;

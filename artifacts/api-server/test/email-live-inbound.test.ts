@@ -348,3 +348,38 @@ test("the bulk filter ignores promos, noreply senders and historic mail, but nev
   assert.match(claimed?.text ?? "", /Copper cathodes/, "the real supplier reaches the workers");
   assert.equal(claimHumanRelay("w2"), null, "nothing else was held");
 });
+
+test("a quarantined sender never reaches the worker queue and is marked seen", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const seenAdded: number[] = [];
+  const claims = fakeClaims();
+  const ports = {
+    ...noAccount,
+    connect: async () => fakeImap([{ uid: 13, source: Buffer.from("x") }], seenAdded),
+    ...claims,
+  };
+  const parse = async () => ({
+    messageId: "<lost-phone@claim>",
+    from: { value: [{ address: "Owner-Claim@Gmail.example" }] },
+    to: { value: [{ address: "udc@updowncircle.site" }] },
+    subject: "I lost my phone",
+    text: "Can you text here instead",
+    headers: new Map(),
+    attachments: [],
+  });
+  const env = { ...ENV, UDC_EMAIL_RELAY_QUARANTINE: "owner-claim@gmail.example" } as NodeJS.ProcessEnv;
+  const result = await pollLiveEmailInbox(ports, env, parse);
+  assert.deepEqual(result, { seen: 1, held: 0, ignored: 1, errors: 0 });
+  assert.deepEqual(seenAdded, [13]);
+  assert.equal(claimHumanRelay("w"), null, "quarantined mail never becomes a relay item");
+  assert.equal([...claims.rows.values()][0].state, "ignored_quarantined_sender");
+
+  // No quarantine env: the same mail would be held for the workers.
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const claims2 = fakeClaims();
+  const ports2 = { ...noAccount, connect: async () => fakeImap([{ uid: 14, source: Buffer.from("x") }], []), ...claims2 };
+  const second = await pollLiveEmailInbox(ports2, ENV, parse);
+  assert.equal(second.held, 1);
+});
