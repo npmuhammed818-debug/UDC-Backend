@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { simpleParser } from "mailparser";
 import assert from "node:assert/strict";
 import {
   __setRelayPersistenceForTests,
@@ -382,4 +383,33 @@ test("a quarantined sender never reaches the worker queue and is marked seen", a
   const ports2 = { ...noAccount, connect: async () => fakeImap([{ uid: 14, source: Buffer.from("x") }], []), ...claims2 };
   const second = await pollLiveEmailInbox(ports2, ENV, parse);
   assert.equal(second.held, 1);
+});
+
+
+test("real mailparser List-Unsubscribe normalization never queues a newsletter", async () => {
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+  const raw = Buffer.from([
+    "From: Product Updates <welcome@vendor.example>",
+    "To: udc@updowncircle.site",
+    "Message-ID: <newsletter-normalized@vendor.example>",
+    "Date: Thu, 12 Nov 2026 10:32:17 +0000",
+    "Subject: Monthly product news",
+    "List-Unsubscribe: <mailto:unsubscribe@vendor.example>",
+    "List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Monthly product announcements",
+  ].join("\r\n"));
+  const claims = fakeClaims();
+  const seenAdded: number[] = [];
+  const ports = { ...noAccount, ...claims, connect: async () => fakeImap([{uid: 31, source: raw}], seenAdded) };
+  const parsed = await simpleParser(raw);
+  assert.equal(parsed.headers.has("list-unsubscribe"), false);
+  assert.ok(parsed.headers.has("list"));
+  const result = await pollLiveEmailInbox(ports, ENV, async () => parsed as never);
+  assert.deepEqual(result, { seen: 1, held: 0, ignored: 1, errors: 0 });
+  assert.equal([...claims.rows.values()][0].state, "ignored_list_mail");
+  assert.equal(claimHumanRelay("newsletter-test"), null);
+  resetHumanRelay();
 });
