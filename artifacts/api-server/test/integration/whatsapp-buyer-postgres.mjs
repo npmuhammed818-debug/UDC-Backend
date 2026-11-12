@@ -137,7 +137,7 @@ try {
   assert.equal(mail.outbox.length, 1);assert.equal(mail.outbox[0].to, email);
   const code = mail.outbox[0].code;
   await post('Email code ' + code);
-  assert.match(sent.at(-1).text.body, /ownership is verified/);
+  assert.match(sent.at(-1).text.body, /email is verified/);
   await post('Email code ' + code);
   assert.match(sent.at(-1).text.body, /invalid or expired/);
   await post('Verify email');
