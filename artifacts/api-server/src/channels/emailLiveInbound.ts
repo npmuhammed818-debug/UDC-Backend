@@ -29,7 +29,12 @@ export const EMAIL_LIVE_NOT_BEFORE = Date.parse("2026-11-11T03:37:00.000Z");
  *  10 Nov): it is marked read and claimed as processed, silently. */
 export function bulkMailReason(parsed: { headers?: Map<string, unknown>; date?: Date }, from: string): string | null {
   const header = (name: string) => String(parsed.headers?.get(name) ?? "").toLowerCase();
-  if (header("list-unsubscribe") !== "" || header("list-id") !== "") return "list_mail";
+  // mailparser normalizes List-* headers into a structured "list" object.
+  // Keep raw-key support for other parsers and fixtures too.
+  const list = parsed.headers?.get("list");
+  const parsedListMail = typeof list === "object" && list !== null
+    && ["unsubscribe", "id"].some((key) => Object.hasOwn(list, key));
+  if (parsedListMail || header("list-unsubscribe") !== "" || header("list-id") !== "") return "list_mail";
   if (["bulk", "list", "junk"].includes(header("precedence"))) return "bulk_precedence";
   const auto = header("auto-submitted");
   if (auto !== "" && auto !== "no") return "auto_submitted";

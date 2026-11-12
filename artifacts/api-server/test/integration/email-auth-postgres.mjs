@@ -488,7 +488,7 @@ try {
   const waLetter = fixture.outbox.at(-1);
   assert.match(
     await app.handleEmailVerification(phone, "Email code " + waLetter.code),
-    /ownership is verified/,
+    /email is verified/,
   );
   assert.equal(
     (

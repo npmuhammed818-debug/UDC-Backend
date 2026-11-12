@@ -5,7 +5,13 @@ packages:
   - scripts
 
 allowBuilds:
+  '@swc/core': true
   esbuild: true
+  ffmpeg-static: true
+  msw: true
+  unrs-resolver: true
+  # Package-manager check only; no runtime artifact is generated.
+  msedge-tts: false
 
 autoInstallPeers: false
 
@@ -38,13 +44,6 @@ minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@replit/*'
   - stripe-replit-sync
-
-onlyBuiltDependencies:
-  - '@swc/core'
-  - ffmpeg-static
-  - esbuild
-  - msw
-  - unrs-resolver
 
 overrides:
   minimatch: 11.0.1

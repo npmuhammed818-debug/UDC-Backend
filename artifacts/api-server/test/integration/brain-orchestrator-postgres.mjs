@@ -21,6 +21,7 @@ Object.assign(process.env, {
   NODE_ENV: "test",
   WHATSAPP_APP_SECRET: "synthetic-brainorchestrator-secret-32",
   AKIF_BRAIN_ORCHESTRATOR: "on",
+  AKIF_GROQ: "on", // Fixture only: all model calls are injected, no network.
   GROQ_API_KEY: "synthetic-offline-key",
 });
 const directory = await mkdtemp(fileURLToPath(new URL("../../tmp/qa-brainorchestrator-", import.meta.url)));
