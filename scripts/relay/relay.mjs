@@ -36,6 +36,18 @@ if (cmd === "status" || cmd === "pending" || cmd === "emaildrafts") {
   const body = JSON.stringify({ phone, text });
   const r = await fetch(`${BASE}/api/akif-relay/brief`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
   console.log(r.status); console.log(JSON.stringify(await r.json()));
+} else if (cmd === "dismiss") {
+  // Completion without sending: claim ownership is checked by the server.
+  const [workerId, contact, itemId] = process.argv.slice(3);
+  const reason = readFileSync(0, "utf8").trim();
+  if (!workerId || !contact || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(itemId ?? "") || !reason || reason.length > 200) {
+    console.error("usage: dismiss <workerId> <phone> <itemId> < reason (1-200 characters)");
+    process.exit(1);
+  }
+  const body = JSON.stringify({ phone: contact, itemId, workerId, reason });
+  const r = await fetch(`${BASE}/api/akif-relay/dismiss`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
+  console.log(r.status); console.log(JSON.stringify(await r.json()));
+  if (!r.ok) process.exitCode = 1;
 } else if (cmd === "ask") {
   const text = readFileSync(0, "utf8");
   const body = JSON.stringify({ phone, text });
@@ -45,4 +57,4 @@ if (cmd === "status" || cmd === "pending" || cmd === "emaildrafts") {
   const body = JSON.stringify({ phone: a1 ?? phone });
   const r = await fetch(`${BASE}/api/akif-relay/doclink`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
   console.log(r.status); console.log(JSON.stringify(await r.json()));
-} else { console.log("usage: relay.mjs status|pending|emaildrafts|emailsend <draftId>|reply <phone> [voice] < text|replyaudio <phone> <file.ogg>|skip <phone>|ask <phone> < text|brief <phone> < text"); }
+} else { console.log("usage: relay.mjs status|pending|emaildrafts|emailsend <draftId>|reply <phone> [voice] < text|replyaudio <phone> <file.ogg>|skip <phone>|ask <phone> < text|brief <phone> < text|dismiss <workerId> <phone> <itemId> < reason"); }
