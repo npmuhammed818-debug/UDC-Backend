@@ -29,9 +29,13 @@ export function syntheticEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env)
  *  the switch; removing it turns the inbox back off. No app-env check: the
  *  launch service runs as "production" and this is a live channel, not a
  *  synthetic door. Outbound still never sends automatically - every answer
- *  waits for his preview approval. */
+ *  waits for his preview approval.
+ *  14 Nov: Resend inbound webhooks are an equivalent live source - with the
+ *  mailbox providers all walled off, signed Resend webhook delivery takes
+ *  over from IMAP polling. Either credential keeps the channel live. */
 export function liveEmailRelayEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return typeof env.UDC_EMAIL_IMAP_PASS === "string" && env.UDC_EMAIL_IMAP_PASS.length > 0;
+  if (typeof env.UDC_EMAIL_IMAP_PASS === "string" && env.UDC_EMAIL_IMAP_PASS.length > 0) return true;
+  return typeof env.RESEND_WEBHOOK_SECRET === "string" && env.RESEND_WEBHOOK_SECRET.length > 0;
 }
 
 /** Same HMAC fixture gate as emailSyntheticReceiver: a synthetic envelope is

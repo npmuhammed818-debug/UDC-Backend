@@ -1,5 +1,6 @@
 import ideaReviewRouter from './ideaReview';
 import emailSyntheticRouter from './emailSynthetic';
+import emailResendInboundRouter from './emailResendInbound';
 import currencyHelperRouter from './currencyHelper';
 import tradeAssistRouter from './tradeAssist';
 import dealStatusPictureRouter from './dealStatusPicture';
@@ -44,6 +45,7 @@ const router: IRouter = Router();
 
 router.use(ideaReviewRouter);
 router.use(emailSyntheticRouter);
+router.use(emailResendInboundRouter);
 router.use(commissionProposalsRouter);
 router.use(healthRouter);
 router.use(databaseRouter);

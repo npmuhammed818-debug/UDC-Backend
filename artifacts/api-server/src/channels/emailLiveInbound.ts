@@ -85,7 +85,7 @@ function messageHash(messageId: string, env: NodeJS.ProcessEnv): string {
   return createHmac("sha256", secret).update(messageId).digest("hex");
 }
 
-type ParsedMail = {
+export type ParsedMail = {
   messageId?: string;
   references?: string[] | string;
   from?: { value: Array<{ address?: string }> };
@@ -100,12 +100,14 @@ type ParsedMail = {
 };
 
 /** Build the relay event from a parsed email. Returns null when the message
- *  cannot yield a usable sender + body. Exported for tests. */
-export function liveEmailToEvent(uid: number, parsed: ParsedMail): EmailEvidence | null {
+ *  cannot yield a usable sender + body. Exported for tests. A numeric uid is
+ *  an IMAP message; a string id is a provider event id (Resend inbound). */
+export function liveEmailToEvent(uid: number | string, parsed: ParsedMail): EmailEvidence | null {
   const from = parsed.from?.value?.[0]?.address;
   const text = (parsed.text ?? "").trim();
   if (!from || !text) return null;
-  const messageId = (parsed.messageId || `imap-${uid}`).trim();
+  const eventId = typeof uid === "number" ? `imap-${uid}` : `resend-${uid}`;
+  const messageId = (parsed.messageId || eventId).trim();
   const references = parsed.references;
   const firstRef = Array.isArray(references) ? references[0] : references;
   const header = (name: string) => String(parsed.headers?.get(name) ?? "").toLowerCase();
@@ -113,7 +115,7 @@ export function liveEmailToEvent(uid: number, parsed: ParsedMail): EmailEvidence
   const precedence = header("precedence");
   const bulk = ["bulk", "list", "junk"].includes(precedence) || header("list-id") !== "";
   return {
-    eventId: `imap-${uid}`,
+    eventId,
     messageId,
     threadId: (firstRef || messageId).trim(),
     from,
@@ -125,13 +127,51 @@ export function liveEmailToEvent(uid: number, parsed: ParsedMail): EmailEvidence
     autoSubmitted,
     bulk,
     attachments: (parsed.attachments ?? []).map((a, i) => ({
-      id: a.contentId || `att-${uid}-${i}`,
+      id: a.contentId || `att-${typeof uid === "number" ? `imap-${uid}` : `resend-${uid}`}-${i}`,
       name: a.filename || "document",
       type: a.contentType || "application/octet-stream",
       bytes: a.content.length,
       contentB64: a.content.toString("base64"),
     })),
   };
+}
+
+/** Claim + filter + relay for one parsed live message. Shared by the IMAP
+ *  poller and the Resend inbound webhook so both paths claim in audit_logs
+ *  BEFORE processing and apply the exact same quarantine/bulk rules. Returns
+ *  the final claim state; alreadyProcessed means a prior claim row was done. */
+export async function processLiveEmailMessage(
+  sourceId: number | string,
+  parsed: ParsedMail,
+  ports: Omit<LiveEmailInboundPorts, "connect">,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ state: string; alreadyProcessed: boolean; held: boolean }> {
+  const event = liveEmailToEvent(sourceId, parsed);
+  const hash = messageHash(event?.messageId ?? String(sourceId), env);
+  const prior = await ports.claimLookup(hash);
+  if (prior?.state === "processed") return { state: "processed", alreadyProcessed: true, held: false };
+  if (!prior) {
+    await ports.claimInsert(hash, {
+      messageHash: hash,
+      state: "processing",
+      from: event?.from ?? "unknown",
+      subject: event?.subject ?? "",
+      messageId: event?.messageId ?? String(sourceId),
+      references: event ? [event.threadId] : [],
+    });
+  }
+  let state = "processed";
+  let held = false;
+  const ignoreReason = event ? quarantinedSenderReason(env, event.from) ?? bulkMailReason(parsed, event.from) : null;
+  if (ignoreReason) {
+    state = `ignored_${ignoreReason}`;
+  } else if (event) {
+    const status = await receiveLiveEmailRelay(event, ports, env);
+    if (status === "disabled" || status === "invalid") state = "failed";
+    else if (status === "held_for_human_relay" || status === "held_attachment_store_failed") held = true;
+  }
+  await ports.claimUpdate(hash, state);
+  return { state, alreadyProcessed: false, held };
 }
 
 /** One poll cycle. Exported for tests; every dependency is injected. */
@@ -154,35 +194,11 @@ export async function pollLiveEmailInbox(
           const fetched = await client.fetchOne(uid, { source: true }, { uid: true });
           if (!fetched) continue;
           const parsed = await parse(fetched.source);
-          const event = liveEmailToEvent(uid, parsed);
-          const hash = messageHash(event?.messageId ?? `imap-${uid}`, env);
-          const prior = await ports.claimLookup(hash);
-          if (prior?.state === "processed") {
-            await client.messageFlagsAdd(uid, ["\\Seen"], { uid: true });
-            continue;
-          }
-          if (!prior) {
-            await ports.claimInsert(hash, {
-              messageHash: hash,
-              state: "processing",
-              from: event?.from ?? "unknown",
-              subject: event?.subject ?? "",
-              messageId: event?.messageId ?? `imap-${uid}`,
-              references: event ? [event.threadId] : [],
-            });
-          }
-          let state = "processed";
-          const ignoreReason = event ? quarantinedSenderReason(env, event.from) ?? bulkMailReason(parsed, event.from) : null;
-          if (ignoreReason) {
-            ignored += 1;
-            state = `ignored_${ignoreReason}`;
-          } else if (event) {
-            const status = await receiveLiveEmailRelay(event, ports, env);
-            if (status === "disabled" || status === "invalid") state = "failed";
-            else if (status === "held_for_human_relay" || status === "held_attachment_store_failed") held += 1;
-          }
-          await ports.claimUpdate(hash, state);
+          const result = await processLiveEmailMessage(uid, parsed, ports, env);
           await client.messageFlagsAdd(uid, ["\\Seen"], { uid: true });
+          if (result.alreadyProcessed) continue;
+          if (result.state.startsWith("ignored_")) ignored += 1;
+          if (result.held) held += 1;
           seen += 1;
         } catch {
           errors += 1;
@@ -197,25 +213,10 @@ export async function pollLiveEmailInbox(
   return { seen, held, ignored, errors };
 }
 
-/** Production ports: real IMAP + audit_logs claims + protected store. */
-function livePorts(env: NodeJS.ProcessEnv): LiveEmailInboundPorts {
+/** Claim/relay ports backed by audit_logs and the protected store, without
+ *  the IMAP connection - what the Resend inbound webhook uses. */
+export function liveDbPorts(env: NodeJS.ProcessEnv): Omit<LiveEmailInboundPorts, "connect"> {
   return {
-    connect: async () => {
-      const { ImapFlow } = await import("imapflow");
-      const client = new ImapFlow({
-        host: env.UDC_EMAIL_IMAP_HOST || "imap.titan.email",
-        port: Number(env.UDC_EMAIL_IMAP_PORT || 993),
-        secure: env.UDC_EMAIL_IMAP_SECURE !== "false",
-        auth: {
-          user: env.UDC_EMAIL_IMAP_USER || EMAIL_RELAY_MAILBOX,
-          pass: env.UDC_EMAIL_IMAP_PASS!,
-        },
-        logger: false,
-        socketTimeout: 30_000,
-      });
-      await client.connect();
-      return client as unknown as LiveImapClient;
-    },
     claimLookup: async (hash) => {
       const { and, eq, sql } = await import("drizzle-orm");
       const { db, auditLogsTable } = await import("@workspace/db");
@@ -242,6 +243,29 @@ function livePorts(env: NodeJS.ProcessEnv): LiveEmailInboundPorts {
       return p ? { role: p.role, status: p.status, verified: p.status === "verified" } : null;
     },
     storeEmailAttachments: (input) => storeConfidentialEmailAttachments(input),
+  };
+}
+
+/** Production ports: real IMAP + audit_logs claims + protected store. */
+function livePorts(env: NodeJS.ProcessEnv): LiveEmailInboundPorts {
+  return {
+    connect: async () => {
+      const { ImapFlow } = await import("imapflow");
+      const client = new ImapFlow({
+        host: env.UDC_EMAIL_IMAP_HOST || "imap.titan.email",
+        port: Number(env.UDC_EMAIL_IMAP_PORT || 993),
+        secure: env.UDC_EMAIL_IMAP_SECURE !== "false",
+        auth: {
+          user: env.UDC_EMAIL_IMAP_USER || EMAIL_RELAY_MAILBOX,
+          pass: env.UDC_EMAIL_IMAP_PASS!,
+        },
+        logger: false,
+        socketTimeout: 30_000,
+      });
+      await client.connect();
+      return client as unknown as LiveImapClient;
+    },
+    ...liveDbPorts(env),
   };
 }
 
