@@ -6,6 +6,8 @@ import { db, whatsappInboundDedupTable } from "@workspace/db";
 // missing table) fail closed so the webhook can return 503 and Meta can retry.
 // Never substitute a process-local cache for cross-instance replay protection.
 const STALE_CLAIM_MS = 2 * 60_000;
+const CLAIM_ATTEMPTS = 4;
+const CLAIM_RETRY_DELAY_MS = 400;
 
 export const fingerprintProviderMessage = (id: string) => createHash("sha256").update("wa-inbound:" + id).digest("hex");
 
@@ -16,20 +18,27 @@ export class InboundDedupUnavailable extends Error {
 export async function claimInboundMessage(id: unknown): Promise<boolean> {
   if (typeof id !== "string" || id.length < 6 || id.length > 200) return false;
   const hash = fingerprintProviderMessage(id);
-  try {
-    const claimed = await db.insert(whatsappInboundDedupTable).values({ idHash: hash })
-      .onConflictDoUpdate({
-        target: whatsappInboundDedupTable.idHash,
-        set: { claimedAt: new Date() },
-        setWhere: and(isNull(whatsappInboundDedupTable.completedAt), sql`${whatsappInboundDedupTable.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`),
-      }).returning({ idHash: whatsappInboundDedupTable.idHash });
-    if (Math.random() < 0.02) {
-      await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
+  // A transient database blip (cold pooler connection, brief reconnect) must not
+  // cost a customer their reply: retry the durable claim a few times before
+  // failing closed. Still no process-local substitute for the durable claim.
+  for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt += 1) {
+    try {
+      const claimed = await db.insert(whatsappInboundDedupTable).values({ idHash: hash })
+        .onConflictDoUpdate({
+          target: whatsappInboundDedupTable.idHash,
+          set: { claimedAt: new Date() },
+          setWhere: and(isNull(whatsappInboundDedupTable.completedAt), sql`${whatsappInboundDedupTable.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`),
+        }).returning({ idHash: whatsappInboundDedupTable.idHash });
+      if (Math.random() < 0.02) {
+        await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
+      }
+      return claimed.length === 1;
+    } catch {
+      if (attempt === CLAIM_ATTEMPTS - 1) break;
+      await new Promise((resolve) => setTimeout(resolve, CLAIM_RETRY_DELAY_MS * (attempt + 1)));
     }
-    return claimed.length === 1;
-  } catch {
-    throw new InboundDedupUnavailable();
   }
+  throw new InboundDedupUnavailable();
 }
 
 export async function completeInboundMessages(ids: unknown[]) {
