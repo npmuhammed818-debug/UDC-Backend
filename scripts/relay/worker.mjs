@@ -5,8 +5,10 @@
 // Reads the relay HMAC secret from the sandbox vault file; never prints it.
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-const BASE = "https://udc-staging-api.onrender.com";
-const secret = readFileSync("/home/sandbox/.vault/whatsapp-app-secret-udc-staging-render-38d955/password", "utf8").trim();
+// Test hook: only a loopback stub may replace the real host, so signed requests can never be pointed at another server.
+const override = process.env.UDC_RELAY_TEST_BASE;
+const BASE = override && /^http:\/\/127\.0\.0\.1:\d+$/.test(override) ? override : "https://udc-staging-api.onrender.com";
+const secret = process.env.UDC_RELAY_TEST_BASE && BASE !== "https://udc-staging-api.onrender.com" && process.env.UDC_RELAY_TEST_SECRET ? process.env.UDC_RELAY_TEST_SECRET : readFileSync("/home/sandbox/.vault/whatsapp-app-secret-udc-staging-render-38d955/password", "utf8").trim();
 const sig = (v) => "sha256=" + createHmac("sha256", secret).update(v).digest("hex");
 const [cmd, a1, a2, a3, a4] = process.argv.slice(2);
 if (cmd === "claim") {
