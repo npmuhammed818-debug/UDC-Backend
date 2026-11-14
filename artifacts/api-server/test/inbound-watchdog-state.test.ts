@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pendingInbound, noteInboundForWatchdog, noteOutboundForWatchdog } from "../src/whatsapp/inboundWatchdogState.ts";
+import { pendingInbound, noteInboundForWatchdog, noteOutboundForWatchdog, lastOutboundAt } from "../src/whatsapp/inboundWatchdogState.ts";
 
 test("every inbound kind except a reaction is tracked, including media", () => {
   pendingInbound.clear();
@@ -22,4 +22,11 @@ test("tracking is capped so memory cannot grow without bound", () => {
   for (let i = 0; i < 600; i++) noteInboundForWatchdog("+1555000" + (1000 + i), "id" + i, "text", "x");
   assert.ok(pendingInbound.size <= 500);
   assert.ok(!pendingInbound.has("id0"));
+});
+test("an outbound is timestamped per phone so the watchdog can drop its own reply when someone answered first", () => {
+  lastOutboundAt.clear();
+  const before = Date.now();
+  noteOutboundForWatchdog("+15550009001");
+  assert.ok((lastOutboundAt.get("+15550009001") ?? 0) >= before);
+  assert.equal(lastOutboundAt.get("+15550009002"), undefined);
 });

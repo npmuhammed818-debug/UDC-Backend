@@ -3,7 +3,7 @@ import { runBackgroundTask } from "../lib/backgroundTask";
 import { runFreeChain } from "../akif/intelligence/freeProviderChain";
 import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
-import { pendingInbound, noteInboundForWatchdog } from "./inboundWatchdogState";
+import { pendingInbound, noteInboundForWatchdog, lastOutboundAt } from "./inboundWatchdogState";
 import { noteHumanRelayReplySent, pendingHumanRelay } from "../akif/humanRelay";
 
 // Owner rule (30s): a customer message with no answer after 30 seconds gets a
@@ -42,6 +42,11 @@ export async function sweepUnanswered(now = Date.now()) {
       if (p.kind === "text" && p.text.trim()) {
         const r = await runFreeChain(p.text, SYSTEM + await accountFactsLine(p.phone), () => 12_000).catch(() => null);
         if (r?.content) { reply = r.content.replace(/\s[-\u2013\u2014]\s/g, ", "); source = r.provider; }
+      }
+      // A human or the brain may have answered while the fallback reply was being composed: never double reply.
+      if ((lastOutboundAt.get(p.phone) ?? 0) >= p.at) {
+        logger.info({ flow: "inbound_watchdog", reason: "answered_while_composing", phoneTail: p.phone.slice(-4) }, "watchdog_skipped");
+        continue;
       }
       try {
         await sendWhatsAppText(p.phone, reply);
