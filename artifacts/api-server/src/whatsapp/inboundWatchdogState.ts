@@ -22,3 +22,12 @@ export function noteOutboundForWatchdog(phone: string): void {
   if (lastOutboundAt.size > 2000) { const k = lastOutboundAt.keys().next().value; if (k) lastOutboundAt.delete(k); }
   for (const [id, p] of pendingInbound) if (p.phone === phone) pendingInbound.delete(id);
 }
+
+/** Real message sends currently in progress per phone, including rate limiter waits and Meta retry sleeps. While one is in flight the
+ *  watchdog holds back instead of racing it; if that send fails the pending message is still there for the next sweep. */
+export const outboundInFlight = new Map<string, number>();
+export function beginOutboundForWatchdog(phone: string): void { outboundInFlight.set(phone, (outboundInFlight.get(phone) ?? 0) + 1); }
+export function endOutboundForWatchdog(phone: string): void {
+  const n = (outboundInFlight.get(phone) ?? 1) - 1;
+  if (n <= 0) outboundInFlight.delete(phone); else outboundInFlight.set(phone, n);
+}

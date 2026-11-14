@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { replySinkEnabled, replySinkSendAllowed, recordSunkReply } from "./replySink.ts";
 import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
 import { recordOutboundMessage } from "./outboundLog.ts";
-import { noteOutboundForWatchdog } from "./inboundWatchdogState.ts";
+import { noteOutboundForWatchdog, beginOutboundForWatchdog, endOutboundForWatchdog } from "./inboundWatchdogState.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
 // Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
@@ -64,6 +64,9 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
     let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
     return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
   }
+  const trackInFlight = url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"');
+  if (trackInFlight) beginOutboundForWatchdog(to);
+  try {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     await takeOutboundToken(sleepImpl);
     const response = await maybeSubmitted(fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }));
@@ -80,6 +83,7 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
     await sleepImpl(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : backoff);
   }
   return null;
+  } finally { if (trackInFlight) endOutboundForWatchdog(to); }
 }
 
 /** Real Meta credentials configured (not sink placeholders)? Only then may an allowlisted recipient bypass the sink. */

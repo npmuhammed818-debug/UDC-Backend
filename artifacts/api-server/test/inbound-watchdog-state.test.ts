@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pendingInbound, noteInboundForWatchdog, noteOutboundForWatchdog, lastOutboundAt } from "../src/whatsapp/inboundWatchdogState.ts";
+import { pendingInbound, noteInboundForWatchdog, noteOutboundForWatchdog, lastOutboundAt, outboundInFlight, beginOutboundForWatchdog, endOutboundForWatchdog } from "../src/whatsapp/inboundWatchdogState.ts";
 
 test("every inbound kind except a reaction is tracked, including media", () => {
   pendingInbound.clear();
@@ -29,4 +29,15 @@ test("an outbound is timestamped per phone so the watchdog can drop its own repl
   noteOutboundForWatchdog("+15550009001");
   assert.ok((lastOutboundAt.get("+15550009001") ?? 0) >= before);
   assert.equal(lastOutboundAt.get("+15550009002"), undefined);
+});
+test("in-flight sends are counted per phone and always released", () => {
+  outboundInFlight.clear();
+  beginOutboundForWatchdog("+15550009003"); beginOutboundForWatchdog("+15550009003");
+  assert.equal(outboundInFlight.get("+15550009003"), 2);
+  endOutboundForWatchdog("+15550009003");
+  assert.equal(outboundInFlight.get("+15550009003"), 1);
+  endOutboundForWatchdog("+15550009003");
+  assert.equal(outboundInFlight.has("+15550009003"), false);
+  endOutboundForWatchdog("+15550009003");
+  assert.equal(outboundInFlight.has("+15550009003"), false);
 });

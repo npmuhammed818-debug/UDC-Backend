@@ -3,7 +3,7 @@ import { runBackgroundTask } from "../lib/backgroundTask";
 import { runFreeChain } from "../akif/intelligence/freeProviderChain";
 import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
-import { pendingInbound, noteInboundForWatchdog, lastOutboundAt } from "./inboundWatchdogState";
+import { pendingInbound, noteInboundForWatchdog, lastOutboundAt, outboundInFlight } from "./inboundWatchdogState";
 import { noteHumanRelayReplySent, pendingHumanRelay } from "../akif/humanRelay";
 
 // Owner rule (30s): a customer message with no answer after 30 seconds gets a
@@ -34,6 +34,8 @@ export async function sweepUnanswered(now = Date.now()) {
       const age = now - p.at;
       if (age > GIVE_UP_MS) { pendingInbound.delete(id); continue; }
       if (age < ANSWER_DEADLINE_MS) continue;
+      // A real send to this phone is in flight (rate limiter wait or Meta retry): hold back, keep the message pending for the next sweep.
+      if ((outboundInFlight.get(p.phone) ?? 0) > 0) continue;
       pendingInbound.delete(id); // exactly one intervention per message
       if (now - (lastIntervention.get(p.phone) ?? 0) < 20_000) continue;
       lastIntervention.set(p.phone, now);
@@ -44,6 +46,7 @@ export async function sweepUnanswered(now = Date.now()) {
         if (r?.content) { reply = r.content.replace(/\s[-\u2013\u2014]\s/g, ", "); source = r.provider; }
       }
       // A human or the brain may have answered while the fallback reply was being composed: never double reply.
+      if ((outboundInFlight.get(p.phone) ?? 0) > 0) { pendingInbound.set(id, p); lastIntervention.delete(p.phone); continue; } // someone started sending while we composed; if that send fails the next sweep answers
       if ((lastOutboundAt.get(p.phone) ?? 0) >= p.at) {
         logger.info({ flow: "inbound_watchdog", reason: "answered_while_composing", phoneTail: p.phone.slice(-4) }, "watchdog_skipped");
         continue;
