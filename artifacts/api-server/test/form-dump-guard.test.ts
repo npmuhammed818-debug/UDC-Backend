@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fixFormDumpReply, fixRelayFallbackReply, leaksModelIdentity } from "../src/akif/formDump.ts";
+import { formDumpFields, fixFormDumpReply, fixRelayFallbackReply, leaksModelIdentity } from "../src/akif/formDump.ts";
 
 test("relay draft form-dump guard: multi-ask drafts become the one-thing floor", () => {
   const dump = "Sure, I've noted your email. Are you registering as a buyer, seller, or agent? I'll need your full name, company name and registration country (and registration number if you have one) to continue.";
@@ -27,4 +27,14 @@ test("relay draft identity guard: model/provider leaks and junk drafts are rejec
   assert.equal(fixRelayFallbackReply(normal, "ok"), normal);
   assert.equal(leaksModelIdentity("The buyer Claude confirmed the LOI."), false, "a person named Claude is fine");
   assert.equal(leaksModelIdentity("The vessel Gemini arrives Tuesday."), false, "a vessel named Gemini is fine");
+});
+test("a single question that names two words is one ask, not a form dump", () => {
+  assert.equal(formDumpFields("What is your company name?"), 1);
+  assert.equal(formDumpFields("Which country is your company registered in?"), 1);
+  assert.equal(formDumpFields("Which country is your business based in?"), 1);
+});
+test("real lists of details are still form dumps", () => {
+  assert.ok(formDumpFields("Could you share your name, email and company?") >= 2);
+  assert.ok(formDumpFields("Please also let me know your country and registration number.") >= 2);
+  assert.ok(formDumpFields("1. Your name\n2. Your email") >= 2);
 });

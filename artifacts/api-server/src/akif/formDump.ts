@@ -20,7 +20,12 @@ export function formDumpFields(reply: string): number {
   const found = new Set<string>();
   for (const sentence of reply.split(/(?<=[.!?])\s+/)) {
     if (!ASKING_WORDS.test(sentence)) continue;
-    for (const [re, key] of FIELD_ASKS) if (re.test(sentence)) found.add(key);
+    const hits = FIELD_ASKS.filter(([re]) => re.test(sentence)).map(([, key]) => key);
+    // One question without a list is one ask, even when it names two words
+    // ("What is your company name?" mentions company and name, but asks for one thing).
+    const isList = /,|;|&|\/|\band\b|\bor\b|\balso\b/i.test(sentence);
+    if (!isList && hits.length > 1) { found.add(hits[0]); continue; }
+    for (const key of hits) found.add(key);
   }
   for (const line of reply.split("\n")) {
     if (!LIST_ITEM.test(line)) continue;
