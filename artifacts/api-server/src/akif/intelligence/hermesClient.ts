@@ -1,6 +1,7 @@
 import {requirePrivateServiceUrl} from '../../privacy/serviceUrl.ts';
 import { isAkifWorkerConversationEnabled, runAkifWorkerChat } from "./workerClient.ts";
 import { isGroqConfigured, runGroqChat } from "./groqClient.ts";
+import { runFreeChain } from "./freeProviderChain.ts";
 
 type HermesChatResponse = {
   choices?: Array<{
@@ -311,6 +312,18 @@ export async function runConversationChat(
     }
   } else {
     console.warn("Groq backup conversation skipped", { reason: "not_configured" });
+  }
+
+  try {
+    const free = await withinDeadline(async budget => {
+      const started = performance.now();
+      const r = await runFreeChain(message, system, () => Math.max(1, budget - (performance.now() - started)));
+      if (!r) throw new Error("no free provider answered");
+      return { content: r.content, raw: r.raw as HermesChatResponse };
+    });
+    return free;
+  } catch {
+    remaining();
   }
 
   return withinDeadline(budget => runHermesChat(message, system, budget));
