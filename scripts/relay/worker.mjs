@@ -35,6 +35,18 @@ if (cmd === "claim") {
   const body = JSON.stringify({ phone: a2, text, itemId: a3, workerId: a1 });
   const r = await fetch(`${BASE}/api/akif-relay/reply`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
   console.log(r.status); console.log(JSON.stringify(await r.json()));
+} else if (cmd === "dismiss") {
+  // Completion without sending: claim ownership is checked by the server.
+  const [workerId, contact, itemId] = process.argv.slice(3);
+  const reason = readFileSync(0, "utf8").trim();
+  if (!workerId || !contact || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(itemId ?? "") || !reason || reason.length > 200) {
+    console.error("usage: dismiss <workerId> <phone> <itemId> < reason (1-200 characters)");
+    process.exit(1);
+  }
+  const body = JSON.stringify({ phone: contact, itemId, workerId, reason });
+  const r = await fetch(`${BASE}/api/akif-relay/dismiss`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
+  console.log(r.status); console.log(JSON.stringify(await r.json()));
+  if (!r.ok) process.exitCode = 1;
 } else if (cmd === "ask") {
   const text = readFileSync(0, "utf8");
   const body = JSON.stringify({ phone: a1, text });
@@ -61,4 +73,4 @@ if (cmd === "claim") {
   const body = JSON.stringify({ phone: a1 });
   const r = await fetch(`${BASE}/api/akif-relay/skip`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
   console.log(r.status); console.log(JSON.stringify(await r.json()));
-} else { console.log("usage: worker.mjs claim <workerId> | answer <workerId> <phone> <itemId> < text | answer-v <workerId> <phone> <itemId> (text on stdin, sent as voice) | answer-voice <workerId> <phone> <itemId> <file.ogg> | ask <phone> < text | doclink <phone> | skip <phone>"); }
+} else { console.log("usage: worker.mjs claim <workerId> | answer <workerId> <phone> <itemId> < text | answer-v <workerId> <phone> <itemId> (text on stdin, sent as voice) | answer-voice <workerId> <phone> <itemId> <file.ogg> | ask <phone> < text | doclink <phone> | skip <phone> | dismiss <workerId> <phone> <itemId> < reason"); }
