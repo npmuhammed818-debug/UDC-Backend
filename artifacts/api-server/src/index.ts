@@ -14,7 +14,7 @@ import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
 import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
-import { startInboundWatchdog } from "./whatsapp/inboundWatchdog";
+import { startInboundWatchdog, restoreWatchdogFromRelay } from "./whatsapp/inboundWatchdog";
 import { startWhatsAppWebhookInboxRunner } from "./whatsapp/webhookInboxRunner";
 import { startEtaFollowupRunner } from "./tracking/etaFollowupRunner";
 import { startShipmentWatchRunner } from "./tracking/shipmentWatchRunner";
@@ -47,6 +47,7 @@ process.on("SIGTERM", () => {
   server?.closeIdleConnections?.();
 });
 void hydrateHumanRelay().catch(() => 0).then(() => {
+try { const restored = restoreWatchdogFromRelay(); if (restored) logger.warn({ restored }, "watchdog_restored_after_restart"); } catch { /* never block startup */ }
 server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");

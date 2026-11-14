@@ -3,8 +3,8 @@ import { runBackgroundTask } from "../lib/backgroundTask";
 import { runFreeChain } from "../akif/intelligence/freeProviderChain";
 import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
-import { pendingInbound } from "./inboundWatchdogState";
-import { noteHumanRelayReplySent } from "../akif/humanRelay";
+import { pendingInbound, noteInboundForWatchdog } from "./inboundWatchdogState";
+import { noteHumanRelayReplySent, pendingHumanRelay } from "../akif/humanRelay";
 
 // Owner rule (30s): a customer message with no answer after 30 seconds gets a
 // fresh, human, non-repetitive reply from the server itself, never silence.
@@ -62,4 +62,22 @@ export function startInboundWatchdog() {
   started = true;
   const timer = setInterval(() => runBackgroundTask(() => sweepUnanswered(), () => logger.warn("inbound watchdog sweep failed")), SWEEP_MS);
   timer.unref();
+}
+
+const RESTORE_MAX_AGE_MS = 2 * 60_000;
+
+/** After a restart the in-memory pending map is empty. Held relay items are persisted and restored first, so
+ *  re-register the ones from the last two minutes: their 30 second answer was in flight when the process stopped.
+ *  Older open items are left alone (the watchdog already had its chance, and a repeat would double reply). */
+export function restoreWatchdogFromRelay(now = Date.now()): number {
+  let n = 0;
+  for (const item of pendingHumanRelay()) {
+    const age = now - Date.parse(item.at);
+    if (!Number.isFinite(age) || age < 0 || age > RESTORE_MAX_AGE_MS) continue;
+    noteInboundForWatchdog(item.phone, `restored:${item.id}`, item.kind === "voice" ? "audio" : "text", item.kind === "voice" ? "" : item.text);
+    const p = pendingInbound.get(`restored:${item.id}`);
+    if (p) p.at = Math.max(Date.parse(item.at), now - RESTORE_MAX_AGE_MS);
+    n++;
+  }
+  return n;
 }

@@ -44,7 +44,7 @@ import { accountFactsLine } from "../akif/fallbackContext";
 import { inviteGateHandles } from "../whatsapp/inviteGate";
 import { isMutedPhone } from "../whatsapp/mutedInbound";
 import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
-import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
+import { claimInboundMessage, completeInboundMessages, releaseInboundMessages, inboundClaimInProgress } from "../whatsapp/inboundDedup";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
 import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
@@ -1560,6 +1560,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
     : [];
 
   const claimedInbound: unknown[] = [];
+  const inProgressRedelivery: unknown[] = [];
   const senderOf = new Map<unknown, string>();
   for (const change of changes) {
     const value = change.value;
@@ -1595,7 +1596,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         res.sendStatus(503);
         return;
       }
-      if (!claimed) continue; // answer each Meta message id once
+      if (!claimed) { if (await inboundClaimInProgress(message.id)) inProgressRedelivery.push(message.id); continue; } // answer each Meta message id once; an unfinished fresh claim is not done, see below
       claimedInbound.push(message.id);
       if (isMutedPhone(message.from)) {
         req.log.warn({ flow: "whatsapp_inbound", reason: "muted_by_owner", phoneTail: String(message.from).slice(-4), type: String(message.type ?? "text") }, "Inbound from a muted number: no automated reply");
@@ -2664,6 +2665,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
     return;
   }
   await completeInboundMessages(claimedInbound);
+  if (inProgressRedelivery.length) {
+    // The first delivery of these messages never completed (still running, or its process restarted).
+    // Non-2xx makes Meta redeliver; once the claim is stale (2 min) or completed the next delivery resolves it.
+    req.log.warn({ flow: "whatsapp_inbound", reason: "redelivery_of_unfinished_claim", count: inProgressRedelivery.length }, "Redelivery of an unfinished message: asking Meta to retry later");
+    res.sendStatus(503);
+    return;
+  }
   res.sendStatus(200);
 }
 

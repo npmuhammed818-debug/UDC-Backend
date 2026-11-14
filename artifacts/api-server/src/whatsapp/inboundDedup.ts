@@ -56,3 +56,14 @@ export async function releaseInboundMessages(ids: unknown[]) {
   try { await db.delete(whatsappInboundDedupTable).where(and(inArray(whatsappInboundDedupTable.idHash, hashes), isNull(whatsappInboundDedupTable.completedAt))); }
   catch { /* An unfinished durable claim becomes retryable after the stale-claim window. */ }
 }
+
+/** True when this message has a fresh claim that nobody completed: a first delivery may still be running, or its process died.
+ *  Either way a redelivery must not be acknowledged yet, or work lost to a restart is never retried. */
+export async function inboundClaimInProgress(id: unknown): Promise<boolean> {
+  if (typeof id !== "string" || id.length < 6 || id.length > 200) return false;
+  try {
+    const rows = await db.select({ idHash: whatsappInboundDedupTable.idHash }).from(whatsappInboundDedupTable)
+      .where(and(eq(whatsappInboundDedupTable.idHash, fingerprintProviderMessage(id)), isNull(whatsappInboundDedupTable.completedAt)));
+    return rows.length > 0;
+  } catch { return false; }
+}
