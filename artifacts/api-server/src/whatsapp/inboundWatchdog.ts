@@ -4,6 +4,7 @@ import { runFreeChain } from "../akif/intelligence/freeProviderChain";
 import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
 import { pendingInbound } from "./inboundWatchdogState";
+import { noteHumanRelayReplySent } from "../akif/humanRelay";
 
 // Owner rule (30s): a customer message with no answer after 30 seconds gets a
 // fresh, human, non-repetitive reply from the server itself, never silence.
@@ -44,6 +45,8 @@ export async function sweepUnanswered(now = Date.now()) {
       }
       try {
         await sendWhatsAppText(p.phone, reply);
+        // The held queue item stays open for a human, but the bot line is recorded so a worker sees what the customer already received and the repeat guard knows it.
+        noteHumanRelayReplySent(p.phone, "watchdog", reply);
         logger.warn({ flow: "inbound_watchdog", ageMs: age, kind: p.kind, source, phoneTail: p.phone.slice(-4) }, "watchdog_intervention");
       } catch (error) {
         logger.error({ flow: "inbound_watchdog", reason: error instanceof Error ? error.name : "send_failed" }, "watchdog_send_failed");
