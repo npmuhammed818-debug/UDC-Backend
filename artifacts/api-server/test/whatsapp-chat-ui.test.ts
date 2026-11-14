@@ -529,7 +529,11 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         assert.equal(request.buyerUserId,buyer.id);assert.equal(request.quantity,'100');
         assert.equal(request.destination,'Jebel Ali');assert.equal(request.preferredIncoterm,'CIF');
         assert.equal(request.status,'pending_admin_review');
-        assert.equal(state.modelCalls,calls,'plain answers must bypass all unavailable providers');
+        // Since 14 Nov (owner rule) account-flow wording is always attempted
+        // through the AI first, so an outage adds bounded compose attempts that
+        // fall back to fixed lines. What must hold: extraction and persistence
+        // never depend on the model, proven by the data assertions above.
+        assert.ok(state.modelCalls-calls<=12,'only bounded wording attempts during outage');
       }finally{state.flowId=oldFlow;state.modelOutput=oldOutput;state.modelError=false;await m.handleChatUi(buyerPhone,ui('cancel'));}
     });
     await t.test('seller registration and multiple exact-currency offers work without AI',async()=>{
@@ -553,7 +557,9 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
           assert.equal(rows.sellerListingsTable.at(-1).status,'pending_admin_review');
         }
         assert.equal(rows.sellerListingsTable.length,before+2);
-        assert.equal(state.modelCalls,calls);
+        // Wording is AI-first since 14 Nov; bounded compose attempts during an
+        // outage are expected, extraction stays deterministic (asserted above).
+        assert.ok(state.modelCalls-calls<=12,'only bounded wording attempts during outage');
       }finally{state.flowId=oldFlow;state.modelError=false;await m.handleChatUi(sellerPhone,ui('cancel'));}
     });
     await t.test('agent plain-name registration keeps personal-email support during an AI outage',async()=>{
@@ -565,7 +571,9 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
         await m.handleChatUi(agentPhone,ui('submit'));
         const agent=rows.usersTable.find((u:any)=>u.phone===agentPhone);
         assert.ok(agent);assert.equal(agent.role,'agent');assert.equal(agent.status,'pending');
-        assert.equal(agent.email,'qa-outage-agent@gmail.com');assert.equal(state.modelCalls,calls);
+        assert.equal(agent.email,'qa-outage-agent@gmail.com');
+        // AI-first wording (14 Nov) permits bounded compose attempts in outage.
+        assert.ok(state.modelCalls-calls<=12,'only bounded wording attempts during outage');
       }finally{state.flowId=oldFlow;state.modelError=false;await m.handleChatUi(agentPhone,ui('cancel'));}
     });
     await t.test('fresh WhatsApp buyer completes registration then one private requirement without live customer writes',async()=>{

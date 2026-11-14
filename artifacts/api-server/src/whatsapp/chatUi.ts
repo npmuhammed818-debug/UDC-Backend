@@ -36,6 +36,24 @@ import { parseDocumentPick } from './docUploadIntent';
 import { guidanceKey } from './guidanceSession';
 import {requestRoleChange,roleChangeReply} from '../accounts/roleChangeRequest';
 import {PoolAllocationError,poolReplyText,respondToPoolInvite} from '../marketplace/poolInvites';
+import { renderNote, type NoteSpec } from '../akif/composeReply';
+
+// AI wording for the post-handshake account lines (owner rule, 14 Nov). The
+// deterministic outcome (saved, blocked, code sent) is decided by code; Akif
+// only chooses the words. Fallback text ships only when every provider is
+// down, and that is logged.
+const CHAT_NOTE_INTENTS:Record<string,NoteSpec>={
+  'Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.':{intent:"Welcome the customer warmly to UDC (UpDownCircle, the B2B trade platform). Ask whether they are joining as a buyer, seller or agent, and mention they can choose below. Add that if they already registered from another number, they can send the words Sign in followed by their registered email. Friendly and brief.",fallback:'Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.',mustSay:["Sign in"]},
+  'What would you like to do? Choose below, or message Akif normally.':{intent:"Ask the customer warmly what they would like to do; they can pick an option below or simply message Akif in their own words. Very brief.",fallback:'What would you like to do? Choose below, or message Akif normally.'},
+  'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.':{intent:"Tell the customer that this email already belongs to a UDC account. To use it from this WhatsApp number, they can send the words Sign in followed by that email address, and a code will go to that email. Reassure them that profiles are never merged automatically. Warm, clear, brief.",fallback:'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.',mustSay:["Sign in"]},
+  'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.':{intent:"Tell the customer you just sent a 6-digit code to their email, to reply here with that code to confirm the email and finish registration, and that it expires in 10 minutes. Warm and brief. Never name the email address.",fallback:'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.',mustSay:["10 minutes"]},
+  'Email codes are paused for a short while on our side. Your details are saved, please try again in some time.':{intent:"Apologize lightly and tell the customer that email codes are paused for a short while on our side, their details are saved, and they should please try again in some time. Warm and honest.",fallback:'Email codes are paused for a short while on our side. Your details are saved, please try again in some time.'},
+  'A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.':{intent:"Tell the customer a 6-digit code was sent to their email, to reply here with that code to confirm the email and finish registration, and that it expires in 10 minutes. Warm and brief. Never name the email address.",fallback:'A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.',mustSay:["10 minutes"]},
+};
+async function sayAi(text:string,languageOf?:string):Promise<string>{
+  const spec=CHAT_NOTE_INTENTS[text]??{intent:`Say this to the customer in your own natural warm words, keeping the exact meaning, every instruction and every example unchanged: ${JSON.stringify(text)}. Do not add or remove facts or steps.`,fallback:text};
+  return renderNote({...spec,languageOf});
+}
 
 export type ChatMessage={id?:string;from?:string;context?:{id?:string};text?:{body?:string};interactive?:{type?:string;button_reply?:{id?:string};list_reply?:{id?:string};nfm_reply?:{response_json?:string}};document?:{id?:string}};
 const actions=['buyer','seller','agent','menu','more','profile','requirement','offer','deals','documents','verification','referrals','commissions','invite','ask','meeting','track','submit','restart','cancel','edit_profile','change_role'] as const;
@@ -79,8 +97,8 @@ export async function sendChatHome(phone:string){
   if(user&&['suspended','rejected'].includes(user.status)){await sendWhatsAppText(phone,'Your account needs UDC review.');return;}
   const role=user?.email?user.role:undefined;
   try{
-    if(role)await sendWhatsAppInteractive(phone,{type:'button',body:{text:'What would you like to do? Choose below, or message Akif normally.'},action:{buttons:primaryActions(role)}});
-    else await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.'},action:{buttons:[['buyer','Buyer'],['seller','Seller'],['agent','Agent']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
+    if(role)await sendWhatsAppInteractive(phone,{type:'button',body:{text:await sayAi('What would you like to do? Choose below, or message Akif normally.')},action:{buttons:primaryActions(role)}});
+    else await sendWhatsAppInteractive(phone,{type:'button',body:{text:await sayAi('Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.')},action:{buttons:[['buyer','Buyer'],['seller','Seller'],['agent','Agent']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});
   }catch{await sendWhatsAppText(phone,role?'Menu unavailable. You can still message Akif, or send “My code”, “My deals”, or “More options”.':'Role buttons unavailable. Reply Buyer, Seller or Agent to continue registration, or type Menu to try again.');}
 }
 async function sendChatMore(phone:string){
@@ -177,11 +195,11 @@ export async function submitChatFlow(phone:string,raw:unknown){
         // Quota or provider failure (owner direction, 10 Nov): say a short
         // honest line and let them retry later; registration must not break.
         try{await emailAuth.requestVerification(otpUserId);}
-        catch{return 'Email codes are paused for a short while on our side. Your details are saved, please try again in some time.';}
-        return 'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.';}
+        catch{return sayAi('Email codes are paused for a short while on our side. Your details are saved, please try again in some time.');}
+        return sayAi('I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.');}
     }catch{/* email sending off or rate limited: user can still send Verify email later */}
   }
-  return saved.split('{{VERIFY_HINT}}').join(' To confirm your email, send Verify email.');
+  return sayAi(saved.split('{{VERIFY_HINT}}').join(' To confirm your email, send Verify email.'));
   }catch(error){if(error instanceof z.ZodError)return 'Please check the required fields, email and positive quantities/prices, then open a new form from Menu.';throw error;}
 }
 
@@ -220,11 +238,11 @@ export async function registerWhatsAppProfileDirect(phone:string,role:'buyer'|'s
     if(result.ok&&'userId' in result&&result.userId){
       try{
         if(isTesterPhone(phone))return {ok:true,reply:result.reply+' Email confirmed automatically (tester mode).'};
-        if(!(await emailAuth.status(result.userId)).emailVerified){await emailAuth.requestVerification(result.userId);return {ok:true,reply:'A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.'};}
+        if(!(await emailAuth.status(result.userId)).emailVerified){await emailAuth.requestVerification(result.userId);return {ok:true,reply:await sayAi('A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.')};}
       }catch{/* email sending off or rate limited: user can send Verify email later */}
-      return {ok:true,reply:result.reply+' Email is not confirmed yet; a 6-digit email code confirms it.'};
+      return {ok:true,reply:await sayAi(result.reply+' Email is not confirmed yet; a 6-digit email code confirms it.')};
     }
-    return {ok:result.ok,reply:result.reply};
+    return {ok:result.ok,reply:result.ok?result.reply:await sayAi(result.reply)};
   }catch(error){
     if(error instanceof z.ZodError)return {ok:false,reply:'The details did not pass validation: check the email format and required fields and try again.'};
     throw error;

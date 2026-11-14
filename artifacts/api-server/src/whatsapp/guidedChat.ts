@@ -14,6 +14,7 @@ import { estimateCustomerEmotion, loadAkifFeelings, recordAkifFeeling, feelingEv
 import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 import { speakReply } from './voiceSend';
+import { renderNote, type NoteSpec } from '../akif/composeReply';
 import { VOICE_NOTICE } from '../akif/voiceConsent';
 import type { VoiceLanguage } from '../akif/voiceLanguage';
 
@@ -46,6 +47,27 @@ export function guidedQuestions(purpose:FlowPurpose):Question[]{
 export const EMAIL_TAKEN_NOTE='This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
 export const NO_DETAIL_NOTE='I am sorry, I did not quite catch that. Say it in your own words - for example your name, or Email name@company.com - and I will take it from there.';
 export const REVIEW_CHANGE_UNREAD_NOTE='I am sorry, I could not read that change. Send it labelled, for example: email: name@company.com; company name: Your Company Ltd; country: India - or tap Submit for review if everything is already correct.';
+// AI wording for the fixed account-flow notes (owner rule, 14 Nov): after the
+// T&C handshake, Akif says these in its own words. The fallback text is sent
+// only when every AI provider is down, and that fallback is logged. Validation
+// rules, review screens, submit and the code checks stay fully deterministic.
+const NOTE_INTENTS:Record<string,NoteSpec>={
+  [EMAIL_TAKEN_NOTE]:{intent:"Tell the customer that this email already belongs to a UDC account. To use it from this WhatsApp number, they can send the words Sign in followed by that email address, and a code will go to that email. Reassure them that profiles are never merged automatically. Warm, clear, brief.",fallback:EMAIL_TAKEN_NOTE,mustSay:["Sign in"]},
+  [NO_DETAIL_NOTE]:{intent:"Apologize lightly and say you did not quite catch that. Invite them to say it in their own words, for example their name, or Email followed by their email address, and you will take it from there. Warm and brief.",fallback:NO_DETAIL_NOTE},
+  [REVIEW_CHANGE_UNREAD_NOTE]:{intent:"Apologize lightly and say you could not read that change. Ask them to send it labelled, for example email: name@company.com, or to tap Submit for review if everything is already correct. Brief.",fallback:REVIEW_CHANGE_UNREAD_NOTE,mustSay:["Submit"]},
+  'That draft expired. Send Menu to start again.':{intent:"Tell the customer kindly that this draft expired, and to send Menu to start again. Brief.",fallback:'That draft expired. Send Menu to start again.',mustSay:["Menu"]},
+  'Cancelled. Nothing was submitted. Send Menu to see your features.':{intent:"Confirm warmly that the draft is cancelled and nothing was submitted, and that they can send Menu to see their features. Brief.",fallback:'Cancelled. Nothing was submitted. Send Menu to see your features.',mustSay:["Menu"]},
+  'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.':{intent:"Reassure the customer their details are saved for about 30 minutes, and they can say continue when ready or cancel to drop them. Warm and brief.",fallback:'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.',mustSay:["continue","cancel"]},
+};
+async function sendNote(phone:string,text:string,languageOf?:string){
+  const spec=NOTE_INTENTS[text]??{
+    // A validation note whose wording was not registered: explain the same
+    // meaning in Akif's own words, preserving every example and requirement.
+    intent:`A customer's answer during a UDC form was not accepted. Explain warmly and naturally why, and what to send instead, keeping this exact meaning and any examples: ${JSON.stringify(text)}. Do not add or remove requirements.`,
+    fallback:text,
+  };
+  await sendWhatsAppTextWithMenu(phone,await renderNote({...spec,languageOf:languageOf??spec.languageOf}));
+}
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
@@ -58,7 +80,20 @@ async function question(phone:string,purpose:FlowPurpose,step:number,data:Record
     if(!labels.length){await sendWhatsAppTextWithMenu(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
     await sendWhatsAppTextWithMenu(phone,`Send ${labels.join(', ')} together in one short message.${purpose.startsWith('profile_')?'':' You can include grade, timing, payment terms and the delivery place too.'}`);return;
   }
-  const current=guidedQuestions(purpose)[step];await sendWhatsAppTextWithMenu(phone,current.label+(current.optional?' Reply Skip to leave it blank.':''));
+  const current=guidedQuestions(purpose)[step];
+  if(purpose.startsWith('profile_')){
+    const ASK:Record<string,string>={
+      full_name:"Ask the customer for their full name, warmly and naturally, as the first step of their registration.",
+      email:purpose==='profile_agent'?"Ask the customer which email UDC should use for their account; a personal or business email is fine. Warm and brief.":"Ask the customer for their company email address. Warm and brief.",
+      company_name:"Ask the customer for their registered company name. Warm and brief.",
+      country:"Ask the customer in which country their company is registered. Warm and brief.",
+      registration_number:"Ask the customer for their company registration number, and mention they can say Skip if they do not have it handy. Warm and brief.",
+    };
+    const fallback=current.label+(current.optional?' Reply Skip to leave it blank.':'');
+    await sendWhatsAppTextWithMenu(phone,await renderNote({intent:ASK[current.name]??`Ask the customer: ${current.label}`,fallback}));
+    return;
+  }
+  await sendWhatsAppTextWithMenu(phone,current.label+(current.optional?' Reply Skip to leave it blank.':''));
 }
 export async function clearGuidedChat(phone:string){const fingerprint=phoneHash(phone);await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+fingerprint}))`);await tx.delete(sessions).where(eq(sessions.phoneHash,fingerprint));});}
 export async function startGuidedChat(phone:string,purpose:FlowPurpose,initial:Record<string,string>={}){
@@ -151,7 +186,7 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
   if(snapshot&&snapshot.expiresAt>new Date()&&raw&&!action&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&!/^(?:cancel|stop|edit|skip)$/i.test(raw)){
     const turn=classifyTurn(raw,true);
     const purpose=snapshot.purpose as FlowPurpose;
-    if(turn==='pause'){await sendWhatsAppTextWithMenu(phone,'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.');return true;}
+    if(turn==='pause'){await sendNote(phone,'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.',raw);return true;}
     if(turn==='resume'){await question(phone,purpose,snapshot.step,snapshot.data);return true;}
     if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length&&!purpose.startsWith('profile_'))return false;
   }
@@ -282,11 +317,11 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
   if(!result)return false;
   switch(result.kind){
     case 'duplicate':return true;
-    case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Send Menu to start again.');return true;
-    case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
-    case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
-    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);if('brainReply' in result&&result.brainReply)await sendIntakeBrainReply(phone,result.brainReply,voice);else await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
-    case 'review':if('note' in result&&result.note){if('noteFromBrain' in result&&result.noteFromBrain)await sendIntakeBrainReply(phone,result.note,voice);else await sendWhatsAppTextWithMenu(phone,result.note);}await review(phone,result.purpose,result.data);return true;
+    case 'expired':await sendNote(phone,'That draft expired. Send Menu to start again.');return true;
+    case 'cancelled':await sendNote(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
+    case 'invalid':await sendNote(phone,result.text,raw);await question(phone,result.purpose,result.step);return true;
+    case 'question':if('note' in result&&result.note)await sendNote(phone,result.note,raw);if('brainReply' in result&&result.brainReply)await sendIntakeBrainReply(phone,result.brainReply,voice);else await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
+    case 'review':if('note' in result&&result.note){if('noteFromBrain' in result&&result.noteFromBrain)await sendIntakeBrainReply(phone,result.note,voice);else await sendNote(phone,result.note,raw);}await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
       // Validation and identity conflicts return a useful reply without saving.

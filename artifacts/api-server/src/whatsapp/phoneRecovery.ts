@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { db } from "@workspace/db";
+import { renderNote } from "../akif/composeReply";
 import {
   EMAIL_CODE_ATTEMPTS, EMAIL_CODE_TTL_MS, emailCodeHash, emailCodeMatches, newEmailCode,
 } from "../auth/emailCodes";
@@ -14,8 +15,35 @@ import { isTesterPhone } from "../auth/testerMode";
 // All entry points must be called only after Meta HMAC and WhatsApp consent validation.
 // An email alone is never proof of identity. Moving phones keeps the existing user ID.
 const emailSchema = z.email().max(254);
-const generic = "If this verified UDC email is eligible, a 6-digit sign-in code will arrive by email. Reply Phone code followed by the code. It expires in 10 minutes.";
+// Deterministic fallbacks: sent only when every AI provider is down (logged in
+// renderNote). Normal operation is Akif's own words around these exact facts.
+const generic = "If this verified UDC email is eligible, a 6-digit sign-in code will arrive by email. Reply with the 6-digit code here. It expires in 10 minutes.";
 const denied = "That code is invalid, expired or unavailable. You can request a new code, or contact UDC for account review.";
+const linked = "Your original UDC account is now linked to this WhatsApp number. Your deals and verification history are preserved. The old number can no longer access it. Open Menu to continue.";
+
+// Anti-enumeration stays deterministic: one identical intent for delivered,
+// absent, blocked, unverified and rate-limited identities. Only the wording is AI.
+const GENERIC_INTENT =
+  "Tell the customer: if this email belongs to a UDC account that can use it, a 6-digit sign-in code is on its way to that email, and it expires in 10 minutes. Ask them to reply here with the 6-digit code from the email. Never confirm or deny whether the email exists, is registered, or is eligible. Warm and brief.";
+const DENIED_INTENT =
+  "Tell the customer kindly that this code is invalid, expired or no longer available, and that they can request a fresh code or contact UDC for an account review. Warm and brief.";
+const LINKED_INTENT =
+  "Tell the customer warmly that their original UDC account is now linked to this WhatsApp number, that their deals and verification history are preserved, and that the old number can no longer access the account. Ask them to send Menu to continue.";
+
+// A Sign in / recover command supersedes any half-finished registration draft:
+// the guided form must never swallow the replies that follow (14 Nov incident:
+// a stray draft answered an OTP wait state with an email-format error).
+async function clearGuidedDraft(phone: string) {
+  const fingerprint = guidedChatPhoneHash(phone);
+  try {
+    await db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"guided_chat:" + fingerprint}))`);
+      await tx.execute(sql`delete from public.whatsapp_chat_sessions where phone_hash=${fingerprint}`);
+    });
+  } catch {
+    // Clearing the draft is best effort; the recovery flow must not fail on it.
+  }
+}
 const eligible = (status: string, role: string) =>
   !["suspended", "rejected"].includes(status) && ["buyer", "seller", "agent"].includes(role);
 type UserRow = {
@@ -123,7 +151,7 @@ export function createPhoneRecoveryService(options: {
       }
     }
     // Same response for absent, blocked, unverified, rate-limited or delivered identities.
-    return generic;
+    return renderNote({ intent: GENERIC_INTENT, fallback: generic, mustSay: ["10 minutes"], languageOf: rawEmail, maxChars: 500 });
   }
 
   async function confirm(phone: string, code: string) {
@@ -200,19 +228,37 @@ export function createPhoneRecoveryService(options: {
           '{"emailVerified":true,"oldNumberUnlinked":true}'::jsonb)`);
       return true;
     });
-    return changed
-      ? "Your original UDC account is now linked to this WhatsApp number. Your deals and verification history are preserved. The old number can no longer access it. Open Menu to continue."
-      : denied;
+    if (changed)
+      return renderNote({ intent: LINKED_INTENT, fallback: linked, mustSay: ["Menu"], maxChars: 600 });
+    return renderNote({ intent: DENIED_INTENT, fallback: denied, maxChars: 500 });
   }
 
   async function handle(phone: string, text: string) {
     const action = phoneRecoveryCommand(text);
-    if (!action) return null;
-    if (!/^\d{7,20}$/.test(phone)) return denied;
+    if (!action) {
+      // A bare 6-digit reply counts as the code while a sign-in code is waiting
+      // for this phone (same courtesy as email verification); anything else
+      // falls through to the normal conversation.
+      const digits = text.trim();
+      if (!/^\d{6}$/.test(digits) || !/^\d{7,20}$/.test(phone)) return null;
+      try {
+        const { rows: waiting } = await database.execute(
+          sql`select 1 from public.whatsapp_phone_link_challenges where new_phone=${phone} and consumed_at is null and expires_at>now() limit 1`,
+        );
+        if (!waiting.length) return null;
+        return await confirm(phone, digits);
+      } catch {
+        return "Account recovery is unavailable right now. Please try again later.";
+      }
+    }
+    if (!/^\d{7,20}$/.test(phone)) return renderNote({ intent: DENIED_INTENT, fallback: denied, languageOf: text });
     try {
-      return action.kind === "request"
-        ? await request(phone,action.email)
-        : await confirm(phone,action.code);
+      if (action.kind === "request") {
+        const reply = await request(phone, action.email);
+        await clearGuidedDraft(phone);
+        return reply;
+      }
+      return await confirm(phone, action.code);
     } catch {
       // Never leak SQL, email identity, or provider errors into WhatsApp.
       return "Account recovery is unavailable right now. Please try again later.";
