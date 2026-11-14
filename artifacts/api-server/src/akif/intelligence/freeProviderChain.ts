@@ -5,12 +5,19 @@
 type ChainProvider = {
   id: string;
   keyEnv: string;
-  baseUrl: string;
+  baseUrl: string | (() => string | null);
   modelEnv: string;
   defaultModel: string;
 };
 
 export const FREE_CHAIN: ChainProvider[] = [
+  {
+    id: "cloudflare", keyEnv: "CLOUDFLARE_AI_TOKEN", modelEnv: "CLOUDFLARE_AI_MODEL", defaultModel: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    baseUrl: () => {
+      const account = process.env.CLOUDFLARE_AI_ACCOUNT_ID?.trim();
+      return account ? `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1` : null;
+    },
+  },
   { id: "cerebras", keyEnv: "CEREBRAS_API_KEY", baseUrl: "https://api.cerebras.ai/v1", modelEnv: "CEREBRAS_MODEL", defaultModel: "gpt-oss-120b" },
   { id: "sambanova", keyEnv: "SAMBANOVA_API_KEY", baseUrl: "https://api.sambanova.ai/v1", modelEnv: "SAMBANOVA_MODEL", defaultModel: "gpt-oss-120b" },
   { id: "mistral", keyEnv: "MISTRAL_API_KEY", baseUrl: "https://api.mistral.ai/v1", modelEnv: "MISTRAL_MODEL", defaultModel: "mistral-small-latest" },
@@ -26,6 +33,7 @@ export function resetFreeChainBreakers() { state.clear(); }
 export function configuredFreeProviders(now = Date.now()): ChainProvider[] {
   return FREE_CHAIN.filter(p => {
     if (!process.env[p.keyEnv]?.trim()) return false;
+    if (typeof p.baseUrl === "function" && !p.baseUrl()) return false;
     const s = state.get(p.id);
     return !s || s.openUntil <= now;
   });
@@ -47,7 +55,9 @@ export async function runFreeChain(
   for (const p of configuredFreeProviders()) {
     try {
       const timeout = Math.min(budgetMs(), 25_000);
-      const res = await fetch(`${p.baseUrl}/chat/completions`, {
+      const base = typeof p.baseUrl === "function" ? p.baseUrl() : p.baseUrl;
+      if (!base) throw new Error("no base url");
+      const res = await fetch(`${base}/chat/completions`, {
         method: "POST",
         signal: AbortSignal.timeout(timeout),
         headers: { "content-type": "application/json", authorization: `Bearer ${process.env[p.keyEnv]!.trim()}` },
