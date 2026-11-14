@@ -15,7 +15,7 @@ import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 import { speakReply } from './voiceSend';
 import { renderNote, type NoteSpec } from '../akif/composeReply';
-import { takeBuyerUnitCurrency, buyerPriceLabel, buyerQuantityLabel } from '../akif/buyerUnitCurrency';
+import { takeBuyerUnitCurrency, buyerPriceLabel, buyerQuantityLabel, buyerUnresolved } from '../akif/buyerUnitCurrency';
 import { VOICE_NOTICE } from '../akif/voiceConsent';
 import type { VoiceLanguage } from '../akif/voiceLanguage';
 
@@ -76,6 +76,7 @@ async function question(phone:string,purpose:FlowPurpose,step:number,data:Record
   if(data.__paragraph==='1'){
     if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppTextWithMenu(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
     const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
+    if(purpose==='buyer'&&buyerUnresolved(data)){await sendWhatsAppTextWithMenu(phone,(data.__bad_currency?'Which three letter currency code should I use for your price, for example EUR or USD?':'Which unit is your quantity in, for example kg or MT?'));return;}
     if(next){await sendWhatsAppTextWithMenu(phone,purpose==='buyer'&&next.name==='quantity'?buyerQuantityLabel(data):next.label);return;}
     const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>q.label);
     if(!labels.length){await sendWhatsAppTextWithMenu(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
@@ -155,6 +156,8 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
     if(/^\d+(?:\.\d+)?$/.test(text)&&Number(text)>0)return {target_price:text} as Record<string,string>;
     return null;
   }
+  if(purpose==='buyer'&&data.__bad_currency&&/^[A-Za-z]{3}$/.test(text))return {currency:text} as Record<string,string>;
+  if(purpose==='buyer'&&!data.__bad_currency&&data.__bad_unit&&text.length<=24&&/^[\p{L}\p{N} ]+$/u.test(text))return {unit:text} as Record<string,string>;
   const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
   if(!next)return null;
   let scalar=false;
@@ -305,7 +308,7 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
       // Target price is optional, so the paragraph flow never asked for it unless the AI extracted it. Ask once.
       if(data.target_price!==undefined&&data.__awaiting==='target_price')delete data.__awaiting;
       if(requiredDone&&purpose==='buyer'&&data.target_price===undefined&&data.__priceAsked!=='1'){data.__priceAsked='1';data.__awaiting='target_price';}
-      const complete=requiredDone&&data.__awaiting!=='target_price';
+      const complete=requiredDone&&data.__awaiting!=='target_price'&&!(purpose==='buyer'&&buyerUnresolved(data));
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
       return complete?{kind:'review' as const,purpose,data,note:brainReply??notes[0],noteFromBrain:!!brainReply}:{kind:'question' as const,purpose,step,data,note:notes[0],brainReply:brainReply??undefined};

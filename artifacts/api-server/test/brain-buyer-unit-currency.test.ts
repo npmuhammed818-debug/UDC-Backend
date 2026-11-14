@@ -34,3 +34,17 @@ test("scripted questions follow the buyer's own unit and currency", () => {
   assert.equal(buyerPriceLabel({}), "What is your target price in USD per MT?");
   assert.equal(buyerPriceLabel({ unit: "kg", currency: "eur" }), "What is your target price in EUR per kg?");
 });
+import { buyerUnresolved } from "../src/akif/buyerUnitCurrency.ts";
+
+test("an unreadable stated currency or unit blocks submit until clarified", () => {
+  const f: Record<string, string> = {};
+  takeBuyerUnitCurrency({ currency: "euros" }, f);
+  assert.match(buyerUnresolved(f) ?? "", /currency/);
+  takeBuyerUnitCurrency({ currency: "eur" }, f);
+  assert.equal(buyerUnresolved(f), null);
+  takeBuyerUnitCurrency({ unit: "x".repeat(30) }, f);
+  assert.match(buyerUnresolved(f) ?? "", /unit/);
+  takeBuyerUnitCurrency({ unit: "kg" }, f);
+  assert.equal(buyerUnresolved(f), null);
+  assert.equal(buyerUnresolved({}), null);
+});

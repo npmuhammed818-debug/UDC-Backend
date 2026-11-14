@@ -21,7 +21,7 @@ import { guidedQuestions, validate as validateGuidedAnswer, type Question } from
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
 import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
-import { takeBuyerUnitCurrency, buyerRequirementPayload } from "./buyerUnitCurrency.ts";
+import { takeBuyerUnitCurrency, buyerRequirementPayload, buyerUnresolved } from "./buyerUnitCurrency.ts";
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerRequirement.ts";
 import { recordPendingSellerOffer, sellerOfferSchema } from "./recordPendingSellerOffer.ts";
 import { guidanceHistoryIdentity } from "../whatsapp/guidanceSession.ts";
@@ -196,6 +196,8 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
   }
   if (name === "save_offer_details") return { note: collectFields("seller", args, state).note };
   if (name === "submit_requirement") {
+    const unresolved = buyerUnresolved(state.fields);
+    if (unresolved) return { note: unresolved };
     const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
     if (!user || user.role !== "buyer" || ["suspended", "rejected"].includes(user.status)) return { note: "No registered buyer account for this number yet, so the requirement is saved but not submitted. Do not ask again for anything in KNOWN FACTS. In one short line say registration is the last step, read back the name, company and email you already hold and ask them to confirm, then ask only for what is missing. When confirmed, call save_registration_details with those values and submit_registration, then submit_requirement again. Never answer with a generic menu." };
     const missing = missingRequired("buyer", state.fields);

@@ -15,7 +15,7 @@ import { z } from 'zod/v4';
 import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, shipmentWatchesTable, usersTable, whatsappChatSessionsTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
-import { buyerRequirementPayload } from '../akif/buyerUnitCurrency';
+import { buyerRequirementPayload, buyerUnresolved } from '../akif/buyerUnitCurrency';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
 import { downloadWhatsAppMedia, sendWhatsAppInteractive, sendWhatsAppText, sendWhatsAppTextWithMenu } from './client';
 import { uploadDocumentBytes } from '../supabase/storage';
@@ -171,6 +171,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
       if(token.purpose==='buyer'){
+        const unresolved=buyerUnresolved(data);if(unresolved)return 'Before I submit this, please tell me which three letter currency code and which unit your requirement uses, for example EUR and kg. Send Edit to change your details.';
         const input=buyerIntakeSchema.parse(buyerRequirementPayload(phone,user.fullName,data,optional));
         await recordPendingBuyerRequirement(input,tx);reply='Your requirement is saved for UDC review. I will keep you updated here in WhatsApp.';
       }else{
