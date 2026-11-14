@@ -21,6 +21,7 @@ import { guidedQuestions, validate as validateGuidedAnswer, type Question } from
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
 import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
+import { takeBuyerUnitCurrency } from "./buyerUnitCurrency.ts";
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerRequirement.ts";
 import { recordPendingSellerOffer, sellerOfferSchema } from "./recordPendingSellerOffer.ts";
 import { guidanceHistoryIdentity } from "../whatsapp/guidanceSession.ts";
@@ -188,7 +189,11 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const reply = await handleEmailVerification(phone, "verify email");
     return { note: "Email verification step ran.", finalReply: reply ?? "Send Verify email first so I can email you a fresh 6-digit code." };
   }
-  if (name === "save_requirement_details") return { note: collectFields("buyer", args, state).note };
+  if (name === "save_requirement_details") {
+    const { rest, rejected } = takeBuyerUnitCurrency(args, state.fields);
+    const r = collectFields("buyer", rest, state);
+    return { note: r.note + (rejected.length ? ` Rejected: ${rejected.join("; ")}.` : "") };
+  }
   if (name === "save_offer_details") return { note: collectFields("seller", args, state).note };
   if (name === "submit_requirement") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
@@ -196,7 +201,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const missing = missingRequired("buyer", state.fields);
     if (missing.length) return { note: `Cannot submit yet; still needed: ${missing.join(", ")}.` };
     const f = state.fields;
-    const input = buyerIntakeSchema.parse({ phone, fullName: user.fullName || "WhatsApp buyer", product: f.product, quantity: f.quantity, unit: "MT", currency: "USD", destination: f.destination, incoterm: f.incoterm, specification: f.specification || undefined, targetPrice: f.target_price || undefined, deliveryTime: f.delivery_time || undefined, paymentTerms: f.payment_terms || undefined });
+    const input = buyerIntakeSchema.parse({ phone, fullName: user.fullName || "WhatsApp buyer", product: f.product, quantity: f.quantity, unit: f.unit || "MT", currency: f.currency || "USD", destination: f.destination, incoterm: f.incoterm, specification: f.specification || undefined, targetPrice: f.target_price || undefined, deliveryTime: f.delivery_time || undefined, paymentTerms: f.payment_terms || undefined });
     await recordPendingBuyerRequirement(input);
     state.fields = {};
     return { note: "Requirement submitted for UDC review. It stays private until review; updates come here in WhatsApp." };
