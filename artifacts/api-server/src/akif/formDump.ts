@@ -21,10 +21,15 @@ export function formDumpFields(reply: string): number {
   for (const sentence of reply.split(/(?<=[.!?])\s+/)) {
     if (!ASKING_WORDS.test(sentence)) continue;
     const hits = FIELD_ASKS.filter(([re]) => re.test(sentence)).map(([, key]) => key);
-    // One question without a list is one ask, even when it names two words
-    // ("What is your company name?" mentions company and name, but asks for one thing).
-    const isList = /,|;|&|\/|\band\b|\bor\b|\balso\b/i.test(sentence);
-    if (!isList && hits.length > 1) { found.add(hits[0]); continue; }
+    // One interrogative sentence with no list marker and at most two of the
+    // words company, name, country is one ask ("What is your company name?"
+    // names company and name but asks for one thing). Email and registration
+    // number never collapse, imperatives ("Tell me your name company") do not
+    // collapse, and "or" is not a list marker ("buyer or seller" is one choice).
+    const isList = /,|;|&|\/|\band\b|\balso\b/i.test(sentence);
+    const interrogative = /\?\s*$/.test(sentence.trim());
+    const collapsible = hits.length === 2 && hits.every((k) => k === "company" || k === "name" || k === "country");
+    if (interrogative && !isList && collapsible) { found.add(hits[0]); continue; }
     for (const key of hits) found.add(key);
   }
   for (const line of reply.split("\n")) {

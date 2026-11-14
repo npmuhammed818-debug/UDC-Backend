@@ -38,3 +38,13 @@ test("real lists of details are still form dumps", () => {
   assert.ok(formDumpFields("Please also let me know your country and registration number.") >= 2);
   assert.ok(formDumpFields("1. Your name\n2. Your email") >= 2);
 });
+test("guard edge cases: independent asks without a list marker still count, one choice with 'or' does not", () => {
+  assert.ok(formDumpFields("Tell me your name email company") >= 2, "imperative run of fields");
+  assert.ok(formDumpFields("What are your name, email and company?") >= 2);
+  assert.ok(formDumpFields("What is your name email?") >= 2, "email never collapses");
+  assert.ok(formDumpFields("What is your name? What is your email?") >= 2, "two separate questions");
+  assert.ok(formDumpFields("Which country is your company in? Also what is your registration number?") >= 2);
+  assert.equal(formDumpFields("Are you registering as a buyer or seller?"), 0);
+  assert.equal(formDumpFields("Which role would you like to register as, buyer or seller?"), 0);
+  assert.equal(formDumpFields("What is your registration number?"), 1);
+});
