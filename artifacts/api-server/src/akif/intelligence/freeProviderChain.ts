@@ -8,7 +8,19 @@ type ChainProvider = {
   baseUrl: string | (() => string | null);
   modelEnv: string;
   defaultModel: string;
+  // Providers that may train on prompts. Owner rule (14 Nov, relayed by parent):
+  // chat text only, never documents or confidential content.
+  chatTextOnly?: boolean;
 };
+
+const CONFIDENTIAL_HINTS = /\b(passport|iban|swift|bank account|account number|routing number|tax id|vat number|invoice|contract|certificate|bill of lading|packing list|document|attachment|extracted text|national id|licen[cs]e number)\b/i;
+const MAX_CHAT_TEXT_ONLY_CHARS = 3000;
+
+export function isSafeForTrainingProvider(message: string, system?: string): boolean {
+  const text = `${message}\n${system ?? ""}`;
+  if (message.length > MAX_CHAT_TEXT_ONLY_CHARS) return false;
+  return !CONFIDENTIAL_HINTS.test(text);
+}
 
 export const FREE_CHAIN: ChainProvider[] = [
   {
@@ -21,6 +33,7 @@ export const FREE_CHAIN: ChainProvider[] = [
   { id: "cerebras", keyEnv: "CEREBRAS_API_KEY", baseUrl: "https://api.cerebras.ai/v1", modelEnv: "CEREBRAS_MODEL", defaultModel: "gpt-oss-120b" },
   { id: "sambanova", keyEnv: "SAMBANOVA_API_KEY", baseUrl: "https://api.sambanova.ai/v1", modelEnv: "SAMBANOVA_MODEL", defaultModel: "gpt-oss-120b" },
   { id: "mistral", keyEnv: "MISTRAL_API_KEY", baseUrl: "https://api.mistral.ai/v1", modelEnv: "MISTRAL_MODEL", defaultModel: "mistral-small-latest" },
+  { id: "gemini", keyEnv: "GEMINI_API_KEY", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", modelEnv: "GEMINI_MODEL", defaultModel: "gemini-2.5-flash", chatTextOnly: true },
   { id: "openrouter", keyEnv: "OPENROUTER_API_KEY", baseUrl: "https://openrouter.ai/api/v1", modelEnv: "OPENROUTER_MODEL", defaultModel: "openai/gpt-oss-120b:free" },
 ];
 
@@ -52,7 +65,9 @@ export async function runFreeChain(
   system: string | undefined,
   budgetMs: () => number,
 ): Promise<{ content: string; raw: unknown; provider: string } | null> {
+  const safe = isSafeForTrainingProvider(message, system);
   for (const p of configuredFreeProviders()) {
+    if (p.chatTextOnly && !safe) continue;
     try {
       const timeout = Math.min(budgetMs(), 25_000);
       const base = typeof p.baseUrl === "function" ? p.baseUrl() : p.baseUrl;
