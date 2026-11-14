@@ -40,6 +40,7 @@ import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMes
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { isMutedPhone } from "../whatsapp/mutedInbound";
 import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
@@ -1594,6 +1595,11 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       if (!claimed) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
+      if (isMutedPhone(message.from)) {
+        req.log.warn({ flow: "whatsapp_inbound", reason: "muted_by_owner", phoneTail: String(message.from).slice(-4), type: String(message.type ?? "text") }, "Inbound from a muted number: no automated reply");
+        await completeInboundMessages([message.id]);
+        continue;
+      }
       noteInboundForWatchdog(message.from, message.id, String(message.type ?? 'text'), message.text?.body ?? '');
       if (message.from) { senderOf.set(message.id, message.from); if (humanRelayActiveFor(message.from)) { markRead(message.from, message.id); } else { markReadAndTyping(message.from, message.id); } }
       // Minimal text-only crisis first response before consent, trade, reactions or AI.
