@@ -343,7 +343,8 @@ router.post("/akif-relay/reply", async (req, res) => {
         heardLanguage: lastHeardLanguageFor(phone),
       });
   if (!delivery.delivered) {
-    res.status(502).json({ ok: false, error: "delivery_failed", reason: delivery.reason });
+    // An unknown outcome (timeout, network error, 5xx) is NOT a rejection: the customer may already have the message, so the worker must check before resending.
+    res.status(502).json({ ok: false, error: "delivery_failed", reason: delivery.reason, outcomeUnknown: delivery.reason === "provider_outcome_unknown" });
     return;
   }
   if (parsed.data!.itemId) {
