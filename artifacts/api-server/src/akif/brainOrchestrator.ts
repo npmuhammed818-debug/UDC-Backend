@@ -360,7 +360,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
 
 function orchestratorSystem(sender: { registered: boolean; role?: string; status?: string; emailVerified: boolean; companyStatus?: string; country?: string | null; inviteCode?: string }): string {
   const state = sender.registered
-    ? `The customer is registered as ${sender.role} (account ${sender.status}, email ${sender.emailVerified ? "confirmed" : "not confirmed"}, company review: ${sender.companyStatus ?? "no company"}${sender.inviteCode ? ", invite code " + sender.inviteCode : ""}).`
+    ? `The customer is registered as ${sender.role} (account ${sender.status}, email ${sender.emailVerified ? "confirmed" : "not confirmed"}, company review: ${sender.companyStatus ?? "no company"}${sender.inviteCode ? ", invite code " + sender.inviteCode : ""}).${sender.inviteCode ? "" : " This account has no referral or invite code, because only agent accounts get one. If they ask for a referral or invite link, say that plainly and offer to set them up as an agent; never answer with filler."}`
     : "The customer is not registered yet.";
   // Time awareness (env-gated AKIF_BRAIN_TIME_AWARE, off by default; owner
   // feature yes, 8 Nov): manner only - facts, deals and safety never change

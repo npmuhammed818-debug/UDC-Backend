@@ -36,8 +36,18 @@ if (Number.isNaN(port) || port <= 0) {
 
 // Restore the held relay queue before accepting traffic: a deploy must not
 // drop customer messages still waiting on a human answer (10 Nov).
+let server: import("node:http").Server | undefined;
+// Graceful shutdown: a deploy swap must finish in-flight customer messages instead of killing them mid-reply
+// (a message was lost at the 6:54pm swap because SIGTERM killed the process immediately).
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received; draining in-flight requests");
+  const force = setTimeout(() => process.exit(0), 25_000);
+  force.unref();
+  server?.close(() => process.exit(0));
+  server?.closeIdleConnections?.();
+});
 void hydrateHumanRelay().catch(() => 0).then(() => {
-app.listen(port, (err) => {
+server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
