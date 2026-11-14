@@ -26,6 +26,7 @@ import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
 import { sendWhatsAppVoiceNote } from "../whatsapp/client";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
+import { relayDeliveryFailureBody } from "../akif/relayDeliveryResult";
 import { handleChatUi } from "../whatsapp/chatUi";
 import { emailRelayTarget, liveEmailRelayEnabled } from "../channels/emailRelayChannel";
 import { buildRelayEmailPayload, outboundDepsFromEnv, sendRelayEmail } from "../channels/emailOutbound";
@@ -344,7 +345,7 @@ router.post("/akif-relay/reply", async (req, res) => {
       });
   if (!delivery.delivered) {
     // An unknown outcome (timeout, network error, 5xx) is NOT a rejection: the customer may already have the message, so the worker must check before resending.
-    res.status(502).json({ ok: false, error: "delivery_failed", reason: delivery.reason, outcomeUnknown: delivery.reason === "provider_outcome_unknown" });
+    res.status(502).json(relayDeliveryFailureBody(delivery.reason));
     return;
   }
   if (parsed.data!.itemId) {

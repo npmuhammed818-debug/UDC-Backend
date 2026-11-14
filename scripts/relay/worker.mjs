@@ -34,7 +34,7 @@ if (cmd === "claim") {
   const text = readFileSync(0, "utf8");
   const body = JSON.stringify({ phone: a2, text, itemId: a3, workerId: a1 });
   const r = await fetch(`${BASE}/api/akif-relay/reply`, { method: "POST", headers: { "content-type": "application/json", "x-udc-relay-signature": sig(body) }, body });
-  console.log(r.status); console.log(JSON.stringify(await r.json()));
+  console.log(r.status); { const j = await r.json(); console.log(JSON.stringify(j)); if (j && j.outcomeUnknown) console.log("WARNING: outcome unknown. The customer may already have this message. Do not resend before checking the conversation."); }
 } else if (cmd === "ask") {
   const text = readFileSync(0, "utf8");
   const body = JSON.stringify({ phone: a1, text });
