@@ -41,6 +41,7 @@ import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agent
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { accountFactsLine } from "../akif/fallbackContext";
+import { inviteGateHandles } from "../whatsapp/inviteGate";
 import { isMutedPhone } from "../whatsapp/mutedInbound";
 import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
@@ -1598,6 +1599,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       claimedInbound.push(message.id);
       if (isMutedPhone(message.from)) {
         req.log.warn({ flow: "whatsapp_inbound", reason: "muted_by_owner", phoneTail: String(message.from).slice(-4), type: String(message.type ?? "text") }, "Inbound from a muted number: no automated reply");
+        await completeInboundMessages([message.id]);
+        continue;
+      }
+      if (await inviteGateHandles(message.from, req.log)) {
         await completeInboundMessages([message.id]);
         continue;
       }
