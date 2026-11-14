@@ -68,6 +68,7 @@ export async function runFreeChain(
   const safe = isSafeForTrainingProvider(message, system);
   for (const p of configuredFreeProviders()) {
     if (p.chatTextOnly && !safe) continue;
+    const t0 = Date.now();
     try {
       const timeout = Math.min(budgetMs(), 25_000);
       const base = typeof p.baseUrl === "function" ? p.baseUrl() : p.baseUrl;
@@ -87,10 +88,11 @@ export async function runFreeChain(
       const content = raw.choices?.[0]?.message?.content?.trim();
       if (!content) throw new Error("empty");
       record(p.id, true);
+      console.info("Free chain answered", { provider: p.id, ms: Date.now() - t0 });
       return { content, raw, provider: p.id };
     } catch (error) {
       record(p.id, false);
-      console.warn("Free chain provider failed", { provider: p.id, reason: error instanceof Error ? error.message.slice(0, 40) : "error" });
+      console.warn("Free chain provider failed", { provider: p.id, ms: Date.now() - t0, reason: error instanceof Error ? error.message.slice(0, 40) : "error" });
     }
   }
   return null;

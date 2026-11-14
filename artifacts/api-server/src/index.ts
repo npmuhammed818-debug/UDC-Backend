@@ -1,3 +1,4 @@
+import { pool } from "@workspace/db";
 import {startDealReminderRunner} from './whatsapp/dealReminders';
 import {startPriceWatchRunner} from './whatsapp/priceWatch';
 import {startProactiveRunner} from './akif/proactiveNudges.ts';
@@ -53,6 +54,8 @@ app.listen(port, (err) => {
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
   startInboundWatchdog();
+  // Open several DB connections now so the first customer message after a restart does not pay TLS and pooler setup (503s seen right after deploys).
+  void Promise.allSettled(Array.from({ length: 5 }, () => pool.query("select 1"))).then(() => logger.info("db pool warmed"));
   startEtaFollowupRunner();
   startShipmentWatchRunner();
   startShipmentNotificationRunner();
