@@ -1,4 +1,3 @@
-import { db, whatsappChatSessionsTable as sessions } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { sendWhatsAppText } from "./client";
 import { isMutedPhone } from "./mutedInbound";
@@ -11,6 +10,8 @@ import { HOLDING_REPLY, digits, inviteOnlyOn, isAllowedPhone } from "./inviteRul
 export async function inviteGateHandles(phone: string | undefined, log: { warn: (o: object, m: string) => void }): Promise<boolean> {
   if (!inviteOnlyOn() || !phone) return false;
   if (isMutedPhone(phone) || isAllowedPhone(phone)) return false; // muted handled by caller
+  const dbm = (await import("@workspace/db")) as any;
+  const db = dbm.db; const sessions = dbm.whatsappChatSessionsTable;
   const key = "invitehold:" + digits(phone);
   let first = false;
   try {
