@@ -15,6 +15,7 @@ import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
 import { speakReply } from './voiceSend';
 import { renderNote, type NoteSpec } from '../akif/composeReply';
+import { takeBuyerUnitCurrency, buyerPriceLabel, buyerQuantityLabel } from '../akif/buyerUnitCurrency';
 import { VOICE_NOTICE } from '../akif/voiceConsent';
 import type { VoiceLanguage } from '../akif/voiceLanguage';
 
@@ -71,11 +72,11 @@ async function sendNote(phone:string,text:string,languageOf?:string){
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
-  if(data.__paragraph==='1'&&data.__awaiting==='target_price'){await sendWhatsAppTextWithMenu(phone,'What is your target price in USD per MT? Reply Skip to leave it blank.');return;}
+  if(data.__paragraph==='1'&&data.__awaiting==='target_price'){await sendWhatsAppTextWithMenu(phone,buyerPriceLabel(data)+' Reply Skip to leave it blank.');return;}
   if(data.__paragraph==='1'){
     if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppTextWithMenu(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
     const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
-    if(next){await sendWhatsAppTextWithMenu(phone,next.label);return;}
+    if(next){await sendWhatsAppTextWithMenu(phone,purpose==='buyer'&&next.name==='quantity'?buyerQuantityLabel(data):next.label);return;}
     const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>q.label);
     if(!labels.length){await sendWhatsAppTextWithMenu(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
     await sendWhatsAppTextWithMenu(phone,`Send ${labels.join(', ')} together in one short message.${purpose.startsWith('profile_')?'':' You can include grade, timing, payment terms and the delivery place too.'}`);return;
@@ -137,7 +138,7 @@ export function validate(question:Question,text:string,purpose:FlowPurpose){
   if(question.name==='full_name'&&!looksLikeFullName(text))throw new Error(text.trim().length<2?'Please send your full name.':NAME_REJECTION);return text;
 }
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
-  const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
+  const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target price',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
   const summary=Object.entries(data).filter(([k,v])=>v&&!k.startsWith('__')).map(([key,value])=>`${label[key]??key}: ${value}`).join('\n');
   await sendWhatsAppTextWithMenu(phone,'Please review:\n'+summary+(purpose.startsWith('profile_')?'\nRegistration needs UDC approval.':'\nUDC recommends DLC directly to seller, after SGS at destination. Other terms require explicit buyer agreement. Submission needs UDC review.'));
   try{await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Are these details correct?'},action:{buttons:[['submit','Submit for review'],['restart','Edit details'],['cancel','Cancel']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});}catch{await sendWhatsAppTextWithMenu(phone,'Reply Submit to send for UDC review, Edit to start again, or Cancel.');}
@@ -290,8 +291,10 @@ async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{b
         }
         data[item.name]=value;
       }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);/* The old value stays; the user is told why. */}}}
+      if(purpose==='buyer'&&extracted){const taken=takeBuyerUnitCurrency(extracted,data);for(const r of taken.rejected)notes.push(r+'.');}
       if(purpose.startsWith('profile_')){
         const reqPurpose=purpose==='profile_buyer'?'buyer':purpose==='profile_seller'?'seller':null;
+        if(reqPurpose==='buyer'){const tmp:Record<string,string>={};takeBuyerUnitCurrency(brainRequirements,tmp);for(const [k,v] of Object.entries(tmp))data['__req_'+k]=v;}
         if(reqPurpose)for(const item of guidedQuestions(reqPurpose)){const candidate=brainRequirements[item.name];if(candidate!==undefined){try{data['__req_'+item.name]=validate(item,candidate,reqPurpose);}catch{/* an unreadable volunteered detail is simply asked again in the requirement flow */}}}
       }
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);

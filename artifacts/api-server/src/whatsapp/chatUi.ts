@@ -15,6 +15,7 @@ import { z } from 'zod/v4';
 import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, commissionsTable, db, dealFinancialsTable, dealParticipantsTable, dealsTable, notificationsTable, referralsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, shipmentWatchesTable, usersTable, whatsappChatSessionsTable, whatsappUserContextsTable } from '@workspace/db';
 import { hashPassword } from '../auth/passwords';
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from '../akif/recordBuyerRequirement';
+import { buyerRequirementPayload } from '../akif/buyerUnitCurrency';
 import { recordPendingSellerOffer, sellerOfferSchema } from '../akif/recordPendingSellerOffer';
 import { downloadWhatsAppMedia, sendWhatsAppInteractive, sendWhatsAppText, sendWhatsAppTextWithMenu } from './client';
 import { uploadDocumentBytes } from '../supabase/storage';
@@ -170,7 +171,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
       if(!user)return 'Register first using Menu, then choose your role.';
       if(user.role!==token.purpose)return 'This form does not match your account role. Open your own Menu.';
       if(token.purpose==='buyer'){
-        const input=buyerIntakeSchema.parse({phone,fullName:user.fullName||'WhatsApp buyer',product:data.product,quantity:data.quantity,unit:'MT',currency:'USD',destination:data.destination,incoterm:data.incoterm,specification:optional(data.specification),targetPrice:optional(data.target_price),deliveryTime:optional(data.delivery_time),paymentTerms:optional(data.payment_terms)});
+        const input=buyerIntakeSchema.parse(buyerRequirementPayload(phone,user.fullName,data,optional));
         await recordPendingBuyerRequirement(input,tx);reply='Your requirement is saved for UDC review. I will keep you updated here in WhatsApp.';
       }else{
         const input=sellerOfferSchema.parse({phone,fullName:user.fullName||'WhatsApp seller',product:data.product,quantity:data.quantity,unit:data.unit,currency:data.currency,price:data.price,originCountry:data.origin,incoterm:data.incoterm,specification:optional(data.specification),availability:optional(data.availability),destination:optional(data.destination),paymentTerms:optional(data.payment_terms)});

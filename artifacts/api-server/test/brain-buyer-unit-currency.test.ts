@@ -17,3 +17,20 @@ test("bad currency is rejected and not stored", () => {
   assert.equal(f.unit, undefined);
   assert.equal(rejected.length, 2);
 });
+import { buyerRequirementPayload, buyerBasis, buyerQuantityLabel, buyerPriceLabel } from "../src/akif/buyerUnitCurrency.ts";
+
+test("submit payload carries stated unit and currency, no conversion", () => {
+  const p = buyerRequirementPayload("+10000000001", "Test Buyer", { product: "Sugar", quantity: "500", unit: "kg", currency: "EUR", destination: "Rotterdam", incoterm: "CIF", target_price: "2" });
+  assert.equal(p.unit, "kg"); assert.equal(p.currency, "EUR"); assert.equal(p.quantity, "500"); assert.equal(p.targetPrice, "2");
+});
+test("old drafts without unit or currency still default to MT and USD", () => {
+  const p = buyerRequirementPayload("+10000000001", null, { product: "Sugar", quantity: "5", destination: "Dubai", incoterm: "FOB", target_price: "skip", specification: "" });
+  assert.equal(p.unit, "MT"); assert.equal(p.currency, "USD"); assert.equal(p.fullName, "WhatsApp buyer"); assert.equal(p.specification, undefined);
+  assert.deepEqual(buyerBasis({}), { unit: "MT", currency: "USD" });
+});
+test("scripted questions follow the buyer's own unit and currency", () => {
+  assert.equal(buyerQuantityLabel({}), "How many metric tonnes (MT) do you need?");
+  assert.equal(buyerQuantityLabel({ unit: "kg" }), "How much do you need, in kg?");
+  assert.equal(buyerPriceLabel({}), "What is your target price in USD per MT?");
+  assert.equal(buyerPriceLabel({ unit: "kg", currency: "eur" }), "What is your target price in EUR per kg?");
+});

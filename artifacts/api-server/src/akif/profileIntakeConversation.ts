@@ -21,7 +21,7 @@ const STATUS_CLAIM = /\b(?:account is (?:verified|approved)|you are (?:verified|
 export type ProfilePurpose = Extract<FlowPurpose, "profile_buyer" | "profile_seller" | "profile_agent">;
 
 const PROFILE_KEYS = ["full_name", "email", "company_name", "country", "registration_number"] as const;
-const BUYER_REQ_KEYS = ["product", "quantity", "specification", "destination", "incoterm", "target_price", "delivery_time", "payment_terms"] as const;
+const BUYER_REQ_KEYS = ["product", "quantity", "unit", "currency", "specification", "destination", "incoterm", "target_price", "delivery_time", "payment_terms"] as const;
 const SELLER_OFFER_KEYS = ["product", "quantity", "unit", "specification", "price", "currency", "origin", "incoterm", "availability", "destination", "payment_terms"] as const;
 
 export function requirementKeysFor(purpose: ProfilePurpose): readonly string[] {
