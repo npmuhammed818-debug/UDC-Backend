@@ -12,18 +12,28 @@ assert.match(container, /^[a-f0-9]{64}$/, 'identify the isolated PostgreSQL serv
 const env = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
   ['PATH', 'HOME', 'TMPDIR', 'DOCKER_HOST', 'DOCKER_CONFIG'].includes(k)));
 const cases = [
+  ['review', 'UDC_REVIEW_QA_DATABASE_URL', 'document-review'],
   ['lifecycle', 'UDC_LIFECYCLE_QA_DATABASE_URL', 'full-mvp-lifecycle'],
   ['onboarding', 'UDC_QA_DATABASE_URL', 'whatsapp-onboarding-ux'],
   ['delivery', 'UDC_DELIVERY_QA_DATABASE_URL', 'shipment-delivery'],
   ['registration', 'UDC_QA_DATABASE_URL', 'whatsapp-buyer'],
   ['retry', 'UDC_QA_DATABASE_URL', 'whatsapp-webhook-retry'],
+  ['meta_limits', 'UDC_QA_DATABASE_URL', 'whatsapp-meta-limits'],
+  ['edge', 'UDC_QA_DATABASE_URL', 'whatsapp-edge-scenarios'],
+  ['sweep', 'UDC_QA_DATABASE_URL', 'route-sweep'],
+  ['sink', 'UDC_QA_DATABASE_URL', 'whatsapp-reply-sink'],
   ['email_auth', 'UDC_EMAIL_QA_DATABASE_URL', 'email-auth'],
   ['verification', 'UDC_VERIFICATION_QA_DATABASE_URL', 'company-verification'],
   ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'p0-gates'],
+  ['p0gates', 'UDC_P0_QA_DATABASE_URL', 'redteam-pass4'],
+  ['roletransition', 'UDC_ROLETRANSITION_QA_DATABASE_URL', 'role-transition'],
+  ['brainorchestrator', 'UDC_BRAINORCH_QA_DATABASE_URL', 'brain-orchestrator'],
   ['vault', 'UDC_VAULT_QA_DATABASE_URL', 'vault'],
   ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools'],
+  ['pools', 'UDC_POOLS_QA_DATABASE_URL', 'buyer-pools-pilot'],
   ['journey', 'UDC_JOURNEY_QA_DATABASE_URL', 'trade-journey'],
   ['commroutes', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-routes'],
+  ['commproposals', 'UDC_COMMROUTES_QA_DATABASE_URL', 'commission-proposals'],
   ['commission', 'UDC_COMMISSION_QA_DATABASE_URL', 'commission-migration'],
 ];
 const directory=path.resolve(root,process.argv.find(a=>a.startsWith('--output-dir='))?.slice(13)??'.acceptance-results');
@@ -54,7 +64,7 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
 for (const [prefix, variable, file] of cases) {
   if (selected && selected !== file) continue;
   if (process.argv.includes('--extended') && ['registration', 'email_auth'].includes(prefix)) continue;
-  const name = `udc_qa_${prefix}_${randomBytes(6).toString('hex')}`;
+  const name = `udc_qa_${prefix==='commproposals'?'commroutes':prefix}_${randomBytes(6).toString('hex')}`;
   const url = `postgresql://udc_dev@127.0.0.1:5432/${name}?sslmode=disable`;
   let created = false;
   try {
@@ -62,7 +72,7 @@ for (const [prefix, variable, file] of cases) {
     created = true;
     // Schema push is only fixture bootstrap in this empty disposable database.
     // Exact migration semantics are exercised by the migration/restore suites.
-    if (prefix !== 'commission') command('pnpm', ['--filter', '@workspace/db', 'run', 'push'], {
+    if (!['commission','review'].includes(prefix)) command('pnpm', ['--filter', '@workspace/db', 'run', 'push'], {
       SUPABASE_DATABASE_URL: url, SUPABASE_DIRECT_URL: url,
     });
     const output = command(process.execPath, [`artifacts/api-server/test/integration/${file}-postgres.mjs`], { [variable]: url });

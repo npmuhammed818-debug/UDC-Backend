@@ -40,5 +40,29 @@ test("unverified payment, inspection, shipment and match claims are caught", () 
   assert.ok(claimsUnverifiedFact("Your shipment has departed.", {}));
   assert.ok(claimsUnverifiedFact("I matched you with a seller.", {}));
   assert.ok(!claimsUnverifiedFact("I'm checking whether a seller is available.", {}));
+  // Red-team widening: shapes that previously slipped through.
+  for (const claim of [
+    "Payment is approved.",
+    "Your payment is approved, you can relax.",
+    "The payment went through.",
+    "Payment successful!",
+    "Your deal is approved.",
+    "The order is confirmed.",
+    "Your shipment was delivered.",
+    "Customs cleared for your cargo.",
+    "You are now verified.",
+    "Your company is verified.",
+    "Verification is approved.",
+    "Your documents are approved.",
+    "The inspection is passed.",
+  ]) assert.ok(claimsUnverifiedFact(claim, {}), claim);
+  // Negated / conditional phrasing is information, not a false assertion.
+  for (const safe of [
+    "Payment is not approved yet; UDC reviews it first.",
+    "No shipment departed yet.",
+    "I cannot say the inspection passed - that is UDC's call.",
+    "Your verification is still pending, not approved.",
+    "Payment confirmed? I have no record of that.",
+  ]) assert.ok(!claimsUnverifiedFact(safe, {}), safe);
   assert.match(AI_FALLBACK_REPLY, /talk to a person/);
 });

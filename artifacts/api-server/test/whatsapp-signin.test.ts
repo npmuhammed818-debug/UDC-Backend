@@ -25,7 +25,15 @@ test('WhatsApp web sign-in requires phone ownership, private browser proof and s
     };
     const q:any={values:(v:any)=>{input=v;return q},set:(v:any)=>{input=v;return q},where:(v:any)=>{condition=v;return q},returning:()=>q,then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};return q;
   };
-  state.db={select,insert:(v:any)=>mutation(v,'insert'),update:(v:any)=>mutation(v,'update'),delete:(v:any)=>mutation(v,'delete'),execute:async(v:any)=>{state.locks.push(v);}};
+  state.limits={};
+  state.db={transaction:async(f:any)=>f(state.db),select,insert:(v:any)=>mutation(v,'insert'),update:(v:any)=>mutation(v,'update'),delete:(v:any)=>mutation(v,'delete'),execute:async(v:any)=>{
+    state.locks.push(v);
+    const text=(v?.parts??[]).join('');
+    if(text.startsWith('delete from email_auth_limits')){const cutoff=v.values[0];for(const[k,r]of Object.entries(state.limits) as any){if(new Date((r as any).window_start)<cutoff)delete state.limits[k];}return {rows:[]};}
+    if(text.includes('from email_auth_limits where key=')){const row=state.limits[v.values[0]];return {rows:row?[row]:[]};}
+    if(text.startsWith('insert into email_auth_limits')){state.limits[v.values[0]]={count:v.values[1],window_start:v.values[2],last_attempt_at:v.values[3]};return {rows:[]};}
+    return {rows:[]};
+  }};
   let queue=Promise.resolve();state.db.transaction=(f:any)=>{const job=queue.then(()=>f(state.db));queue=job.catch(()=>{});return job;};
   (globalThis as any).__whatsappSigninFixture=state;
   const output=fileURLToPath(new URL(`./whatsapp-signin-${randomUUID()}.mjs`,import.meta.url));
@@ -35,7 +43,7 @@ test('WhatsApp web sign-in requires phone ownership, private browser proof and s
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
   }}]});
   await writeFile(output,bundle.outputFiles[0].text);let server:any;
-  const previousSecret=process.env.SESSION_SECRET;process.env.SESSION_SECRET='synthetic-signin-session-secret';
+  const previousSecret=process.env.SESSION_SECRET;process.env.SESSION_SECRET='synthetic-signin-session-secret-32!!';
   try{
     const m=await import(output);server=m.default.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
     const request=async(path:string,body:any,method='POST')=>fetch(`http://127.0.0.1:${server.address().port}${path}`,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});
@@ -47,7 +55,11 @@ test('WhatsApp web sign-in requires phone ownership, private browser proof and s
       const row=records.whatsappSigninChallengesTable.at(-1);assert.equal(row.code,undefined);assert.equal(row.browserToken,undefined);assert.notEqual(row.codeHash,c.code);assert.notEqual(row.browserTokenHash,c.browserToken);
       assert.match(await m.handleWhatsAppSignin('10000000001','CONFIRM LOGIN '+c.code),/first/);assert.equal(records.usersTable.length,0);
       assert.deepEqual(await (await poll(c.browserToken)).json(),{status:'pending'});
-      assert.match(await m.handleWhatsAppSignin('10000000001','LOGIN '+c.code),/Never approve/);
+      const warning=await m.handleWhatsAppSignin('10000000001','LOGIN '+c.code);
+      assert.match(warning,/Never approve/);
+      assert.match(warning,/internet address 127\.0\.0\.1 at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
+      assert.match(warning,/expires in 2 minutes/);
+      assert.ok(Math.abs(new Date(c.expiresAt).getTime()-(Date.now()+120_000))<20_000,'code lives about 2 minutes');
       assert.match(await m.handleWhatsAppSignin('10000000002','CONFIRM LOGIN '+c.code),/unavailable/);assert.equal(records.usersTable.length,0);
       assert.match(await m.handleWhatsAppSignin('10000000001','CONFIRM LOGIN '+c.code),/Approved/);
       assert.equal(records.usersTable[0].role,'seller');assert.equal(records.usersTable[0].status,'pending');

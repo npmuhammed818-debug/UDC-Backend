@@ -1,3 +1,4 @@
+process.env.WHATSAPP_INBOUND_PER_MINUTE = "100000"; // these fixtures reuse one phone; the cap has its own test
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, randomUUID } from "node:crypto";
@@ -8,8 +9,8 @@ import { build } from "esbuild";
 // Exercise the real signed webhook, including route ordering and DB predicates.
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("WhatsApp webhook intake and private media acceptance", async (t) => {
-  const names = ["notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
-    "documentAccessTable", "documentsTable", "usersTable", "whatsappMessageContextsTable", "whatsappUserContextsTable"];
+  const names = ["notificationPreferencesTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable","notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
+    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "buyerRequestsTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable", "dealFinancialsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
   })]));
@@ -17,6 +18,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const evaluate = (node: any, row: any): any => {
     if (node?.kind === "column") return row[node.table]?.[node.key];
     if (node?.kind === "eq") return evaluate(node.a, row) === evaluate(node.b, row);
+    if (node?.kind === "ne") return evaluate(node.a, row) !== evaluate(node.b, row);
     if (node?.kind === "and") return node.args.every((n: any) => evaluate(n, row));
     if (node?.kind === "or") return node.args.some((n: any) => evaluate(n, row));
     if (node?.kind === "in" && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
@@ -29,7 +31,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     const q: any = {
       from(t: any) { table = t._tableName; return q; }, where(c: any) { condition = c; return q; },
       innerJoin(t: any, on: any) { joins.push({ table: t._tableName, on }); return q; },
-      orderBy() { return q; }, limit(n: number) { maximum = n; return q; },
+      orderBy() { return q; }, for() { return q; }, limit(n: number) { maximum = n; return q; },
       run() {
         let values = rows[table].map(r => ({ [table]: r }));
         for (const join of joins) values = values.flatMap(r => rows[join.table]
@@ -45,7 +47,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     const run = () => {
       if (inserted) return inserted;
       if (ignoreConflict && rows[table._tableName].some(r => r.providerMessageId === input.providerMessageId && input.providerMessageId)) return inserted = [];
-      const records = (Array.isArray(input) ? input : [input]).map(item => ({ id: randomUUID(), ...item }));
+      const records = (Array.isArray(input) ? input : [input]).map(item => ({ id: randomUUID(),createdAt:new Date(), ...item }));
       rows[table._tableName].push(...records);
       return inserted = records;
     };
@@ -55,7 +57,8 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       then(resolve: any, reject: any) { return Promise.resolve().then(run).then(resolve, reject); } };
     return q;
   }
-  const state: any = { tables, db: { select, insert }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
+  function update(table:any){let input:any,condition:any;const run=()=>{const values=rows[table._tableName].filter(r=>evaluate(condition,{[table._tableName]:r}));values.forEach(r=>Object.assign(r,input));return values;};const q:any={set(v:any){input=v;return q;},where(v:any){condition=v;return q;},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};return q;}
+  const state: any = { tables, db: { select, insert,update }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
     privacyReply: null, saved: null, decision: null, dealDecision: null, dealCalls: 0,
     send: async (to: string, body: any) => { state.sent.push({ to, body }); return { delivered: true, messageId: randomUUID() }; },
     sign: async (path: string) => { state.signed.push(path); return `https://signed.example/${path}`; },
@@ -69,37 +72,45 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../whatsapp/phoneRecovery": "export const handlePhoneRecovery=async(phone,text)=>{if(!/^(?:(?:sign in|recover account|change number)(?:\\s|$)|phone code(?:\\s|$))/i.test(text))return null;s.recoveryCalls=(s.recoveryCalls||0)+1;return 'Fixture private phone recovery reply';};",
     "../whatsapp/customerServiceWindow": "export const recordSignedCustomerInbound=async input=>{s.windowEvidence.push(input);return {recorded:true};};",
     "../whatsapp/shipmentDeliveryReceipts": "export const recordSignedShipmentStatuses=async values=>{s.receipts.push(...values);if(s.failReceipt)throw Error('synthetic_DB_error');return {received:values.length};};",
-    "../whatsapp/chatUi": "export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};export const sendChatHome=async(phone)=>{s.homeCalls=(s.homeCalls||0)+1;};",
+    "../whatsapp/chatUi": "export const sendDocumentsLink=async()=>false;export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};export const sendChatHome=async(phone)=>{s.homeCalls=(s.homeCalls||0)+1;};",
     "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
-    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};",
+    "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};export const guidanceMainLanguage=async()=>'';",
+    "../akif/intelligence/hermesClient": "export const runConversationChat=async()=>({content:'',raw:{}});",
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
-    "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const transcribeAkifAudio=async()=> '100 MT copper';",
+    "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const warmAkifWorker=()=>{};export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
+    "../akif/brainOrchestrator":
+      "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
-    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>true;export const completeInboundMessages=async()=>{};",
-    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});",
+    "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
+    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');if(s.redelivery)return false;return true;};export const completeInboundMessages=async()=>{};export const inboundClaimInProgress=async()=>s.redelivery==='unfinished';export const releaseInboundMessages=async()=>{};",
+    "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const sendWhatsAppImage=async(to,link,caption)=>{s.images=(s.images||[]).concat([{to,link,caption}]);return {delivered:true,messageId:'img-1'};};export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const markReadAndTyping=()=>{};export const markRead=()=>{};export const sendWhatsAppReaction=async()=>({delivered:true,messageId:'rx-1'});export const trackReplyFailures=(fn)=>fn(new Set());export const sendWhatsAppVoiceNote=async(to)=>{s.voice=(s.voice||[]);s.voice.push(to);return s.voiceFail?{delivered:false,reason:'upload_failed'}:{delivered:true};};",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
     "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
     "../akif/documentIntelligence": "export const processDocumentIntelligence=async()=>({status:'needs_review'});",
     "../supabase/storage": "export const createSignedDownloadUrl=s.sign;export const uploadDocumentBytes=s.upload;export const parseStoragePath=x=>x.startsWith('storage://udc-documents/')?x.slice('storage://udc-documents/'.length):null;",
     "../akif/whatsappIntakeStore": "export const loadWhatsAppIntakeDraft=async()=>s.saved;export const saveWhatsAppIntakeDraft=async x=>{s.saved={...x,lastProviderMessageId:x.providerMessageId};};export const clearWhatsAppIntakeDraft=async()=>{s.saved=null;};",
     "../privacy/whatsappPrivacyGate": "export const whatsappPrivacyGate=async()=>s.privacyReply;",
+    "../vault/service": "export const createVaultUploadLink=async()=>({ok:false,error:'vault_base_url_not_configured'});export const acceptUpload=async()=>({ok:false,error:'invalid'});export const listOwnDocumentStatuses=async()=>[];export const lookupLink=async()=>({row:null,check:{ok:false,reason:'invalid'}});export const requestDocumentDeletion=async()=>({ok:false,error:'not_found'});export const logVaultAccess=async()=>{};",
   };
   const output = fileURLToPath(new URL(`./webhook-${randomUUID()}.mjs`, import.meta.url));
   const bundle = await build({
-    stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},error(){}};next();});app.use(router);export default app;', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
+    stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(router);export default app;', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
     bundle: true, platform: "node", format: "esm", packages: "external", write: false,
     plugins: [{ name: "fixtures", setup(b) {
       b.onResolve({ filter: /.*/ }, args => {
         if (args.path === "@workspace/db") return { path: "db", namespace: "fixture" };
+        if (args.importer.endsWith("/whatsapp/voiceSend.ts") && (args.path === "../akif/intelligence/workerClient" || args.path === "../akif/intelligence/hermesClient")) return { path: args.path, namespace: "fixture" };
+        if (args.importer.endsWith("/whatsapp/voiceSend.ts") && args.path === "./client") return { path: "../whatsapp/client", namespace: "fixture" };
+        if (args.path === "./voicePreference" && args.importer.endsWith("/whatsapp/voiceSend.ts")) return { path: "../whatsapp/voicePreference", namespace: "fixture" };
         if (args.path === "drizzle-orm") return { path: "orm", namespace: "fixture" };
         if (args.importer.endsWith("/routes/whatsappWebhook.ts") && fixtures[args.path]) return { path: args.path, namespace: "fixture" };
       });
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents:
         'const s=globalThis.__whatsappRoutes;' + (args.path === "db"
           ? 'export const db=s.db;' + names.map(n => `export const ${n}=s.tables.${n};`).join("")
-          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const desc=x=>x;'
+          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});export const desc=x=>x;'
           : fixtures[args.path]) }));
     } }],
   });
@@ -110,8 +121,9 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const reset = () => {
     for (const n of names) rows[n] = [];
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
+    state.images = []; state.voice = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
-    state.receipts=[];state.failReceipt=false;
+    state.receipts=[];state.failReceipt=false;state.dedupFailure=false;state.redelivery=false;
     state.windowEvidence=[];
     state.fromWabaPhoneId="qa-sender-number";
     state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
@@ -120,7 +132,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
     rows.dealsTable = [{ id: "deal-a", dealNumber: "UDC-A", buyerUserId: "buyer", sellerUserId: "seller", status: "negotiation", productId: "copper", quantity: "100", unit: "MT", agreedPrice: "5900", currency: "USD", incoterm: "CIF", destination: "Jebel Ali" }, { id: "deal-b", dealNumber: "UDC-B", buyerUserId: "buyer", sellerUserId: "seller", status: "negotiation" }];
     rows.productsTable = [{ id: "copper", name: "Copper cathode" }];
-    rows.dealParticipantsTable = ["deal-a", "deal-b"].flatMap(dealId => ["buyer", "seller"].map(userId => ({ id: randomUUID(), dealId, userId, status: "active" })));
+    rows.dealParticipantsTable = ["deal-a", "deal-b"].flatMap(dealId => ["buyer", "seller"].map(userId => ({ id: randomUUID(), dealId, userId, participantRole: userId, status: "active" })));
     rows.whatsappUserContextsTable = [{ userId: "buyer", activeDealId: "deal-a" }];
   }
   try {
@@ -133,6 +145,43 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
+    await t.test('private exit callback is handled before generic interactive UI',async()=>{
+      reset();seedDeal();const oldEnv=process.env.UDC_APP_ENV;process.env.UDC_APP_ENV='staging';
+      try{const dealId=randomUUID();rows.dealsTable[0].id=dealId;rows.dealsTable[0].status='cancelled';rows.auditLogsTable.push({id:randomUUID(),actorUserId:'buyer',action:'deal_closed_by_party',entityId:dealId});
+      const uiBefore=state.uiCalls||0;const r=await message({interactive:{type:'list_reply',list_reply:{id:'udc:exit:'+dealId+':skip'}}});assert.equal(r.status,200);assert.equal(rows.auditLogsTable.filter(x=>x.action==='trade_exit_reason_skipped').length,1);assert.equal(state.uiCalls||0,uiBefore);
+      }finally{if(oldEnv===undefined)delete process.env.UDC_APP_ENV;else process.env.UDC_APP_ENV=oldEnv;}
+    });
+    await t.test('staging crisis text, captions and voice stop before trade and model calls', async () => {
+      const oldEnv=process.env.UDC_APP_ENV; process.env.UDC_APP_ENV='staging';
+      try {
+        for (const fields of [{text:{body:'I want to kill myself'}},{image:{id:'fake-image',caption:'എനിക്ക് മരിക്കണം'}}]) {
+          reset();state.privacyReply='Reply AGREE';
+          assert.equal((await message(fields)).status,200);
+          assert.equal(state.sent.length,1);assert.match(state.sent[0].body,/emergency|അടിയന്തര/);
+          assert.deepEqual(state.guidanceCalls,[]);assert.deepEqual(state.recorded,[]);assert.deepEqual(state.intake,[]);assert.deepEqual(state.uploaded,[]);assert.equal(state.voice.length,0);
+        }
+        reset();state.transcript='എനിക്ക് ജീവിക്കാൻ തോന്നുന്നില്ല';
+        assert.equal((await message({audio:{id:'fake-crisis-audio'}})).status,200);
+        assert.match(state.sent[0].body,/അടിയന്തര/);assert.deepEqual(state.guidanceCalls,[]);assert.deepEqual(state.recorded,[]);assert.equal(state.voice.length,0);
+        reset();state.transcript=undefined;
+        assert.equal((await message({text:{body:'I want to die'}},false)).status,401);assert.equal(state.sent.length,0);
+      } finally { if(oldEnv===undefined)delete process.env.UDC_APP_ENV;else process.env.UDC_APP_ENV=oldEnv;state.transcript=undefined; }
+    });
+    await t.test('dedup outage returns retryable failure before any outbound or trade work', async () => {
+      reset();state.dedupFailure=true;
+      const response=await message({text:{body:'100 MT copper'}});
+      assert.equal(response.status,503);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);assert.deepEqual(state.intake,[]);
+      assert.equal(state.dealCalls,0);assert.equal(state.homeCalls,0);
+    });
+    await t.test('redelivery of an unfinished claim is retried (503), a completed duplicate is acknowledged (200), neither sends anything', async () => {
+      reset();state.redelivery='unfinished';
+      assert.equal((await message({text:{body:'100 MT copper'}})).status,503);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);
+      reset();state.redelivery='completed';
+      assert.equal((await message({text:{body:'100 MT copper'}})).status,200);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);
+    });
     await t.test('unverified quoted learning questions bypass deal and intake; voice questions answer without execution',async()=>{
       reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
       state.guidanceReply='DLC means Documentary Letter of Credit.';
@@ -145,6 +194,65 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.doesNotMatch(state.sent.at(-1).body,/couldn.t read|PRIVATE/);state.guidanceFailure=false;
       state.privacyReply='Reply AGREE';state.guidanceCalls=[];
       await message({text:{body:'What is dlc?'}});assert.deepEqual(state.guidanceCalls,[]);
+    });
+    await t.test('one-voice rule: with the relay active and the brain off, no automatic reply of any kind goes out',async()=>{
+      const oldEnabled=process.env.AKIF_HUMAN_RELAY_ENABLED,oldNumbers=process.env.AKIF_HUMAN_RELAY_NUMBERS;
+      process.env.AKIF_HUMAN_RELAY_ENABLED='true';process.env.AKIF_HUMAN_RELAY_NUMBERS='all';
+      try{
+        // A learning question that WOULD auto-answer: held silently, guidance never called.
+        reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
+        state.guidanceReply='DLC means Documentary Letter of Credit.';
+        await message({text:{body:'What is dlc?'}});
+        assert.equal(state.sent.length,0,'no scripted or model reply reaches the customer');
+        assert.deepEqual(state.guidanceCalls,[],'the guidance chain is never invoked for a relay customer');
+        // The robotic intro / busy fallback / refusal class: provider failure still sends nothing.
+        state.guidanceFailure=true;
+        await message({text:{body:'Can you prepare an LOI for me?'}});
+        assert.equal(state.sent.length,0,'no fallback, intro or refusal line on failure');
+        state.guidanceFailure=false;state.guidanceReply=undefined;
+        // Greeting: no canned hello.
+        await message({text:{body:'Hy'}});
+        assert.equal(state.sent.length,0,'no automatic greeting');
+        // Commission ask: no direct fixed answer, held for a worker.
+        await message({text:{body:'What is my commission?'}});
+        assert.equal(state.sent.length,0,'no automatic commission reply');
+        // A relay-free customer keeps the old scripted safety net.
+        process.env.AKIF_HUMAN_RELAY_NUMBERS='99999999999';
+        reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
+        state.guidanceReply='DLC means Documentary Letter of Credit.';
+        await message({text:{body:'What is dlc?'}});
+        assert.equal(state.sent.at(-1)?.body,state.guidanceReply,'non-relay customers keep the scripted answers');
+      } finally {
+        if(oldEnabled===undefined)delete process.env.AKIF_HUMAN_RELAY_ENABLED;else process.env.AKIF_HUMAN_RELAY_ENABLED=oldEnabled;
+        if(oldNumbers===undefined)delete process.env.AKIF_HUMAN_RELAY_NUMBERS;else process.env.AKIF_HUMAN_RELAY_NUMBERS=oldNumbers;
+      }
+    });
+    await t.test("voice behaviour: voice in gives voice out, no text copy, long voice gets a text offer, critical stays text",async()=>{
+      reset();state.voice=[];state.voiceState='voice';state.voiceFail=false;state.voiceSeconds=5;state.noticeRecorded=0;
+      const previous=process.env.AKIF_VOICE_REPLIES;process.env.AKIF_VOICE_REPLIES="on";
+      try{
+        const sentBefore=()=>state.sent.length;
+        state.guidanceReply='Happy to help. FOB means the seller loads the goods on the ship.';
+        let n=sentBefore();await message({audio:{id:'voice-warm'}});
+        assert.equal(state.voice.length,1);assert.equal(state.sent.length,n,"a spoken reply is never also sent as text");
+        state.voiceSeconds=45;n=sentBefore();await message({audio:{id:'voice-long'}});
+        assert.equal(state.voice.length,2);assert.equal(state.sent.length,n+1);assert.equal(state.sent.at(-1).body,"Want this in text? Reply yes.");
+        await message({text:{body:"Yes"}});assert.equal(state.sent.at(-1).body,state.guidanceReply,"text only after a yes");
+        n=sentBefore();await message({text:{body:"Yes"}});assert.notEqual(state.sent.at(-1)?.body,"Want this in text? Reply yes.");
+        state.voiceSeconds=5;state.guidanceReply='The price is 450 USD per metric ton.';
+        n=sentBefore();const spokenBefore=state.voice.length;await message({audio:{id:'voice-critical'}});
+        assert.equal(state.voice.length,spokenBefore);assert.equal(state.sent.at(-1).body,state.guidanceReply);assert.equal(state.sent.at(-2).body,"This one has details that must stay in writing, so here it is in text.","mirrored voice note gets the honest line");assert.equal(state.sent.length,n+2);
+        state.guidanceReply='Happy to help with that.';state.voiceFail=true;
+        n=sentBefore();await message({audio:{id:'voice-failure'}});assert.equal(state.sent.at(-1).body,state.guidanceReply,"text fallback when voice cannot be sent");assert.equal(state.sent.at(-2).body,"Voice is not working just now, so here is your answer in text.","mirrored voice note gets the honest line");assert.equal(state.sent.length,n+2);
+        state.voiceFail=false;state.voiceState='text_only';n=sentBefore();const v=state.voice.length;await message({audio:{id:'voice-textonly'}});
+        assert.equal(state.voice.length,v);assert.equal(state.sent.at(-1).body,state.guidanceReply);
+        state.voiceState='voice';state.guidanceReply='Sure, here is the short answer.';
+        await message({text:{body:"What is dlc?"}});assert.equal(state.voice.length,v,"text in gives text out");
+        await message({text:{body:"voice please"}});assert.match(state.sent.at(-1).body,/answer your next question in voice/);
+        await message({text:{body:"What is dlc?"}});assert.equal(state.voice.length,v+1,"explicit request gives one voice reply");
+        state.voiceState='needs_notice';await message({audio:{id:'voice-first'}});
+        assert.equal(state.noticeRecorded,1);assert.equal(state.sent.at(-1).body,"I can reply by voice. Send 'text only' to switch voice off.");
+      }finally{if(previous===undefined)delete process.env.AKIF_VOICE_REPLIES;else process.env.AKIF_VOICE_REPLIES=previous;state.voiceState=undefined;}
     });
     await t.test("24h window evidence accepts only signed, consented, verified inbound messages",async()=>{
       reset();seedDeal();
@@ -284,6 +392,14 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(state.recorded[0]?.destination, "Jebel Ali");
       assert.equal(state.sent[0].body, state.decision.reply);
     });
+    await t.test("AI down: a buyer inquiry continues in the guided form instead of a dead end", async () => {
+      reset(); state.decision = null; const before = state.uiCalls || 0;
+      assert.equal((await message({ text: { body: "I need 100 MT copper cathode CIF Jebel Ali" } })).status, 200);
+      assert.equal(state.sent[0].body, "My assistant is busy right now, so I will take your details step by step instead.");
+      assert.equal((state.uiCalls || 0), before + 1, "guided form opened exactly once");
+      assert.ok(!state.sent.some((x: any) => /may be busy/.test(x.body)));
+      assert.deepEqual(state.recorded, [], "nothing is recorded without the guided review");
+    });
     await t.test("seller can add another product after an offer is saved without reusing the old offer details", async () => {
       reset();
       state.decision = { role: "seller", newIntake: true, fields: { product: "Copper cathode", quantity: 100, price: 5900, currency: "USD" }, reply: "model reply" };
@@ -397,6 +513,140 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.deepEqual(state.signed,[],"legacy HTTPS URL cannot be forwarded");
 
     });
+    await t.test("approved deal photos deliver as viewable images", async () => {
+      reset(); seedDeal();
+      rows.documentsTable = [{ id: "img", dealId: "deal-a", documentType: "image", uploadedBy: "seller", status: "approved", fileUrl: "storage://udc-documents/deals/deal-a/photo.jpg" }];
+      rows.documentAccessTable = [{ documentId: "img", userId: "buyer" }];
+      await message({ text: { body: "send photo to me" } });
+      assert.equal(state.images.length, 1, "photo must go through the image send, not file document");
+      assert.match(String(state.images[0].link), /photo\.jpg/);
+      // Without a grant the photo stays private.
+      reset(); seedDeal(); state.images = [];
+      rows.documentsTable = [{ id: "img", dealId: "deal-a", documentType: "image", uploadedBy: "seller", status: "approved", fileUrl: "storage://udc-documents/deals/deal-a/photo.jpg" }];
+      await message({ text: { body: "send photo to me" } });
+      assert.equal(state.images?.length ?? 0, 0);
+    });
+    await t.test("a plain photo in a deal room relays to the other side as a viewable image", async () => {
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-b", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-b" }, image: { id: "img-in", mime_type: "image/jpeg", caption: "goods ready at warehouse" } });
+      // The counterparty receives the photo as an image, attributed by role only.
+      assert.equal(state.images?.length, 1);
+      assert.equal(state.images[0].to, "10000000002");
+      assert.match(state.images[0].caption, /^Photo from the buyer in deal UDC-B\./);
+      assert.match(state.images[0].caption, /goods ready at warehouse/);
+      assert.ok(!/10000000001/.test(state.images[0].caption), "sender phone never appears in the caption");
+      assert.match(String(state.images[0].link), /signed\.example/);
+      // The sender hears it was passed on, and the other side holds a viewer grant.
+      assert.match(state.sent.at(-1).body, /passed it to the other side/);
+      assert.ok(state.sent.at(-1).body.includes("SENSITIVE") === false);
+      const newDoc = rows.documentsTable.at(-1);
+      assert.equal(newDoc.dealId, "deal-b");
+      assert.equal(newDoc.documentType, "image");
+      assert.ok(rows.documentAccessTable.some(r => r.documentId === newDoc.id && r.userId === "seller" && r.accessRole === "viewer"));
+      assert.ok(rows.whatsappMessageContextsTable.some(r => r.kind === "deal_image_relay" && r.dealId === "deal-b" && r.recipientUserId === "seller"));
+      // The sender is never relayed their own photo.
+      assert.ok(!state.images.some((i: any) => i.to === "10000000001"));
+      // A photo whose caption names a trade document stays on the document path.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-c", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-c" }, image: { id: "img-loi", mime_type: "image/jpeg", caption: "signed LOI" } });
+      assert.equal(state.images?.length ?? 0, 0, "a trade-document photo is never auto-relayed");
+      assert.match(state.sent.at(-1).body, /keep it here for review/);
+      // When the relay fails, the sender hears the photo was kept, not passed.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-d", dealId: "deal-b", recipientUserId: "buyer" }];
+      rows.dealParticipantsTable = rows.dealParticipantsTable.filter(r => !(r.dealId === "deal-b" && r.userId === "seller"));
+      await message({ context: { id: "quoted-d" }, image: { id: "img-solo", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0);
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
+      // A participant removed from the deal, or a suspended counterparty, must
+      // never receive a relayed photo.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-e", dealId: "deal-b", recipientUserId: "buyer" }];
+      rows.dealParticipantsTable.find(r => r.dealId === "deal-b" && r.userId === "seller").status = "removed";
+      await message({ context: { id: "quoted-e" }, image: { id: "img-removed", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0, "a removed participant receives no relay");
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-f", dealId: "deal-b", recipientUserId: "buyer" }];
+      rows.usersTable.find(r => r.id === "seller").status = "suspended";
+      await message({ context: { id: "quoted-f" }, image: { id: "img-susp", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0, "a suspended counterparty receives no relay");
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
+    });
+    await t.test("trade documents relay straight to the other side; KYC-looking and legal drafts never do", async () => {
+      // An invoice PDF in a deal room goes directly to the counterparty as a
+      // document, with a viewer grant, a relay context and an audit row.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-inv", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-inv" }, document: { id: "doc-inv", filename: "invoice.pdf", caption: "commercial invoice" } });
+      const relayed = state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link);
+      assert.equal(relayed.length, 1, "counterparty receives the document");
+      assert.match(String(relayed[0].body.link), /signed\.example/);
+      assert.match(state.sent.at(-1).body, /passed it straight to the other side/);
+      const invDoc = rows.documentsTable.at(-1);
+      assert.equal(invDoc.documentType, "invoice");
+      assert.equal(invDoc.status, "pending", "file record unchanged, UDC can still review later");
+      assert.ok(rows.documentAccessTable.some(r => r.documentId === invDoc.id && r.userId === "seller" && r.accessRole === "viewer"));
+      assert.ok(rows.auditLogsTable.some(r => r.action === "trade_document_auto_relayed" && r.entityId === invDoc.id));
+      assert.ok(rows.whatsappMessageContextsTable.some(r => r.kind === "deal_document_relay" && r.recipientUserId === "seller"));
+      const badSends = state.sent.filter((x: any) => x.to === "10000000001" && typeof x.body === "object" && x.body?.link);
+      assert.equal(badSends.length, 0, "sender is never relayed their own document");
+      // Bill of lading and SGS reports behave the same.
+      for (const [name, type] of [["bl.pdf", "BL"], ["sgs-report.pdf", "SGS"], ["packing-list.pdf", "packing_list"]] as const) {
+        reset(); seedDeal();
+        rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-t", dealId: "deal-b", recipientUserId: "buyer" }];
+        await message({ context: { id: "quoted-t" }, document: { id: "doc-t", filename: name } });
+        assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 1, name + " relays");
+        assert.equal(rows.documentsTable.at(-1).documentType, type);
+      }
+      // A PDF that reads as KYC/bank stays on the review path, never relayed.
+      reset(); seedDeal();
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-kyc", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-kyc" }, document: { id: "doc-kyc", filename: "bank-statement.pdf", caption: "my bank statement" } });
+      assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 0, "bank documents never auto-relay");
+      assert.match(state.sent.at(-1).body, /secure private upload link/, "KYC is redirected to the vault link, never stored from chat");
+      assert.ok(!rows.documentsTable.some(r => r.dealId === "deal-b"), "no chat-side record for a KYC file");
+      assert.ok(!rows.auditLogsTable.some(r => r.action === "trade_document_auto_relayed"));
+      // Legal/negotiation drafts keep their staged flow, never auto-relayed.
+      for (const name of ["LOI.pdf", "SPA.pdf", "NCNDA.pdf"]) {
+        reset(); seedDeal();
+        rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-l", dealId: "deal-b", recipientUserId: "buyer" }];
+        await message({ context: { id: "quoted-l" }, document: { id: "doc-l", filename: name } });
+        assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 0, name + " never auto-relays");
+      }
+      // Relay failure leaves the document stored and the sender hears the honest line.
+      reset(); seedDeal();
+      rows.dealParticipantsTable = rows.dealParticipantsTable.filter(r => !(r.dealId === "deal-b" && r.userId === "seller"));
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-solo", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-solo" }, document: { id: "doc-solo", filename: "invoice.pdf" } });
+      assert.equal(state.sent.filter((x: any) => x.to === "10000000002" && typeof x.body === "object" && x.body?.link).length, 0);
+      assert.match(state.sent.at(-1).body, /keep it here for review/);
+    });
+    await t.test("an agent participant never receives the automatic photo relay or a document grant", async () => {
+      reset(); seedDeal();
+      rows.usersTable.push({ id: "agent", phone: "10000000003", role: "agent", status: "verified" });
+      rows.dealParticipantsTable.push({ id: randomUUID(), dealId: "deal-b", userId: "agent", participantRole: "agent", status: "active" });
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-g", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-g" }, image: { id: "img-agent", mime_type: "image/jpeg", caption: "goods ready" } });
+      // The buyer/seller principal still receives the photo; the agent never does.
+      assert.equal(state.images?.length, 1);
+      assert.equal(state.images[0].to, "10000000002");
+      assert.ok(!state.images.some((i: any) => i.to === "10000000003"), "agent phone receives no relay");
+      const newDoc = rows.documentsTable.at(-1);
+      assert.ok(!rows.documentAccessTable.some(r => r.documentId === newDoc.id && r.userId === "agent"), "relay creates no agent document-access grant");
+      assert.ok(rows.documentAccessTable.some(r => r.documentId === newDoc.id && r.userId === "seller" && r.accessRole === "viewer"));
+      assert.ok(!rows.whatsappMessageContextsTable.some(r => r.kind === "deal_image_relay" && r.recipientUserId === "agent"));
+      // A principal whose account role changed to agent after the participant row
+      // was created is also excluded - authorization follows the current role.
+      reset(); seedDeal();
+      rows.usersTable.find(r => r.id === "seller").role = "agent";
+      rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-h", dealId: "deal-b", recipientUserId: "buyer" }];
+      await message({ context: { id: "quoted-h" }, image: { id: "img-rolechange", mime_type: "image/jpeg" } });
+      assert.equal(state.images?.length ?? 0, 0, "a participant whose account is no longer buyer/seller receives no relay");
+      assert.match(state.sent.at(-1).body, /kept it in this deal/);
+    });
     await t.test("media replies attach to the quoted deal, with an owner grant", async () => {
       reset(); seedDeal();
       rows.whatsappMessageContextsTable = [{ providerMessageId: "quoted-b", dealId: "deal-b", recipientUserId: "buyer" }];
@@ -433,12 +683,50 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       const refreshed = rows.whatsappMessageContextsTable.filter(r => r.kind.startsWith("draft_confirmation:")).at(-1);
       await message({ context: { id: refreshed.providerMessageId }, text: { body: "CONFIRM DRAFT LOI" } });
       assert.equal(state.uploaded.length, 1);
-      assert.match(state.uploaded[0], /LOI\.txt$/);
+      assert.match(state.uploaded[0], /LOI\.pdf$/);
       assert.equal(rows.documentsTable[0].status, "pending");
       assert.equal(rows.documentAccessTable[0].userId, "buyer");
       assert.equal(rows.auditLogsTable[0].action, "loi_draft_generated");
       assert.ok(state.sent.every((s: any) => s.to === "10000000001"));
-      assert.match(state.sent.at(-1).body, /private draft for review/);
+      assert.match(state.sent.at(-1).body, /private UDC template, not legal advice/);
+    });
+    await t.test("draft commands and replies to saved messages skip the AI even when chat history exists", async () => {
+      reset(); seedDeal();
+      state.guidanceReply = "A Letter of Intent is a non-binding document.";
+      await message({ text: { body: "create LOI" } });
+      assert.deepEqual(state.guidanceCalls, []);
+      assert.match(state.sent.at(-1).body, /CONFIRM DRAFT LOI/);
+      const preview = rows.whatsappMessageContextsTable.find(r => r.kind.startsWith("draft_confirmation:"));
+      assert.ok(preview);
+      await message({ context: { id: preview.providerMessageId }, text: { body: "CONFIRM DRAFT LOI" } });
+      assert.deepEqual(state.guidanceCalls, []);
+      assert.equal(state.uploaded.length, 1);
+      assert.match(state.sent.at(-1).body, /private UDC template, not legal advice/);
+      // A plain question without a draft command or saved context still goes to the AI.
+      await message({ text: { body: "tell me about LOI" } });
+      assert.equal(state.guidanceCalls.length, 1);
+    });
+    await t.test('typed voice relay confirmation sends exact preview once and rejects cross-user or expired previews',async()=>{
+      reset();seedDeal();state.transcript='When can loading start?';state.dealDecision={intent:'question',replyToSender:'Noted',relay:true,relayToCounterparty:'When can loading start?'};
+      await message({audio:{id:'synthetic-safe-question'}});const preview=rows.dealConversationEventsTable.find(r=>r.intent==='voice_relay_preview');assert.ok(preview);assert.equal(state.sent.filter(r=>r.to==='10000000002').length,0);
+      const context=rows.whatsappMessageContextsTable.find(r=>r.kind===`voice_relay_preview:${preview.id}`);assert.ok(context);
+      await message({from:'10000000002',text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.equal(state.sent.filter(r=>r.to==='10000000001'&&r.body==='When can loading start?').length,0);
+      await message({text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.equal(state.sent.filter(r=>r.to==='10000000002'&&r.body==='When can loading start?').length,1);assert.equal(preview.relayed,true);
+      await message({text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.equal(state.sent.filter(r=>r.to==='10000000002'&&r.body==='When can loading start?').length,1);
+      preview.createdAt=new Date(Date.now()-16*60*1000);await message({text:{body:'CONFIRM VOICE RELAY'},context:{id:context.providerMessageId}});assert.match(state.sent.at(-1).body,/unavailable/);delete state.transcript;
+    });
+    await t.test("own company details are shown in the prompt; only LOI and ICPO hide the other side", async () => {
+      reset(); seedDeal();
+      rows.companiesTable = [{ ownerUserId: "buyer", companyName: "Acme Metals Ltd", address: "1 Test Road", registrationNumber: "REG-1" }];
+      await message({ text: { body: "create LOI" } });
+      assert.match(state.sent.at(-1).body, /Acme Metals Ltd[.;] 1 Test Road[.;] REG-1/);
+      assert.match(state.sent.at(-1).body, /hidden until the NCNDA stage/);
+      await message({ text: { body: "create SPA" } });
+      assert.match(state.sent.at(-1).body, /Acme Metals Ltd/);
+      assert.match(state.sent.at(-1).body, /other side stays a placeholder/);
+      assert.doesNotMatch(state.sent.at(-1).body, /hidden until the NCNDA/);
+      await message({ text: { body: "create NCNDA" } });
+      assert.doesNotMatch(state.sent.at(-1).body, /Acme Metals/);
     });
     await t.test("seller cannot generate buyer documents and meetings reach admin review history", async () => {
       reset(); seedDeal();
@@ -447,6 +735,78 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.dealDecision = { intent: "meeting_request", replyToSender: "I’ll ask UDC to arrange a call.", relay: false, relayToCounterparty: null };
       await message({ text: { body: "Can we arrange a video call?" } });
       assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_request").length, 1);
+    });
+    await t.test("voice notes inside a deal room join the deal conversation; spoken commitments still need text", async () => {
+      reset(); seedDeal(); state.transcript = "When does the seller ship?";
+      state.dealDecision = { intent: "question", replyToSender: "The seller plans to ship within 7 days.", relay: false, relayToCounterparty: null };
+      await message({ audio: { id: "voice-deal-question" } });
+      assert.equal(state.dealCalls, 1);
+      assert.equal(state.sent.at(-1).body, "The seller plans to ship within 7 days.");
+      assert.equal(rows.dealConversationEventsTable.at(-1).intent, "coordinator_reply");
+      state.transcript = "Yes I accept that price";
+      state.dealDecision = { intent: "acceptance", replyToSender: "Accepted.", relay: true, relayToCounterparty: "Buyer accepted." };
+      await message({ audio: { id: "voice-deal-accept" } });
+      assert.match(state.sent.at(-1).body, /confirm this acceptance in text/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 1);
+      assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
+      // A voice note that only RELAYS commercial content (no commitment intent)
+      // is held the same way - a mis-heard number must never reach the other side.
+      state.transcript = "I can offer 500 dollars per ton";
+      state.dealDecision = { intent: "clarification", replyToSender: "Noted.", relay: true, relayToCounterparty: "Seller offers $500/MT." };
+      await message({ audio: { id: "voice-deal-offer" } });
+      assert.match(state.sent.at(-1).body, /confirm this clarification in text/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "voice_transcript_unconfirmed").length, 2);
+      assert.ok(!rows.dealConversationEventsTable.some(r => r.relayed));
+      // A pure question on a voice note still answers directly, no hold needed.
+      state.transcript = "What is the agreed quantity?";
+      state.dealDecision = { intent: "deal_question", replyToSender: "The agreed quantity is 100 MT.", relay: false, relayToCounterparty: null };
+      await message({ audio: { id: "voice-deal-question" } });
+      assert.equal(state.sent.at(-1).body, "The agreed quantity is 100 MT.");
+      delete state.transcript;
+    });
+    await t.test("meeting details questions read the scheduled record; arrange requests still reach the model", async () => {
+      reset(); seedDeal();
+      rows.dealMeetingsTable = [{ id: "m1", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() + 2 * 86400000), provider: "zoom", meetingUrl: "https://zoom.us/j/123", agenda: null }];
+      await message({ text: { body: "When is our meeting?" } });
+      assert.equal(state.dealCalls, 0);
+      assert.match(state.sent.at(-1).body, /UTC/);
+      assert.match(state.sent.at(-1).body, /zoom\.us\/j\/123/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_details_request").length, 1);
+      state.dealDecision = { intent: "meeting_request", replyToSender: "I’ll ask UDC to arrange a call.", relay: false, relayToCounterparty: null };
+      await message({ text: { body: "Can we arrange a video call?" } });
+      assert.equal(state.dealCalls, 1);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "meeting_request").length, 1);
+      // "need" plus a booking detail is a question about the existing booking,
+      // not an arrange request.
+      await message({ text: { body: "I need the meeting link" } });
+      assert.equal(state.dealCalls, 1);
+      assert.match(state.sent.at(-1).body, /zoom\.us\/j\/123/);
+      // A meeting whose time already passed is never offered as the next one.
+      rows.dealMeetingsTable = [{ id: "m2", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() - 86400000), provider: "zoom", meetingUrl: "https://zoom.us/j/999", agenda: null }];
+      await message({ text: { body: "When is our meeting?" } });
+      assert.match(state.sent.at(-1).body, /No meeting is scheduled on this deal yet/);
+      // An in-person meeting keeps its agenda labelled as agenda, never as a place.
+      rows.dealMeetingsTable = [{ id: "m3", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() + 86400000), provider: "in_person", meetingUrl: null, agenda: "final terms" }];
+      await message({ text: { body: "Where is the meeting?" } });
+      assert.match(state.sent.at(-1).body, /in person \(agenda: final terms\)/);
+    });
+    await t.test("payment status questions read the DLC record; other payment chat still reaches the model", async () => {
+      reset(); seedDeal();
+      rows.dealFinancialsTable = [{ id: "fin-1", dealId: "deal-a", instrumentType: "DLC", status: "received", amount: "590000.00", currency: "USD", terms: "Release after SGS inspection at destination" }];
+      await message({ text: { body: "What is the payment status?" } });
+      assert.equal(state.dealCalls, 0);
+      assert.match(state.sent.at(-1).body, /received by the bank/);
+      assert.match(state.sent.at(-1).body, /Step 3 of 4/);
+      assert.match(state.sent.at(-1).body, /USD 590000\.00/);
+      assert.match(state.sent.at(-1).body, /bank's own confirmation is what counts/);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "payment_status_request").length, 1);
+      // "paid" questions reach the same recorded-status reply.
+      await message({ text: { body: "When will I get paid?" } });
+      assert.equal(state.dealCalls, 0);
+      assert.equal(rows.dealConversationEventsTable.filter(r => r.intent === "payment_status_request").length, 2);
+      state.dealDecision = { intent: "casual", replyToSender: "Got it.", relay: false, relayToCounterparty: null };
+      await message({ text: { body: "I will pay on Monday" } });
+      assert.equal(state.dealCalls, 1);
     });
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));

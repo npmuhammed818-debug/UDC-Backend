@@ -22,8 +22,29 @@ test("document mentions and scrubbing", () => {
 test("webhook refuses Aadhaar before any other processing; vault has no Aadhaar type", async () => {
   const wh = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
   const loop = wh.indexOf("for (const message of value?.messages");
-  assert.ok(wh.slice(loop, loop + 400).includes("containsAadhaarNumber"));
+  const aadhaar = wh.indexOf("containsAadhaarNumber", loop);
+  assert.ok(aadhaar > loop && aadhaar < wh.indexOf("whatsappPrivacyGate(message.from", loop), "Aadhaar refusal must precede consent and trade processing");
   assert.ok(wh.indexOf("whatsappPrivacyGate(message.from") > loop + 400);
   const link = await readFile(new URL("../src/vault/uploadLink.ts", import.meta.url), "utf8");
   assert.ok(!/aadhaar|aadhar/i.test(link.slice(0, link.indexOf("CONFIDENTIAL_WORDS"))));
+});
+
+test("checksum coincidences in exact UUID record identifiers are not Aadhaar",()=>{
+ const id='aaaaaaaa-bbbb-4ccc-8ddd-234123412346';
+ assert.equal(containsAadhaarNumber('review photo quote '+id),false);
+ assert.equal(containsAadhaarNumber('record '+id+' and ID 2341 2341 2346'),true);
+ assert.equal(containsAadhaarNumber('not-a-uuid-234123412346'),true);
+});
+
+// The signed registration failure used a seller- prefixed UUID email. Keep
+// the complete identifier intact while still refusing standalone ID numbers.
+test("UUIDs in prefixed email identifiers do not block registration or corrupt scrubbing",()=>{
+ const id='00000000-0000-4000-8000-234567890124';
+ for(const text of ['seller-'+id+'@example.invalid','qa-'+id+'@gmail.com',id+'-attachment']){
+  assert.equal(containsAadhaarNumber(text),false,text);
+  assert.equal(scrubAadhaar(text),text);
+  assert.equal(containsAadhaarNumber(text+' ID 2341 2341 2346'),true);
+  assert.equal(scrubAadhaar(text+' ID 2341 2341 2346'),text+' ID [aadhaar removed]');
+ }
+ for(const text of ['seller-not-a-uuid-2341-2341-2346@example.invalid','prefixx'+id,'234123412346'])assert.equal(containsAadhaarNumber(text),true,text);
 });

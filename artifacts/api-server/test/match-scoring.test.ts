@@ -64,3 +64,28 @@ test('automatic presentation stays within quantity, budget, delivery and stated 
  assert.equal(canAutomaticallyPresentOffer(buyer,{...compatible,incoterm:'EXW',destination:'Named seller warehouse'}),true);
  assert.equal(canAutomaticallyPresentOffer({...buyer,additionalConditions:'Delivery within seven days'},compatible),false);assert.equal(canAutomaticallyPresentOffer({...buyer,inspectionRequirements:'SGS at destination'},compatible),false);
 });
+
+
+test('automatic proposal gate compares exact large and fractional terms without Number rounding',()=>{
+ const b={...buyer,quantity:'9007199254740993.000001',targetPrice:'100.000001',specification:null};
+ const s={...seller,quantity:'9007199254740993.000000',monthlyCapacity:null,minimumOrderQuantity:null,price:'100.000001',specification:null};
+ assert.equal(canAutomaticallyPresentOffer(b,s),false,'one millionth below required capacity must refuse');
+ assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',price:'100.000002'}),false,'one millionth above target must refuse');
+ assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',minimumOrderQuantity:'100.000001'}),false);
+ assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100'}),true);
+ for(const patch of [{monthlyCapacity:'NaN'},{minimumOrderQuantity:'NaN'},{price:'1e2'},{quantity:'100.0000001'}])assert.equal(canAutomaticallyPresentOffer({...b,quantity:'100'},{...s,quantity:'100',...patch}),false);
+});
+
+
+test('ranking never calls rounded short capacity or excess price compatible',()=>{
+ const q='9007199254740993.000001';
+ const ranked=scoreTradeMatch({...buyer,quantity:q,targetPrice:q},{...seller,quantity:'9007199254740993.000000',monthlyCapacity:null,minimumOrderQuantity:'9007199254740993.000002',price:'9007199254740993.000002'});
+ assert.ok(ranked.reasons.includes('listed quantity and monthly capacity are below the request'));
+ assert.ok(ranked.reasons.includes('minimum order exceeds the requested quantity'));
+ assert.ok(ranked.reasons.includes("offer is above the buyer's target price"));
+ assert.ok(!ranked.reasons.some(r=>r.includes('covers the request')||r.includes('within the buyer')));
+ const invalid=scoreTradeMatch(buyer,{...seller,quantity:'NaN',minimumOrderQuantity:'NaN',price:'1e3'});
+ assert.ok(invalid.reasons.includes('quantity data is invalid; manual review needed'));
+ assert.ok(invalid.reasons.includes('minimum order data is invalid; manual review needed'));
+ assert.ok(invalid.reasons.includes('price data is invalid; manual review needed'));
+});

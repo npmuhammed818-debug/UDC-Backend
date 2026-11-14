@@ -50,12 +50,14 @@ test("review requires an explained outcome and only supported states", () => {
     requestReviewSchema.safeParse({
       status: "resolved",
       outcome: "Review complete: retention explained.",
+      verifiedChecklist:{identity:true,database:true,messagesAndMemory:true,storage:true,providers:true,backups:true,retentionExplained:true},
     }).success,
     true,
   );
   for (const input of [
     { status: "deleted", outcome: "Deleted everything" },
     { status: "resolved", outcome: "" },
+    {status:"resolved",outcome:"Closed without checking the copies"},
     { status: "in_review", outcome: "a".repeat(1001) },
   ]) {
     assert.equal(requestReviewSchema.safeParse(input).success, false);
@@ -67,7 +69,7 @@ test("policy pages have semantic navigation and escaped titles", () => {
     assert.match(html, /<html lang="en">/);
     assert.match(html, /<main>/);
     assert.match(html, /aria-label="Policies"/);
-    assert.match(html, /mailto:udc@updowncircle.site/);
+    assert.match(html, /mailto:service@updowncircle.site/);
     assert.doesNotMatch(html, /<script|fonts.googleapis|guaranteed safe/i);
   }
   assert.match(renderPolicy("<script>", ""), /&lt;script&gt;/);

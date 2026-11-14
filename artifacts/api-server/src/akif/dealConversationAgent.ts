@@ -5,25 +5,7 @@ import { normalizeModelDecision, type DealConversationDecision } from "./dealDec
 import { conversationSafeDealMemory, recentDealConversation } from "./dealConversationMemory";
 import { runConversationChat } from "./intelligence/hermesClient";
 
-function formatTradeNumber(value: string | number, max = 6) {
-  const numeric = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numeric)) return String(value);
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: max,
-    useGrouping: true,
-  }).format(numeric);
-}
-
-function formatTradeQuantity(value: string | number) {
-  return formatTradeNumber(value, 6);
-}
-
-function formatTradeMoney(currency: string, value: string | number) {
-  const amount = formatTradeNumber(value, 2);
-  const code = currency.trim().toUpperCase();
-  return code === "USD" ? `$${amount}` : `${code} ${amount}`;
-}
+import {formatTradeMoney,formatTradeQuantity} from './tradeDisplay.ts';
 
 export async function interpretActiveDealConversation(input: {
   dealId: string;

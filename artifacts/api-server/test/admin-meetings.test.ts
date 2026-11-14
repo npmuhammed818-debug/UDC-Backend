@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 test('admin trade workflows preserve verification, ownership, review and payment controls', async t => {
   const source=await readFile(new URL('../src/routes/admin.ts',import.meta.url),'utf8');
   const dealSource=await readFile(new URL('../src/routes/deals.ts',import.meta.url),'utf8');
-  const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable'])];
+  const names=[...new Set([...(source+dealSource).match(/\b\w+Table\b/g),'shipmentEtaFollowupsTable','shipmentWatchesTable','akifSharedLessonsTable'])];
   const tables:any=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{get:(t,k)=>k==='_table'?name:{column:k,table:name}})]));
   const records:any=Object.fromEntries(names.map(name=>[name,[]]));
   records.whatsappShipmentOutboxTable=[];
@@ -44,7 +44,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
     const run=()=>{if(done)return done; if((globalThis as any).__adminMeetingFixture?.failAudit && table._table==='auditLogsTable'){(globalThis as any).__adminMeetingFixture.failAudit=false;throw new Error('synthetic_audit_failure');} if(table._table==='dealFeedbackTable' && !update && records[table._table].some((r:any)=>r.dealId===input.dealId && r.authorUserId===input.authorUserId)) throw new Error('fixture_unique_author_deal'); if(update){done=records[table._table].filter((r:any)=>predicate(condition,r));done.forEach((r:any)=>Object.assign(r,input));}
       else if(conflict && records[table._table].some((r:any)=>r.dealId===input.dealId)){done=records[table._table].filter((r:any)=>r.dealId===input.dealId);done.forEach((r:any)=>Object.assign(r,conflict.set));}
       else {done=(Array.isArray(input)?input:[input]).map((r:any)=>({id:randomUUID(),...r}));records[table._table].push(...done);}return done;};
-    const q:any={onConflictDoUpdate:(v:any)=>{conflict=v;return q},values:(v:any)=>{input=v;return q},set:(v:any)=>{input=v;return q},where:(c:any)=>{condition=c;return q},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};
+    const q:any={onConflictDoNothing:()=>q,onConflictDoUpdate:(v:any)=>{conflict=v;return q},values:(v:any)=>{input=v;return q},set:(v:any)=>{input=v;return q},where:(c:any)=>{condition=c;return q},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};
     return q;
   }
   const key='__adminMeetingFixture';
@@ -59,18 +59,19 @@ test('admin trade workflows preserve verification, ownership, review and payment
       records.whatsappShipmentOutboxTable.push(row);
       return {rows:[{id:row.id}]};
     }
+    if(statement.includes('count(*)::int'))return {rows:[{n:0}]};
     state.db.locks.push(query.values?.[0]);return {rows:[]};
   };
   state.db.transaction=async(f:any)=>{const before=structuredClone(records);try{return await f(state.db);}catch(error){for(const name of Object.keys(records))records[name]=before[name];throw error;}};
   (globalThis as any)[key]=state;
   const output=fileURLToPath(new URL(`./admin-meeting-${randomUUID()}.mjs`,import.meta.url));
-  const result=await build({stdin:{contents:`import express from 'express';export { respondToTerms,presentInitialVerifiedOffer } from '../src/marketplace/termAgreement';import router from '../src/routes/admin';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(deals);export const routes=router.stack.filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
+  const result=await build({stdin:{contents:`import express from 'express';export { respondToTerms,presentInitialVerifiedOffer } from '../src/marketplace/termAgreement';import router from '../src/routes/admin';import proposals from '../src/routes/commissionProposals';import deals from '../src/routes/deals';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.${key}.user;next()});app.use(router);app.use(proposals);app.use(deals);export const routes=[...router.stack,...proposals.stack].filter(x=>x.route).flatMap(x=>Object.keys(x.route.methods).map(method=>({method,path:x.route.path})));export default app;`,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-admin',setup(b){
     const mocks:any={
       db:`const s=globalThis.${key};export const db=s.db;`+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),
-      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});export const asc=x=>x;export const gt=(a,b)=>({kind:'gt',a,b});`,
+      orm:`export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const inArray=(a,list)=>({kind:'in',a,list});export const desc=x=>x;export const or=(...args)=>({kind:'or',args});export const ilike=()=>true;export const sql=(parts,...values)=>({kind:'sql',parts,values});export const asc=x=>x;export const gt=(a,b)=>({kind:'gt',a,b});export const lt=(a,b)=>({kind:'lt',a,b});export const isNull=(a)=>({kind:'isnull',a});`,
       sessions:'export const getAuthenticatedUser=async()=>null;',
-      whatsapp:'export const sendWhatsAppText=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};export const sendWhatsAppInteractive=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:true}};',
-      storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
+      whatsapp:'export const sendWhatsAppText=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:!globalThis.__adminMeetingFixture.failProposalDelivery}};export const sendWhatsAppInteractive=async(to,body)=>{globalThis.__adminMeetingFixture.sent.push({to,body});return {delivered:!globalThis.__adminMeetingFixture.failProposalDelivery&&!globalThis.__adminMeetingFixture.failProposalButton}};',
+      storage:'export const createSignedDownloadUrl=async()=>null;export const createSignedUploadUrl=async()=>null;export const downloadDocumentBytes=async()=>null;export const uploadDocumentBytes=async()=> "storage://udc-documents/deals/synthetic/upload.pdf";export const removeDocumentObject=async()=>null;export const parseStoragePath=()=>null;export const storagePath=()=>null;',
       screening:'export const companyProfileFingerprint=company=>JSON.stringify([company.companyName,company.registrationNumber||null,company.country||null]);export const screenCompanyEvidence=async()=>{globalThis.__adminMeetingFixture.screeningCalls=(globalThis.__adminMeetingFixture.screeningCalls||0)+1;return {status:"needs_human_review",authenticityVerified:false,observations:[],comparisons:[],confidence:0};};',
       intelligence:'export const processDocumentIntelligence=async()=>null;export const refreshDealIntelligenceSnapshot=async()=>null;',
     };
@@ -85,7 +86,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
     const base=`http://127.0.0.1:${server.address().port}`;
     const input={scheduledAt:'2026-11-01T12:00:00Z',provider:'UDC video',meetingUrl:'https://example.invalid/synthetic-meeting'};
     const request=async(path:string,body:any=input,method='POST')=>{
-      const r=await fetch(base+path,{method,headers:{'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,data:await r.json()};
+      const r=await fetch(base+path,{method,headers:{'content-type':'application/json'},...(method==='GET'?{}:{body:JSON.stringify(body)})});return {status:r.status,data:await r.json()};
     };
     const path=`/admin/deals/${dealId}/meetings`;
     await t.test('anonymous, non-admin and suspended admin cannot schedule',async()=>{
@@ -189,12 +190,24 @@ test('admin trade workflows preserve verification, ownership, review and payment
         records.matchesTable=[{id:matchId,buyerRequestId:requestId,sellerListingId:offerId,status:'approved'}];records.dealsTable=[];records.auditLogsTable=[];
         const terms={matchId,quantity:100,agreedPrice:490};
         assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required');
+        state.failProposalDelivery=true;assert.equal((await request(`/admin/matches/${matchId}/terms-review`,{})).status,409);const failedProposal=records.auditLogsTable.find((r:any)=>r.action==='match_terms_proposed');assert.ok(failedProposal);await respondToTerms('10000000001',failedProposal.id,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0,'failed full proposal delivery cannot authorize buyer decision');assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_presented').length,0);state.failProposalDelivery=false;state.failProposalButton=true;assert.equal((await request(`/admin/matches/${matchId}/terms-review`,{})).status,409);await respondToTerms('10000000001',failedProposal.id,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0,'text accepted but failed button still cannot authorize decision');assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_presented').length,0);state.failProposalButton=false;
         let review=await request(`/admin/matches/${matchId}/terms-review`,{});assert.equal(review.status,200);
         const proposalId=review.data.proposalId;
         await respondToTerms('10000000002',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);
         records.sellerListingsTable[0].price='495';await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);records.sellerListingsTable[0].price='490';
-        const savedExpiry=records.auditLogsTable[0].metadata.expiresAt;records.auditLogsTable[0].metadata.expiresAt=new Date(0).toISOString();await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);records.auditLogsTable[0].metadata.expiresAt=savedExpiry;
+        const savedExpiry=records.auditLogsTable[0].metadata.expiresAt;records.auditLogsTable[0].metadata.expiresAt=new Date(0).toISOString();await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0);for(const expiry of ['invalid',undefined]){records.auditLogsTable[0].metadata.expiresAt=expiry;await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,0,'malformed expiry fails closed');}records.auditLogsTable[0].metadata.expiresAt=savedExpiry;
         await respondToTerms('10000000001',proposalId,true);await respondToTerms('10000000001',proposalId,true);assert.equal(records.auditLogsTable.filter((r:any)=>r.action==='match_terms_accepted').length,1);
+        const decisionAudit=records.auditLogsTable.find((r:any)=>r.action==='match_terms_accepted');
+        const presentedAudit=records.auditLogsTable.find((r:any)=>r.action==='match_terms_presented');
+        const proposalAudit=records.auditLogsTable.find((r:any)=>r.id===proposalId);
+        for (const [audit,key,invalid] of [[decisionAudit,'fingerprint','wrong'],[decisionAudit,'matchId',randomUUID()],[presentedAudit,'fingerprint','wrong'],[presentedAudit,'allTermsShown',false],[presentedAudit,'transportAccepted',false]] as any[]) {
+          const current=records.auditLogsTable.find((r:any)=>r.id===audit.id);const original=current.metadata[key];current.metadata[key]=invalid;
+          assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required','deal creation revalidates exact consent and presentation');
+          records.auditLogsTable.find((r:any)=>r.id===audit.id).metadata[key]=original;
+        }
+        records.auditLogsTable.find((r:any)=>r.id===proposalAudit.id).metadata.terms.price='489';
+        assert.equal((await request('/admin/deals',terms)).data.error,'explicit_buyer_terms_agreement_required','stored terms must match their own fingerprint');
+        records.auditLogsTable.find((r:any)=>r.id===proposalAudit.id).metadata.terms.price='490';
         assert.equal((await request('/admin/deals',{...terms,agreedPrice:489})).data.error,'deal_differs_from_buyer_accepted_terms');
         state.failAudit=true;assert.equal((await request('/admin/deals',terms)).status,500);assert.equal(records.dealsTable.length,0);
         const opened=await request('/admin/deals',terms);assert.equal(opened.status,201);const dealId=opened.data.deal.id;
@@ -313,13 +326,157 @@ test('admin trade workflows preserve verification, ownership, review and payment
       records.dealsTable[0].unit='kg';assert.equal((await request('/admin/commissions',perMt)).status,400);
       records.dealsTable[0].unit='MT';assert.equal((await request('/admin/commissions',perMt)).data.commission.amount,'250.00');
     });
+    await t.test('meeting edits and feedback reviews roll back with failed audit writes',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};
+      const meetingId=randomUUID();records.dealMeetingsTable.push({id:meetingId,dealId,status:'requested',provider:'in_person',agenda:'Synthetic agreed location'});
+      state.failAudit=true;assert.equal((await request(`/admin/meetings/${meetingId}`,{status:'cancelled'},'PATCH')).status,500);assert.equal(records.dealMeetingsTable.find((r:any)=>r.id===meetingId).status,'requested');
+      assert.equal((await request(`/admin/meetings/${meetingId}`,{status:'cancelled',adminNotes:'Representative attendance agreed by human'},'PATCH')).status,200);assert.ok(state.db.locks.includes('meeting:'+meetingId));
+      const feedbackId=randomUUID();records.dealFeedbackTable.push({id:feedbackId,dealId,status:'pending',rating:4,comment:'Synthetic review'});
+      state.failAudit=true;assert.equal((await request(`/admin/feedback/${feedbackId}/status`,{status:'approved'},'PATCH')).status,500);assert.equal(records.dealFeedbackTable.find((r:any)=>r.id===feedbackId).status,'pending');
+      assert.equal((await request(`/admin/feedback/${feedbackId}/status`,{status:'approved'},'PATCH')).status,200);assert.ok(state.db.locks.includes('feedback:'+feedbackId));
+      assert.equal((await request(`/admin/feedback/${feedbackId}/status`,{status:'fake'},'PATCH')).status,400);
+      records.dealFeedbackTable=records.dealFeedbackTable.filter((r:any)=>r.id!==feedbackId);
+    });
+    await t.test('tracking event reads are shipment-scoped and unavailable for missing shipments',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};const id=randomUUID();records.shipmentsTable.push({id,dealId,carrier:'Synthetic'});records.shipmentTrackingEventsTable.push({id:randomUUID(),shipmentId:id,kind:'booked',source:'udc_manual'});
+      const response=await request(`/admin/shipments/${id}/events`,null,'GET');assert.equal(response.status,200);assert.ok(response.data.events.every((e:any)=>e.shipmentId===id));
+      assert.equal((await request(`/admin/shipments/${randomUUID()}/events`,null,'GET')).status,404);
+      records.shipmentsTable=records.shipmentsTable.filter((r:any)=>r.id!==id);records.shipmentTrackingEventsTable=records.shipmentTrackingEventsTable.filter((r:any)=>r.shipmentId!==id);
+    });
+    await t.test('document registration and review are atomic with audit records',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};
+      const path=`storage://udc-documents/deals/${dealId}/synthetic-atomic.pdf`;
+      const before=records.documentsTable.length;state.failAudit=true;
+      assert.equal((await request('/admin/documents',{dealId,documentType:'trade_document',fileUrl:path})).status,500);assert.equal(records.documentsTable.length,before);
+      const saved=await request('/admin/documents',{dealId,documentType:'trade_document',fileUrl:path});assert.equal(saved.status,201);
+      const id=saved.data.document.id;state.failAudit=true;assert.equal((await request(`/admin/documents/${id}/status`,{status:'approved',reviewNote:'Synthetic human review'},'PATCH')).status,500);assert.equal(records.documentsTable.find((r:any)=>r.id===id).status,'pending');
+      assert.equal((await request(`/admin/documents/${id}/status`,{status:'approved',reviewNote:'Synthetic human review'},'PATCH')).status,200);assert.ok(state.db.locks.includes('document:'+id));
+      records.documentsTable=records.documentsTable.filter((r:any)=>r.id!==id);
+    });
+    await t.test('draft preview preserves identity placeholders and binds download to reviewed terms',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};const d=records.dealsTable.find((r:any)=>r.id===dealId);Object.assign(d,{dealNumber:'SYNTHETIC',productId:'test-product',quantity:'10',unit:'MT',agreedPrice:'500',currency:'USD'});
+      const preview=await request(`/admin/deals/${dealId}/draft-preview?type=LOI`,null,'GET');assert.equal(preview.status,200);assert.equal(preview.data.terms.hideBuyer,true);assert.equal(preview.data.terms.hideSeller,true);
+      assert.equal((await request(`/admin/deals/${dealId}/draft-download`,{type:'LOI',humanReviewed:true,confirmation:'stale'})).status,409);
+      assert.equal((await request(`/admin/deals/${dealId}/draft-download`,{type:'LOI',confirmation:preview.data.confirmation})).status,400);
+      const response=await fetch(base+`/admin/deals/${dealId}/draft-download`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'LOI',humanReviewed:true,confirmation:preview.data.confirmation})});assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/pdf');assert.equal((await response.text()).slice(0,5),'%PDF-');
+      assert.ok(records.auditLogsTable.some((r:any)=>r.action==='admin_private_draft_downloaded'));
+      assert.equal((await request(`/admin/deals/${dealId}/draft-preview?type=AGENT_AGREEMENT`,null,'GET')).status,400);
+    });
+    await t.test('admin raw PDF uploads enforce header, size and audit rollback',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};const path=`/admin/deals/${dealId}/documents/upload?documentType=SGS`;
+      let r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/pdf'},body:'not a PDF'});assert.equal(r.status,400);
+      const before=records.documentsTable.length;state.failAudit=true;r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/pdf'},body:'%PDF-1.7 synthetic fixture'});assert.equal(r.status,500);assert.equal(records.documentsTable.length,before);
+      r=await fetch(base+path,{method:'POST',headers:{'content-type':'application/pdf'},body:'%PDF-1.7 synthetic fixture'});assert.equal(r.status,201);const d=(await r.json()).document;assert.equal(d.status,'pending');assert.equal(records.documentAccessTable.filter((a:any)=>a.documentId===d.id).length,1);assert.equal(records.documentAccessTable.find((a:any)=>a.documentId===d.id).userId,'admin');records.documentsTable=records.documentsTable.filter((row:any)=>row.id!==d.id);
+    });
+    await t.test('commission preparation is not liability and only human admin approval records it',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};const d=records.dealsTable.find((r:any)=>r.id===dealId),old=d.status;d.status='completed';const beneficiary=randomUUID();records.usersTable.push({id:beneficiary,role:'seller',status:'verified'});
+      const input={dealId,beneficiaryUserId:beneficiary,method:'percentage',rate:'2',currency:'USD',agreementReference:'Synthetic written fee schedule signed by the parties',humanConfirmed:true};const before=records.commissionsTable.length;
+      assert.equal((await request('/admin/commission-agreed-terms',{...input,humanConfirmed:false})).status,400);
+      const prepared=await request('/admin/commission-agreed-terms',input);assert.equal(prepared.status,201);assert.equal(prepared.data.proposals.length,1);assert.equal(records.commissionsTable.length,before);const p=prepared.data.proposals[0];assert.equal(p.metadata.notLiability,true);assert.equal(p.metadata.amount,'100.00');
+      assert.equal((await request('/admin/commission-agreed-terms',{...input,amount:'100'})).status,400);
+      const changed=records.dealsTable.find((r:any)=>r.id===dealId);changed.agreedPrice='600';assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,409);records.dealsTable.find((r:any)=>r.id===dealId).agreedPrice='500';
+      assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{})).status,400);
+      state.user={id:'buyer',role:'buyer',status:'verified'};assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,403);state.user={id:'admin',role:'admin',status:'verified'};
+      state.failAudit=true;assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,500);assert.equal(records.commissionsTable.length,before);
+      assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,200);assert.equal(records.commissionsTable.length,before+1);assert.equal((await request(`/admin/commission-proposals/${p.id}/approve`,{humanApproved:true})).status,409);
+      records.commissionsTable=records.commissionsTable.filter((c:any)=>c.beneficiaryUserId!==beneficiary);records.dealsTable.find((r:any)=>r.id===dealId).status=old;
+    });
+    await t.test('meeting representative is a human-attested private arrangement, never a booking',async()=>{
+      state.user={id:'admin',role:'admin',status:'verified'};const id=randomUUID();records.dealMeetingsTable.push({id,dealId,status:'scheduled'});const input={name:'Synthetic Representative',role:'Observer',agreementReference:'Synthetic agreement from both parties and representative',partiesAgreed:true,representativeAgreed:true,noPaymentOrBooking:true};
+      assert.equal((await request(`/admin/meetings/${id}/representative`,{...input,representativeAgreed:false})).status,400);state.failAudit=true;assert.equal((await request(`/admin/meetings/${id}/representative`,input)).status,500);assert.equal((await request(`/admin/meetings/${id}/representative`,input)).status,201);const record=await request(`/admin/meetings/${id}/representative`,null,'GET');assert.equal(record.data.record.metadata.recordOnly,true);records.dealMeetingsTable.find((r:any)=>r.id===id).status='cancelled';assert.equal((await request(`/admin/meetings/${id}/representative`,input)).status,409);
+    });
+    await t.test('company directory exposes full saved profiles to admins only',async()=>{
+      state.user={id:'admin',role:'admin'};
+      const response=await request('/admin/companies',undefined,'GET');assert.equal(response.status,200);assert.ok(Array.isArray(response.data.companies));
+      state.user={id:'buyer',role:'buyer'};assert.equal((await request('/admin/companies',undefined,'GET')).status,403);state.user={id:'admin',role:'admin'};
+    });
+    await t.test('pending commission corrections require agreement, preserve attribution and roll back with audit',async()=>{
+      state.user={id:'admin',role:'admin'};
+      const id=randomUUID(),beneficiary=randomUUID();
+      records.dealsTable[0].currency='USD';records.dealsTable[0].quantity='100';records.dealsTable[0].unit='MT';records.dealsTable[0].agreedPrice='500';
+      records.commissionsTable.push({id,dealId,beneficiaryUserId:beneficiary,status:'pending',amount:'100.00',commissionAmount:'100.00',currency:'USD',commissionType:'fixed_amount'});
+      const path=`/admin/commissions/${id}/terms`,input={commissionType:'fixed_amount',amount:'125.00',expectedAmount:'100.00',reason:'Corrected per signed fee agreement',confirmAgreedTerms:true};
+      assert.equal((await request(path,{...input,confirmAgreedTerms:false},'PATCH')).status,400);
+      assert.equal((await request(path,{...input,expectedAmount:'99.00'},'PATCH')).status,409);
+      assert.equal((await request(path,{...input,beneficiaryUserId:'other'},'PATCH')).status,400);
+      state.failAudit=true;
+      assert.equal((await request(path,input,'PATCH')).status,500);
+      assert.equal(records.commissionsTable.find((x:any)=>x.id===id).amount,'100.00');
+      const response=await request(path,input,'PATCH');assert.equal(response.status,200);
+      assert.equal(response.data.commission.amount,'125.00');assert.equal(response.data.commission.commissionAmount,'125.00');
+      assert.equal(response.data.commission.beneficiaryUserId,beneficiary);assert.equal(response.data.commission.dealId,dealId);assert.equal(response.data.commission.currency,'USD');
+      const audit=records.auditLogsTable.find((x:any)=>x.action==='commission_terms_corrected'&&x.entityId===id);assert.equal(audit.metadata.previousAmount,'100.00');assert.equal(audit.metadata.newAmount,'125.00');assert.equal(audit.metadata.reason,input.reason);
+      assert.ok(state.db.locks.includes('commission-status:'+id));
+      assert.equal((await request(path,input,'PATCH')).status,409);
+      for(const status of ['paid','cancelled']){records.commissionsTable.find((x:any)=>x.id===id).status=status;assert.equal((await request(path,{...input,expectedAmount:'125.00'},'PATCH')).status,409);}
+      state.user={id:'agent',role:'agent'};assert.equal((await request(path,input,'PATCH')).status,403);state.user={id:'admin',role:'admin'};
+    });
+    await t.test('case creation, review and evidence roll back when audit fails',async()=>{
+      const count=records.dealCasesTable.length;state.failAudit=true;
+      assert.equal((await request(`/admin/deals/${dealId}/cases`,{summary:'Synthetic case facts'})).status,500);
+      assert.equal(records.dealCasesTable.length,count);
+      const created=await request(`/admin/deals/${dealId}/cases`,{summary:'Synthetic case facts'});assert.equal(created.status,201);
+      const caseId=created.data.case.id;state.failAudit=true;
+      assert.equal((await request(`/admin/cases/${caseId}`,{status:'investigating'},'PATCH')).status,500);
+      assert.notEqual(records.dealCasesTable.find((r:any)=>r.id===caseId).status,'investigating');
+      state.failAudit=true;
+      assert.equal((await request(`/admin/cases/${caseId}/evidence`,{note:'Synthetic evidence'})).status,500);
+      assert.ok(!records.dealCasesTable.find((r:any)=>r.id===caseId).evidence?.length);
+    });
+    await t.test('referral and assignment changes roll back if audit fails',async()=>{
+      const agentId=randomUUID(),referredId=randomUUID();
+      records.usersTable.push({id:agentId,role:'agent',status:'verified'},{id:referredId,role:'buyer',status:'verified'});
+      const referralCount=records.referralsTable.length;
+      state.failAudit=true;
+      assert.equal((await request('/admin/referrals',{agentUserId:agentId,referredUserId:referredId,referralCode:'fixture-intro'})).status,500);
+      assert.equal(records.referralsTable.length,referralCount);
+      const created=await request('/admin/referrals',{agentUserId:agentId,referredUserId:referredId,referralCode:'fixture-intro'});assert.equal(created.status,201);
+      state.failAudit=true;
+      assert.equal((await request(`/admin/referrals/${created.data.referral.id}/status`,{status:'qualified'},'PATCH')).status,500);
+      assert.equal(records.referralsTable.find((r:any)=>r.id===created.data.referral.id).status,'pending');
+      const before=records.dealParticipantsTable.length;state.failAudit=true;
+      assert.equal((await request(`/admin/deals/${dealId}/agents`,{userId:agentId})).status,500);
+      assert.equal(records.dealParticipantsTable.length,before);
+      assert.ok(state.db.locks.includes(`deal-agent:${dealId}`));
+    });
+    await t.test('trade review rolls back when its audit fails',async()=>{
+      for(const [table,kind] of [['buyerRequestsTable','buyer-requests'],['sellerListingsTable','seller-offers']]){
+        const id=randomUUID();records[table].push({id,status:'pending_admin_review',buyerUserId:'buyer',sellerUserId:'seller'});
+        state.failAudit=true;
+        assert.equal((await request(`/admin/${kind}/${id}/status`,{status:'approved'},'PATCH')).status,500);
+        assert.equal(records[table].find((r:any)=>r.id===id).status,'pending_admin_review');
+      }
+    });
+    await t.test('finance changes roll back if their audit cannot be recorded',async()=>{
+      const initialInstruments=structuredClone(records.dealFinancialsTable);
+      state.failAudit=true;
+      assert.equal((await request('/admin/financial-instruments',{dealId,amount:'100',currency:'USD'})).status,500);
+      assert.deepEqual(records.dealFinancialsTable,initialInstruments);
+      const created=await request('/admin/financial-instruments',{dealId,amount:'100',currency:'USD'});
+      assert.equal(created.status,201);
+      const instrumentId=created.data.instrument.id;
+      state.failAudit=true;
+      assert.equal((await request(`/admin/financial-instruments/${instrumentId}`,{status:'confirmed'},'PATCH')).status,500);
+      assert.equal(records.dealFinancialsTable.find((x:any)=>x.id===instrumentId).status,'not_started');
+      const commissionId=randomUUID();
+      records.commissionsTable.push({id:commissionId,dealId,beneficiaryUserId:'agent',status:'pending',amount:'1',currency:'USD'});
+      state.failAudit=true;
+      assert.equal((await request(`/admin/commissions/${commissionId}/status`,{status:'cancelled'},'PATCH')).status,500);
+      assert.equal(records.commissionsTable.find((x:any)=>x.id===commissionId).status,'pending');
+    });
     await t.test('commission payout records require a completed deal',async()=>{
       const id=randomUUID();records.commissionsTable=[{id,dealId,beneficiaryUserId:'agent',currency:'USD',amount:'100',status:'pending'}];
       assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,409);
       assert.equal(records.commissionsTable[0].status,'pending');
       assert.equal((await request(`/admin/deals/${dealId}/status`,{status:'completed',confirmDestinationSgs:true},'PATCH')).status,200);
+      records.usersTable.push({id:'agent',role:'agent',status:'verified',phone:'10000000009'});
+      records.dealsTable.find(r=>r.id===dealId).dealNumber='UDC-A';
+      const sentBefore=state.sent.length;
       assert.equal((await request(`/admin/commissions/${id}/status`,{status:'paid'},'PATCH')).status,200);
       assert.ok(records.commissionsTable[0].paidAt);assert.equal(records.commissionsTable[0].status,'paid');
+      const notice=state.sent.slice(sentBefore).find(m=>m.to==='10000000009');
+      assert.ok(notice,'beneficiary hears the payout on WhatsApp');
+      assert.match(notice.body,/USD 100/);assert.match(notice.body,/UDC-A/);assert.match(notice.body,/marked paid/);
     });
     await t.test('inspection, shipment and customs records use existing audited operations',async()=>{
       const inspection=await request('/admin/inspections',{dealId,inspectorName:'Synthetic SGS',scheduledAt:'2026-11-01T10:00:00Z'});assert.equal(inspection.status,201);

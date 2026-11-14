@@ -41,3 +41,17 @@ test("worker conversation transport never extends a short remaining caller budge
   assert.equal((await runAkifWorkerChat("hello", undefined, 100)).content, "quick reply");
   assert.ok(requestedTimeout <= 100, "worker transport must respect the caller's remaining time");
 });
+
+test("worker chat is tagged private unless the caller explicitly says generic", async () => {
+  process.env.AKIF_WORKER_URL = "https://worker.example";
+  process.env.AKIF_WORKER_TOKEN = "dummy";
+  const sent: string[] = [];
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)).sensitivity);
+    return Response.json({ choices: [{ message: { content: "ok" } }] });
+  }) as typeof fetch;
+  await runAkifWorkerChat("deal with Acme at 40 USD");
+  await runAkifWorkerChat("what is MOQ", undefined, 15_000, "generic");
+  await runAkifWorkerChat("x", undefined, 15_000, "anything" as never);
+  assert.deepEqual(sent, ["private", "generic", "private"]);
+});

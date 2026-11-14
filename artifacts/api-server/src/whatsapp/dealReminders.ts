@@ -1,0 +1,36 @@
+import {currentEmailAccountConsent} from '../channels/emailAccount';
+import {and,desc,eq,sql} from 'drizzle-orm';
+import {db,usersTable,dealsTable,whatsappUserContextsTable,auditLogsTable,notificationPreferencesTable} from '@workspace/db';
+import {reminderCommand,safeReminderTime,reminderText} from '../deals/reminderText';
+import {sendWhatsAppText} from './client';
+export async function handleDealReminder(phone:string,text:string){
+ if(process.env.UDC_APP_ENV!=='staging')return false;const input=reminderCommand(text),off=/^reminders off$/i.test(text.trim());if(!input&&!off)return false;
+ const [u]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);if(!u||u.status!=='verified'||!['buyer','seller'].includes(u.role)){await sendWhatsAppText(phone,'Deal reminders need your verified buyer or seller account.');return true;}
+ const [c]=await db.select({id:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,u.id)).limit(1);const [d]=c?await db.select({id:dealsTable.id,status:dealsTable.status}).from(dealsTable).where(and(eq(dealsTable.id,c.id),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1):[];
+ if(!d||['completed','cancelled','rejected'].includes(d.status)||input&&!safeReminderTime(input.dueAt)){await sendWhatsAppText(phone,'Select your own active deal and a future timestamp with its UTC offset, within one year. No reminder changed.');return true;}
+ const key=input?input.kind:'off';const result=await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'deal_reminder:'+u.id+':'+d.id}))`);
+ const [currentUser]=await tx.select({role:usersTable.role,status:usersTable.status,phone:usersTable.phone}).from(usersTable).where(eq(usersTable.id,u.id)).limit(1).for('share');
+ if(!currentUser||currentUser.status!=='verified'||currentUser.role!==u.role||currentUser.phone!==phone)return 'unavailable';
+ const [selected]=await tx.select({id:whatsappUserContextsTable.activeDealId}).from(whatsappUserContextsTable).where(eq(whatsappUserContextsTable.userId,u.id)).limit(1).for('share');
+ if(selected?.id!==d.id)return 'unavailable';
+ const [currentDeal]=await tx.select({status:dealsTable.status}).from(dealsTable).where(and(eq(dealsTable.id,d.id),eq(currentUser.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,u.id))).limit(1).for('share');
+ if(!currentDeal||['completed','cancelled','rejected'].includes(currentDeal.status)||input&&!safeReminderTime(input.dueAt))return 'unavailable';
+ if(input){const [old]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminder_requested'),eq(auditLogsTable.actorUserId,u.id),eq(auditLogsTable.entityId,d.id),sql`${auditLogsTable.metadata}->>'kind'=${input.kind}`,sql`${auditLogsTable.metadata}->>'dueAt'=${input.dueAt}`)).limit(1);if(old)return true;}
+ await tx.insert(auditLogsTable).values({actorUserId:u.id,action:off?'deal_reminders_stopped':'deal_reminder_requested',entityType:'deal',entityId:d.id,metadata:input?{kind:input.kind,dueAt:input.dueAt,userRequested:true}:{all:true}});return false;});
+ if(result==='unavailable'){await sendWhatsAppText(phone,'Your verified account or selected active deal changed. No reminder changed. Select your current deal and try again.');return true;}
+ await sendWhatsAppText(phone,off?'All existing reminders for this selected deal are stopped.':`${result?'Already recorded':'Reminder saved'}: ${key}, ${input!.dueAt} (UTC). This is your reminder time, not a verified contractual deadline. Send reminders off to stop existing reminders on this deal.`);return true;
+}
+export async function runDealReminders(now=new Date()){
+ if(process.env.UDC_APP_ENV!=='staging'||process.env.AKIF_WHATSAPP_REPLY_SINK!=='store')return {sent:0,disabled:true};if(!Number.isFinite(now.getTime()))throw Error('invalid_time');
+ const due=await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminder_requested'),sql`${auditLogsTable.metadata}->>'dueAt'<=${now.toISOString()}`,sql`${auditLogsTable.metadata}->>'dueAt'>=${new Date(now.getTime()-86400000).toISOString()}`,sql`not exists (select 1 from audit_logs delivered where delivered.action='deal_reminder_delivered' and delivered.entity_id=${auditLogsTable.id})`)).orderBy(auditLogsTable.createdAt).limit(101);if(due.length>100)throw Error('reminder_batch_requires_review');let sent=0;
+ for(const r of due){if(!r.actorUserId||!r.entityId||typeof r.metadata?.dueAt!=='string'||!['payment','documents','shipment'].includes(String(r.metadata?.kind)))continue;await db.transaction(async tx=>{
+ await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'deal_reminder:'+r.actorUserId+':'+r.entityId}))`);
+ const [prior]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminder_delivered'),eq(auditLogsTable.entityId,r.id))).limit(1);if(prior)return;
+ const [stop]=await tx.select({at:auditLogsTable.createdAt}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'deal_reminders_stopped'),eq(auditLogsTable.actorUserId,r.actorUserId!),eq(auditLogsTable.entityId,r.entityId!))).orderBy(desc(auditLogsTable.createdAt)).limit(1);if(stop&&stop.at>=r.createdAt)return;
+ const [u]=await tx.select({phone:usersTable.phone,role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,r.actorUserId!)).limit(1).for('share');if(!u?.phone||u.status!=='verified'||!['buyer','seller'].includes(u.role))return;
+ if(!await currentEmailAccountConsent(r.actorUserId!,tx,true))return;const [preferences]=await tx.select({optional:notificationPreferencesTable.optionalWhatsApp,reminders:notificationPreferencesTable.reminders}).from(notificationPreferencesTable).where(eq(notificationPreferencesTable.userId,r.actorUserId!)).limit(1).for('share');if(preferences&&(preferences.optional===false||preferences.reminders===false))return;
+ const [d]=await tx.select({status:dealsTable.status}).from(dealsTable).where(and(eq(dealsTable.id,r.entityId!),eq(u.role==='buyer'?dealsTable.buyerUserId:dealsTable.sellerUserId,r.actorUserId!))).limit(1).for('share');if(!d||['completed','cancelled','rejected'].includes(d.status))return;
+ const delivery=await sendWhatsAppText(u.phone,reminderText(String(r.metadata!.kind),String(r.metadata!.dueAt)));if(delivery.delivered){await tx.insert(auditLogsTable).values({actorUserId:r.actorUserId,action:'deal_reminder_delivered',entityType:'deal_reminder',entityId:r.id,metadata:{syntheticSink:true,dealId:r.entityId}});sent++;}
+ });}return {sent,disabled:false};
+}
+export function startDealReminderRunner(){if(process.env.UDC_DEAL_REMINDERS_ENABLED!=='true'||process.env.UDC_APP_ENV!=='staging'||process.env.AKIF_WHATSAPP_REPLY_SINK!=='store')return;let busy=false;const run=async()=>{if(busy)return;busy=true;try{await runDealReminders();}catch{}finally{busy=false;}};void run();const timer=setInterval(()=>void run(),60000);timer.unref();}

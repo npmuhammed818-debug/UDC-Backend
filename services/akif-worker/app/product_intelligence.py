@@ -92,7 +92,7 @@ def analyze_product(request: ProductIntelligenceRequest) -> ProductIntelligenceR
             text = complete([
                 {"role": "system", "content": "You assist with international trade product classification. Never claim a classification is final."},
                 {"role": "user", "content": prompt},
-            ])
+            ], sensitivity="generic")
             for code, description in re.findall(r"\b(\d{6})\b\s*[-:–]?\s*([^\n]{1,160})", text):
                 candidates.append(
                     HsCandidate(

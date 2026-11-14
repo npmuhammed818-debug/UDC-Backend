@@ -1,4 +1,99 @@
 import {readMessageAcknowledgement} from './messageAcknowledgement.ts';
+import { AsyncLocalStorage } from "node:async_hooks";
+import { replySinkEnabled, replySinkSendAllowed, recordSunkReply } from "./replySink.ts";
+import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
+import { recordOutboundMessage } from "./outboundLog.ts";
+import { noteOutboundForWatchdog, noteUnknownOutboundForWatchdog, beginOutboundForWatchdog, endOutboundForWatchdog } from "./inboundWatchdogState.ts";
+
+// ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
+// Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
+// WHATSAPP_OUTBOUND_PER_SECOND. Meta's own per-number throughput is higher, so this stays well under it.
+const bucket = { tokens: -1, last: 0 };
+export function resetOutboundPacingForTest() { bucket.tokens = -1; bucket.last = 0; }
+async function takeOutboundToken(sleep: (ms: number) => Promise<void>) {
+  const rate = Math.max(1, Number(process.env.WHATSAPP_OUTBOUND_PER_SECOND) || 20);
+  const now = Date.now();
+  if (bucket.tokens < 0) { bucket.tokens = rate; bucket.last = now; }
+  bucket.tokens = Math.min(rate, bucket.tokens + ((now - bucket.last) / 1000) * rate);
+  bucket.last = now;
+  if (bucket.tokens >= 1) { bucket.tokens -= 1; return; }
+  const wait = Math.ceil(((1 - bucket.tokens) / rate) * 1000);
+  bucket.tokens = 0; bucket.last = now + wait;
+  await sleep(wait);
+}
+
+// Meta throttling and pair-rate limits. Retrying these is safe: the message was not accepted.
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80007, 130429, 131048, 131056]);
+export const WINDOW_CLOSED_CODE = 131047; // re-engagement: outside the 24 hour customer service window
+const MAX_ATTEMPTS = 4;
+let sleepImpl: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
+export function setSleepForTest(fn: ((ms: number) => Promise<void>) | null) { sleepImpl = fn ?? ((ms) => new Promise((r) => setTimeout(r, ms))); }
+
+export class WhatsAppSendError extends Error {
+  httpStatus: number;
+  code?: number;
+  retryable: boolean;
+  constructor(message: string, httpStatus: number, code?: number, retryable = false) { super(message); this.httpStatus = httpStatus; this.code = code; this.retryable = retryable; }
+}
+export const isWindowClosedError = (e: unknown) => e instanceof WhatsAppSendError && e.code === WINDOW_CLOSED_CODE;
+
+// Per-request record of recipients whose reply could not be delivered after retries, so the webhook can
+// release its dedup claim and let Meta redeliver instead of silently dropping the reply.
+const failures = new AsyncLocalStorage<Set<string>>();
+export function trackReplyFailures<T>(fn: (failed: Set<string>) => Promise<T>): Promise<T> {
+  const set = new Set<string>();
+  return failures.run(set, () => fn(set));
+}
+// Sends one provider request with pacing and rate-limit retry. Returns null when the outcome is unknown
+// (timeout or 5xx: the message may have been accepted, so it is NEVER retried; callers quarantine it).
+// Returns the last non-ok response when Meta keeps throttling, so the caller raises its usual error.
+async function metaPost(to: string, url: string, init: RequestInit): Promise<Response | null> {
+  if(process.env.UDC_APP_ENV==='staging'&&url.endsWith('/messages')&&typeof init.body==='string'){
+    const payload=JSON.parse(init.body),target=payload.text??payload.interactive?.body??payload.document??payload.image;
+    const key=payload.text?'body':payload.interactive?'text':'caption';
+    if(target&&typeof target[key]==='string'){
+      const {priceReferenceForRecipient}=await import('./priceCurrency');
+      const enriched=await priceReferenceForRecipient(to,target[key]);
+      const limit=payload.type==='text'?4096:1024;
+      if(enriched.length<=limit)target[key]=enriched;
+      else if(target[key].length<limit-100)target[key]+='\n[Indicative FX] Reference omitted: message length limit. Original price unchanged.';
+      init={...init,body:JSON.stringify(payload)};
+    }
+  }
+  if (replySinkEnabled() && url.endsWith("/messages") && !sinkBypassForAllowlistedRecipient(to)) { // staging reply sink: store, never send (except allowlisted test recipients with real credentials)
+    let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
+    return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
+  }
+  const trackInFlight = url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"');
+  if (trackInFlight) beginOutboundForWatchdog(to);
+  try {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    await takeOutboundToken(sleepImpl);
+    const response = await maybeSubmitted(fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }));
+    if (response?.ok && url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"')) noteOutboundForWatchdog(to);
+    if (!response && url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"')) noteUnknownOutboundForWatchdog(to);
+    if (!response || response.ok) return response;
+    const peek = response.clone();
+    const error = await providerError(peek);
+    const limited = error.httpStatus === 429 || (error.code !== undefined && RATE_LIMIT_CODES.has(error.code));
+    if (!limited) return response;
+    if (attempt === MAX_ATTEMPTS) { failures.getStore()?.add(to); return response; }
+    const retryAfter = Number(response.headers.get("retry-after"));
+    await response.body?.cancel();
+    const backoff = Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250);
+    await sleepImpl(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 8000) : backoff);
+  }
+  return null;
+  } finally { if (trackInFlight) endOutboundForWatchdog(to); }
+}
+
+/** Real Meta credentials configured (not sink placeholders)? Only then may an allowlisted recipient bypass the sink. */
+const hasRealMetaCredentials = (env: NodeJS.ProcessEnv = process.env) =>
+  Boolean(env.WHATSAPP_ACCESS_TOKEN?.trim() && env.WHATSAPP_PHONE_NUMBER_ID?.trim());
+
+const sinkBypassForAllowlistedRecipient = (to: string, env: NodeJS.ProcessEnv = process.env) =>
+  replySinkSendAllowed(to, env) && hasRealMetaCredentials(env);
+
 type WhatsAppConfig = {
   accessToken: string;
   phoneNumberId: string;
@@ -7,6 +102,7 @@ type WhatsAppConfig = {
 export function getWhatsAppConfig(env:NodeJS.ProcessEnv=process.env): WhatsAppConfig | null {
   const accessToken = env.WHATSAPP_ACCESS_TOKEN?.trim();
   const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+  if (replySinkEnabled(env)) return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : { accessToken: accessToken || "sink", phoneNumberId: phoneNumberId || "sink" };
   return accessToken && phoneNumberId ? { accessToken, phoneNumberId } : null;
 }
 
@@ -78,9 +174,7 @@ export async function sendWhatsAppText(to: string, body: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await maybeSubmitted(fetch(
-    `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
-    {
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: {
@@ -93,16 +187,17 @@ export async function sendWhatsAppText(to: string, body: string) {
         type: "text",
         text: { body },
       }),
-    },
-  ));
+    });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
     const error = await providerError(response);
-    throw new Error(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
+    throw new WhatsAppSendError(`whatsapp_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
-  return readMessageAcknowledgement(response);
+  const ack = await readMessageAcknowledgement(response);
+  if (ack.delivered) recordOutboundMessage(ack.messageId, to, body);
+  return ack;
 }
 
 export type WhatsAppInteractive =
@@ -116,9 +211,9 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
   const config=getConfig();
   if(!config)return {delivered:false as const,reason:'not_configured' as const};
-  const response=await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})}));
+  const response=await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
   if(!response)return unknownSubmission();
-  if(!response.ok){const error=await providerError(response);throw new Error(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`);}
+  if(!response.ok){const error=await providerError(response);throw new WhatsAppSendError(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`, error.httpStatus, error.code);}
   return readMessageAcknowledgement(response);
 }
 
@@ -137,9 +232,7 @@ export async function sendWhatsAppDocument(
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
-  const response = await maybeSubmitted(fetch(
-    `https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,
-    {
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
       method: "POST",
       signal: AbortSignal.timeout(10_000),
       headers: {
@@ -156,13 +249,47 @@ export async function sendWhatsAppDocument(
           ...(caption ? { caption } : {}),
         },
       }),
-    },
-  ));
+    });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
     const error = await providerError(response);
-    throw new Error(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`);
+    throw new WhatsAppSendError(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
+  }
+
+  return readMessageAcknowledgement(response);
+}
+
+export async function sendWhatsAppImage(
+  to: string,
+  link: string,
+  caption?: string,
+) {
+  const config = getConfig();
+  if (!config) return { delivered: false as const, reason: "not_configured" as const };
+
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        authorization: `Bearer ${config.accessToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "image",
+        image: {
+          link,
+          ...(caption ? { caption } : {}),
+        },
+      }),
+    });
+
+  if(!response)return unknownSubmission();
+  if (!response.ok) {
+    const error = await providerError(response);
+    throw new WhatsAppSendError(`whatsapp_image_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
   return readMessageAcknowledgement(response);
@@ -196,6 +323,9 @@ export async function downloadWhatsAppMedia(mediaId: string) {
   const maximumBytes = 25 * 1024 * 1024;
   if (typeof metadata.file_size === "number" && metadata.file_size > maximumBytes) {
     throw new Error("whatsapp_media_too_large");
+  }
+  if (!isAllowedMediaDownloadUrl(metadata.url)) {
+    throw new Error("whatsapp_media_url_untrusted_host");
   }
   const fileResponse = await fetch(metadata.url, {
     headers: { authorization: `Bearer ${config.accessToken}` },
@@ -240,12 +370,12 @@ export async function downloadWhatsAppMedia(mediaId: string) {
 export async function sendWhatsAppReaction(to: string, inboundMessageId: string, emoji: string) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
-  const response = await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+  const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
     method: "POST",
     signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "reaction", reaction: { message_id: inboundMessageId, emoji } }),
-  }));
+  });
   if(!response)return unknownSubmission();
   if(!response.ok){await response.body?.cancel();return {delivered:false as const,reason:'provider_rejected' as const};}
   return readMessageAcknowledgement(response);
@@ -255,6 +385,7 @@ export async function sendWhatsAppReaction(to: string, inboundMessageId: string,
 export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { const id = recordSunkReply(to, { type: "audio" }).id; return readMessageAcknowledgement(Response.json({ messages: [{ id }] })); }
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
   form.set("type", "audio/ogg");
@@ -266,12 +397,54 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   if (!up.ok) { await up.body?.cancel(); return { delivered: false as const, reason: "upload_failed" as const }; }
   const mediaId = ((await up.json().catch(() => null)) as { id?: unknown } | null)?.id;
   if (typeof mediaId !== "string") return { delivered: false as const, reason: "upload_failed" as const };
-  const sent = await maybeSubmitted(fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+  const sent = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
     method: "POST", signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId } }),
-  }));
+    body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId, voice: true } }),
+  });
   if(!sent)return unknownSubmission();
   if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}
-  return readMessageAcknowledgement(sent);
+  const ack = await readMessageAcknowledgement(sent);
+  if (ack.delivered) recordOutboundMessage(ack.messageId, to, "[voice note]");
+  return ack;
+}
+
+/**
+ * Marks an inbound message as read (blue ticks) and shows "typing..." until we reply (WhatsApp drops it after 25 s).
+ * Off unless UDC_WHATSAPP_TYPING=on. Fire-and-forget: short timeout, no retry, never throws, never logs.
+ * With the staging reply sink on, nothing is sent to Meta; a "read_typing" entry is stored instead.
+ */
+/** Read receipt only (blue ticks, no typing bubble). Used where a typing
+ *  bubble would promise a reply that may not come (owner rule, 10 Nov). */
+export function markRead(to: string, inboundMessageId: string | null | undefined): void {
+  if (typeof inboundMessageId !== "string" || !inboundMessageId) return;
+  if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { recordSunkReply(to, { type: "read_typing" }); return; }
+  const config = getConfig();
+  if (!config) return;
+  void fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST", signal: AbortSignal.timeout(3_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: inboundMessageId }),
+  }).then(r => r.body?.cancel(), () => undefined).catch(() => undefined);
+}
+
+export function markReadAndTyping(to: string, inboundMessageId: string | null | undefined): void {
+  if (process.env["UDC_WHATSAPP_TYPING"] !== "on" || typeof inboundMessageId !== "string" || !inboundMessageId) return;
+  if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { recordSunkReply(to, { type: "read_typing" }); return; }
+  const config = getConfig();
+  if (!config) return;
+  void fetch(`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`, {
+    method: "POST", signal: AbortSignal.timeout(3_000),
+    headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: inboundMessageId, typing_indicator: { type: "text" } }),
+  }).then(r => r.body?.cancel(), () => undefined).catch(() => undefined);
+}
+
+/** Private synthetic image sink only. Never uploads bytes to Meta or a public
+ * storage URL. A live image transport needs separate release/provider testing. */
+export async function sendSyntheticStatusImage(to:string,png:Uint8Array,caption:string){
+ if(process.env.UDC_APP_ENV!=='staging'||!replySinkEnabled())return {delivered:false as const,reason:'synthetic_only' as const};
+ if(png.length<8||png.length>2*1024*1024||Buffer.from(png).subarray(0,8).toString('hex')!=='89504e470d0a1a0a')return {delivered:false as const,reason:'invalid_png' as const};
+ const id=recordSunkReply(to,{type:'image',image:{caption},syntheticImage:{mimeType:'image/png',byteLength:png.length}}).id;
+ return readMessageAcknowledgement(Response.json({messages:[{id}]}));
 }

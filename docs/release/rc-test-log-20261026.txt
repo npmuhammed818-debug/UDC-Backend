@@ -1,0 +1,163 @@
+commit: f61b6687c278d580a443b20a4d66822172580819
+--- typecheck
+typecheck api-server: OK
+$ tsc --build
+typecheck libs: OK
+--- unit
+# tests 330
+# pass 330
+# fail 0
+=== buyer-pools-postgres passed_lines=6 errors=0
+PASSED: pool goes ahead only when every invited buyer accepted and the quantity is filled; bank/instrument state untouched
+PASSED: only the invited buyer can answer; anonymous 401, wrong role 403, bad id 400, no second answer
+PASSED: decline is free, frees the quantity, and a declined invite stays declined
+PASSED: invites expire after 10 days (open at 9d23h, expired at 10d), expired cannot be accepted, quantity is freed, re-invite works
+PASSED: WhatsApp: invite message carries Accept/Decline buttons; only the invited buyer's tap counts; accept, repeat, full acceptance and decline replies (fake client)
+PASSED: 5 real PostgreSQL buyer-pool scenarios (synthetic data, no network).
+=== commission-migration-postgres passed_lines=6 errors=0
+PASSED: forward widening preserves every existing row exactly (value, currency, count)
+PASSED: 3-decimal amounts (OMR, BHD) store exactly after widening
+PASSED: forward script refuses to run twice (preflight shape check)
+PASSED: rollback refuses while a non-zero third decimal exists, leaving the table unchanged
+PASSED: rollback succeeds once no third-decimal data exists and restores the original values
+PASSED: 5 synthetic-database migration checks.
+=== commission-routes-postgres passed_lines=8 errors=0
+PASSED: manual commissions in USD, EUR, INR, AED, SAR, QAR, JPY are stored exactly
+PASSED: excess precision and unsupported currencies are rejected with a clear error and write nothing
+PASSED: calculated percentage commission stored at the currency's precision
+PASSED: before the migration a non-zero third decimal is refused (409), a zero third decimal is accepted
+PASSED: after the draft migration (synthetic DB) and the flag, OMR 1500.125 is stored exactly and earlier rows keep their values
+PASSED: JPY and USD precision rules are unchanged after widening
+PASSED: default-commission preview route: estimate flagged, manual_review without an RBI rate
+PASSED: 7 real PostgreSQL commission route scenarios (synthetic data, no network).
+=== company-verification-postgres passed_lines=6 errors=0
+PASSED: web registration: buyer needs company email and name and gets a pending company row; agent exempt
+PASSED: company cannot be verified without an approved document (409, status unchanged)
+PASSED: buyer cannot be verified through the admin route without a verified company and approved document (409)
+PASSED: approved document then verified company satisfies the marketplace evidence check
+PASSED: rejecting the last approved document downgrades company and owner and fails the evidence check
+PASSED: 5 real PostgreSQL company-verification scenarios; no real network/provider calls.
+=== email-auth-postgres passed_lines=23 errors=0
+PASSED: new password registration explicitly eligible; no fabricated ownership or company approval
+PASSED: unknown and unverified reset accounts receive generic response with no mail
+PASSED: six-digit code is delivered only to mock email; DB stores keyed digest with ten-minute expiry
+PASSED: one-minute resend cooldown
+PASSED: five wrong guesses consume the code; correct code then fails
+PASSED: expired code cannot verify email
+PASSED: purpose isolation, atomic single use under concurrency, no company auto-approval
+PASSED: strong replacement password, atomic reset/replay rejection, old password rejected and all prior sessions revoked
+PASSED: email change requires password reauthentication and invalidates ownership proof
+PASSED: WhatsApp-only accounts cannot gain passwords through recovery; legacy eligibility requires actual password proof
+PASSED: challenge is user-bound; another authenticated user cannot consume it
+PASSED: database trigger invalidates codes even after out-of-band email change away and back
+PASSED: WhatsApp ownership verification preserves passwordless status and consumes code locally
+PASSED: five-per-hour limit, durable resend invalidation and newest-code verification
+PASSED: concurrent old-password login cannot retain a session after reset commits
+PASSED: suspension is rechecked before code use and prevents recovery requests
+PASSED: delivery errors are generic and undelivered codes are invalidated
+PASSED: IP rate limit counts unknown requests and survives service reinitialization
+PASSED: malformed confirmation requests consume the durable IP guessing budget
+PASSED: real PostgreSQL: verified email permits safe second-number recovery without duplicate identity or client SQL access
+PASSED: real PostgreSQL concurrency: two independently issued phone codes cannot rebind the same verified identity twice
+PASSED: audit excludes codes; private challenge table has RLS enabled
+PASSED: 22 real PostgreSQL email-auth scenarios; no real email/network/provider calls.
+=== email-migration-review passed_lines=10 errors=0
+PASSED: exclusive DDL lock wait is observable; bounded lock timeout rolls back without partial schema/data changes
+PASSED: schema drift fails closed after partial DDL; rollback restores old columns and preserves the preexisting sentinel table/data
+PASSED: 1000 fictional legacy profiles, scrypt hashes, roles, statuses and sessions preserved; no eligibility/proof backfill or local users-heap rewrite
+PASSED: old application insert/update column lists remain compatible; passwords are not inferred from hashes
+PASSED: anon/authenticated have no table read/write grants and cannot read private code hashes/counters
+PASSED: RLS independently denies client reads/inserts even with deliberate accidental table grants
+PASSED: trusted service_role can read/write OTP challenges and limits without destructive grants; clients remain restricted
+PASSED: trigger is SECURITY INVOKER with explicit search path; changed emails invalidate proof/codes without granting recovery
+PASSED: exact migration reruns idempotently without altering legacy profile/session payloads
+PASSED: 9 isolated PostgreSQL migration review scenarios; no production data or configurations touched.
+=== full-mvp-lifecycle-postgres passed_lines=25 errors=0
+PASSED: agent: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: buyer: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: buyer: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: seller: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: buyer: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: seller has distinct offers with independent units, currencies and prices
+PASSED: buyer requirement and seller offer land in the admin review queue; the queue is admin-only
+PASSED: approval gate, match recommendations, match created once, both parties notified
+PASSED: deal created from the approved match once; participants only
+PASSED: agent assigned without price access; referral pending then qualified by admin; no automatic commission; non-agents cannot refer
+PASSED: shipment created, milestone replay-safe and conflict-checked, future/unsourced milestones refused, tracking visible to the deal's buyer and seller only, no price to the agent
+PASSED: only an admin records a commission; the agent sees their own, buyer and seller see none
+PASSED: trade documents: PDF-only upload, private until approved, admin review with mandatory rejection reason, rejected files not downloadable, uploader notified
+PASSED: LOI, ICPO, FCO, SPA, NCNDA: draft-for-review only, explicit terms confirmation, LOI/ICPO buyer-only, FCO seller-only, SPA/NCNDA both parties (404 stranger, 403 agent, 401 anon), recorded terms used, audited
+PASSED: AKIF reads actual authorized SQL context, excludes vault URLs/private counterparty history, denies forged-role outsiders and does not execute approvals
+PASSED: role-change request is duplicate-safe and audited; admin review never grants a second role or rewrites deal ownership
+PASSED: buyer: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: role activation requires admin and evidence, revokes prior sessions, blocks replay and removes former role permissions
+PASSED: buyer: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: buyer: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: agent: actual consented registration, one-time OTP, private company evidence where required, human-only verification
+PASSED: role switching gates: one winner under concurrency, buyer/seller targets need a verified company, a blocked activation changes and revokes nothing, every activation audited
+PASSED: continuous cohort reaches completion only after confirmed DLC, passed inspection, approved SGS and explicit human destination review; records no real payment
+PASSED: cancellation on a separate fictional active deal is admin-authorized and persisted, not a customer/model action
+PASSED: 24 continuous-cohort PostgreSQL lifecycle scenarios (synthetic data, no network).
+=== mvp-backup-restore-rehearsal SKIPPED (needs docker + udc_migration_test cluster)
+=== p0-gates-postgres passed_lines=5 errors=0 (rerun with its own env var name; first pass of the runner used the wrong one)
+AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+=== shipment-delivery-postgres passed_lines=14 errors=0
+PASSED: disabled by default; enabling uses current signed window and sends each durable intent once, never the private body
+PASSED: end-to-end actual admin milestone route → SQL outbox → simulated Meta; idempotent source and concurrent workers
+PASSED: queue outage rolls back the source milestone; retrying the same event safely commits one notification per recipient
+PASSED: ETA-only edits notify buyer/seller/agent without inventing physical arrival or duplicating unchanged updates
+PASSED: outsider, removed agent, agent document updates and STOP preferences cause zero provider calls
+PASSED: suspension, withdrawn consent and changed phone without fresh consent block queued delivery
+PASSED: expired window sends only exact approved utility template; paused approval blocks before POST
+PASSED: confirmed rate limits back off and stop at three attempts; timeout stays uncertain and cannot be manually resent
+PASSED: missing/malformed/contradictory 2xx acknowledgements have no provider ID, context or delivery confirmation; receipts and admin retry cannot release them
+PASSED: early receipts reconcile after acceptance; real signed callback updates delivered→read; invalid HMAC denied
+PASSED: all legacy replay families persist claims before Meta, enforce consent/window/membership and cannot call missing-ID responses sent or replay them across workers/restart
+PASSED: expired worker leases are quarantined and audited without another Meta submission
+PASSED: admin sees sanitized delivery/failure metadata and audited state transitions; non-admin denied
+PASSED: 13 real PostgreSQL shipment delivery scenarios; no real messages or external calls.
+=== shipment-migration-review passed_lines=8 errors=0
+PASSED: email OTP, WhatsApp account recovery and all shipment/outbox migrations share a single isolated PostgreSQL database with private grants and preserved identity.
+PASSED: exact shipment milestone SQL reruns safely; RLS and restricted grants, events, provenance, FK and unique replay validated on disposable PostgreSQL.
+PASSED: exact cargo-unit migration, sea/air/road records, unique references, transport constraints and private role permissions.
+PASSED: exact ETA follow-up migration, RLS, least-privilege service-role grants, daily deduplication and honest reasons.
+PASSED: exact WhatsApp shipment outbox SQL, RLS, client least privilege, replay key and ambiguous-leased state restrictions.
+PASSED: exact receipt migration, stable sender status, RLS, unique signed callbacks, provider IDs and restricted grants.
+PASSED: signed WhatsApp customer window migration RLS, least-privilege grants, HMAC-only fingerprints and monotonic replay.
+PASSED: role-change review RLS, least privilege, single pending request, review consistency and stable account identity.
+=== trade-journey-postgres passed_lines=9 errors=0
+PASSED: buyer requirement and seller offer land in the admin review queue; the queue is admin-only
+PASSED: approval gate, match recommendations, match created once, both parties notified
+PASSED: deal created from the approved match once; participants only
+PASSED: agent assigned without price access; referral pending then qualified by admin; no automatic commission; non-agents cannot refer
+PASSED: shipment created, milestone replay-safe and conflict-checked, future/unsourced milestones refused, tracking visible to the deal's buyer and seller only, no price to the agent
+PASSED: only an admin records a commission; the agent sees their own, buyer and seller see none
+PASSED: trade documents: PDF-only upload, private until approved, admin review with mandatory rejection reason, rejected files not downloadable, uploader notified
+PASSED: LOI, ICPO, FCO, SPA, NCNDA: draft-for-review only, explicit terms confirmation, LOI/ICPO buyer-only, FCO seller-only, SPA/NCNDA both parties (404 stranger, 403 agent, 401 anon), recorded terms used, audited
+PASSED: 8 real PostgreSQL trade-journey scenarios (synthetic data, no network).
+=== vault-postgres passed_lines=6 errors=0
+PASSED: link issue: needs a configured https base, login, a non-agent role and a known document type
+PASSED: upload page opens only for a real token, no-store headers, token stored hashed only
+PASSED: bad bytes 415, storage failure 502 releases the link, good PDF 201 stored under the owner's company as pending, second use 410
+PASSED: expired link 410; at most 5 active links per user (6th gets 429)
+PASSED: owner sees status only (no file URL), other companies see nothing and cannot delete, deletion request recorded once, access logged
+PASSED: 5 real PostgreSQL vault scenarios (synthetic data, fake storage, no network).
+=== whatsapp-buyer-postgres passed_lines=3 errors=0
+PASSED combined signed WhatsApp + PostgreSQL: outage registration, mocked email code, ownership proof, replay rejection and unchanged role/company/passwordless permissions before trade intake.
+PASSED additionally with real local PostgreSQL: seller and agent registration, two kg/AED offers, retained rejected registration + successful edit/retry, existing account unchanged, and signed cross-role intake blocked.
+PASSED: signed webhook, privacy consent, worker timeout + fallback error, plain buyer registration, pending company review, private requirement persistence and duplicate submit protection (real local PostgreSQL; no live messages).
+=== whatsapp-meta-limits-postgres passed_lines=5 errors=0
+PASSED: two Meta 429s then success: reply delivered, backoff 656ms, 1038ms
+PASSED: persistent 429: bounded retries, claim released, 503 to Meta, redelivery answered once
+PASSED: per-phone cap: 30 rapid messages, one slow-down notice, no reply storm; counted per phone
+PASSED: outbound token bucket paces a burst of 12 sends at 5/s (7 waits)
+PASSED: pool invites: window closed (Meta 131047) and persistent throttling both recorded as "notification not delivered" for the admin; normal send works; evidence gate blocks before sending (not_delivered_window_closed)
+=== whatsapp-onboarding-ux-postgres passed_lines=1 errors=0
+PASSED: onboarding for buyer, seller and agent: welcome formatting and links, consent gate (short reminders), role buttons, helpful validation messages, retries, cancel and restart, edit, nothing created before confirmation, menu 
+=== whatsapp-webhook-retry-postgres passed_lines=5 errors=0
+PASSED: webhook retry of the same message id sends no extra replies
+PASSED: durable dedup table: fingerprint-only rows, completed marking, crash-reclaim after 2 minutes, no repeat afterwards
+PASSED: five simultaneous deliveries of one message id answered once (atomic database claim)
+PASSED: missing-table fallback works and the versioned migration creates a working table (synthetic DB only)
+PASSED: prompt-injection boundary: 4 hostile messages changed no role/status/verification and leaked no other account data (worker unavailable in this harness, so this tests the deterministic gates, not model behaviour)
+DONE

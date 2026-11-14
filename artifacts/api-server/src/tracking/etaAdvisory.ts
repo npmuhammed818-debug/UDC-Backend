@@ -22,8 +22,8 @@ export function etaAdvisory(
 
 export function etaAdvisoryLabel(value:EtaState):string|null{
   switch(value){
-    case "overdue_unconfirmed":return "Recorded ETA has passed; arrival is not confirmed. UDC will check with the logistics party.";
-    case "last_report_stale":return "No recent confirmed update (over 48 hours). UDC follow-up needed.";
+    case "overdue_unconfirmed":return "Recorded ETA has passed; arrival is not confirmed. A fresh logistics update is needed.";
+    case "last_report_stale":return "The last recorded update is over 48 hours old. A fresh logistics update is needed.";
     case "on_schedule_unconfirmed":return "ETA recorded but not independently confirmed.";
     case "not_recorded":return "No ETA recorded.";
     case "complete":return null;

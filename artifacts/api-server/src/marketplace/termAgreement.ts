@@ -1,4 +1,5 @@
 import { verifiedCounterparties } from "./verifiedCounterparties";
+import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
@@ -197,6 +198,10 @@ export async function requestTermsReview(matchId: string, actorUserId: string, s
     },
   });
   if(!delivered.delivered)throw new AgreementError("proposal_delivery_unavailable");
+  // All exact-term chunks and the associated button must have been accepted by
+  // the transport before a callback can record consent. This is not a receipt
+  // or proof that a person read it, and does not authorize any payment.
+  await db.insert(auditLogsTable).values({actorUserId:proposal.buyerUser.id,action:'match_terms_presented',entityType:'match_terms',entityId:proposal.id,metadata:{fingerprint:termsFingerprint(proposal.terms),allTermsShown:true,transportAccepted:true}});
   return { proposalId: proposal.id };
 }
 export async function acceptedMatchTerms(
@@ -217,9 +222,11 @@ export async function acceptedMatchTerms(
     .orderBy(desc(auditLogsTable.createdAt))
     .limit(1);
   const metadata = proposal?.metadata as any;
+  const currentTerms = matchTerms(buyer, seller);
   if (
-    !metadata ||
-    metadata.fingerprint !== termsFingerprint(matchTerms(buyer, seller))
+    !metadata?.terms ||
+    metadata.fingerprint !== termsFingerprint(currentTerms) ||
+    Object.entries(currentTerms).some(([key, value]) => metadata.terms[key] !== value)
   )
     return null;
   const [decision] = await tx
@@ -233,7 +240,18 @@ export async function acceptedMatchTerms(
       ),
     )
     .limit(1);
-  return decision ? (metadata.terms as ReturnType<typeof matchTerms>) : null;
+  if (decision?.metadata?.fingerprint !== metadata.fingerprint ||
+      decision?.metadata?.matchId !== matchId) return null;
+  const [presented] = await tx.select({metadata: auditLogsTable.metadata})
+    .from(auditLogsTable).where(and(
+      eq(auditLogsTable.entityId, proposal.id),
+      eq(auditLogsTable.action, "match_terms_presented"),
+      eq(auditLogsTable.actorUserId, buyer.buyerUserId),
+    )).limit(1);
+  if (presented?.metadata?.allTermsShown !== true ||
+      presented.metadata.transportAccepted !== true ||
+      presented.metadata.fingerprint !== metadata.fingerprint) return null;
+  return metadata.terms as ReturnType<typeof matchTerms>;
 }
 export async function respondToTerms(
   phone: string,
@@ -282,6 +300,8 @@ export async function respondToTerms(
         )
         .limit(1);
       if (prior) return "Your decision on this proposal is already recorded.";
+      const [presented]=await tx.select({metadata:auditLogsTable.metadata}).from(auditLogsTable).where(and(eq(auditLogsTable.entityId,proposal.id),eq(auditLogsTable.action,'match_terms_presented'),eq(auditLogsTable.actorUserId,actor.id))).limit(1);
+      if(presented?.metadata?.allTermsShown!==true||presented.metadata.transportAccepted!==true||presented.metadata.fingerprint!==metadata?.fingerprint)return "That exact proposal has not been fully presented. Ask UDC to send it again before deciding.";
       const c = await context(tx, proposal.entityId);
       const [latest] = await tx
         .select()
@@ -294,9 +314,10 @@ export async function respondToTerms(
         )
         .orderBy(desc(auditLogsTable.createdAt))
         .limit(1);
+      const expiry=typeof metadata.expiresAt==='string'?Date.parse(metadata.expiresAt):NaN;
       if (
         latest?.id !== proposal.id ||
-        Date.parse(metadata.expiresAt) <= Date.now() ||
+        !Number.isFinite(expiry) || expiry <= Date.now() ||
         metadata.fingerprint !== termsFingerprint(c.terms)
       )
         return "These terms changed or expired. Ask UDC to send the current proposal.";
@@ -357,11 +378,16 @@ export async function respondToTerms(
           )
             eligible.push(offer);
         }
+        const attemptedSellers = attempted.length ? await tx
+          .select({sellerUserId:sellerListingsTable.sellerUserId})
+          .from(sellerListingsTable)
+          .where(inArray(sellerListingsTable.id,attempted.map(m=>m.sellerListingId))) : [];
         const ranked = eligible
           .filter(
             (o) =>
               o.unit === c.buyer.unit &&
               o.sellerUserId !== c.seller.sellerUserId &&
+              !attemptedSellers.some(s=>s.sellerUserId===o.sellerUserId) &&
               verified.some((u) => u.id === o.sellerUserId) &&
               !attempted.some((m) => m.sellerListingId === o.id),
           )
@@ -425,6 +451,7 @@ export async function respondToTerms(
   if(reply.nextMatchId)try{await requestTermsReview(reply.nextMatchId,reply.actorUserId,'automatic_rematch');}catch{
     await db.insert(auditLogsTable).values({actorUserId:reply.actorUserId,action:'rematch_proposal_delivery_needs_review',entityType:'match',entityId:reply.nextMatchId,metadata:{requiresAdminReview:true}});
     const admins=await db.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await db.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'rematch_delivery_failed',title:'Next offer needs delivery review',body:'The buyer requested another seller. The next exact proposal is saved but was not accepted by the messaging provider.',link:'/matches'})));
+    queueAdminReviewAlert("offer review");
     try{await sendWhatsAppText(phone,'The next offer could not be delivered just now. Your requirement is saved and UDC can resend the offer.');}catch{/* Do not claim delivery. */}
   }
 }
@@ -442,9 +469,10 @@ export async function presentInitialVerifiedOffer(requirementId:string){
   const [deal]=await tx.select({id:dealsTable.id}).from(dealsTable).where(eq(dealsTable.buyerRequestId,buyer.id)).limit(1);
   if(deal)return null;
   const offers=await tx.select().from(sellerListingsTable).where(and(eq(sellerListingsTable.productId,buyer.productId),eq(sellerListingsTable.status,'approved'))).orderBy(desc(sellerListingsTable.updatedAt)).limit(100);
+  const priorSellers=attempts.length?await tx.select({sellerUserId:sellerListingsTable.sellerUserId}).from(sellerListingsTable).where(inArray(sellerListingsTable.id,attempts.map(match=>match.sellerListingId))):[];
   const ranked=[];
   for(const offer of offers){
-   if(attempts.some(match=>match.sellerListingId===offer.id)||!await verifiedCounterparties(buyer.buyerUserId,offer.sellerUserId,tx))continue;
+   if(priorSellers.some(seller=>seller.sellerUserId===offer.sellerUserId)||attempts.some(match=>match.sellerListingId===offer.id)||!await verifiedCounterparties(buyer.buyerUserId,offer.sellerUserId,tx))continue;
    ranked.push({offer,...scoreTradeMatch(buyer,offer)});
   }
   const preferred=(buyer.paymentTerms||udcPaymentTerms).trim().toLowerCase();
@@ -455,7 +483,8 @@ export async function presentInitialVerifiedOffer(requirementId:string){
   const id=randomUUID(),automatic=Boolean(immediate);
   await tx.insert(matchesTable).values({id,buyerRequestId:buyer.id,sellerListingId:chosen.offer.id,status:automatic?'approved':'suggested',matchScore:String(chosen.score)});
   await tx.insert(auditLogsTable).values({actorUserId:buyer.buyerUserId,action:'automatic_match_selected',entityType:'match',entityId:id,metadata:{buyerRequestId:buyer.id,sellerListingId:chosen.offer.id,automaticPresentation:automatic,dealApprovalRequired:true}});
-  if(!automatic){const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_needs_review',title:'Offer needs review before presentation',body:'Verified supply was found, but a requirement or offer condition needs review.',link:'/matches'})));}
+  if(!automatic){const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));if(admins.length)await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_needs_review',title:'Offer needs review before presentation',body:'Verified supply was found, but a requirement or offer condition needs review.',link:'/matches'})));
+    queueAdminReviewAlert("offer review");}
   return {id,buyerUserId:buyer.buyerUserId,automatic};
  },{isolationLevel:'serializable'});
  if(!selected)return false;
@@ -463,6 +492,7 @@ export async function presentInitialVerifiedOffer(requirementId:string){
   await db.insert(auditLogsTable).values({actorUserId:selected.buyerUserId,action:'match_proposal_delivery_needs_review',entityType:'match',entityId:selected.id,metadata:{requiresAdminReview:true}});
   const admins=await db.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['active','verified'])));
   if(admins.length)await db.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'match_delivery_failed',title:'Offer delivery needs review',body:'The exact proposal is saved but could not be accepted by the messaging provider.',link:'/matches'})));
+    queueAdminReviewAlert("offer review");
  }
  return true;
 }

@@ -1,31 +1,78 @@
+import { runBackgroundTask } from "../lib/backgroundTask.ts";
+import {handleDocumentCheck} from '../whatsapp/documentCheck';
+import {handleDealReadSummary} from '../whatsapp/dealReadSummary';
+import {handleSellerReviewCard} from '../whatsapp/sellerReviewCard';
+import {handlePhotoQuoteReview,handlePhotoReviewButton} from '../whatsapp/photoQuoteReview';
+import {handleRelationshipMemory} from '../whatsapp/relationshipMemory';
+import {handleDealTermTip} from '../whatsapp/dealTermTip';
+import {handleStatusPicture} from '../whatsapp/statusPicture';
+import {handleMonthlyScorecard} from '../whatsapp/sellerScorecard';
+import {handleHumanHelpButton} from '../whatsapp/humanHelp';
+import {handleTraderDiary} from '../whatsapp/traderDiary';
+import {handleQualityProofPack} from '../whatsapp/qualityProofPack';
+import {handleFreightEstimate} from '../whatsapp/freightEstimate';
+import {handleTradeBrief} from '../whatsapp/tradeBriefs';
+import {handleEmailChannelLink} from '../whatsapp/emailChannelLink';
+import {handleDealReminder} from '../whatsapp/dealReminders';
+import {handleTrialOrder} from '../deals/trialOrder';
+import {promptExitReason,handleExitReason} from '../whatsapp/exitReason';
+import {handleNegotiationCoach} from '../whatsapp/negotiationCoach';
+import {handlePriceWatch} from '../whatsapp/priceWatch';
+import {handleSellerScorecard} from '../whatsapp/sellerScorecard';
+import {handleTradeTerm} from '../whatsapp/tradeTerms';
+import {handleCurrencyHelper} from '../whatsapp/currencyHelper';
+import {handleTradeAssist} from '../whatsapp/tradeAssist';
+import { crisisSafetyReply } from "../akif/crisisSafety";
+import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
+import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { fixRelayFallbackReply } from "../akif/formDump";
+import { runConversationChat } from "../akif/intelligence/hermesClient";
+import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
+import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
 import {recordSignedCustomerInbound} from '../whatsapp/customerServiceWindow';
-import { answerGuidance, isGuidanceQuestion } from '../whatsapp/guidance';
+import { answerGuidance, guidanceMainLanguage, isGuidanceQuestion } from '../whatsapp/guidance';
 import { recordedDealTerms } from '../deals/recordedTerms';
-import { chatAction, handleChatUi, sendChatHome, type ChatMessage } from '../whatsapp/chatUi';
+import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMessage } from '../whatsapp/chatUi';
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { claimInboundMessage, completeInboundMessages } from "../whatsapp/inboundDedup";
-import { Router, type IRouter, type Request } from "express";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentsTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { accountFactsLine } from "../akif/fallbackContext";
+import { inviteGateHandles } from "../whatsapp/inviteGate";
+import { isMutedPhone } from "../whatsapp/mutedInbound";
+import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
+import { claimInboundMessage, completeInboundMessages, releaseInboundMessages, inboundClaimInProgress } from "../whatsapp/inboundDedup";
+import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
+import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction } from "../whatsapp/client";
+import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
+import { Router, type IRouter, type Request, type Response } from "express";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
+import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
+import { dealPaymentStatusReply, paymentStatusQuestion } from "../whatsapp/dealPayments";
 import { interpretIntakeConversation } from "../akif/intakeConversation";
 import { recordPendingBuyerRequirement } from "../akif/recordBuyerRequirement";
 import { recordPendingSellerOffer } from "../akif/recordPendingSellerOffer";
-import { isAkifWorkerMediaEnabled, transcribeAkifAudio } from "../akif/intelligence/workerClient";
+import { isAkifWorkerMediaEnabled, transcribeAkifAudioDetailed, warmAkifWorker } from "../akif/intelligence/workerClient";
 import { queueWhatsAppResearch } from "../akif/queueResearch";
 import { isSellerOffer } from "../akif/sellerOfferTriage";
 import { AADHAAR_REFUSAL, containsAadhaarNumber, mentionsAadhaarDocument } from "../privacy/aadhaar";
 import { acknowledgementReply, grievanceDeadline, isGrievance } from "../grievance/grievance";
 import { scrubAadhaar } from "../privacy/aadhaar";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
-import { react } from "../whatsapp/reactions";
-import { trySpeakReply } from "../whatsapp/voiceSend";
-import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
+import { react, reactByMeaning } from "../whatsapp/reactions";
+import { speakReply } from "../whatsapp/voiceSend";
+import { parseVoiceCommand, setTextOnly, getVoiceState, TEXT_ONLY_CONFIRMATION, VOICE_ON_CONFIRMATION } from "../whatsapp/voicePreference";
+import { isVoiceGoAhead, VOICE_NOTICE, VOICE_TEXT_OFFER, EXPLICIT_VOICE_CONFIRMATION, EXPLICIT_VOICE_TEXT_ONLY, parseVoiceRequest, isOfferYes } from "../akif/voiceConsent.ts";
+import { armExplicitVoice, consumeExplicitVoice, getLastAnswer, hasExplicitVoice, setLastAnswer, setVoiceOffer, takeVoiceOffer, textOfferSeconds } from "../akif/voiceSession.ts";
+import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
+import { reserveTranscription } from "../akif/voiceLimits.ts";
+import { downloadWhatsAppMedia, sendWhatsAppDocument, sendWhatsAppImage, sendWhatsAppText, sendWhatsAppTextWithMenu } from "../whatsapp/client";
+import { quotedOutboundFor } from "../whatsapp/outboundLog.ts";
 import { requireRole } from "../auth/middleware";
 import { interpretActiveDealConversation } from "../akif/dealConversationAgent";
 import { looksLikeNewTradeIntake, isExplicitSeparateTradeIntake, isStandaloneBuyerInquiry } from "../akif/dealDecisionSafety";
@@ -35,14 +82,23 @@ import { createSignedDownloadUrl, parseStoragePath, uploadDocumentBytes } from "
 import { managedDealDocumentPath } from "../supabase/documentAccessPath";
 import { looksLikeConfidentialDocumentTopic, SENSITIVE_UPLOAD_WARNING, vaultRedirectReply, VAULT_DOCUMENT_TYPES, type VaultDocumentType } from "../vault/uploadLink";
 import { wantsHumanHelp, HUMAN_HANDOFF_REPLY } from "../akif/conversationPolicy";
-import { getVaultLinkIssuer } from "../vault/issuer";
+import { getVaultLinkIssuer, setVaultLinkIssuer } from "../vault/issuer";
+import { createVaultUploadLink } from "../vault/service";
+// The WhatsApp process must be able to issue vault links even when the vault
+// router (which also registers this) is not loaded in it.
+setVaultLinkIssuer(createVaultUploadLink);
 import { mergeBuyerRequirementDraft, mergeSellerOfferDraft } from "../akif/intakeDraftMerge";
 import { sellerOfferReply } from "../akif/sellerOfferReply";
 import { triageSellerOffer } from "../akif/sellerOfferTriage";
 import { clearWhatsAppIntakeDraft, loadWhatsAppIntakeDraft, saveWhatsAppIntakeDraft } from "../akif/whatsappIntakeStore";
 
 import { whatsappPrivacyGate } from "../privacy/whatsappPrivacyGate";
-import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraft } from "../deals/whatsappDraft";
+import { asksForUploadLink } from "../whatsapp/uploadLinkIntent";
+import { askedAboutPausingDeal, dealPauseHowTo } from "../deals/dealPauseText";
+import { requestedDealPause, dealPauseContextKind, dealPausePrompt, applyDealPause, pausedConfirmationToSender, closedConfirmationToSender } from "../deals/dealPause";
+import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmation, generateWhatsAppDraftPdf } from "../deals/whatsappDraft";
+import { contactsUnlocked } from "../deals/contactSharing";
+import type { SpaDraftInput } from "../deals/spaDraft";
 
 const router: IRouter = Router();
 
@@ -54,7 +110,7 @@ function isEqual(left: string, right: string) {
 }
 
 function cleanHumanWhatsAppText(body: string) {
-  return body
+  return stripDashBreaks(body
     .replace(/```[\s\S]*?```/g, "")
     .replace(/[`*_~]/g, "")
     .replace(/_{2,}/g, " ")
@@ -65,16 +121,168 @@ function cleanHumanWhatsAppText(body: string) {
     .replace(/\s+([,.!?])/g, "$1")
     .replace(/([!?.,])\1{1,}/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .trim());
+}
+
+import { chooseChannel } from "../akif/voiceMoments.ts";
+import { guardOutboundText } from "../akif/outboundGuard.ts";
+import { pickVoiceLanguage } from "../akif/voiceLanguage.ts";
+
+const VOICE_LANGUAGE_NAMES: Record<string, string> = { eng: "english", mal: "malayalam", tam: "tamil", hin: "hindi", ara: "arabic" };
+
+/**
+ * Reply the way a person would. Voice when the user used voice or asked for it; AKIF may also pick
+ * voice by itself for the Master Plan moments (calming an upset user, explaining something long)
+ * when AKIF_VOICE_AUTOPICK=on - never dates or money, never the welcome message (those paths do not
+ * pass a userText). Voice is spoken in the customer's main language or English (AKIF's per-customer
+ * pick); text is always English. A spoken reply is never also sent as text. If the voice cannot be
+ * sent, the same reply goes as text. After a long voice reply (over the threshold) a short text
+ * offer follows; the text itself is only sent after a yes.
+ */
+async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, context: { userText?: string; heardLanguage?: string; explicitVoice?: boolean; voiceNote?: boolean } = {}) {
+  setLastAnswer(to, reply);
+  const choice = chooseChannel({ wantsVoice, userText: context.userText, reply });
+  if (choice.channel === "text") return deliverWhatsAppReply(to, reply);
+  const mainLanguage = await guidanceMainLanguage(to);
+  const language = pickVoiceLanguage({ mainLanguage, heardLanguage: context.heardLanguage });
+  const spoken = await speakReply(to, reply, { language });
+  if (spoken.status === false) {
+    // Content-free diagnosis: which gate turned this voice reply into text.
+    console.warn(JSON.stringify({ event: "voice_reply_text_fallback", reason: spoken.reason ?? "unknown", rule: spoken.detail ?? null }));
+    // AKIF promised voice (explicit request) or mirrored a voice note: never go text silently.
+    if (context.explicitVoice || context.voiceNote) {
+      await deliverWhatsAppReply(to, spoken.reason === "not_speakable"
+        ? "This one has details that must stay in writing, so here it is in text."
+        : "Voice is not working just now, so here is your answer in text.");
+    }
+    return deliverWhatsAppReply(to, reply);
+  }
+  if (spoken.status === "uncertain") return { delivered: false as const, reason: "provider_outcome_unknown" as const };
+  if (spoken.noticeDue) await deliverWhatsAppReply(to, VOICE_NOTICE);
+  if (spoken.seconds !== null && spoken.seconds > textOfferSeconds()) {
+    setVoiceOffer(to, reply);
+    await deliverWhatsAppReply(to, VOICE_TEXT_OFFER);
+  }
+  return { delivered: true as const };
+}
+
+// Human relay (staging tests; default OFF): an allowlisted test number's open
+// chat turns are held in memory for a dev-side answer instead of AKIF
+// answering straight away. The brain still runs silently so the held message
+// carries its draft and tool results; any deferred background work is
+// cancelled, never started, because the dev side decides what actually goes
+// out. Brain failure just means no draft - the message is still held.
+const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
+const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 1500) || 0);
+// Delay ack fires only when the reply is genuinely slow, never as a per-message ack (owner feedback, 10 Nov).
+const RELAY_SLOW_NUDGE_MS = Math.max(0, Number(process.env.AKIF_RELAY_SLOW_NUDGE_MS ?? 12000) || 0);
+
+// Identity for the no-tools fallback chain (10 Nov): with no system prompt the
+// fallback model introduced itself as another provider's product in a held
+// draft. AKIF always identifies as AKIF from UDC.
+const RELAY_FALLBACK_SYSTEM = "You are AKIF, UpDownCircle (UDC)'s AI trade assistant on WhatsApp. Text like a warm, capable trade coordinator: short, casual, one thing at a time, no menus. Never name or claim any other AI model, provider or company. If asked who you are, say you are AKIF, UDC's AI assistant.";
+
+export async function buildHumanRelayDraft(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
+  if (!isBrainOrchestratorEnabled()) return null;
+  try {
+    const brain = await runBrainTurn({ phone, text, messageId });
+    if (brain?.background) await brain.cancelBackground?.();
+    return { reply: brain?.reply ?? null, backgroundDiscarded: Boolean(brain?.background), toolsUsed: brain?.toolsUsed ?? [] };
+  } catch (error) {
+    // Sanitized reason only (HTTP status class or error name): the provider's
+    // error body is never logged. A silent null here was costing us the cause
+    // of empty held drafts (owner report, 10 Nov).
+    const msg = error instanceof Error ? error.message : "";
+    const httpStatus = /HTTP (\d{3})/i.exec(msg)?.[1];
+    console.warn("AKIF relay draft turn failed", { reason: httpStatus ? `http_${httpStatus}` : (error instanceof Error ? error.name : "unknown") });
+    // Free fallback chain (owner direction, 10 Nov): a Groq free-tier 429 must
+    // not leave the held message draft-less. The conversation chain (self
+    // brain, then the Gemini-backed worker, then the older providers) answers
+    // without tools; tool-backed drafts still prefer the brain turn above.
+    try {
+      const convo = await runConversationChat(text, RELAY_FALLBACK_SYSTEM + await accountFactsLine(phone), 20000);
+      const raw = convo?.content?.trim() || null;
+      return { reply: raw ? fixRelayFallbackReply(raw, text) : null, backgroundDiscarded: false, toolsUsed: [] };
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** One relay draft turn, with a busy wait for an in-flight previous turn and a
+ *  single retry when the turn failed or came back empty (a provider rate limit
+ *  on back-to-back turns produced held messages with no draft, 10 Nov). */
+export async function buildHumanRelayDraftWithRetry(phone: string, text: string, messageId?: string): Promise<{ reply: string | null; backgroundDiscarded: boolean; toolsUsed: string[] } | null> {
+  // Drafts are off with the orchestrator (owner direction 10 Nov): without
+  // this guard every held message waited out a dead 5s retry before enqueue.
+  if (!isBrainOrchestratorEnabled()) return null;
+  let draft = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    draft = await buildHumanRelayDraft(phone, text, messageId);
+    if (draft?.reply !== BRAIN_BUSY_REPLY) break;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  if (!draft?.reply) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const retry = await buildHumanRelayDraft(phone, text, messageId);
+    if (retry?.reply) return retry;
+  }
+  return draft;
+}
+
+/** Send the dev-side answer. Voice requests use the normal voice path with its own honest text fallback. */
+/** Registered account state for relay humans: role, status and (for agents)
+ *  the invite code, so an answer never asks what the system already knows. */
+async function relayCustomerNote(phone: string): Promise<string | undefined> {
+  try {
+    const [u] = await db.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status, emailVerifiedAt: usersTable.emailVerifiedAt }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
+    if (!u) {
+      // Registration must remember what the customer already gave in chat
+      // (owner feedback, 10 Nov): never re-ask a detail on record.
+      // Registration must remember everything the customer already gave in
+      // this thread (owner feedback, 10 Nov): the note lists the known facts
+      // so no answer ever re-asks them.
+      const facts = knownFactsForContact(phone);
+      const knownBits = [
+        facts.name ? `name ${facts.name}` : "",
+        facts.email ? `email ${facts.email}` : "",
+        facts.company ? `company ${facts.company}` : "",
+        facts.role ? `role ${facts.role}` : "",
+      ].filter(Boolean);
+      // Owner rule (10 Nov): agents register with any email and no company
+      // details; buyers and sellers keep the company-email rule. Workers see
+      // this on every unregistered note so nobody demands the wrong thing.
+      const rules = "agents may use any email and need no company details, buyers/sellers need a company email, company name and country";
+      return (knownBits.length ? `not registered, known in thread: ${knownBits.join(", ")}` : "not registered") + "; " + rules;
+    }
+    const parts = [`registered ${u.role}`, `account ${u.status}`, u.emailVerifiedAt ? "email confirmed" : "email not confirmed"];
+    if (u.role === "agent") parts.push(`invite code ${agentReferralCode(u.id)}`);
+    return parts.join(", ");
+  } catch { return undefined; }
+}
+
+export async function deliverHumanRelayReply(to: string, text: string, options: { voice?: boolean; heardLanguage?: string } = {}) {
+  const cleanedText = sanitizeRelayReplyText(text);
+  if (options.voice) {
+    return deliverAnswer(to, cleanedText, true, { userText: cleanedText, heardLanguage: options.heardLanguage, explicitVoice: true, voiceNote: true });
+  }
+  return deliverWhatsAppReply(to, cleanedText);
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string, _withMenu = false) {
   if (!to) return { delivered: false as const, reason: "missing_sender" as const };
 
   try {
-    const cleaned = cleanHumanWhatsAppText(body);
+    const guarded = guardOutboundText(body);
+    if (guarded.replaced) console.warn(JSON.stringify({ event: "outbound_placeholder_blocked" }));
+    const cleaned = cleanHumanWhatsAppText(guarded.text);
     return await sendWhatsAppText(to, cleaned);
-  } catch {
+  } catch (error) {
+    // Safe fields only: never the message body, number, token or provider response text.
+    const e = error as { httpStatus?: unknown; code?: unknown; subcode?: unknown } | null;
+    const msg = error instanceof Error ? error.message : "";
+    const subcode = /subcode=(\d+)/.exec(msg)?.[1];
+    console.warn(JSON.stringify({ event: "whatsapp_reply_send_failed", httpStatus: typeof e?.httpStatus === "number" ? e.httpStatus : null, code: typeof e?.code === "number" ? e.code : null, subcode: subcode ?? null }));
     return {
       delivered: false as const,
       // Provider errors must not be copied into logs: they can contain user or
@@ -315,6 +523,10 @@ function inferDocumentType(filename?: string, caption?: string) {
   if (/bill of lading|\bbl\b/.test(value)) return "BL";
   if (/certificate of origin|\bco\b/.test(value)) return "CO";
   if (/coa|assay/.test(value)) return "COA";
+  if (/\binvoice\b/.test(value)) return "invoice";
+  if (/packing[\s_-]?list/.test(value)) return "packing_list";
+  if (/inspection/.test(value)) return "inspection_report";
+  if (/\.(jpe?g|png|webp)$/i.test(filename ?? "")) return "image";
   return "trade_document";
 }
 
@@ -331,6 +543,7 @@ function requestedStoredDocumentType(text: string, replyContextKind?: string) {
     ["BL", /bill of lading|\bbl\b/],
     ["COA", /\bcoa\b|assay/],
     ["CO", /certificate of origin/],
+    ["image", /\b(?:photo|photos|picture|pictures|image|images|img|pic)\b/],
   ] as const;
 
   const requested = explicit.find(([, pattern]) => pattern.test(normalized))?.[0];
@@ -427,6 +640,12 @@ async function resolveActiveDealForUser(userId: string, replyToProviderMessageId
   return deals.length === 1 ? deals[0]!.dealId : null;
 }
 
+export function noDealFileReply(role: string) {
+  return role === "agent"
+    ? "I got the file. Agents do not upload documents here, so I have not kept it."
+    : "I got the file, but you have no active deal yet. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF.";
+}
+
 async function handleWhatsAppDealDocument(
   from: string,
   document: { id: string; filename?: string; mime_type?: string; caption?: string },
@@ -434,7 +653,7 @@ async function handleWhatsAppDealDocument(
   replyToProviderMessageId?: string,
 ) {
   const [sender] = await db
-    .select({ id: usersTable.id, status: usersTable.status })
+    .select({ id: usersTable.id, status: usersTable.status, role: usersTable.role })
     .from(usersTable)
     .where(eq(usersTable.phone, from))
     .limit(1);
@@ -460,6 +679,9 @@ async function handleWhatsAppDealDocument(
 
   const dealId = await resolveActiveDealForUser(sender.id, replyToProviderMessageId);
   if (!dealId) {
+    const [anyDeal] = await db.select({ dealId: dealParticipantsTable.dealId }).from(dealParticipantsTable)
+      .where(eq(dealParticipantsTable.userId, sender.id)).limit(1);
+    if (!anyDeal) return { reply: noDealFileReply(sender.role) };
     return { reply: "I got the file, but I’m not sure which deal it belongs to. Reply to the right deal message and send it again." };
   }
 
@@ -504,8 +726,117 @@ async function handleWhatsAppDealDocument(
     throw new Error("document_record_not_created");
   }
 
-  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "owner" });
+  await db.insert(documentAccessTable).values({ documentId: savedDocument.id, userId: sender.id, accessRole: "editor" });
 
+  // Deal-room photo relay: a plain photo in an active deal is shared with the other side
+  // as a viewable image (goods photos are the content itself - there is no "rewrite" for a
+  // picture). Captions naming a trade document stay on the document path above and are
+  // never auto-relayed. The sender is named by role only; numbers and names stay private.
+  let photoRelayedTo = 0;
+  if (documentType === "image") {
+    try {
+      const [dealRow] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+        .where(eq(dealsTable.id, dealId)).limit(1);
+      // Only the deal's buyer/seller principals ever receive an automatic photo
+      // relay. Agents (and anyone whose account role no longer matches their
+      // participant role, such as after a role change) are excluded: confidential
+      // deal content is never auto-relayed to them and they receive no
+      // document-access grant from the relay below.
+      const counterparties = await db.select({
+        userId: dealParticipantsTable.userId,
+        phone: usersTable.phone,
+      }).from(dealParticipantsTable)
+        .innerJoin(usersTable, eq(usersTable.id, dealParticipantsTable.userId))
+        .where(and(
+          eq(dealParticipantsTable.dealId, dealId),
+          eq(dealParticipantsTable.status, "active"),
+          inArray(dealParticipantsTable.participantRole, ["buyer", "seller"]),
+          inArray(usersTable.role, ["buyer", "seller"]),
+          eq(usersTable.status, "verified"),
+          ne(dealParticipantsTable.userId, sender.id),
+        ));
+      const senderSide = sender.role === "buyer" ? "buyer" : sender.role === "seller" ? "seller" : "other side";
+      const caption = `Photo from the ${senderSide} in deal ${dealRow?.dealNumber ?? "your deal"}.${document.caption ? ` Note: ${document.caption.slice(0, 300)}` : ""}`;
+      for (const side of counterparties) {
+        if (!side.phone) continue;
+        try {
+          const signedUrl = await createSignedDownloadUrl(objectPath);
+          const delivery = await sendWhatsAppImage(side.phone, signedUrl, caption);
+          if (delivery.delivered) {
+            photoRelayedTo += 1;
+            await db.insert(documentAccessTable).values({
+              documentId: savedDocument.id, userId: side.userId, accessRole: "viewer",
+            }).onConflictDoNothing();
+            if ("messageId" in delivery && delivery.messageId) {
+              await db.insert(whatsappMessageContextsTable).values({
+                providerMessageId: delivery.messageId, dealId,
+                recipientUserId: side.userId, kind: "deal_image_relay",
+              }).onConflictDoNothing();
+            }
+          }
+        } catch { /* one failed recipient never blocks the others */ }
+      }
+    } catch { /* relay failure still leaves the photo stored in the deal */ }
+  }
+
+  // Trade documents go straight to the other side of the same deal, no UDC
+  // review step first (owner direction, 10 Nov): invoice, packing list, bill
+  // of lading, inspection and certificates. Negotiation/legal drafts (LOI,
+  // ICPO, FCO, SCO, SPA, NCNDA) keep their staged flow with the hidden-party
+  // rules, and anything that reads as KYC/ID/bank NEVER auto-relays.
+  const TRADE_RELAY_TYPES = new Set(["SGS", "BL", "CO", "COA", "invoice", "packing_list", "inspection_report", "trade_document"]);
+  const KYC_WORDS = /passport|national[\s_-]?id|aadhaar|aadhar|pan[\s_-]?card|bank|kyc|visa|driving[\s_-]?licen[cs]e/i;
+  let tradeRelayedTo = 0;
+  if (TRADE_RELAY_TYPES.has(documentType) && !KYC_WORDS.test(`${document.filename ?? ""} ${document.caption ?? ""}`)) {
+    try {
+      const [dealRow] = await db.select({ dealNumber: dealsTable.dealNumber }).from(dealsTable)
+        .where(eq(dealsTable.id, dealId)).limit(1);
+      // Same recipient rule as the photo relay: the deal's buyer/seller
+      // principals only, never agents or stale-role accounts.
+      const counterparties = await db.select({
+        userId: dealParticipantsTable.userId,
+        phone: usersTable.phone,
+      }).from(dealParticipantsTable)
+        .innerJoin(usersTable, eq(usersTable.id, dealParticipantsTable.userId))
+        .where(and(
+          eq(dealParticipantsTable.dealId, dealId),
+          eq(dealParticipantsTable.status, "active"),
+          inArray(dealParticipantsTable.participantRole, ["buyer", "seller"]),
+          inArray(usersTable.role, ["buyer", "seller"]),
+          eq(usersTable.status, "verified"),
+          ne(dealParticipantsTable.userId, sender.id),
+        ));
+      const senderSide = sender.role === "buyer" ? "buyer" : sender.role === "seller" ? "seller" : "other side";
+      const relayCaption = `${documentType} from the ${senderSide} in deal ${dealRow?.dealNumber ?? "your deal"}.${document.caption ? ` Note: ${document.caption.slice(0, 300)}` : ""}`;
+      for (const side of counterparties) {
+        if (!side.phone) continue;
+        try {
+          const signedUrl = await createSignedDownloadUrl(objectPath);
+          const delivery = await sendWhatsAppDocument(side.phone, signedUrl, safeFilename, relayCaption);
+          if (delivery.delivered) {
+            tradeRelayedTo += 1;
+            await db.insert(documentAccessTable).values({
+              documentId: savedDocument.id, userId: side.userId, accessRole: "viewer",
+            }).onConflictDoNothing();
+            if ("messageId" in delivery && delivery.messageId) {
+              await db.insert(whatsappMessageContextsTable).values({
+                providerMessageId: delivery.messageId, dealId,
+                recipientUserId: side.userId, kind: "deal_document_relay",
+              }).onConflictDoNothing();
+            }
+          }
+        } catch { /* one failed recipient never blocks the others */ }
+      }
+      if (tradeRelayedTo > 0) {
+        await db.insert(auditLogsTable).values({
+          actorUserId: sender.id, action: "trade_document_auto_relayed", entityType: "document", entityId: savedDocument.id,
+          metadata: { dealId, documentType, recipients: tradeRelayedTo, channel: "whatsapp" },
+        });
+      }
+    } catch { /* relay failure still leaves the document stored in the deal */ }
+  }
+
+  if (documentType !== "image") {
   void processDocumentIntelligence({
     documentId: savedDocument.id,
     dealId,
@@ -519,9 +850,12 @@ async function handleWhatsAppDealDocument(
       const warning = result.status === "needs_review"
         ? " I extracted the available text, but this file may contain scanned/image-only pages, so manual review is still required."
         : "";
+      const summaryOffer = ["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA"].includes(documentType.toUpperCase())
+        ? " Reply SUMMARY anytime for a plain-words summary."
+        : "";
       await sendWhatsAppTextWithMenu(
         from,
-        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}`,
+        `I finished extracting the ${documentType}. Its full text and structured trade data are now saved in this deal.${warning}${summaryOffer}`,
       ).catch(() => undefined);
     })
     .catch(async () => {
@@ -530,6 +864,7 @@ async function handleWhatsAppDealDocument(
         `I attached the ${documentType} to the deal, but full extraction failed. UDC kept the original file for review and retry.`,
       ).catch(() => undefined);
     });
+  }
 
   await setActiveDealContext(sender.id, dealId);
   await db.insert(dealConversationEventsTable).values({
@@ -543,10 +878,30 @@ async function handleWhatsAppDealDocument(
   });
 
   return {
-    reply: `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
+    reply: documentType === "image"
+      ? photoRelayedTo > 0
+        ? `Got the photo and passed it to the other side in this deal.\n\n${SENSITIVE_UPLOAD_WARNING}`
+        : `Got the photo and kept it in this deal. I could not pass it to the other side just now - I’ll keep it here.\n\n${SENSITIVE_UPLOAD_WARNING}`
+      : tradeRelayedTo > 0
+        ? `Got the ${documentType} and passed it straight to the other side in this deal.\n\n${SENSITIVE_UPLOAD_WARNING}`
+        : `Got the ${documentType}. I’ll keep it here for review.\n\n${SENSITIVE_UPLOAD_WARNING}`,
     dealId,
     recipientUserId: sender.id,
   };
+}
+
+// Only the early non-binding drafts hide the other side. SPA and FCO need the real names to be signed.
+const PRE_NCNDA_DRAFTS = new Set(["LOI", "ICPO"]);
+
+async function isReplyToSavedDealMessage(from: string, contextId?: string) {
+  if (!contextId) return false;
+  const [row] = await db
+    .select({ id: whatsappMessageContextsTable.id })
+    .from(whatsappMessageContextsTable)
+    .innerJoin(usersTable, eq(usersTable.id, whatsappMessageContextsTable.recipientUserId))
+    .where(and(eq(whatsappMessageContextsTable.providerMessageId, contextId), eq(usersTable.phone, from)))
+    .limit(1);
+  return Boolean(row);
 }
 
 async function handleDealWhatsAppMessage(
@@ -554,6 +909,7 @@ async function handleDealWhatsAppMessage(
   text: string,
   replyToProviderMessageId?: string,
   inboundProviderMessageId?: string,
+  options: { voiceTranscript?: boolean } = {},
 ) {
   const explicitMatch = text.trim().match(/^deal\s+(UDC-[A-Z0-9-]+)\s*:\s*(.+)$/i);
 
@@ -732,10 +1088,46 @@ async function handleDealWhatsAppMessage(
   await setActiveDealContext(sender.id, deal.id);
   await setActiveDealContext(receiverUserId, deal.id);
 
+  const pauseRequest = requestedDealPause(messageBody);
+  if (pauseRequest) {
+    const ctxKind = dealPauseContextKind(pauseRequest.kind);
+    if (!pauseRequest.confirmed || replyContextKind !== ctxKind)
+      return { reply: dealPausePrompt(pauseRequest.kind, deal.dealNumber), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: ctxKind };
+    const result = await applyDealPause({ dealId: deal.id, dealNumber: deal.dealNumber, senderId: sender.id, receiverId: receiverUserId, kind: pauseRequest.kind });
+    if (!result.applied) return { reply: "This deal is already paused, closed or finished, so nothing changed.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    if(pauseRequest.kind==='close'&&result.applied)await promptExitReason(from,deal.id).catch(()=>undefined);
+    return { reply: (pauseRequest.kind === "pause" ? pausedConfirmationToSender : closedConfirmationToSender)(deal.dealNumber, result.told), deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+  }
+
+  const confirmedVoiceEvent=confirmedVoiceRelay(messageBody,options.voiceTranscript===true,replyContextKind);
+  if(confirmedVoiceEvent){
+    // Scope to this verified sender and already-authorized active deal. A reply
+    // cannot select another person's preview or authorize a commercial decision.
+    const [preview]=await db.select().from(dealConversationEventsTable).where(and(eq(dealConversationEventsTable.id,confirmedVoiceEvent),eq(dealConversationEventsTable.dealId,deal.id),eq(dealConversationEventsTable.userId,sender.id),eq(dealConversationEventsTable.intent,'voice_relay_preview'))).limit(1);
+    if(!preview?.relayText||!preview.createdAt||Date.now()-new Date(preview.createdAt).getTime()>15*60*1000||['completed','cancelled','rejected','on_hold','disputed'].includes(deal.status))return {reply:'That voice preview is unavailable. Please type your message again.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    // Atomic claim prevents replay. An uncertain delivery is never auto-retried.
+    const claimed=await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'voice_relay:'+preview.id}))`);const [activeDeal]=await tx.select({status:dealsTable.status}).from(dealsTable).where(eq(dealsTable.id,deal.id)).limit(1);const [activeReceiver]=await tx.select({id:dealParticipantsTable.id}).from(dealParticipantsTable).where(and(eq(dealParticipantsTable.dealId,deal.id),eq(dealParticipantsTable.userId,receiverUserId),eq(dealParticipantsTable.status,'active'))).limit(1);if(!activeDeal||!activeReceiver||['completed','cancelled','rejected','on_hold','disputed'].includes(activeDeal.status))return false;const [current]=await tx.select().from(dealConversationEventsTable).where(eq(dealConversationEventsTable.id,preview.id)).limit(1);if(!current||current.relayed)return false;const [attempt]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'voice_relay_send_claimed'),eq(auditLogsTable.entityId,preview.id))).limit(1);if(attempt)return false;await tx.insert(auditLogsTable).values({actorUserId:sender.id,action:'voice_relay_send_claimed',entityType:'deal_conversation_event',entityId:preview.id,metadata:{dealId:deal.id,typedConfirmation:true}});return true;});
+    if(!claimed)return {reply:'This voice preview was already sent or attempted. I will not send it twice. Please ask UDC if delivery is unclear.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    const [receiver]=await db.select({phone:usersTable.phone,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,receiverUserId)).limit(1);
+    if(!receiver?.phone||receiver.status!=='verified')return {reply:'The other account needs review, so nothing was sent.',deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id};
+    const delivery=await deliverWhatsAppReply(receiver.phone,preview.relayText);if(delivery.delivered){await db.update(dealConversationEventsTable).set({relayed:true}).where(eq(dealConversationEventsTable.id,preview.id));if(delivery.messageId)await db.insert(whatsappMessageContextsTable).values({providerMessageId:delivery.messageId,dealId:deal.id,recipientUserId:receiverUserId,kind:`mediated_clarification:${preview.id}`}).onConflictDoNothing();}
+    return {reply:delivery.delivered?'Passed on the exact text you confirmed. Your audio was not shared.':'I could not confirm delivery. I will not resend automatically. Ask UDC to check before trying again.',deliveredToCounterparty:delivery.delivered,dealId:deal.id,recipientUserId:sender.id};
+  }
+
   const draftRequest = requestedWhatsAppDraft(messageBody);
   if (draftRequest) {
     if (!mayPrepareWhatsAppDraft(draftRequest.type, sender.id === deal.buyerUserId)) {
       return { reply: "That draft needs to be requested by the authorized party for this deal.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
+    // Owner decision (28 Oct): agents sign their agreement only after the SPA
+    // for the deal is signed. The contract stage moves only by UDC's own ops.
+    if (draftRequest.type === "AGENT_AGREEMENT") {
+      if (sender.role !== "agent") {
+        return { reply: "Agent agreements are for UDC agents.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+      }
+      if (!contactsUnlocked(deal.status)) {
+        return { reply: "Your agent agreement is signed after the SPA for this deal is signed. UDC will share it with you then.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+      }
     }
     const [product] = await db.select({ name: productsTable.name }).from(productsTable)
       .where(eq(productsTable.id, deal.productId)).limit(1);
@@ -743,25 +1135,43 @@ async function handleDealWhatsAppMessage(
     const terms = { paymentTerms:acceptedTerms?.paymentTerms, inspectionTerms:acceptedTerms?.inspectionTerms, dealNumber: deal.dealNumber,
       date: new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeZone: "UTC" }).format(new Date()),
       productName: product?.name ?? "", quantity: deal.quantity, unit: deal.unit,
-      agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination };
+      agreedPrice: deal.agreedPrice, currency: deal.currency, incoterm: deal.incoterm, destination: deal.destination } as SpaDraftInput;
+    // Only the requester's own profile details are filled. The other side stays hidden until the NCNDA stage.
+    const requesterIsBuyer = sender.id === deal.buyerUserId;
+    const [ownCompany] = draftRequest.type === "NCNDA" ? [] : await db
+      .select({ name: companiesTable.companyName, address: companiesTable.address, reg: companiesTable.registrationNumber })
+      .from(companiesTable).where(eq(companiesTable.ownerUserId, sender.id)).limit(1);
+    if (ownCompany && draftRequest.type !== "NCNDA") {
+      if (requesterIsBuyer) Object.assign(terms, { buyerName: ownCompany.name, buyerAddress: ownCompany.address, buyerRegistrationNo: ownCompany.reg, hideSeller: PRE_NCNDA_DRAFTS.has(draftRequest.type) });
+      else Object.assign(terms, { sellerName: ownCompany.name, sellerAddress: ownCompany.address, sellerRegistrationNo: ownCompany.reg, hideBuyer: PRE_NCNDA_DRAFTS.has(draftRequest.type) });
+    }
+    const ownDetailsLine = ownCompany && draftRequest.type !== "NCNDA"
+      ? `\n\nYour details from your UDC profile will be filled in: ${ownCompany.name}; ${ownCompany.address || "[address missing]"}; ${ownCompany.reg || "[registration no. missing]"}. ${PRE_NCNDA_DRAFTS.has(draftRequest.type) ? " The other side stays hidden until the NCNDA stage." : " The other side stays a placeholder."} Replying with the exact words below confirms these details.`
+      : "";
     const confirmationKind = whatsappDraftConfirmation(draftRequest.type, terms);
     if (!draftRequest.confirmed || replyContextKind !== confirmationKind) {
-      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. Legal party details stay as placeholders. Reply to this message with CONFIRM DRAFT ${draftRequest.type}.`,
+      return { reply: `Prepare a ${draftRequest.type} draft from ${terms.productName || "the recorded product"}, ${Number(terms.quantity).toLocaleString("en-US")} ${terms.unit}, ${terms.currency} ${Number(terms.agreedPrice).toLocaleString("en-US")}/${terms.unit}, ${terms.incoterm || "[Incoterm missing]"} ${terms.destination || "[destination missing]"}? Payment: ${terms.paymentTerms || "DLC directly to seller, after SGS at destination"}. `+ownDetailsLine+"\n\nSend your own or use a UDC draft?\n1. Your own: send your "+draftRequest.type+" here as a file (put "+draftRequest.type+" in the file name or caption).\n2. UDC draft: reply to this message with CONFIRM DRAFT "+draftRequest.type+". Other legal details stay as placeholders.\n\nWarning: the UDC draft is a template only. It is not legal advice. Have your own lawyer review it before you use or sign it. UDC acts only as an introducing agent between buyer and seller.",
         deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id, contextKind: confirmationKind };
     }
-    const draft = generateWhatsAppDraft(draftRequest.type, terms);
-    const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.txt`;
-    const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft, "utf8"), "text/plain");
-    await db.transaction(async tx => {
-      const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
-        documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
-      await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "owner" });
-      await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
-        entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
-    });
-    return { reply: `Prepared the ${draftRequest.type} draft for your review.`, deliveredToCounterparty: false,
-      dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
-        storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.txt`, draft: true } };
+    try {
+      const draft = await generateWhatsAppDraftPdf(draftRequest.type, terms);
+      const path = `deals/${deal.id}/drafts/${randomUUID()}-${draftRequest.type}.pdf`;
+      const fileUrl = await uploadDocumentBytes(path, Buffer.from(draft), "application/pdf");
+      await db.transaction(async tx => {
+        const [document] = await tx.insert(documentsTable).values({ dealId: deal.id, uploadedBy: sender.id,
+          documentType: draftRequest.type, fileUrl, status: "pending" }).returning({ id: documentsTable.id });
+        await tx.insert(documentAccessTable).values({ documentId: document!.id, userId: sender.id, accessRole: "editor" });
+        await tx.insert(auditLogsTable).values({ actorUserId: sender.id, action: `${draftRequest.type.toLowerCase()}_draft_generated`,
+          entityType: "deal", entityId: deal.id, metadata: { documentId: document!.id, draftVersion: 1, termsConfirmedByRequester: true, channel: "whatsapp" } });
+      });
+      return { reply: `Prepared the ${draftRequest.type} draft for your review. It is a UDC template, not legal advice.`, deliveredToCounterparty: false,
+        dealId: deal.id, recipientUserId: sender.id, documentToSender: { documentType: draftRequest.type,
+          storageObjectPath: path, fileName: `${draftRequest.type}-DRAFT.pdf`, draft: true } };
+    } catch (error) {
+      // Never answer a draft request with a 500: Meta would retry and the user would hear nothing.
+      console.error(JSON.stringify({ event: "whatsapp_draft_failed", dealId: deal.id, draftType: draftRequest.type, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" }));
+      return { reply: "I could not prepare that draft right now. Nothing was saved. Please try again in a moment.", deliveredToCounterparty: false, dealId: deal.id, recipientUserId: sender.id };
+    }
   }
 
   const requestedDocument = requestedStoredDocumentType(messageBody, replyContextKind);
@@ -796,12 +1206,19 @@ async function handleDealWhatsAppMessage(
           let documentMessageId: string | undefined;
           try {
             const signedUrl = await createSignedDownloadUrl(storageObjectPath);
-            const documentDelivery = await sendWhatsAppDocument(
-              receiver.phone,
-              signedUrl,
-              `${storedDocument.documentType}.${extension}`,
-              `${storedDocument.documentType} for review. Let me know what you want to do next.`,
-            );
+            // Photos arrive as viewable images, not generic file documents.
+            const documentDelivery = /^(jpe?g|png|webp)$/i.test(extension)
+              ? await sendWhatsAppImage(
+                  receiver.phone,
+                  signedUrl,
+                  `${storedDocument.documentType} for review. Let me know what you want to do next.`,
+                )
+              : await sendWhatsAppDocument(
+                  receiver.phone,
+                  signedUrl,
+                  `${storedDocument.documentType}.${extension}`,
+                  `${storedDocument.documentType} for review. Let me know what you want to do next.`,
+                );
             documentDelivered = documentDelivery.delivered;
             documentMessageId = "messageId" in documentDelivery
               ? documentDelivery.messageId
@@ -861,6 +1278,104 @@ async function handleDealWhatsAppMessage(
     }
   }
 
+  // Contract summary (AI tools): a plain-words reading helper rendered
+  // deterministically from the structured extraction - no model writes the
+  // numbers. The same read rules as the document itself apply.
+  const summaryAsk = contractSummaryRequest(messageBody);
+  if (summaryAsk) {
+    const summaryAccess = inArray(documentsTable.id,
+      db.select({ documentId: documentAccessTable.documentId }).from(documentAccessTable)
+        .where(eq(documentAccessTable.userId, sender.id)));
+    const [extraction] = await db
+      .select({
+        documentType: documentsTable.documentType,
+        structuredData: documentExtractionsTable.structuredData,
+        warnings: documentExtractionsTable.warnings,
+        status: documentExtractionsTable.status,
+      })
+      .from(documentExtractionsTable)
+      .innerJoin(documentsTable, eq(documentsTable.id, documentExtractionsTable.documentId))
+      .where(and(
+        eq(documentExtractionsTable.dealId, deal.id),
+        inArray(documentExtractionsTable.status, ["completed", "needs_review"]),
+        summaryAsk.documentType
+          ? eq(documentsTable.documentType, summaryAsk.documentType)
+          : inArray(documentsTable.documentType, ["LOI", "ICPO", "FCO", "SCO", "SPA", "NCNDA"]),
+        // A deal association alone is not permission to read another party's
+        // extraction; the same rules as the document apply.
+        or(eq(documentsTable.uploadedBy, sender.id),
+          and(eq(documentsTable.status, "approved"), summaryAccess)),
+      ))
+      .orderBy(desc(documentExtractionsTable.updatedAt))
+      .limit(1);
+    const summary = extraction?.structuredData
+      ? renderContractSummary({
+          documentType: extraction.documentType,
+          structured: extraction.structuredData,
+          warnings: extraction.warnings,
+          status: extraction.status,
+        })
+      : null;
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "contract_summary_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: summary ?? "I don't have a finished contract analysis to summarize yet. Upload the contract here and I will extract it first, then ask me again.",
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: summary ? "mediator_reply_contract_summary" : "mediator_reply_contract_summary_missing",
+    };
+  }
+
+  // Meeting details: confirmed times, providers and join links come straight
+  // from the meeting record UDC staff scheduled - never from the model.
+  if (meetingDetailsQuestion(messageBody)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "meeting_details_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: await upcomingDealMeetingsReply(deal.id),
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_meeting_details",
+    };
+  }
+
+  // Payment steps: the DLC status, amount and terms come straight from the
+  // financial-instrument record UDC staff maintain - never from the model.
+  if (paymentStatusQuestion(messageBody)) {
+    await db.insert(dealConversationEventsTable).values({
+      dealId: deal.id,
+      userId: sender.id,
+      participantRole: sender.role,
+      intent: "payment_status_request",
+      originalText: messageBody,
+      relayText: null,
+      relayed: false,
+    });
+    return {
+      reply: await dealPaymentStatusReply(deal.id),
+      deliveredToCounterparty: false,
+      dealId: deal.id,
+      recipientUserId: sender.id,
+      contextKind: "mediator_reply_payment_status",
+    };
+  }
+
   const aiDecision = await interpretActiveDealConversation({
     dealId: deal.id,
     participantRole: sender.role,
@@ -892,6 +1407,14 @@ async function handleDealWhatsAppMessage(
       recipientUserId: sender.id,
       contextKind: "mediator_reply_unprocessed",
     };
+  }
+
+  // Preserve the reviewed text. Never forward the speaker's raw audio or let
+  // a transcript approve an acceptance, rejection or counteroffer.
+  const voiceRelay = pendingVoiceRelay(aiDecision.intent,aiDecision.relay===true,aiDecision.relayToCounterparty);
+  if(options.voiceTranscript&&(aiDecision.relay===true||['acceptance','rejection','counteroffer'].includes(aiDecision.intent))){
+    const [preview]=await db.insert(dealConversationEventsTable).values({dealId:deal.id,userId:sender.id,participantRole:sender.role,intent:voiceRelay?'voice_relay_preview':'voice_transcript_unconfirmed',originalText:messageBody,relayText:voiceRelay?aiDecision.relayToCounterparty:null,relayed:false}).returning({id:dealConversationEventsTable.id});
+    return {reply:voiceRelay?`I can pass this text to the other side, not your audio:\n\n${aiDecision.relayToCounterparty}\n\nCheck it carefully. Reply to this message in text with ${voiceRelayConfirmation} to send exactly this. Nothing has been sent yet.`:`I heard: ${messageBody.slice(0,2000)}. Voice can mis-hear numbers. Please confirm this ${aiDecision.intent} in text by typing the exact trade instruction yourself before I act on it.`,deliveredToCounterparty:false,dealId:deal.id,recipientUserId:sender.id,contextKind:voiceRelay?`voice_relay_preview:${preview.id}`:'mediator_reply_voice_unconfirmed'};
   }
 
   const effectiveIntent = aiDecision.intent;
@@ -984,6 +1507,15 @@ router.get(
   },
 );
 
+// Real Meta messages always carry a string id (needed to answer each message once) and a string text
+// body. Anything else is dropped: no id means a retry would be answered again, and a non-string body
+// used to crash the handler with a 500, which makes Meta retry.
+function dropMalformedInboundMessages(value: { messages?: unknown } | undefined): void {
+  if (!value || !Array.isArray(value.messages)) { if (value && value.messages != null) value.messages = []; return; }
+  value.messages = value.messages.filter((m: any) => m && typeof m === "object" && typeof m.id === "string" && m.id &&
+    (m.text === undefined || (m.text && typeof m.text.body === "string")));
+}
+
 router.get("/webhooks/whatsapp", (req, res) => {
   const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -998,7 +1530,16 @@ router.get("/webhooks/whatsapp", (req, res) => {
   res.type("text/plain").send(challenge);
 });
 
-router.post("/webhooks/whatsapp", async (req, res) => {
+// Staging reply sink readout (only when AKIF_WHATSAPP_REPLY_SINK=store). Needs x-udc-sink-signature.
+router.get("/webhooks/whatsapp-sink", (req, res) => {
+  if (!replySinkEnabled() || !sinkReadAuthorized(req.header("x-udc-sink-signature"))) { res.sendStatus(404); return; }
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  const since = Number(req.query.since) || 0;
+  res.json({ replies: readSunkReplies(to, since) });
+});
+
+router.post("/webhooks/whatsapp", async (req, res) => { await trackReplyFailures((failed) => handleWhatsAppWebhook(req, res, failed)); });
+async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies: Set<string>) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.header("x-hub-signature-256");
   const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
@@ -1019,6 +1560,8 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     : [];
 
   const claimedInbound: unknown[] = [];
+  const inProgressRedelivery: unknown[] = [];
+  const senderOf = new Map<unknown, string>();
   for (const change of changes) {
     const value = change.value;
     const fullName = value?.contacts?.[0]?.profile?.name;
@@ -1037,12 +1580,49 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         res.sendStatus(503);return;
       }
     }
+    dropMalformedInboundMessages(value);
     for (const message of value?.messages ?? []) {
-      if (!(await claimInboundMessage(message.id))) continue; // answer each Meta message id once
+      let claimed: boolean;
+      try { claimed = await claimInboundMessage(message.id); }
+      catch {
+        // No typing, consent, AI, trade writes or outbound sends for an unclaimed
+        // message. Finish earlier messages in this batch, then ask Meta to retry.
+        const failed = claimedInbound.filter((id) => {
+          const from = senderOf.get(id); return from !== undefined && failedReplies.has(from);
+        });
+        await releaseInboundMessages(failed);
+        await completeInboundMessages(claimedInbound.filter((id) => !failed.includes(id)));
+        req.log.error({ flow: "whatsapp_inbound", reason: "dedup_unavailable" }, "Durable inbound claim unavailable");
+        res.sendStatus(503);
+        return;
+      }
+      if (!claimed) { if (await inboundClaimInProgress(message.id)) inProgressRedelivery.push(message.id); continue; } // answer each Meta message id once; an unfinished fresh claim is not done, see below
       claimedInbound.push(message.id);
+      if (isMutedPhone(message.from)) {
+        req.log.warn({ flow: "whatsapp_inbound", reason: "muted_by_owner", phoneTail: String(message.from).slice(-4), type: String(message.type ?? "text") }, "Inbound from a muted number: no automated reply");
+        await completeInboundMessages([message.id]);
+        continue;
+      }
+      if (await inviteGateHandles(message.from, req.log)) {
+        await completeInboundMessages([message.id]);
+        continue;
+      }
+      noteInboundForWatchdog(message.from, message.id, String(message.type ?? 'text'), message.text?.body ?? '');
+      if (message.from) { senderOf.set(message.id, message.from); if (humanRelayActiveFor(message.from)) { markRead(message.from, message.id); } else { markReadAndTyping(message.from, message.id); } }
+      // Minimal text-only crisis first response before consent, trade, reactions or AI.
+      // Captions are checked too, without downloading the attachment.
+      const crisis = crisisSafetyReply([message.text?.body, message.document?.caption, message.image?.caption].filter(Boolean).join(" "));
+      if (message.from && crisis) {
+        await deliverWhatsAppReply(message.from, crisis, false);
+        continue;
+      }
       if (message.from && (containsAadhaarNumber(message.text?.body) || mentionsAadhaarDocument(message.text?.body) || mentionsAadhaarDocument(message.document?.filename) || mentionsAadhaarDocument(message.document?.caption) || mentionsAadhaarDocument(message.image?.caption))) {
         try { await deliverWhatsAppReply(message.from, AADHAAR_REFUSAL); } catch { /* best effort */ }
         continue;
+      }
+      if (message.from) {
+        const cap = checkInboundCap(message.from);
+        if (cap !== "ok") { if (cap === "notice") await deliverWhatsAppReply(message.from, INBOUND_CAP_NOTICE); continue; }
       }
       if (message.from && (typeof message.text?.body === "string" || Boolean(message.interactive) || typeof message.document?.id === "string" || typeof message.audio?.id === "string" || typeof message.image?.id === "string")) {
         try {
@@ -1053,6 +1633,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             else if (privacyReply.kind === "consent_accepted") await sendChatHome(message.from);
             continue;
           }
+          if (typeof message.text?.body === "string") reactByMeaning(message.from, message.id, message.text.body); // only after consent; off unless both flags are on
           const [account] = await db.select({ status: usersTable.status }).from(usersTable)
             .where(eq(usersTable.phone, message.from)).limit(1);
           if (account?.status === "suspended" || account?.status === "rejected") {
@@ -1088,14 +1669,23 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         if (recoveryReply !== null) { await deliverWhatsAppReply(message.from,recoveryReply); continue; }
       }
       if (message.from && typeof message.text?.body === 'string') {
+        const channelLinkReply = await handleEmailChannelLink(message.from,message.text.body);
+        if(channelLinkReply!==null){await deliverWhatsAppReply(message.from,channelLinkReply);continue;}
         const emailReply = await handleEmailVerification(message.from,message.text.body);
         if (emailReply !== null) { await deliverWhatsAppReply(message.from,emailReply); continue; }
       }
-      // Explicit menu requests take precedence over AI guidance. Never open
-      // the menu for ordinary greetings, consent, or unrelated chat messages.
-      if(message.from && chatAction(message)==='menu'){
+      // Menu BUTTON taps take the fixed menu path. A TYPED "menu" (or "what
+      // can you do") goes to the brain like any other text: AKIF explains its
+      // options naturally instead of dumping the static list (owner rule, 8 Nov).
+      const exitId=message.interactive?.list_reply?.id??message.interactive?.button_reply?.id;
+      if(message.from&&exitId){try{if(await handlePhotoReviewButton(message.from,exitId))continue;if(await handleHumanHelpButton(message.from,exitId))continue;if(await handleExitReason(message.from,exitId))continue;}catch{await deliverWhatsAppReply(message.from,'Your private answer could not be saved. Please try again.');continue;}}
+      if(message.from && message.interactive && chatAction(message)==='menu'){
         try{if(await handleChatUi(message.from,message))continue;}
         catch{await deliverWhatsAppReply(message.from,'I couldn\'t open the menu right now. You can still message Akif normally.');continue;}
+      }
+      if (message.from && message.text?.body) {
+        try { if(await handleDocumentCheck(message.from,message.text.body))continue; if(await handleDealReadSummary(message.from,message.text.body))continue; if(await handleSellerReviewCard(message.from,message.text.body))continue; if(await handlePhotoQuoteReview(message.from,message.text.body))continue; if(await handleRelationshipMemory(message.from,message.text.body))continue; if(await handleDealTermTip(message.from,message.text.body))continue; if(await handleStatusPicture(message.from,message.text.body))continue; if(await handleMonthlyScorecard(message.from,message.text.body))continue; if(await handleTraderDiary(message.from,message.text.body))continue; if(await handleQualityProofPack(message.from,message.text.body))continue; if(await handleFreightEstimate(message.from,message.text.body))continue; if(await handleTradeBrief(message.from,message.text.body))continue; if (await handleDealReminder(message.from,message.text.body)) continue; if (await handleTrialOrder(message.from,message.text.body)) continue; if (await handleNegotiationCoach(message.from,message.text.body)) continue; if (await handlePriceWatch(message.from,message.text.body)) continue; if (await handleSellerScorecard(message.from,message.text.body)) continue; if (await handleTradeTerm(message.from,message.text.body)) continue; if (await handleCurrencyHelper(message.from,message.text.body)) continue; if (await handleTradeAssist(message.from,message.text.body)) continue; }
+        catch { await deliverWhatsAppReply(message.from,'I could not save that request. The deal is unchanged. Please try again.');continue; }
       }
       // Complaints are logged and acknowledged immediately, never answered by the model.
       if (message.from && message.text?.body && isGrievance(message.text.body)) {
@@ -1123,42 +1713,230 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         } catch { /* fall through to normal handling rather than dropping the message */ }
       }
       // Learning questions bypass deal/intake routing, including replies quoting the Ask Akif menu.
-      if (message.from && message.text?.body && isGuidanceQuestion(message.text.body)) {
-        try {
-          // UDC/AKIF can occur in a person's or company's name. Consume a
-          // clear answer to the active form before keyword-based tutoring;
-          // actual learning questions still bypass intake without a model call.
-          if (await handleChatUi(message.from, message, true)) continue;
-          const reply = await answerGuidance(message.from, message.text.body, message.id);
-          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
-        } catch {
-          await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
+      if (message.from && typeof message.text?.body === "string") {
+        const pendingOffer = takeVoiceOffer(message.from);
+        if (pendingOffer && isOfferYes(message.text.body)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
+        if (voiceRepliesEnabled() && parseVoiceRequest(message.text.body)) {
+          const wantsVoice = (await getVoiceState(message.from)) !== "text_only";
+          if (wantsVoice) armExplicitVoice(message.from);
+          await deliverWhatsAppReply(message.from, wantsVoice ? EXPLICIT_VOICE_CONFIRMATION : EXPLICIT_VOICE_TEXT_ONLY);
+          continue;
+        }
+        if (isVoiceGoAhead(message.text.body) && hasExplicitVoice(message.from)) {
+          // "do it" after the promise: say the last answer aloud now, don't wait for a new question.
+          consumeExplicitVoice(message.from);
+          const last = getLastAnswer(message.from);
+          if (last) await deliverAnswer(message.from, last, true, { userText: message.text.body, explicitVoice: true });
+          else await deliverWhatsAppReply(message.from, "Ask me your question and I'll answer it in voice.");
+          continue;
+        }
+        const voiceCommand = parseVoiceCommand(message.text.body);
+        if (voiceCommand) {
+          const saved = await setTextOnly(message.from, voiceCommand === "text_only");
+          await deliverWhatsAppReply(message.from, saved
+            ? (voiceCommand === "text_only" ? TEXT_ONLY_CONFIRMATION : VOICE_ON_CONFIRMATION)
+            : "I couldn’t save that voice setting just now. Please try again shortly.");
           continue;
         }
       }
-      if (message.from) {
+      if (message.from && message.text?.body && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
+      // A clear typed answer to an already-open native form is still consumed
+      // here. Brain on: learning questions themselves go to the brain below,
+      // never to scripted tutoring (owner rule, 8 Nov). Brain off (outage
+      // switch): the scripted tutoring chain answers exactly as before.
+      if (message.from && message.text?.body && requestedWhatsAppDraft(message.text.body) === null && isGuidanceQuestion(message.text.body)) {
+        try {
+          if (await handleChatUi(message.from, message, true)) continue;
+          // One-voice rule (owner, 10 Nov): when the human relay covers this
+          // customer, no scripted or fallback reply ever goes out - the turn
+          // falls through to the relay hold below and a worker answers.
+          if (!isBrainOrchestratorEnabled() && !humanRelayActiveFor(message.from)) {
+            const reply = await answerGuidance(message.from, message.text.body, message.id, false, false, undefined, Boolean(message.context?.id));
+            if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
+          }
+        } catch {
+          if (!isBrainOrchestratorEnabled() && !humanRelayActiveFor(message.from)) { await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly."); continue; }
+        }
+      }
+      // Interactive taps keep the fixed feature path. Typed texts only
+      // consume an answer into an already-open native form; every other typed
+      // word belongs to the brain below, never to a pattern-matched script.
+      if (message.from && message.interactive) {
         try { if (await handleChatUi(message.from, message)) continue; }
-        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Send Menu and try again.'); continue; }
+        catch { await deliverWhatsAppReply(message.from, 'I could not open that WhatsApp feature just now. Please tap it again.'); continue; }
+      }
+      if (message.from && message.text?.body) {
+        try {
+          // Brain on: typed texts only feed an already-open native form - the
+          // brain does the talking. Brain off (outage switch): the full
+          // scripted chain still carries registration and forms as before.
+          const consumed = isBrainOrchestratorEnabled()
+            ? await handleChatUi(message.from, message, true)
+            : await handleChatUi(message.from, message);
+          if (consumed) continue;
+        } catch { /* fall through to the brain or the scripted chain */ }
+      }
+      // Held voice notes (relay on, allowlisted sender) are transcribed like
+      // any other and held with their transcript; raw audio is never kept or
+      // relayed, and the crisis path still answers first.
+      // An active intake (offer or requirement) belongs to the intake flow,
+      // not the relay - same skip as typed text (duplicate-question bug, 10 Nov).
+      const relayVoiceIntake = message.from && typeof message.audio?.id === "string" ? await loadWhatsAppIntakeDraft(message.from) : null;
+      const relayVoiceHasOpenIntake = Boolean(relayVoiceIntake && !relayVoiceIntake.stale);
+      if (message.from && typeof message.audio?.id === "string" && humanRelayActiveFor(message.from) && !relayVoiceHasOpenIntake) {
+        if (!isAkifWorkerMediaEnabled()) {
+          await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
+          continue;
+        }
+        if (!reserveTranscription(message.from)) {
+          await deliverWhatsAppReply(message.from, "You’ve reached today’s voice note limit. Please type your message and I’ll keep helping.");
+          continue;
+        }
+        let relayVoiceStage: "download" | "transcription" = "download";
+        // Transcription + the brain turn below prepare a real reply, so the
+        // typing bubble is honest for the duration. Wake the worker first: a
+        // warm start here is the difference between a transcript and a 429.
+        markReadAndTyping(message.from, message.id);
+        warmAkifWorker();
+        try {
+          const media = await downloadWhatsAppMedia(message.audio.id);
+          relayVoiceStage = "transcription";
+          const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
+          const relayVoiceCrisis = crisisSafetyReply(heard.text);
+          if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
+          // Feature requests reach the real scripted feature directly, same as text.
+          const voiceFeature = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(heard.text) ? "documents"
+            : /\b(verify|verification|verified|verifying)\b/i.test(heard.text) ? "verification" : null;
+          if (voiceFeature) {
+            try {
+              if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${voiceFeature}` } } } as ChatMessage)) {
+                enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: `Auto-handled by the ${voiceFeature} feature, no reply needed unless it looks wrong.` });
+                continue;
+              }
+            } catch { /* fall through to the relay draft */ }
+          }
+          // Explicit Menu is a system message (owner direction, 10 Nov):
+          // static menu out, no LLM, no worker wait. Commission asks and
+          // everything else hold for the workers.
+          if (isMenuRequestText(heard.text)) {
+            let menuSent = false;
+            try { await sendChatHome(message.from); menuSent = true; } catch { /* hold for a worker instead */ }
+            if (menuSent) {
+              enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
+              continue;
+            }
+          }
+          const draft = heard.text.trim() ? await buildHumanRelayDraftWithRetry(message.from, heard.text, message.id) : null;
+          // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
+          // only). Text even for a voice greeting, so the auto path never touches
+          // TTS quota; anything beyond a plain greeting stays on the human hold.
+          let voiceAutoAnswered = false;
+          let voiceAutoNote: string | undefined;
+          const voiceReply = draft?.reply ?? null;
+          if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text) && greetingAutoReplySafe(voiceReply)) {
+            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", voiceReply!); console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+          } else if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text)) {
+            // Brain down, no draft: a spoken greeting still gets a spoken
+            // hello back in the customer's language (owner rule, 10 Nov).
+            const hello = fallbackGreeting(heard.language);
+            const sent = await deliverHumanRelayReply(message.from, hello, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", hello); console.info("AKIF relay auto-answered a simple greeting", { kind: "voice", fallback: true }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
+          } else if (relayAutoGreetingsEnabled() && isMenuRequestText(heard.text) && menuAutoReplySafe(voiceReply)) {
+            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", voiceReply!); console.info("AKIF relay auto-answered a menu request", { kind: "voice" }); voiceAutoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
+          } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(voiceReply, draft?.toolsUsed ?? [])) {
+            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
+          } else if (relayBrainFirstEnabled() && isBrainOrchestratorEnabled() && brainFirstReplySafe(message.from, voiceReply, draft?.toolsUsed ?? []) && !relayReplyResetsConversation(message.from, voiceReply!)) {
+            // Brain-first for voice notes too: voice-in still gets voice-out
+            // in the customer's language through the normal voice rules.
+            const sent = await deliverHumanRelayReply(message.from, voiceReply, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            voiceAutoAnswered = Boolean(sent?.delivered);
+            if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF brain-first answered", { kind: "voice" }); voiceAutoNote = "Answered directly by AKIF - no reply needed unless it looks wrong. Sent:"; }
+          }
+          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          if (!voiceAutoAnswered && heldVoice.draft && relayFallbackReplySafe(heard.text, heldVoice.draft, draft?.toolsUsed ?? [])) {
+            scheduleRelayFallback(heldVoice, deliverHumanRelayReply);
+          }
+        } catch (error) {
+          console.warn(`relay voice intake failed { stage: "${relayVoiceStage}", error: "${error instanceof Error ? error.message.slice(0, 120) : "unknown"}" }`);
+          await deliverWhatsAppReply(message.from, "I couldn’t read that voice note just now. Please resend it or type your message.");
+        }
+        continue;
       }
       if (message.from && typeof message.audio?.id === "string") {
         if (!isAkifWorkerMediaEnabled()) {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
           continue;
         }
+        if (!reserveTranscription(message.from)) {
+          await deliverWhatsAppReply(message.from, "You’ve reached today’s voice note limit. Please type your message and I’ll keep helping.");
+          continue;
+        }
         let voiceStage: 'download' | 'transcription' | 'answer' | 'trade_context' = 'download';
         try {
-          react("ack", message.from, message.id);
           const media = await downloadWhatsAppMedia(message.audio.id);
+          req.log.info({ flow: "voice_message", stage: "download", outcome: "success", audioBytes: media.bytes.length, mimeType: media.mimeType }, "UDC voice input downloaded");
           voiceStage = 'transcription';
-          const transcript = await transcribeAkifAudio({ bytes: media.bytes, mimeType: media.mimeType });
+          const heard = await transcribeAkifAudioDetailed({ bytes: media.bytes, mimeType: media.mimeType });
+          const transcript = heard.text;
+          const voiceCrisis = crisisSafetyReply(transcript);
+          if (voiceCrisis) {
+            await deliverWhatsAppReply(message.from, voiceCrisis, false);
+            continue;
+          }
+          req.log.info({ flow: "voice_message", stage: "transcription", outcome: "success", transcriptChars: transcript.length, languageDetected: Boolean(heard.language) }, "UDC voice input transcribed");
+          // Commission questions get the fixed honest answer in the heard
+          // language, voice in voice out, no brain turn (owner direction, 10 Nov).
+          if (isCommissionAskText(transcript)) {
+            await deliverAnswer(message.from, commissionAskReply(heard.language), true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true });
+            continue;
+          }
+          // Reactions are optional and meaning-based, never an automatic acknowledgement on every voice note.
+          // The helper is fire-and-forget and remains disabled unless both reaction flags are explicitly enabled.
+          reactByMeaning(message.from, message.id, transcript);
+          const pendingOffer = takeVoiceOffer(message.from);
+          if (pendingOffer && isOfferYes(transcript)) { await deliverWhatsAppReply(message.from, pendingOffer); continue; }
+          // A voice note during an active form or registration is the same turn, spoken: the
+          // guided flow hears the transcript exactly like typed text, and the brain's
+          // conversational reply can come back as a voice note (voice MVP, Phase 9 item 5e).
+          // Structured content - fixed questions, review screens, notes - always stays text.
+          try {
+            const voiceLanguage = pickVoiceLanguage({ mainLanguage: await guidanceMainLanguage(message.from), heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined });
+            if (await handleChatUi(message.from, { id: message.id, text: { body: transcript } } as ChatMessage, false, { voiceNote: true, language: voiceLanguage })) continue;
+          } catch { /* fall through to guidance, same as before voice intake existed */ }
+          // Brain-led voice answers (owner direction, 10 Nov): an open voice
+          // question gets AKIF's own answer like a typed message; the scripted
+          // guidance chain below stays the fallback. Reply stays text, so the
+          // brain path never spends TTS quota.
+          if (brainVoiceEnabled() && isBrainOrchestratorEnabled()) {
+            try {
+              const voiceBrain = await runBrainTurn({ phone: message.from, text: transcript, messageId: message.id });
+              if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
+                const voiceDelivered = await deliverAnswer(message.from, voiceBrain.reply, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true, userText: transcript });
+                if (voiceBrain.background && voiceDelivered?.delivered) {
+                  const background = voiceBrain.background;
+                  const phone = message.from;
+                  runBackgroundTask(() => background(async reply => (await deliverWhatsAppReply(phone, reply)).delivered), () => {
+                    console.warn("AKIF hands work failed", { reason: "background_failed" });
+                  });
+                } else if (voiceBrain.cancelBackground) {
+                  await voiceBrain.cancelBackground();
+                }
+                continue;
+              }
+              if (voiceBrain?.cancelBackground) await voiceBrain.cancelBackground();
+            } catch { /* scripted guidance below stays the fallback */ }
+          }
           voiceStage = 'answer';
-          const guidance = await answerGuidance(message.from, transcript, message.id, true);
+          const guidance = await answerGuidance(message.from, transcript, message.id, true, false, heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined);
           if (guidance !== null) {
-            if (guidance) {
-              // Draft voice reply: generic text only, user spoke first, flag on. Any failure falls back to text.
-              const spoken = await trySpeakReply(message.from, guidance);
-              if (spoken===false) await deliverWhatsAppReply(message.from, guidance);
-            }
+            if (guidance) await deliverAnswer(message.from, guidance, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true });
             continue;
           }
           voiceStage = 'trade_context';
@@ -1166,21 +1944,31 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             .from(usersTable).where(eq(usersTable.phone, message.from)).limit(1);
           const voiceDealId = speaker?.status === "verified" ? await resolveActiveDealForUser(speaker.id, message.context?.id) : null;
           if (voiceDealId && speaker) {
-            await db.insert(dealConversationEventsTable).values({ dealId: voiceDealId, userId: speaker.id,
-              participantRole: speaker.role, intent: "voice_transcript_unconfirmed",
-              originalText: transcript, relayText: null, relayed: false });
+            // Voice inside a deal room: treat the transcript like a typed deal
+            // message and let the normal text pipeline below handle it
+            // (questions, clarifications, document requests, relay drafts).
+            // Commercial commitments (accept/reject/counteroffer) from voice
+            // still require a text confirmation inside handleDealWhatsAppMessage.
+            req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "routing_to_deal_conversation" }, "UDC deal voice note routed to deal conversation");
+            (message as { voiceTranscript?: boolean }).voiceTranscript = true;
+            message.text = { body: transcript };
+            message.audio = undefined;
+          } else {
+            req.log.info({ flow: "voice_message", stage: "trade_context", outcome: "awaiting_text_confirmation" }, "UDC voice note needs text confirmation before trade action");
+            await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
+            continue;
           }
-          await deliverWhatsAppReply(message.from, `I heard: ${transcript.slice(0, 2000)}${transcript.length > 2000 ? "…" : ""} Please confirm the key trade terms in text before I forward or act on them.`);
-          continue;
-        } catch {
-          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed' }, 'UDC voice processing failed');
+        } catch (error) {
+          req.log.error({ flow: 'voice_message', stage: voiceStage, reason: 'voice_processing_failed', errorType: error instanceof Error ? error.name : 'unknown' }, 'UDC voice processing failed');
           const reply = voiceStage === 'answer'
             ? "I read your voice note, but couldn’t prepare an answer just now. Please try your question again shortly."
             : voiceStage === 'trade_context'
               ? "I read your voice note, but couldn’t check the deal context. Please confirm any trade instructions in text."
               : voiceStage === 'download'
                 ? "I couldn’t download that voice note just now. Please resend it shortly."
-                : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
+                : error instanceof Error && error.message === "akif_audio_http_503"
+                  ? "Voice notes are still being set up on our side. Please type your message for now."
+                  : "Voice transcription is unavailable just now. Please try again shortly or type your question.";
           await deliverWhatsAppReply(message.from, reply);
           continue;
         }
@@ -1310,12 +2098,246 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         continue;
       }
 
+      // Draft commands and replies to a saved bot message are deal actions. They must not
+      // depend on the AI model choosing to hand them back, or a recent chat can swallow them.
+      const dealActionDirect = Boolean(message.from) && (
+        requestedWhatsAppDraft(message.text.body) !== null
+        || requestedDealPause(message.text.body) !== null
+        || await isReplyToSavedDealMessage(message.from, message.context?.id)
+      );
+      // Brain-led front door (owner direction, 7 Nov): Groq decides the
+      // conversation with AKIF features as tools, in its own words. Runs for
+      // every open text turn BEFORE the scripted guidance/intake chain: menus,
+      // forms, sign-in, OTP codes, deal commands and money paths above stay
+      // scripted and keep their gates. Buyer/seller inquiries belong to the
+      // brain (its tools collect the same fields through the same validators);
+      // direct deal commands never reach it. Env-gated; any failure or
+      // validator rejection falls through to the scripted chain below
+      // unchanged.
+      // Human relay hold (default OFF). Menus, forms, consent, crisis, deal
+      // commands and money paths above have already kept their gates; only an
+      // open chat turn from an allowlisted test number is held for a dev-side
+      // answer instead of the brain or scripted chain answering it.
+      // An active intake (offer or requirement) belongs to the intake flow,
+      // not the relay: holding its answers breaks the question order and
+      // doubles replies (owner report, 10 Nov). The skip covers any live
+      // intake draft, even a freshly opened one with no fields yet (the
+      // duplicate-question bug the owner hit, 10 Nov).
+      const hasOpenIntake = Boolean(pendingIntake && !pendingIntake.stale);
+      if (message.from && !dealActionDirect && !hasOpenIntake && humanRelayActiveFor(message.from)) {
+        // Acknowledgements (ok, thanks, noted): a reaction, no text reply, no
+        // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
+        if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
+          const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction, no reply needed unless it looks wrong.` });
+          continue;
+        }
+        // Feature requests reach the real scripted feature directly: the link
+        // or status IS the reply, so no draft, nudge or fallback runs for them.
+        const relayFeature = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
+          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
+        if (relayFeature) {
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${relayFeature}` } } } as ChatMessage)) {
+              enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: true, autoNote: `Auto-handled by the ${relayFeature} feature, no reply needed unless it looks wrong.` });
+              continue;
+            }
+          } catch { /* fall through to the relay draft */ }
+        }
+        // Explicit Menu is a system message (owner direction, 10 Nov): the
+        // static role menu goes straight out, no LLM, no worker wait.
+        // Commission asks and everything else hold for the workers.
+        if (isMenuRequestText(message.text.body)) {
+          let menuSent = false;
+          try { await sendChatHome(message.from); menuSent = true; } catch { /* hold for a worker instead */ }
+          if (menuSent) {
+            enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
+            continue;
+          }
+        }
+        // A real reply is being prepared now (auto answer or the held draft), so
+        // the typing bubble is honest here; acks above never reach this line.
+        markReadAndTyping(message.from, message.id);
+        warmAkifWorker();
+        // Burst coalescing (owner feedback 10 Nov): rapid multi-bubble messages
+        // become ONE brain turn and one reply. Wait out the burst; only the
+        // newest bubble proceeds and its draft sees all the texts.
+        const combinedText = await collectBurst(message.from, message.text.body, RELAY_BURST_MS);
+        if (combinedText === null) continue; // a newer bubble takes the turn
+        // Slow-turn heads-up: if the reply takes more than a few seconds the
+        // customer hears a short natural note first (owner feedback 10 Nov).
+        const slowNotice = RELAY_SLOW_NUDGE_MS > 0 ? setTimeout(() => { void deliverHumanRelayReply(message.from!, "On it, one minute."); }, RELAY_SLOW_NUDGE_MS) : null;
+        // Wait out any in-flight turn from the previous burst, then draft once
+        // (with one retry when the turn itself failed or came back empty).
+        const draft = await buildHumanRelayDraftWithRetry(message.from, combinedText, message.id);
+        if (slowNotice) clearTimeout(slowNotice);
+        let autoAnswered = false;
+        let autoNote: string | undefined;
+        const autoReply = draft?.reply ?? null;
+        if (relayAutoGreetingsEnabled() && isSimpleGreetingText(combinedText)) {
+          // Greetings never depend on the brain: a safe draft wins, otherwise
+          // a rotating warm hello answers instead of holding (owner direction,
+          // 10 Nov launch).
+          const hello = greetingAutoReplySafe(autoReply) ? autoReply : fallbackGreeting();
+          const sent = await deliverHumanRelayReply(message.from, hello);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", hello); console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
+        } else if (relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
+          // Typed "menu": the brain explains the options in its own words (owner
+          // rule, 8 Nov) and the relay auto-sends that explanation, a hold here
+          // would leave the menu question unanswered (owner feedback 10 Nov).
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", autoReply!); console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation, no reply needed unless it looks wrong. Sent:"; }
+        } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(autoReply, draft?.toolsUsed ?? [])) {
+          // The brain really used its tools for this answer, so links and
+          // references in it come from tool output, not invention.
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", autoReply!); console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
+        } else if (relayBrainFirstEnabled() && isBrainOrchestratorEnabled() && brainFirstReplySafe(message.from, autoReply, draft?.toolsUsed ?? []) && !relayReplyResetsConversation(message.from, autoReply!)) {
+          // Brain-first (owner direction, 10 Nov): with the orchestrator on, a
+          // safe brain answer goes straight out and only failures, unsafe or
+          // repetitive drafts hold for the human workers.
+          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          autoAnswered = Boolean(sent?.delivered);
+          if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", autoReply!); console.info("AKIF brain-first answered", { kind: "text" }); autoNote = "Answered directly by AKIF, no reply needed unless it looks wrong. Sent:"; }
+        }
+        if (!autoAnswered && relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && !autoReply) {
+          // No brain draft at all (provider down): the scripted home menu
+          // still answers a typed "menu" the same as a tap.
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:menu` : undefined, text: { body: combinedText } } as ChatMessage)) {
+              autoAnswered = true;
+              autoNote = "Auto-answered by the scripted menu, no reply needed unless it looks wrong.";
+            }
+          } catch { /* fall through to the hold */ }
+        }
+        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+        if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
+          scheduleRelayFallback(heldText, deliverHumanRelayReply);
+        }
+        continue;
+      }
+      let brainFailed = false;
+      let brainText = message.text.body;
+      if (message.from && !dealActionDirect && isBrainOrchestratorEnabled()) {
+        // Pure acks get a WhatsApp reaction, not a brain turn (owner direction,
+        // 10 Nov). Draft requests and replies to saved deal messages are deal
+        // actions and already excluded above.
+        if (brainAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
+          const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
+          if (reacted?.delivered) continue;
+        }
+        // Commission questions get the fixed honest answer immediately, no
+        // burst wait or brain turn (owner direction, 10 Nov).
+        if (isCommissionAskText(message.text.body)) {
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          continue;
+        }
+        // Burst coalescing, same as the relay hold: rapid multi-bubble messages
+        // become ONE brain turn instead of the next bubble hitting the busy floor.
+        brainText = message.text.body;
+        if (brainBurstMs() > 0) {
+          const combined = await collectBurst(message.from, message.text.body, brainBurstMs());
+          if (combined === null) continue; // a newer bubble takes the turn
+          brainText = combined;
+        }
+        // Slow-turn heads-up: if the reply takes more than a few seconds the
+        // customer hears a short natural note first (owner feedback, 10 Nov).
+        const slowNotice = brainSlowNudgeEnabled()
+          ? setTimeout(() => { void deliverWhatsAppReply(message.from!, "On it, one minute."); }, RELAY_SLOW_NUDGE_MS || 12000)
+          : null;
+        try {
+        const callBrain = () => runBrainTurn({
+          phone: message.from!,
+          text: brainText,
+          messageId: message.id,
+        }).catch((error) => {
+          console.warn("AKIF brain turn failed; scripted chain takes over", { reason: error instanceof Error ? error.message : "unknown" });
+          return null;
+        });
+        let brain = await callBrain();
+        if (brainBusyWaitEnabled()) {
+          // An in-flight previous turn clears within seconds; wait it out
+          // instead of answering with the busy floor (owner feedback, 10 Nov).
+          for (let attempt = 0; brain?.reply === BRAIN_BUSY_REPLY && attempt < 3; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            brain = await callBrain();
+          }
+          if (brain?.reply === BRAIN_BUSY_REPLY) brain = null; // never send the floor line
+        }
+        if (!brain?.handled) {
+          // One retry before any fallback: provider rate limits are the common
+          // failure and often clear within seconds.
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          brain = await callBrain();
+        }
+        if (brain?.handled) {
+          const delivered = brain.reply ? await deliverWhatsAppReply(message.from, brain.reply) : null;
+          if (brain.background && delivered?.delivered) {
+            const background = brain.background;
+            const phone = message.from;
+            runBackgroundTask(() => background(async reply => (await deliverWhatsAppReply(phone, reply)).delivered), () => {
+              console.warn("AKIF hands work failed", { reason: "background_failed" });
+            });
+          } else if (brain.cancelBackground) {
+            await brain.cancelBackground();
+          }
+          continue;
+        }
+        brainFailed = true;
+        } finally {
+          if (slowNotice) clearTimeout(slowNotice);
+        }
+      }
+
+      // Brain unavailable after a retry (for example provider rate limits):
+      // a feature request must still reach the real scripted feature -
+      // document upload links and verification status need no AI.
+      if (brainFailed && message.from) {
+        const featureIntent = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
+          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
+        if (featureIntent) {
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature-rescue` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${featureIntent}` } } } as ChatMessage)) continue;
+          } catch { /* fall through to the natural retry note below */ }
+        }
+        // A greeting never needs the brain: when the provider is rate-limited
+        // the customer still gets a warm hello in seconds, not a retry note
+        // (owner report, 10 Nov launch). Variants rotate so repeats don't
+        // read as a canned line.
+        if (isSimpleGreetingText(message.text.body)) {
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: fallbackGreeting(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          continue;
+        }
+        // Menus stay automatic without the model: the scripted home menu
+        // answers a typed "menu" the same as a tap.
+        if (isMenuRequestText(message.text.body)) {
+          try {
+            if (await handleChatUi(message.from, { id: message.id ? `${message.id}:menu` : undefined, text: { body: message.text.body } } as ChatMessage)) continue;
+          } catch { /* fall through to the silent hold below */ }
+        }
+        // Commission questions never need the model either: held for a
+        // worker with the approved fixed wording pre-loaded as the draft.
+        if (isCommissionAskText(message.text.body)) {
+          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          continue;
+        }
+        // Everything else is held silently for the human relay team: no
+        // failure line, no canned note (owner direction, 10 Nov launch).
+        // Workers or the relay owner answer it from the queue.
+        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+        continue;
+      }
+
       if (message.from && !hasPendingIntake && !explicitNewIntake && !repeatedSubmittedIntake) {
         // Short follow-ups such as “and FOB” remain in the tutoring conversation.
         // Explicit trade commands still return to the authorized deal workflow.
         try {
-          const reply = await answerGuidance(message.from, message.text.body, message.id, false, true);
-          if (reply !== null) { if (reply) await deliverWhatsAppReply(message.from, reply); continue; }
+          if (!dealActionDirect && askedAboutPausingDeal(message.text.body)) { await deliverWhatsAppReply(message.from, dealPauseHowTo); continue; }
+          const reply = dealActionDirect ? null : await answerGuidance(message.from, message.text.body, message.id, false, true);
+          if (reply !== null) { if (reply) { const explicitVoice = consumeExplicitVoice(message.from); await deliverAnswer(message.from, reply, explicitVoice, { userText: message.text.body, explicitVoice }); } continue; }
         } catch {
           await deliverWhatsAppReply(message.from, "I couldn’t prepare that answer just now. Please try your question again shortly.");
           continue;
@@ -1325,6 +2347,7 @@ router.post("/webhooks/whatsapp", async (req, res) => {
           message.text.body,
           message.context?.id,
           message.id,
+          { voiceTranscript: (message as { voiceTranscript?: boolean }).voiceTranscript },
         );
         if (dealMessage) {
           if ("duplicate" in dealMessage && dealMessage.duplicate) {
@@ -1341,12 +2364,20 @@ router.post("/webhooks/whatsapp", async (req, res) => {
 
             try {
               const signedUrl = await createSignedDownloadUrl(dealMessage.documentToSender.storageObjectPath);
-              const documentDelivery = await sendWhatsAppDocument(
-                message.from,
-                signedUrl,
-                dealMessage.documentToSender.fileName,
-                `UDC ${dealMessage.documentToSender.documentType} document`,
-              );
+              // Photos arrive as viewable images, not generic file documents.
+              const isImage = /\.(jpe?g|png|webp)$/i.test(dealMessage.documentToSender.fileName);
+              const documentDelivery = isImage
+                ? await sendWhatsAppImage(
+                    message.from,
+                    signedUrl,
+                    `UDC ${dealMessage.documentToSender.documentType} image`,
+                  )
+                : await sendWhatsAppDocument(
+                    message.from,
+                    signedUrl,
+                    dealMessage.documentToSender.fileName,
+                    `UDC ${dealMessage.documentToSender.documentType} document`,
+                  );
               documentDelivered = documentDelivery.delivered;
               documentMessageId = "messageId" in documentDelivery
                 ? documentDelivery.messageId
@@ -1356,9 +2387,10 @@ router.post("/webhooks/whatsapp", async (req, res) => {
             }
 
             const replyBody = documentDelivered
-              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It’s a private draft for review. Complete the placeholders before sharing or signing." : ""}`
+              ? `Sent the ${dealMessage.documentToSender.documentType}.${"draft" in dealMessage.documentToSender ? " It is a private UDC template, not legal advice. Complete the placeholders and have your lawyer review it before sharing or signing. UDC acts only as an introducing agent between buyer and seller." : ""}`
               : `I’ve got the ${dealMessage.documentToSender.documentType}, but it didn’t send. I’ll keep it here for now.`;
             const delivery = await deliverWhatsAppReply(message.from, replyBody);
+            if (documentDelivered) react("complete", message.from, message.id); // one ✅ on the user's request once the document went out
 
             if (documentDelivered && documentMessageId && dealMessage.dealId && dealMessage.recipientUserId) {
               await db.insert(whatsappMessageContextsTable)
@@ -1465,7 +2497,11 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         memory: hasSavedDraft && !sellerStartsAnotherProduct ? savedIntake!.draft : null,
       });
       if (!intakeDecision) {
-        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again shortly.");
+        // The model is slow or rate limited. Do not dead-end: the guided form needs no AI, so continue there.
+        const fallbackAction = isSellerOffer(message.text.body) || savedIntake?.role === "seller" ? "offer" : "requirement";
+        await deliverWhatsAppReply(message.from, "My assistant is busy right now, so I will take your details step by step instead.");
+        try { if (await handleChatUi(message.from, { id: message.id ? `${message.id}:ai-fallback` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${fallbackAction}` } } } as ChatMessage)) continue; } catch { /* fall through to the plain retry note */ }
+        await deliverWhatsAppReply(message.from, "I couldn’t process that just now. Please try again in about a minute.");
         continue;
       }
       const intakeRole = repeatedSubmittedIntake ? savedIntake!.role as "buyer" | "seller" : intakeDecision.role;
@@ -1475,6 +2511,13 @@ router.post("/webhooks/whatsapp", async (req, res) => {
         // Model extraction cannot authorize another account role. Apply the
         // same boundary as native forms before writes or intake-memory changes.
         if (account && account.role !== intakeRole) {
+          // A follow-up with no trade details (for example "Can u do that for me?") is a chat question, not a submission.
+          const noDetails = !intakeDecision.fields || Object.keys(intakeDecision.fields).length === 0;
+          if (noDetails && !hasSavedDraft) {
+            const chatReply = await answerGuidance(message.from, message.text.body, message.id).catch(() => null);
+            if (chatReply) { await deliverWhatsAppReply(message.from, chatReply); continue; }
+            if (chatReply === "") continue;
+          }
           await deliverWhatsAppReply(message.from,
             `Your account is registered as ${account.role}. UDC must review role changes before you submit as a ${intakeRole}.`);
           continue;
@@ -1611,8 +2654,25 @@ router.post("/webhooks/whatsapp", async (req, res) => {
     }
   }
 
+  // A reply that Meta throttled (429 / rate-limit code) even after retries must not leave the claim completed:
+  // release it and answer non-2xx so Meta redelivers the message.
+  const lost = claimedInbound.filter((id) => { const from = senderOf.get(id); return from !== undefined && failedReplies.has(from); });
+  if (lost.length) {
+    await releaseInboundMessages(lost);
+    await completeInboundMessages(claimedInbound.filter((id) => !lost.includes(id)));
+    req.log.warn({ flow: "whatsapp_reply", reason: "rate_limited_reply_released", count: lost.length }, "WhatsApp reply could not be delivered; asking Meta to redeliver");
+    res.sendStatus(503);
+    return;
+  }
   await completeInboundMessages(claimedInbound);
+  if (inProgressRedelivery.length) {
+    // The first delivery of these messages never completed (still running, or its process restarted).
+    // Non-2xx makes Meta redeliver; once the claim is stale (2 min) or completed the next delivery resolves it.
+    req.log.warn({ flow: "whatsapp_inbound", reason: "redelivery_of_unfinished_claim", count: inProgressRedelivery.length }, "Redelivery of an unfinished message: asking Meta to retry later");
+    res.sendStatus(503);
+    return;
+  }
   res.sendStatus(200);
-});
+}
 
 export default router;

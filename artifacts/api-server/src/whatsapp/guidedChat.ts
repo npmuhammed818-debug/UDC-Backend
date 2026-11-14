@@ -1,39 +1,112 @@
 import { extractLabelledParagraph, extractParagraph } from './paragraphIntake';
+import { looksLikeFullName, NAME_REJECTION } from './nameCheck';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
-import { auditLogsTable, db, whatsappChatSessionsTable as sessions } from '@workspace/db';
+import { auditLogsTable, db, usersTable, whatsappChatSessionsTable as sessions } from '@workspace/db';
 import { z } from 'zod/v4';
 import { issueFlowToken, type FlowPurpose } from './flowToken';
-import { businessEmail } from './registrationEmail';
+import { businessEmail, runWithPhone } from './registrationEmail';
 import { classifyTurn } from '../akif/conversationPolicy';
+import { interpretProfileIntakeConversation, requirementKeysFor, detectCorrections, type ProfilePurpose } from '../akif/profileIntakeConversation';
+import { recallCustomerMemories, formatMemoriesForPrompt, saveCustomerMemory } from '../akif/customerMemory';
+import { estimateCustomerEmotion, loadAkifFeelings, recordAkifFeeling, feelingEventFor, formatEmotionalContextForPrompt, FEELING_BASELINE } from '../akif/emotionContext';
+import { react } from './reactions';
 import { sendWhatsAppInteractive, sendWhatsAppTextWithMenu } from './client';
+import { speakReply } from './voiceSend';
+import { renderNote, type NoteSpec } from '../akif/composeReply';
+import { takeBuyerUnitCurrency, buyerPriceLabel, buyerQuantityLabel, buyerUnresolved } from '../akif/buyerUnitCurrency';
+import { VOICE_NOTICE } from '../akif/voiceConsent';
+import type { VoiceLanguage } from '../akif/voiceLanguage';
 
-type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
+export type GuidedVoiceContext={voiceNote?:boolean;language?:VoiceLanguage};
+/**
+ * The brain's conversational reply inside a form: spoken as a voice note when the customer
+ * spoke to us (voice MVP, Phase 9 item 5e) and every voice gate passes, text otherwise.
+ * The master switch (AKIF_VOICE_REPLIES) and all speech privacy rules still gate inside
+ * speakReply, so with the switch off this is exactly the old text send. Structured content
+ * (fixed questions, review screens, validation notes) is never spoken.
+ */
+async function sendIntakeBrainReply(phone:string,reply:string,voice?:GuidedVoiceContext){
+  if(voice?.voiceNote){
+    try{
+      const spoken=await speakReply(phone,reply,{language:voice.language??'english'});
+      if(spoken.status===true){if(spoken.noticeDue)await sendWhatsAppTextWithMenu(phone,VOICE_NOTICE);return;}
+      if(spoken.status==='uncertain')return; // the audio may already be out; the reply must never be doubled
+    }catch{/* text fallback below */}
+  }
+  await sendWhatsAppTextWithMenu(phone,reply);
+}
+
+export type Question={name:string;label:string;optional?:boolean;kind?:'email'|'positive'|'incoterm';max?:number};
 const q=(name:string,label:string,options:Omit<Question,'name'|'label'>={}):Question=>({name,label,...options});
 export function guidedQuestions(purpose:FlowPurpose):Question[]{
   if(purpose.startsWith('profile_'))return [q('full_name','What is your full name?'),q('email',purpose==='profile_agent'?'What email should UDC use? Personal or business email is fine.':'What is your company email?',{kind:'email',max:254}),...(purpose==='profile_agent'?[]:[q('company_name','What is your registered company name?',{max:200}),q('country','In which country is your company registered?'),q('registration_number','What is your company registration number?',{optional:true,max:100})])];
   if(purpose==='buyer')return [q('product','What product do you need?'),q('quantity','How many metric tonnes (MT) do you need?',{kind:'positive'}),q('specification','What grade or specification do you need?',{optional:true,max:2000}),q('destination','What is the destination port?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('target_price','What is your target price in USD per MT?',{kind:'positive',optional:true}),q('delivery_time','When do you need delivery?',{optional:true,max:500}),q('payment_terms','What payment terms do you prefer?',{optional:true,max:2000})];
   return [q('product','What product can you supply?'),q('quantity','What quantity can you supply?',{kind:'positive'}),q('unit','What unit is that quantity and price based on? (for example, MT, kg or pieces)',{max:24}),q('specification','What grade or specification can you supply?',{optional:true,max:2000}),q('price','What price are you offering?',{kind:'positive'}),q('currency','What currency is that price in? (for example, USD, AED or EUR)',{max:3}),q('origin','What is the origin country?'),q('incoterm','Which incoterm: EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP?',{kind:'incoterm'}),q('availability','When is the product available for delivery?',{optional:true,max:500}),q('destination','What is the delivery port or named place? You can skip it if the buyer will choose the destination.',{optional:true,max:120}),q('payment_terms','What payment terms do you propose?',{optional:true,max:2000})];
 }
+export const EMAIL_TAKEN_NOTE='This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.';
+export const NO_DETAIL_NOTE='I am sorry, I did not quite catch that. Say it in your own words - for example your name, or Email name@company.com - and I will take it from there.';
+export const REVIEW_CHANGE_UNREAD_NOTE='I am sorry, I could not read that change. Send it labelled, for example: email: name@company.com; company name: Your Company Ltd; country: India - or tap Submit for review if everything is already correct.';
+// AI wording for the fixed account-flow notes (owner rule, 14 Nov): after the
+// T&C handshake, Akif says these in its own words. The fallback text is sent
+// only when every AI provider is down, and that fallback is logged. Validation
+// rules, review screens, submit and the code checks stay fully deterministic.
+const NOTE_INTENTS:Record<string,NoteSpec>={
+  [EMAIL_TAKEN_NOTE]:{intent:"Tell the customer that this email already belongs to a UDC account. To use it from this WhatsApp number, they can send the words Sign in followed by that email address, and a code will go to that email. Reassure them that profiles are never merged automatically. Warm, clear, brief.",fallback:EMAIL_TAKEN_NOTE,mustSay:["Sign in"]},
+  [NO_DETAIL_NOTE]:{intent:"Apologize lightly and say you did not quite catch that. Invite them to say it in their own words, for example their name, or Email followed by their email address, and you will take it from there. Warm and brief.",fallback:NO_DETAIL_NOTE},
+  [REVIEW_CHANGE_UNREAD_NOTE]:{intent:"Apologize lightly and say you could not read that change. Ask them to send it labelled, for example email: name@company.com, or to tap Submit for review if everything is already correct. Brief.",fallback:REVIEW_CHANGE_UNREAD_NOTE,mustSay:["Submit"]},
+  'That draft expired. Send Menu to start again.':{intent:"Tell the customer kindly that this draft expired, and to send Menu to start again. Brief.",fallback:'That draft expired. Send Menu to start again.',mustSay:["Menu"]},
+  'Cancelled. Nothing was submitted. Send Menu to see your features.':{intent:"Confirm warmly that the draft is cancelled and nothing was submitted, and that they can send Menu to see their features. Brief.",fallback:'Cancelled. Nothing was submitted. Send Menu to see your features.',mustSay:["Menu"]},
+  'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.':{intent:"Reassure the customer their details are saved for about 30 minutes, and they can say continue when ready or cancel to drop them. Warm and brief.",fallback:'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.',mustSay:["continue","cancel"]},
+};
+async function sendNote(phone:string,text:string,languageOf?:string){
+  const spec=NOTE_INTENTS[text]??{
+    // A validation note whose wording was not registered: explain the same
+    // meaning in Akif's own words, preserving every example and requirement.
+    intent:`A customer's answer during a UDC form was not accepted. Explain warmly and naturally why, and what to send instead, keeping this exact meaning and any examples: ${JSON.stringify(text)}. Do not add or remove requirements.`,
+    fallback:text,
+  };
+  await sendWhatsAppTextWithMenu(phone,await renderNote({...spec,languageOf:languageOf??spec.languageOf}));
+}
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
+  if(purpose==='buyer'&&buyerUnresolved(data)){await sendWhatsAppTextWithMenu(phone,(data.__bad_currency?'Which three letter currency code should I use for your price, for example EUR or USD?':'Which unit is your quantity in, for example kg or MT?'));return;}
+  if(data.__paragraph==='1'&&data.__awaiting==='target_price'){await sendWhatsAppTextWithMenu(phone,buyerPriceLabel(data)+' Reply Skip to leave it blank.');return;}
   if(data.__paragraph==='1'){
     if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppTextWithMenu(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
     const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
-    if(next){await sendWhatsAppTextWithMenu(phone,next.label);return;}
+    if(next){await sendWhatsAppTextWithMenu(phone,purpose==='buyer'&&next.name==='quantity'?buyerQuantityLabel(data):next.label);return;}
     const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>q.label);
     if(!labels.length){await sendWhatsAppTextWithMenu(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
     await sendWhatsAppTextWithMenu(phone,`Send ${labels.join(', ')} together in one short message.${purpose.startsWith('profile_')?'':' You can include grade, timing, payment terms and the delivery place too.'}`);return;
   }
-  const current=guidedQuestions(purpose)[step];await sendWhatsAppTextWithMenu(phone,current.label+(current.optional?' Reply Skip to leave it blank.':''));
+  const current=guidedQuestions(purpose)[step];
+  if(purpose.startsWith('profile_')){
+    const ASK:Record<string,string>={
+      full_name:"Ask the customer for their full name, warmly and naturally, as the first step of their registration.",
+      email:purpose==='profile_agent'?"Ask the customer which email UDC should use for their account; a personal or business email is fine. Warm and brief.":"Ask the customer for their company email address. Warm and brief.",
+      company_name:"Ask the customer for their registered company name. Warm and brief.",
+      country:"Ask the customer in which country their company is registered. Warm and brief.",
+      registration_number:"Ask the customer for their company registration number, and mention they can say Skip if they do not have it handy. Warm and brief.",
+    };
+    const fallback=current.label+(current.optional?' Reply Skip to leave it blank.':'');
+    await sendWhatsAppTextWithMenu(phone,await renderNote({intent:ASK[current.name]??`Ask the customer: ${current.label}`,fallback}));
+    return;
+  }
+  await sendWhatsAppTextWithMenu(phone,current.label+(current.optional?' Reply Skip to leave it blank.':''));
 }
 export async function clearGuidedChat(phone:string){const fingerprint=phoneHash(phone);await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+fingerprint}))`);await tx.delete(sessions).where(eq(sessions.phoneHash,fingerprint));});}
 export async function startGuidedChat(phone:string,purpose:FlowPurpose,initial:Record<string,string>={}){
   await db.delete(sessions).where(lt(sessions.expiresAt,new Date()));
   const input={id:randomUUID(),phoneHash:phoneHash(phone),purpose,step:0,data:{...initial,__paragraph:'1'},lastMessageId:null,expiresAt:expiry(),updatedAt:new Date()};
   await db.transaction(async tx=>{await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+input.phoneHash}))`);await tx.insert(sessions).values(input).onConflictDoUpdate({target:sessions.phoneHash,set:input});});
+  // A draft seeded with every required detail (for example trade facts captured
+  // during brain-led registration) goes straight to review instead of re-asking.
+  const seeded:Record<string,string>={...initial,__paragraph:'1'};
+  const requiredMissing=guidedQuestions(purpose).some(item=>!item.optional&&!seeded[item.name]);
+  if(!requiredMissing&&(purpose==='buyer'||purpose==='seller')){await review(phone,purpose,seeded);return;}
   await question(phone,purpose,0,input.data);
 }
 
@@ -47,7 +120,9 @@ function rejectionNote(item:Question,error:unknown){
   if(error instanceof z.ZodError)return item.kind==='email'?'That does not look like an email address. Please send it like name@yourcompany.com.':null;
   return error instanceof Error?error.message:null;
 }
-function validate(question:Question,text:string,purpose:FlowPurpose){
+// Exported so the brain orchestrator validates model-collected fields with the
+// exact same rules as the scripted form. One rule source, no drift.
+export function validate(question:Question,text:string,purpose:FlowPurpose){
   if(question.optional&&/^skip$/i.test(text))return '';
   if(text.length<1||text.length>(question.max??120))throw new Error('Please keep this answer within '+(question.max??120)+' characters.');
   if(question.kind==='email'){
@@ -61,10 +136,10 @@ function validate(question:Question,text:string,purpose:FlowPurpose){
     if(!/^[A-Za-z]{3}$/.test(text))throw new Error('Send the three-letter currency code, for example USD, AED or EUR.');return text.toUpperCase();
   }
   if(question.kind==='incoterm'){const term=text.toUpperCase();if(!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))throw new Error('Choose EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP.');return term;}
-  if(question.name==='full_name'&&text.length<2)throw new Error('Please send your full name.');return text;
+  if(question.name==='full_name'&&!looksLikeFullName(text))throw new Error(text.trim().length<2?'Please send your full name.':NAME_REJECTION);return text;
 }
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
-  const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target USD/MT',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
+  const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target price',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
   const summary=Object.entries(data).filter(([k,v])=>v&&!k.startsWith('__')).map(([key,value])=>`${label[key]??key}: ${value}`).join('\n');
   await sendWhatsAppTextWithMenu(phone,'Please review:\n'+summary+(purpose.startsWith('profile_')?'\nRegistration needs UDC approval.':'\nUDC recommends DLC directly to seller, after SGS at destination. Other terms require explicit buyer agreement. Submission needs UDC review.'));
   try{await sendWhatsAppInteractive(phone,{type:'button',body:{text:'Are these details correct?'},action:{buttons:[['submit','Submit for review'],['restart','Edit details'],['cancel','Cancel']].map(([id,title])=>({type:'reply' as const,reply:{id:'udc:'+id,title}}))}});}catch{await sendWhatsAppTextWithMenu(phone,'Reply Submit to send for UDC review, Edit to start again, or Cancel.');}
@@ -75,6 +150,14 @@ async function review(phone:string,purpose:FlowPurpose,data:Record<string,string
 // Leave prose, corrections and questions to paragraph extraction; never guess
 // which of several facts the user intended to supply.
 function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>){
+  if(purpose==='buyer'&&data.__bad_currency&&/^[A-Za-z]{3}$/.test(text))return {currency:text} as Record<string,string>;
+  if(purpose==='buyer'&&!data.__bad_currency&&data.__bad_unit&&text.length<=24&&/^[\p{L}\p{N} ]+$/u.test(text))return {unit:text} as Record<string,string>;
+  // The one optional price question asked after the required details: a plain number or Skip is a direct answer.
+  if(data.__awaiting==='target_price'){
+    if(/^skip$/i.test(text))return {target_price:'skip'} as Record<string,string>;
+    if(/^\d+(?:\.\d+)?$/.test(text)&&Number(text)>0)return {target_price:text} as Record<string,string>;
+    return null;
+  }
   const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
   if(!next)return null;
   let scalar=false;
@@ -96,7 +179,8 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
   if(!scalar)return null;
   try{return {[next.name]:validate(next,text,purpose)};}catch(error){const note=rejectionNote(next,error);return note?{__note:note}:{};}
 }
-export async function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false){
+export function continueGuidedChat(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false,voice?:GuidedVoiceContext){return runWithPhone(phone,()=>continueGuidedChatInner(phone,message,action,submit,directOnly,voice));}
+async function continueGuidedChatInner(phone:string,message:{id?:string;text?:{body?:string}},action:string|null,submit:(phone:string,raw:string)=>Promise<string>,directOnly=false,voice?:GuidedVoiceContext){
   const raw=message.text?.body?.trim();
   if(!raw&&!['submit','restart','cancel'].includes(action??''))return false;
   const fingerprint=phoneHash(phone);
@@ -106,18 +190,65 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
   if(snapshot&&snapshot.expiresAt>new Date()&&raw&&!action&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&!/^(?:cancel|stop|edit|skip)$/i.test(raw)){
     const turn=classifyTurn(raw,true);
     const purpose=snapshot.purpose as FlowPurpose;
-    if(turn==='pause'){await sendWhatsAppTextWithMenu(phone,'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.');return true;}
+    if(turn==='pause'){await sendNote(phone,'No problem. Your details are saved for about 30 minutes. Say "continue" when you are ready, or "cancel" to drop them.',raw);return true;}
     if(turn==='resume'){await question(phone,purpose,snapshot.step,snapshot.data);return true;}
-    if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length)return false;
+    if(turn==='question'&&!Object.keys(extractLabelledParagraph(purpose,raw)).length&&!purpose.startsWith('profile_'))return false;
   }
   let extracted:Record<string,string>|null=null;
   let fromLocal=false;
-  if(snapshot&&snapshot.expiresAt>new Date()&&snapshot.data.__paragraph==='1'&&snapshot.step<guidedQuestions(snapshot.purpose as FlowPurpose).length&&raw&&!action&&!/^(?:cancel|stop|edit)$/i.test(raw)){
+  let brainReply:string|null=null;
+  let brainRequirements:Record<string,string>={};
+  const inReview=!!snapshot&&snapshot.expiresAt>new Date()&&snapshot.step>=guidedQuestions(snapshot.purpose as FlowPurpose).length;
+  if(snapshot&&snapshot.expiresAt>new Date()&&(snapshot.data.__paragraph==='1'||inReview)&&raw&&!action&&!/^(?:cancel|stop|edit|submit)$/i.test(raw)){
+    // Labelled corrections (email: x@y.com) need no brain call, so they land at the review screen even while the model is down.
     const labelled=extractLabelledParagraph(snapshot.purpose as FlowPurpose,raw);
     const local=Object.keys(labelled).length?labelled:directAnswer(snapshot.purpose as FlowPurpose,raw,snapshot.data);
     if(directOnly&&!local)return false;
     fromLocal=!!local;
-    extracted=local??await extractParagraph(snapshot.purpose as FlowPurpose,raw);
+    if(local)extracted=local;
+    else if(snapshot.purpose.startsWith('profile_')){
+      // Brain-led registration: the model reads details in any order and picks
+      // the words. Deterministic validation below still gates every value, and
+      // a null decision falls back to the fixed-question flow.
+      const collected=Object.fromEntries(Object.entries(snapshot.data).filter(([key])=>!key.startsWith('__')));
+      // Memory (Phase 9 item 3a): only for a registered, opted-in customer;
+      // registration of a brand-new customer simply has no memories yet.
+      let memoryNotes:string|undefined;
+      let memoryUserId:string|null=null;
+      try{
+        const [u]=await db.select({id:usersTable.id,optIn:usersTable.akifLearningOptIn}).from(usersTable).where(eq(usersTable.phone,phone)).limit(1);
+        if(u?.optIn){
+          memoryUserId=u.id;
+          const memories=await recallCustomerMemories({userId:u.id,viewerUserId:u.id,query:raw,limit:5}).catch(()=>[]);
+          const formatted=formatMemoriesForPrompt(memories);
+          if(formatted)memoryNotes=formatted;
+        }
+      }catch{ memoryNotes=undefined; }
+      // Emotional context (Phase 9 item 5d): a probabilistic guess at the
+      // customer's feelings plus AKIF's own persistent state for a known
+      // opted-in user. Any failure leaves it empty - never blocks the chat.
+      let emotionalContext:string|undefined;
+      try{
+        const guess=await estimateCustomerEmotion({history:[{role:'user',content:raw}],currentMessage:raw});
+        let feelings=FEELING_BASELINE;
+        if(memoryUserId){
+          feelings=(await loadAkifFeelings({userId:memoryUserId}).catch(()=>({state:FEELING_BASELINE}))).state;
+          await recordAkifFeeling({userId:memoryUserId,event:feelingEventFor(raw,guess)}).catch(()=>{});
+        }
+        emotionalContext=formatEmotionalContextForPrompt(guess,feelings);
+      }catch{ emotionalContext=undefined; }
+      const decision=await interpretProfileIntakeConversation({message:raw,purpose:snapshot.purpose as ProfilePurpose,collected,memoryNotes,emotionalContext});
+      if(decision){
+        extracted=decision.fields;brainReply=decision.reply;
+        if(memoryUserId){
+          for(const c of detectCorrections(collected,decision.fields)){
+            try{await saveCustomerMemory({userId:memoryUserId,kind:'correction',content:`${c.field}: customer corrected "${c.from.slice(0,120)}" to "${c.to.slice(0,120)}"`,source:'registration chat'});}catch{/* not opted in or unavailable - never blocks the chat */}
+          }
+        }
+        const allowedReq=requirementKeysFor(snapshot.purpose as ProfilePurpose);
+        brainRequirements=Object.fromEntries(Object.entries(decision.requirements).filter(([key])=>allowedReq.includes(key)));
+      }else extracted=await extractParagraph(snapshot.purpose as FlowPurpose,raw);
+    }else extracted=await extractParagraph(snapshot.purpose as FlowPurpose,raw);
   }else if(directOnly)return false;
   const result=await db.transaction(async tx=>{
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'guided_chat:'+fingerprint}))`);
@@ -132,19 +263,55 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
     const questions=guidedQuestions(purpose);
     if(session.step>=questions.length){
       if(action==='submit'||/^submit$/i.test(raw??''))return {kind:'submit' as const,purpose,id:session.id,data:session.data};
-      return {kind:'review' as const,purpose,data:session.data};
+      // Correction at the review screen: the brain read the message; every
+      // extracted value is validated here before it replaces a saved detail.
+      if(extracted&&Object.keys(extracted).length){
+        const data={...session.data};const notes:string[]=[];
+        for(const item of questions){const candidate=extracted[item.name];if(candidate!==undefined){try{
+          const value=validate(item,candidate,purpose);
+          if(item.kind==='email'&&purpose.startsWith('profile_')&&value){
+            const [owner]=await tx.select({phone:usersTable.phone}).from(usersTable).where(sql`lower(${usersTable.email}) = ${value}`).limit(1);
+            if(owner&&owner.phone!==phone){notes.push(EMAIL_TAKEN_NOTE);continue;}
+          }
+          data[item.name]=value;
+        }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);}}}
+        await tx.update(sessions).set({data,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
+        return {kind:'review' as const,purpose,data,note:brainReply??notes[0],noteFromBrain:!!brainReply};
+      }
+      // A correction the brain could not read (model down or reply rejected) must never be a silent re-show: say why nothing changed.
+      return {kind:'review' as const,purpose,data:session.data,note:brainReply??(raw?REVIEW_CHANGE_UNREAD_NOTE:undefined),noteFromBrain:!!brainReply};
     }
     if(session.data.__paragraph==='1'){
       // A concurrent edit/menu must never apply extraction to a different draft.
       if(!snapshot||snapshot.id!==session.id||snapshot.step!==session.step||JSON.stringify(snapshot.data)!==JSON.stringify(session.data))return {kind:'question' as const,purpose,step:session.step,data:session.data};
       const data:Record<string,string>={...session.data,__started:'1'};
       const notes:string[]=[];
-      for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{data[item.name]=validate(item,candidate,purpose);}catch{/* Ask only for invalid or missing details; the reason for a typed answer comes from directAnswer. */}}}
+      for(const item of questions){const candidate=extracted?.[item.name];if(candidate!==undefined){try{
+        const value=validate(item,candidate,purpose);
+        if(item.kind==='email'&&purpose.startsWith('profile_')&&value){
+          const [owner]=await tx.select({phone:usersTable.phone}).from(usersTable).where(sql`lower(${usersTable.email}) = ${value}`).limit(1);
+          if(owner&&owner.phone!==phone){notes.push(EMAIL_TAKEN_NOTE);continue;}
+        }
+        data[item.name]=value;
+      }catch(error){const reason=rejectionNote(item,error);if(reason)notes.push(reason);/* The old value stays; the user is told why. */}}}
+      if(purpose==='buyer'&&extracted){const taken=takeBuyerUnitCurrency(extracted,data);for(const r of taken.rejected)notes.push(r+'.');}
+      if(purpose.startsWith('profile_')){
+        const reqPurpose=purpose==='profile_buyer'?'buyer':purpose==='profile_seller'?'seller':null;
+        if(reqPurpose==='buyer'){const tmp:Record<string,string>={};takeBuyerUnitCurrency(brainRequirements,tmp);for(const [k,v] of Object.entries(tmp))data['__req_'+k]=v;}
+        if(reqPurpose)for(const item of guidedQuestions(reqPurpose)){const candidate=brainRequirements[item.name];if(candidate!==undefined){try{data['__req_'+item.name]=validate(item,candidate,reqPurpose);}catch{/* an unreadable volunteered detail is simply asked again in the requirement flow */}}}
+      }
       if(fromLocal&&extracted?.__note)notes.push(extracted.__note);
-      const complete=questions.every(q=>q.optional||data[q.name]);
+      // Free text we could not read (for example the AI model is unavailable): say so and show the labelled form, instead of silently repeating the question.
+      if(!brainReply&&!notes.length&&purpose.startsWith('profile_')&&raw&&(/@/.test(raw)||(raw.match(/,/g)??[]).length>=2)&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push('I could not read those details automatically. Send them labelled, for example: full name: Asha Verma; email: asha@yourcompany.com'+(purpose==='profile_agent'?'':'; company name: Your Company Ltd; country: India')+'. Or answer one question at a time.');
+      if(!brainReply&&!notes.length&&purpose.startsWith('profile_')&&raw&&!questions.some(q=>extracted?.[q.name]!==undefined))notes.push(NO_DETAIL_NOTE);
+      const requiredDone=questions.every(q=>q.optional||data[q.name]);
+      // Target price is optional, so the paragraph flow never asked for it unless the AI extracted it. Ask once.
+      if(data.target_price!==undefined&&data.__awaiting==='target_price')delete data.__awaiting;
+      if(requiredDone&&purpose==='buyer'&&data.target_price===undefined&&data.__priceAsked!=='1'){data.__priceAsked='1';data.__awaiting='target_price';}
+      const complete=requiredDone&&data.__awaiting!=='target_price'&&!(purpose==='buyer'&&buyerUnresolved(data));
       const step=complete?questions.length:0;
       await tx.update(sessions).set({data,step,lastMessageId:message.id,expiresAt:expiry(),updatedAt:new Date()}).where(eq(sessions.id,session.id));
-      return complete?{kind:'review' as const,purpose,data}:{kind:'question' as const,purpose,step,data,note:notes[0]};
+      return complete?{kind:'review' as const,purpose,data,note:brainReply??notes[0],noteFromBrain:!!brainReply}:{kind:'question' as const,purpose,step,data,note:notes[0],brainReply:brainReply??undefined};
     }
     if(!raw)return {kind:'question' as const,purpose,step:session.step};
     let answer:string;
@@ -156,18 +323,26 @@ export async function continueGuidedChat(phone:string,message:{id?:string;text?:
   if(!result)return false;
   switch(result.kind){
     case 'duplicate':return true;
-    case 'expired':await sendWhatsAppTextWithMenu(phone,'That draft expired. Send Menu to start again.');return true;
-    case 'cancelled':await sendWhatsAppTextWithMenu(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
-    case 'invalid':await sendWhatsAppTextWithMenu(phone,result.text);await question(phone,result.purpose,result.step);return true;
-    case 'question':if('note' in result&&result.note)await sendWhatsAppTextWithMenu(phone,result.note);await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
-    case 'review':await review(phone,result.purpose,result.data);return true;
+    case 'expired':await sendNote(phone,'That draft expired. Send Menu to start again.');return true;
+    case 'cancelled':await sendNote(phone,'Cancelled. Nothing was submitted. Send Menu to see your features.');return true;
+    case 'invalid':await sendNote(phone,result.text,raw);await question(phone,result.purpose,result.step);return true;
+    case 'question':if('note' in result&&result.note)await sendNote(phone,result.note,raw);if('brainReply' in result&&result.brainReply)await sendIntakeBrainReply(phone,result.brainReply,voice);else await question(phone,result.purpose,result.step,'data' in result?result.data:undefined);return true;
+    case 'review':if('note' in result&&result.note){if('noteFromBrain' in result&&result.noteFromBrain)await sendIntakeBrainReply(phone,result.note,voice);else await sendNote(phone,result.note,raw);}await review(phone,result.purpose,result.data);return true;
     case 'submit':{
       const reply=await submit(phone,JSON.stringify({...result.data,flow_token:issueFlowToken(phone,result.purpose,result.id)}));
       // Validation and identity conflicts return a useful reply without saving.
       // Only the transaction's success marker proves it is safe to clear a draft.
       const [saved]=await db.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'whatsapp_chat_form_saved'),sql`${auditLogsTable.metadata}->>'nonce' = ${result.id}`)).limit(1);
       if(saved)await db.delete(sessions).where(and(eq(sessions.id,result.id),eq(sessions.phoneHash,fingerprint),eq(sessions.data,result.data)));
-      await sendWhatsAppTextWithMenu(phone,saved?reply:`${reply}\nYour details are still here. Reply Edit to change them or Cancel.`);return true;
+      await sendWhatsAppTextWithMenu(phone,saved?reply:`${reply}\nYour details are still here. Reply Edit to change them or Cancel.`);if(saved)react('complete',phone,message.id); // one ✅ on the submit tap once the form is saved
+      if(saved&&result.purpose.startsWith('profile_')){
+        const reqPurpose=result.purpose==='profile_buyer'?'buyer':result.purpose==='profile_seller'?'seller':null;
+        const seeded=Object.fromEntries(Object.entries(result.data).filter(([key])=>key.startsWith('__req_')).map(([key,value])=>[key.slice(6),value]));
+        // Trade details volunteered during registration carry into the
+        // requirement/offer draft, prefilled and never re-asked.
+        if(reqPurpose&&Object.keys(seeded).length)await startGuidedChat(phone,reqPurpose,seeded);
+      }
+      return true;
     }
   }
 }

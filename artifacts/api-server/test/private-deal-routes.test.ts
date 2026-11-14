@@ -100,7 +100,7 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
         ? 'const s=globalThis.__privateDealRoutes;export const db=s.db;' + tableNames.map(name => `export const ${name}=s.tables.${name};`).join("")
         : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const desc=x=>x;export const sql=(strings)=>{if(strings.join("").trim()!=="true")throw Error("unsupported test SQL");return true;};'
         : args.path === "sessions" ? 'export const getAuthenticatedUser=async()=>null;'
-        : 'const s=globalThis.__privateDealRoutes;export const createSignedDownloadUrl=s.sign;export const uploadDocumentBytes=s.upload;export const parseStoragePath=x=>x.startsWith("storage://udc-documents/")?x.slice("storage://udc-documents/".length):undefined;' }));
+        : 'const s=globalThis.__privateDealRoutes;export const removeDocumentObject=async()=>{};export const createSignedDownloadUrl=s.sign;export const uploadDocumentBytes=s.upload;export const parseStoragePath=x=>x.startsWith("storage://udc-documents/")?x.slice("storage://udc-documents/".length):undefined;' }));
     } }],
   });
   await writeFile(output, bundle.outputFiles[0].text);

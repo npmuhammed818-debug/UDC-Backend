@@ -1,28 +1,19 @@
-export function formatTradeNumber(value: string | number, maximumFractionDigits = 6) {
-  const numeric = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(numeric)) return String(value);
-
-  return new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits,
-    useGrouping: true,
-  }).format(numeric);
+// Stored commercial values are decimal strings. Never round through Number or
+// limit money to two decimals: per-unit prices can have meaningful fractions.
+export function formatTradeNumber(value: string | number) {
+  const text=String(value);
+  if(!/^\d{1,30}(?:\.\d{1,12})?$/.test(text))return "unavailable";
+  const [whole,fraction=""]=text.split(".");
+  const digits=whole!.replace(/^0+(?=\d)/,"");
+  const tail=fraction.replace(/0+$/,"");
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g,",")+(tail?"."+tail:"");
 }
-
-export function formatTradeQuantity(value: string | number) {
-  return formatTradeNumber(value, 6);
-}
-
-export function formatTradePrice(value: string | number) {
-  return formatTradeNumber(value, 2);
-}
-
+export function formatTradeQuantity(value: string | number) { return formatTradeNumber(value); }
 export function formatTradeMoney(currency: string, value: string | number) {
-  const amount = formatTradePrice(value);
-  const code = currency.trim().toUpperCase();
-
-  if (code === "USD") return `$${amount}`;
-  if (code === "EUR") return `€${amount}`;
-  if (code === "GBP") return `£${amount}`;
-  return `${code} ${amount}`;
+  const amount=formatTradeNumber(value);
+  const code=currency.trim().toUpperCase();
+  return code === "USD" ? `$${amount}` : `${code} ${amount}`;
 }
+
+
+export function formatTradePrice(value:string|number){return formatTradeNumber(value);}

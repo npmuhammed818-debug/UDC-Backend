@@ -1,38 +1,18 @@
 import type { Request } from "express";
 
-type AttemptWindow = {
-  startedAt: number;
-  count: number;
-};
-
-const WINDOW_MS = 15 * 60 * 1000;
-const MAX_ATTEMPTS = 12;
-const attempts = new Map<string, AttemptWindow>();
+// Per-IP budgets key on the visitor's network, not the exact address: an IPv6
+// user rotates through their /64 prefix freely, so the /64 is the billable
+// unit. IPv4 keys on the full address. Zone ids and v4-mapped forms are folded.
+export function normalizeClientIp(ip: string): string {
+  let addr = ip.trim().toLowerCase();
+  if (addr.startsWith("::ffff:")) addr = addr.slice("::ffff:".length);
+  const zone = addr.indexOf("%");
+  if (zone !== -1) addr = addr.slice(0, zone);
+  if (!addr.includes(":")) return addr; // IPv4
+  const groups = addr.split(":");
+  return groups.slice(0, 4).join(":") + "::/64";
+}
 
 export function authRateLimitKey(req: Request) {
-  return req.ip || req.socket.remoteAddress || "unknown";
-}
-
-export function isAuthRateLimited(key: string) {
-  const current = attempts.get(key);
-  if (!current) return false;
-  if (Date.now() - current.startedAt >= WINDOW_MS) {
-    attempts.delete(key);
-    return false;
-  }
-  return current.count >= MAX_ATTEMPTS;
-}
-
-export function recordAuthFailure(key: string) {
-  const now = Date.now();
-  const current = attempts.get(key);
-  if (!current || now - current.startedAt >= WINDOW_MS) {
-    attempts.set(key, { startedAt: now, count: 1 });
-    return;
-  }
-  current.count += 1;
-}
-
-export function clearAuthFailures(key: string) {
-  attempts.delete(key);
+  return normalizeClientIp(req.ip || req.socket.remoteAddress || "unknown");
 }

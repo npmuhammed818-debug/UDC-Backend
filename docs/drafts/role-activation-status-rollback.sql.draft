@@ -1,0 +1,14 @@
+-- DRAFT / UNAPPLIED rollback for lib/db/migrations/20261026_role_activation_status.sql
+-- Only safe while no request has status 'activated'. An activated request records a real, audited
+-- role change; never rewrite it. If any exist, stop and keep the wider constraint.
+BEGIN;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.user_role_change_requests WHERE status='activated') THEN
+    RAISE EXCEPTION 'activated role changes exist; do not roll back the status constraint';
+  END IF;
+END $$;
+ALTER TABLE public.user_role_change_requests DROP CONSTRAINT IF EXISTS user_role_change_requests_status_check;
+ALTER TABLE public.user_role_change_requests
+  ADD CONSTRAINT user_role_change_requests_status_check CHECK (status IN ('pending','reviewed','rejected'));
+COMMIT;

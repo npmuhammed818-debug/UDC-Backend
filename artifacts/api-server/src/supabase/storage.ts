@@ -70,7 +70,7 @@ export async function uploadDocumentBytes(
 }
 
 
-export async function downloadDocumentBytes(path: string) {
+export async function downloadDocumentBytes(path: string, maxBytes = 20 * 1024 * 1024) {
   const { url, key } = config();
   const response = await fetch(
     `${url}/storage/v1/object/${bucket}/${path}`,
@@ -88,6 +88,26 @@ export async function downloadDocumentBytes(path: string) {
   }
 
   const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const declared = Number(response.headers.get("content-length"));
+  if (declared > maxBytes) { await response.body?.cancel(); throw Error("document_too_large"); }
+  const reader = response.body?.getReader();
+  if (!reader) throw Error("document_body_missing");
+  const chunks: Uint8Array[] = []; let length = 0;
+  try {
+    while (true) {
+      const part = await reader.read(); if (part.done) break;
+      length += part.value.byteLength;
+      if (length > maxBytes) { await reader.cancel(); throw Error("document_too_large"); }
+      chunks.push(part.value);
+    }
+  } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(length); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   return { bytes, contentType };
+}
+
+/** Best-effort cleanup of an object created by the same failed upload operation. */
+export async function removeDocumentObject(path:string){
+ const {url,key}=config();const response=await fetch(`${url}/storage/v1/object/${bucket}`,{method:'DELETE',headers:{authorization:`Bearer ${key}`,'content-type':'application/json'},body:JSON.stringify({prefixes:[path]})});
+ if(!response.ok)throw new Error('document_cleanup_failed');
 }

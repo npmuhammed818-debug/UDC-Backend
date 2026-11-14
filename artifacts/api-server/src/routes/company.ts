@@ -1,10 +1,11 @@
 import { Router, raw, type IRouter, type Response } from "express";
+import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { auditLogsTable, companiesTable, companyVerificationDocumentsTable, db, notificationsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
-import { createSignedDownloadUrl, uploadDocumentBytes } from "../supabase/storage";
+import { createSignedDownloadUrl, uploadDocumentBytes, removeDocumentObject } from "../supabase/storage";
 import { managedCompanyDocumentPath } from "../supabase/documentAccessPath";
 
 const router: IRouter = Router();
@@ -98,11 +99,21 @@ router.post("/company/documents/upload", requireAuth,
       if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.length > 5 * 1024 * 1024 || bytes.subarray(0, 5).toString() !== "%PDF-") {
         res.status(400).json({ error: "pdf_required_max_5mb" }); return;
       }
-      const fileUrl = await uploadDocumentBytes(`companies/${company.id}/${randomUUID()}.pdf`, bytes, "application/pdf");
-      const [document] = await db.insert(companyVerificationDocumentsTable).values({
-        companyId: company.id, uploadedBy: req.authUser!.id, documentType, fileUrl, status: "pending",
-      }).returning({ id: companyVerificationDocumentsTable.id, documentType: companyVerificationDocumentsTable.documentType, status: companyVerificationDocumentsTable.status, createdAt: companyVerificationDocumentsTable.createdAt });
-      await db.insert(auditLogsTable).values({ actorUserId: req.authUser!.id, action: "company_verification_document_uploaded", entityType: "company_verification_document", entityId: document.id, metadata: { companyId: company.id, documentType } });
+      let uploadedPath: string | undefined;
+      let document;
+      try {
+        document=await db.transaction(async tx=>{
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'company_upload:'+req.authUser!.id}))`);
+          const [{n:uploadsToday}]=(await tx.execute(sql`select count(*)::int as n from company_verification_documents where uploaded_by=${req.authUser!.id} and created_at > ${new Date(Date.now()-86400000)}`)).rows as Array<{n:number}>;
+          if(uploadsToday>=10)return null;
+          const path=`companies/${company.id}/${randomUUID()}.pdf`;
+          const fileUrl=await uploadDocumentBytes(path,bytes,'application/pdf');uploadedPath=path;
+          const [saved]=await tx.insert(companyVerificationDocumentsTable).values({companyId:company.id,uploadedBy:req.authUser!.id,documentType,fileUrl,status:'pending'}).returning({id:companyVerificationDocumentsTable.id,documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status,createdAt:companyVerificationDocumentsTable.createdAt});
+          await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'company_verification_document_uploaded',entityType:'company_verification_document',entityId:saved.id,metadata:{companyId:company.id,documentType}});
+          return saved;
+        });
+      }catch(error){if(uploadedPath)try{await removeDocumentObject(uploadedPath);}catch{console.warn('Company upload cleanup needs review',{reason:'object_cleanup_failed'});}throw error;}
+      if(!document){res.status(429).json({error:'upload_quota_exceeded'});return;}
       res.status(201).json({ document });
     } catch (error) {
       if (error instanceof z.ZodError) { res.status(400).json({ error: "invalid_document_type" }); return; }
@@ -112,6 +123,8 @@ router.post("/company/documents/upload", requireAuth,
 
 router.post("/company", requireAuth, async (req, res) => {
   try {
+    // Companies belong to trading roles; agents introduce traders, they do not trade.
+    if (req.authUser!.role === "agent") { res.status(403).json({ error: "company_not_available_for_agents" }); return; }
     const input = companySchema.parse(req.body);
     const existing = await getCompanyForUser(req.authUser!.id);
     if (existing) {
@@ -132,6 +145,7 @@ router.post("/company", requireAuth, async (req, res) => {
       })
       .returning(companySelection);
 
+    queueAdminReviewAlert("company verification", input.company_name);
     res.status(201).json({ company });
   } catch (error) {
     if (validationResponse(res, error)) return;

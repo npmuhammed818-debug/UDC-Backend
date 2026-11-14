@@ -1,5 +1,7 @@
 import { containsContactDetails, violatesPrivateRelay } from "./dealConversationPrivacy.ts";
+import { contactsUnlocked } from "../deals/contactSharing.ts";
 import { triageBuyerRequirement } from "./buyerRequirementTriage.ts";
+import { leaksModelIdentity } from "./formDump.ts";
 
 export type DealConversationDecision = {
   intent: string;
@@ -161,7 +163,8 @@ export function looksLikeNewTradeIntake(text: string) {
 export function isSafeConversationText(text: string) {
   return Boolean(text.trim()) && !containsInternalLeak(text)
     && !looksLikeProviderDiagnostic(text) && !narratesCounterparty(text)
-    && !looksLikePrecisionChatter(text) && !looksStructured(text);
+    && !looksLikePrecisionChatter(text) && !looksStructured(text)
+    && !leaksModelIdentity(text);
 }
 
 export function normalizeModelDecision(input: {
@@ -286,7 +289,7 @@ export function normalizeModelDecision(input: {
     ? rawRelay
     : null;
 
-  if (relayToCounterparty && violatesPrivateRelay(relayToCounterparty, [input.incomingMessage, ...(input.privateContext ?? [])], input.incomingMessage)) {
+  if (relayToCounterparty && violatesPrivateRelay(relayToCounterparty, [input.incomingMessage, ...(input.privateContext ?? [])], input.incomingMessage, { allowContactDetails: contactsUnlocked(input.deal.status) })) {
     return { intent, replyToSender: "I’ll keep those details private. Send the terms you want shared with the other party.", relay: false, relayToCounterparty: null, newTradeIntake: false };
   }
 

@@ -7,7 +7,7 @@ import { z } from "zod/v4";
 import { auditLogsTable, buyerRequestsTable, companiesTable, db, dealFinancialsTable, dealsTable, documentAccessTable, documentsTable, inspectionsTable, messagesTable, productsTable, sellerListingsTable, shipmentsTable, shipmentTrackingEventsTable, shipmentCargoUnitsTable, dealMeetingsTable, dealCasesTable, customsClearanceTable, dealFeedbackTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
 import { requireNonAgentDealAccess } from "../auth/agentDealPrivacy";
-import { createSignedDownloadUrl, uploadDocumentBytes } from "../supabase/storage";
+import { createSignedDownloadUrl, uploadDocumentBytes, removeDocumentObject } from "../supabase/storage";
 import { createNcndaDraft } from "../deals/ncndaDraft";
 import { createSpaDraft } from "../deals/spaDraft";
 import { createLoiDraft } from "../deals/loiDraft";
@@ -66,17 +66,22 @@ router.post("/deals/:dealId/documents/upload", requireAuth, requireNonAgentDealA
     if (!Buffer.isBuffer(bytes) || bytes.length < 8 || bytes.length > 5 * 1024 * 1024 || bytes.subarray(0, 5).toString() !== "%PDF-") {
       res.status(400).json({ error: "pdf_required_max_5mb" }); return;
     }
-    const path = `deals/${deal.id}/${randomUUID()}.pdf`;
-    const fileUrl = await uploadDocumentBytes(path, bytes, "application/pdf");
-    const [document] = await db.insert(documentsTable).values({
-      dealId: deal.id, uploadedBy: req.authUser!.id,
-      documentType: type, fileUrl, status: "pending",
-    }).returning();
-    await db.insert(documentAccessTable).values({ documentId: document.id, userId: req.authUser!.id, accessRole: "owner" });
-    await db.insert(auditLogsTable).values({ actorUserId: req.authUser!.id,
-      action: "deal_document_uploaded", entityType: "document", entityId: document.id,
-      metadata: { dealId: deal.id, documentType: type },
-    });
+    let uploadedPath: string | undefined;
+    let document;
+    try {
+      document = await db.transaction(async tx => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'deal_upload:'+req.authUser!.id}))`);
+        const [{n:uploadsToday}]=(await tx.execute(sql`select count(*)::int as n from documents where uploaded_by=${req.authUser!.id} and created_at > ${new Date(Date.now()-86400000)}`)).rows as Array<{n:number}>;
+        if(uploadsToday>=20)return null;
+        const path=`deals/${deal.id}/${randomUUID()}.pdf`;
+        const fileUrl=await uploadDocumentBytes(path,bytes,'application/pdf');uploadedPath=path;
+        const [saved]=await tx.insert(documentsTable).values({dealId:deal.id,uploadedBy:req.authUser!.id,documentType:type,fileUrl,status:'pending'}).returning();
+        await tx.insert(documentAccessTable).values({documentId:saved.id,userId:req.authUser!.id,accessRole:'editor'});
+        await tx.insert(auditLogsTable).values({actorUserId:req.authUser!.id,action:'deal_document_uploaded',entityType:'document',entityId:saved.id,metadata:{dealId:deal.id,documentType:type}});
+        return saved;
+      });
+    } catch(error) {if(uploadedPath)try{await removeDocumentObject(uploadedPath);}catch{console.warn('Deal upload cleanup needs review',{reason:'object_cleanup_failed'});}throw error;}
+    if(!document){res.status(429).json({error:'upload_quota_exceeded'});return;}
     res.status(201).json({ document: { id: document.id, dealId: deal.id, documentType: type, status: document.status } });
   } catch (error) {
     if (error instanceof z.ZodError) { res.status(400).json({ error: "validation_error" }); return; }

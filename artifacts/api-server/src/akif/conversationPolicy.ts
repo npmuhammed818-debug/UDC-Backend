@@ -63,13 +63,21 @@ export const AI_FALLBACK_REPLY =
 
 // Any sentence that would present a match, price, payment, inspection or shipment
 // progress as fact must be backed by a confirmed record; otherwise block it.
-const FACT_CLAIM = /\b(?:payment (?:has been |was )?(?:received|confirmed|completed)|inspection (?:passed|completed|cleared)|shipment (?:has )?(?:departed|arrived|is on its way|cleared customs)|seller (?:has )?accepted|matched you with)\b/i;
+// Unverified-fact shapes the model may never assert: money outcomes, deal
+// approvals, verification approvals, inspection/shipment events and matches.
+// Widened after red-team: previously "payment is approved" slipped through.
+const FACT_CLAIM = /\b(?:(?:your |the )?payment (?:is |has been |was |got |went )?(?:approved|received|confirmed|completed|cleared|successful|processed|released|through)|(?:your |the )?(?:deal|order|trade) (?:is |has been |was )?(?:approved|confirmed|finalized|closed)|inspection (?:is |has been |was )?(?:passed|completed|cleared)|shipment (?:has |is |was )?(?:departed|arrived|on its way|cleared customs|delivered)|customs (?:is |has been |was )?cleared|seller (?:has )?accepted|matched you with|(?:you are|you're|your company is|your account is) (?:now )?verified|verification (?:is |has been |was )?(?:approved|passed|complete|completed)|(?:your |the )?documents? (?:are |is |were |have been )?(?:approved|verified))\b/i;
+const FACT_NEGATION = /\b(?:not|never|no|cannot|can't|wont|won't|without|awaiting|pending|waiting|yet|unless|if)\b/i;
 export function claimsUnverifiedFact(reply: string, verified: { payment?: boolean; inspection?: boolean; shipment?: boolean; match?: boolean }) {
-  const m = reply.match(FACT_CLAIM);
+  const m = FACT_CLAIM.exec(reply);
   if (!m) return false;
+  // Negation or condition near the claim ("payment is not approved", "no
+  // shipment departed yet") is information, not a false assertion.
+  const window = reply.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + m[0].length + 12);
+  if (FACT_NEGATION.test(window.replace(m[0], " "))) return false;
   const c = m[0].toLowerCase();
-  if (c.startsWith("payment")) return !verified.payment;
-  if (c.startsWith("inspection")) return !verified.inspection;
-  if (c.startsWith("shipment")) return !verified.shipment;
+  if (/payment|deal|order|trade/.test(c)) return !verified.payment;
+  if (/inspection/.test(c)) return !verified.inspection;
+  if (/shipment|customs/.test(c)) return !verified.shipment;
   return !verified.match;
 }

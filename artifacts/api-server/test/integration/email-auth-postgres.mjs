@@ -54,7 +54,7 @@ try {
     bundle: true,
     platform: "node",
     format: "esm",
-    external: ["pg-native"],
+    external: ["pg-native", "@resvg/resvg-js"],
     banner: {
       js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);",
     },
@@ -282,6 +282,15 @@ try {
   assert.equal(login.status, 200);
   const oldSession = login.cookie;
   assert.ok(oldSession);
+  const resetIp = "198.51.100.24";
+  assert.equal(
+    (await post("/auth/login", { email, password: "Fictional-Wrong9!" }, "", resetIp)).status,
+    401,
+  );
+  const budgetDigest = (value) =>
+    createHmac("sha256", process.env.SESSION_SECRET)
+      .update("udc-email-limit-v1\0" + value)
+      .digest("hex");
   const resetRequest = await post("/auth/password/recovery/request", { email });
   assert.equal(resetRequest.status, 202);
   const resetLetter = fixture.outbox.at(-1);
@@ -299,15 +308,30 @@ try {
   );
   const resets = await Promise.all(
     [1, 2].map(() =>
-      post("/auth/password/recovery/confirm", {
-        email,
-        challengeId: resetRequest.body.challengeId,
-        code: resetLetter.code,
-        password: "Fictional-Replacement9!",
-      }),
+      post(
+        "/auth/password/recovery/confirm",
+        {
+          email,
+          challengeId: resetRequest.body.challengeId,
+          code: resetLetter.code,
+          password: "Fictional-Replacement9!",
+        },
+        "",
+        resetIp,
+      ),
     ),
   );
   assert.deepEqual(resets.map((x) => x.status).sort(), [200, 400]);
+  const budgetRows = (
+    await pool.query(
+      "select count(*)::int as count from email_auth_limits where key=any($1::text[])",
+      [[
+        budgetDigest(`pwd-login:${email}:${resetIp}`),
+        budgetDigest(`pwd-login-day:${email}`),
+      ]],
+    )
+  ).rows[0];
+  assert.equal(budgetRows.count, 0);
   assert.equal((await post("/auth/login", { email, password })).status, 401);
   assert.equal(
     (await post("/auth/login", { email, password: "Fictional-Replacement9!" }))
@@ -464,7 +488,7 @@ try {
   const waLetter = fixture.outbox.at(-1);
   assert.match(
     await app.handleEmailVerification(phone, "Email code " + waLetter.code),
-    /ownership is verified/,
+    /email is verified/,
   );
   assert.equal(
     (

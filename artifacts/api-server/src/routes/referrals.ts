@@ -1,4 +1,5 @@
 import QRCode from "qrcode";
+import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { agentJoinLink } from "../referrals/joinInvite";
 import { createAgentInvitation, agentReferralCode } from "../referrals/invitation";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -58,6 +59,7 @@ router.post("/referrals/request", requireAuth, async (req, res) => {
           userId: admin.id, type: "agent_referral_requested",
           title: "Referral needs review", body: "An agent submitted a referral for review.", link: "/admin/agents",
         })));
+        queueAdminReviewAlert("referral");
       });
     }
     // Do not reveal whether an email is registered or already attributed to another agent.

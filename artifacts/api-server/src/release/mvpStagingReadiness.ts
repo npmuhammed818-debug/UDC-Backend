@@ -41,8 +41,16 @@ export function evaluateMvpEnvironment(env:NodeJS.ProcessEnv=process.env):Readin
        ?"ETA runner flag is enabled; operational acceptance still required."
        :"Overdue ETA runner is disabled."},
     {id:"shipment_send_gate",label:"Shipment WhatsApp outbound worker",
-      state:"disabled",
-      detail:"No production outbox dispatcher is wired or authorized; pending alerts cannot send automatically."},
+      state:env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"?"review_required":"disabled",
+      detail:env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED==="true"
+       ?"Shipment send flag is enabled and the dispatch runner starts at boot; confirm owner authorization, template approval and delivery tests."
+       :"Shipment WhatsApp sending is disabled; pending alerts do not send automatically."},
+    {id:"chat_typing_flag",label:"WhatsApp read tick and typing indicator",
+      state:env.UDC_WHATSAPP_TYPING==="on"?"configured":"disabled",
+      detail:env.UDC_WHATSAPP_TYPING==="on"?"UDC_WHATSAPP_TYPING is on in this process.":"UDC_WHATSAPP_TYPING is not exactly \"on\" in this process."},
+    {id:"chat_reactions_flag",label:"WhatsApp emoji reactions",
+      state:env.UDC_WHATSAPP_REACTIONS==="on"?"configured":"disabled",
+      detail:env.UDC_WHATSAPP_REACTIONS==="on"?"UDC_WHATSAPP_REACTIONS is on in this process.":"UDC_WHATSAPP_REACTIONS is not exactly \"on\" in this process."},
     {id:"human_acceptance",label:"Human staging acceptance",
       state:"review_required",
       detail:"Buyer, seller, agent, SGS/DLC, OTP, signed Meta and rollback testing require human evidence."},
@@ -57,7 +65,10 @@ export async function inspectMvpSchema(executor:Pick<typeof db,"execute">=db){
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relkind IN ('r','p')
-      AND c.relname = ANY(${[...requiredMvpTables]}::text[])
+      AND c.relname = ANY(ARRAY[${sql.join(
+        [...requiredMvpTables].map((table) => sql`${table}`),
+        sql`, `,
+      )}]::text[])
   `);
   const found=new Map(result.rows.map(r=>[String(r.table_name),
     r.rls_enabled===true]));
@@ -66,10 +77,18 @@ export async function inspectMvpSchema(executor:Pick<typeof db,"execute">=db){
   }));
   return {objects,allPresentWithRls:objects.every(o=>o.present&&o.rlsEnabled)};
 }
+// Uses the existing service connection, returns no keys, URLs or object names.
+export async function inspectStoragePrivacy(env:NodeJS.ProcessEnv=process.env,transport:typeof fetch=fetch):Promise<ReadinessCheck>{
+ const result:ReadinessCheck={id:'private_storage_bucket',label:'Document bucket privacy',state:'unavailable',detail:'The current document bucket privacy could not be verified.'};
+ if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY)return result;
+ try{const base=new URL(env.SUPABASE_URL);if(base.protocol!=='https:'||base.username||base.password)return result;const response=await transport(new URL('/storage/v1/bucket/udc-documents',base),{headers:{authorization:'Bearer '+env.SUPABASE_SERVICE_ROLE_KEY,apikey:env.SUPABASE_SERVICE_ROLE_KEY},signal:AbortSignal.timeout(5000),redirect:'error'});if(!response.ok){await response.body?.cancel();return result;}const body=await response.json() as {id?:unknown;public?:unknown};if(body.id!=='udc-documents'||typeof body.public!=='boolean')return result;
+ return {...result,state:body.public?'review_required':'configured',detail:body.public?'Document bucket is PUBLIC. Stop document uploads and review access before launch.':'Document bucket is private in the current storage service response. Object policies, backups and provider retention still need separate review.'};
+ }catch{return result;}
+}
 export async function buildMvpStagingReadiness(
   options:{env?:NodeJS.ProcessEnv;executor?:Pick<typeof db,"execute">}={}
 ){
-  const checks=evaluateMvpEnvironment(options.env??process.env);
+  const checks=[...evaluateMvpEnvironment(options.env??process.env),await inspectStoragePrivacy(options.env??process.env)];
   try{
     const schema=await inspectMvpSchema(options.executor??db);
     return {
