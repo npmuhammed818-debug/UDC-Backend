@@ -1,4 +1,4 @@
-export const HOLDING_REPLY = "Traffic is very high right now. Access is currently invite only and all open positions are full. We will announce when new spots open.";
+export const HOLDING_REPLY = "The server is busy right now. Access is currently invite only.";
 
 export const digits = (p: string) => String(p ?? "").replace(/\D/g, "");
 
