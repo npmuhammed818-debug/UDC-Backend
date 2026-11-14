@@ -1791,7 +1791,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           if (relayVoiceCrisis) { await deliverWhatsAppReply(message.from, relayVoiceCrisis, false); continue; }
           // Feature requests reach the real scripted feature directly, same as text.
           const voiceFeature = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(heard.text) ? "documents"
-            : /\b(verify|verification|verified|verifying)\b/i.test(heard.text) ? "verification" : null;
+            : /\b(verify|verification|verified|verifying)\b/i.test(heard.text) ? "verification"
+            : /\b(invite|invites|invitation|referral|referrals|my code|invite link|referral link|referral code)\b/i.test(heard.text) ? "invite" : null;
           if (voiceFeature) {
             try {
               if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${voiceFeature}` } } } as ChatMessage)) {
@@ -2120,7 +2121,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Feature requests reach the real scripted feature directly: the link
         // or status IS the reply, so no draft, nudge or fallback runs for them.
         const relayFeature = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
-          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
+          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification"
+          : /\b(invite|invites|invitation|referral|referrals|my code|invite link|referral link|referral code)\b/i.test(message.text.body) ? "invite" : null;
         if (relayFeature) {
           try {
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${relayFeature}` } } } as ChatMessage)) {
@@ -2282,7 +2284,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // document upload links and verification status need no AI.
       if (brainFailed && message.from) {
         const featureIntent = /\b(upload|document|documents|vault|private link|upload link)\b/i.test(message.text.body) ? "documents"
-          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification" : null;
+          : /\b(verify|verification|verified|verifying)\b/i.test(message.text.body) ? "verification"
+          : /\b(invite|invites|invitation|referral|referrals|my code|invite link|referral link|referral code)\b/i.test(message.text.body) ? "invite" : null;
         if (featureIntent) {
           try {
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature-rescue` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${featureIntent}` } } } as ChatMessage)) continue;
