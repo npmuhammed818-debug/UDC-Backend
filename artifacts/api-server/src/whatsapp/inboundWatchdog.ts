@@ -59,7 +59,7 @@ export async function sweepUnanswered(now = Date.now()) {
         const result = await sendWhatsAppText(p.phone, reply) as { delivered?: boolean; reason?: string } | null;
         if (classifySendResult(result) !== "delivered") {
           // Not delivered, or the outcome is unknown (timeout, network error, 5xx: Meta may have accepted it). Never record it as sent and never resend automatically.
-          logger.warn({ flow: "inbound_watchdog", reason: result.reason ?? "not_delivered", unknownOutcome: result.reason === "provider_outcome_unknown", phoneTail: p.phone.slice(-4) }, "watchdog_not_delivered");
+          logger.warn({ flow: "inbound_watchdog", reason: result?.reason ?? "not_delivered", unknownOutcome: result?.reason === "provider_outcome_unknown", phoneTail: p.phone.slice(-4) }, "watchdog_not_delivered");
           continue;
         }
         // The held queue item stays open for a human, but the bot line is recorded so a worker sees what the customer already received and the repeat guard knows it.
