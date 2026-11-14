@@ -1,0 +1,57 @@
+{
+ "label": "A buyer, labelled fields (work without the AI model)",
+ "steps": [
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "Hi"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "No, I do not agree"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "I agree"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "Buyer"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "full name: Asha Verma; email: asha@verma-imports.example.invalid; company name: Verma Imports Pvt Ltd; country: India"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "interactive": {
+    "type": "button_reply",
+    "button_reply": {
+     "id": "udc:submit",
+     "title": "Submit for review"
+    }
+   },
+   "label": "button Submit for review"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "product: copper millberry; quantity: 500 MT; destination: Jebel Ali; incoterm: CIF; target price: 6000 USD/MT"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "quantity: 400 MT"
+  },
+  {
+   "from": "15555550131",
+   "name": "Sim Buyer",
+   "text": "status"
+  }
+ ]
+}
