@@ -40,6 +40,7 @@ import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMes
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { accountFactsLine } from "../akif/fallbackContext";
 import { isMutedPhone } from "../whatsapp/mutedInbound";
 import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
@@ -198,7 +199,7 @@ export async function buildHumanRelayDraft(phone: string, text: string, messageI
     // brain, then the Gemini-backed worker, then the older providers) answers
     // without tools; tool-backed drafts still prefer the brain turn above.
     try {
-      const convo = await runConversationChat(text, RELAY_FALLBACK_SYSTEM, 20000);
+      const convo = await runConversationChat(text, RELAY_FALLBACK_SYSTEM + await accountFactsLine(phone), 20000);
       const raw = convo?.content?.trim() || null;
       return { reply: raw ? fixRelayFallbackReply(raw, text) : null, backgroundDiscarded: false, toolsUsed: [] };
     } catch {

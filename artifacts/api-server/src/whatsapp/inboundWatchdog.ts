@@ -1,6 +1,7 @@
 import { logger } from "../lib/logger";
 import { runBackgroundTask } from "../lib/backgroundTask";
 import { runFreeChain } from "../akif/intelligence/freeProviderChain";
+import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
 import { pendingInbound } from "./inboundWatchdogState";
 
@@ -38,7 +39,7 @@ export async function sweepUnanswered(now = Date.now()) {
       let reply = p.kind === "text" ? FALLBACK_TEXT : FALLBACK_MEDIA;
       let source = "scripted";
       if (p.kind === "text" && p.text.trim()) {
-        const r = await runFreeChain(p.text, SYSTEM, () => 12_000).catch(() => null);
+        const r = await runFreeChain(p.text, SYSTEM + await accountFactsLine(p.phone), () => 12_000).catch(() => null);
         if (r?.content) { reply = r.content.replace(/\s[-\u2013\u2014]\s/g, ", "); source = r.provider; }
       }
       try {
