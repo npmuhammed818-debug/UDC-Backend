@@ -18,42 +18,6 @@ class ImageRequest(BaseModel):
 
 
 _AUDIO_TYPES = {"audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/webm", "audio/flac"}
-ELEVENLABS_STT_MODELS = {"scribe_v1", "scribe_v2"}
-
-
-def _stt_provider() -> str:
-    """elevenlabs (default when ELEVENLABS_API_KEY is set, Groq Whisper is the fallback) or groq."""
-    chosen = os.getenv("AKIF_STT_PROVIDER", "").strip().lower()
-    if chosen in {"elevenlabs", "groq"}:
-        return chosen
-    return "elevenlabs" if os.getenv("ELEVENLABS_API_KEY") else "groq"
-
-
-def _transcribe_elevenlabs(data: bytes, mime_type: str) -> dict:
-    import json as _json
-    import urllib.request
-    import uuid
-    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
-    model = os.getenv("ELEVENLABS_STT_MODEL_ID", "scribe_v1").strip()
-    if not key or model not in ELEVENLABS_STT_MODELS:
-        raise ValueError("elevenlabs_stt_not_configured")
-    boundary = uuid.uuid4().hex
-    base = mime_type.split(";")[0].lower()
-    parts = [
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"model_id\"\r\n\r\n{model}\r\n".encode(),
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"tag_audio_events\"\r\n\r\nfalse\r\n".encode(),
-        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"voice\"\r\nContent-Type: {base}\r\n\r\n").encode(),
-        data, f"\r\n--{boundary}--\r\n".encode(),
-    ]
-    req = urllib.request.Request("https://api.elevenlabs.io/v1/speech-to-text", data=b"".join(parts), method="POST",
-        headers={"xi-api-key": key, "content-type": f"multipart/form-data; boundary={boundary}"})
-    with urllib.request.urlopen(req, timeout=25) as resp:  # one try; the caller decides on fallback
-        payload = _json.loads(resp.read())
-    text = payload.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("empty_transcript")
-    language = payload.get("language_code")
-    return {"text": text.strip()[:30_000], "language": language if isinstance(language, str) else None}
 
 
 def _transcribe_groq(data: bytes, mime_type: str) -> dict:
@@ -76,14 +40,16 @@ def transcribe_audio(data: bytes, filename: str, mime_type: str) -> dict:
         raise HTTPException(status_code=413, detail="audio_size_invalid")
     if mime_type.split(";")[0].lower() not in _AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="audio_type_unsupported")
-    order = ["elevenlabs", "groq"] if _stt_provider() == "elevenlabs" else ["groq"]
-    if not os.getenv("GROQ_API_KEY") and not (order[0] == "elevenlabs" and os.getenv("ELEVENLABS_API_KEY")):
+    # Groq (free Whisper) is the sole STT provider (owner direction, 14 Nov: voice is 100% free,
+    # ElevenLabs out of the chain entirely). NVIDIA NIM hosts no transcription model, so there is
+    # no free second provider to chain; a failure is logged loud below.
+    if not os.getenv("GROQ_API_KEY"):
         raise HTTPException(status_code=503, detail="groq_not_configured")
     used = None
     result = None
-    for provider in order:
+    for provider in ["groq"]:
         try:
-            result = _transcribe_elevenlabs(data, mime_type) if provider == "elevenlabs" else _transcribe_groq(data, mime_type)
+            result = _transcribe_groq(data, mime_type)
             used = provider
             break
         except Exception as exc:
@@ -91,6 +57,8 @@ def transcribe_audio(data: bytes, filename: str, mime_type: str) -> dict:
             print("AKIF audio provider failure: " + _dumps({"provider": provider, "error_type": type(exc).__name__,
                   "audio_bytes": len(data)}), flush=True)
     if result is None:
+        print("AKIF STT ALERT: sole free STT provider (groq) failed - voice notes have no transcription path",
+              flush=True)
         # An empty or failed transcript is never guessed at: the caller tells the user it was not understood.
         raise HTTPException(status_code=502, detail="audio_transcription_failed")
     return {"text": result["text"], "language": result["language"], "source": "voice_transcription",

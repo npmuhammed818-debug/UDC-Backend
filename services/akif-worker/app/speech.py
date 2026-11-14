@@ -4,13 +4,12 @@ Conversational replies (synthesize(..., conversational=True)) are allowed when t
 in conversational_text_ok (no links, emails, long numbers, codes, bank or ID words, approval prompts, max 600
 chars); AKIF_VOICE_CONVERSATIONAL=off returns to fixed sentences only. Daily caps: calls and characters.
 
-Provider-agnostic: AKIF_TTS_PROVIDER selects "elevenlabs" (default, needs ELEVENLABS_API_KEY;
-a missing key means voice is disabled) or "gemini" (free tier, explicit data opt-in). Whichever
-provider runs, only the exact fixed sentences in speakable_replies.json, or privacy-filtered
-conversational text, plus a fixed style instruction, are ever sent to it, so no user, deal or
-account text can reach a speech provider. When the provider is Gemini and its free quota or the
-provider itself fails, ElevenLabs is tried once as fallback; if both fail the caller gets an
-error and answers in text instead.
+Provider: AKIF_TTS_PROVIDER selects "gemini" (free tier, explicit data opt-in) and gemini is the
+default and only provider (owner direction, 14 Nov: voice is 100% free - ElevenLabs is out of the
+chain entirely; nothing may call it). Only the exact fixed sentences in speakable_replies.json, or
+privacy-filtered conversational text, plus a fixed style instruction, are ever sent to the provider,
+so no user, deal or account text can reach a speech provider. When Gemini's free quota or the
+provider itself fails, the caller gets an error and answers in text instead.
 """
 import base64
 import json
@@ -48,19 +47,13 @@ def speech_text_allowed(text: str) -> bool:
     return isinstance(text, str) and text in ALLOWED_TEXTS
 
 
-ELEVENLABS_MODELS = {"eleven_flash_v2_5", "eleven_multilingual_v2", "eleven_flash_v2"}
-_ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/"
-
 # Master Plan v3 language rule: text is always English; voice is the customer's language or
 # English. Only these languages may be requested; anything else fails closed.
 VOICE_LANGUAGES = {"english", "malayalam", "hindi", "tamil", "arabic"}
-# Non-English speech uses the multilingual model; the voice itself always comes from the
-# configured voice-ID environment variable and is never hardcoded here.
-_MULTILINGUAL_MODEL = "eleven_multilingual_v2"
 
 
 def _provider() -> str:
-    return os.getenv("AKIF_TTS_PROVIDER", "elevenlabs").strip().lower() or "elevenlabs"
+    return os.getenv("AKIF_TTS_PROVIDER", "gemini").strip().lower() or "gemini"
 
 
 def _config() -> tuple[str, str, str]:
@@ -76,26 +69,6 @@ def _config() -> tuple[str, str, str]:
     if model not in ALLOWED_MODELS:
         raise HTTPException(status_code=503, detail="tts_model_not_allowed")
     return key, model, os.getenv("AKIF_TTS_VOICE", "Kore").strip() or "Kore"
-
-
-def _elevenlabs_config(language: str = "english") -> tuple[str, str, str]:
-    if os.getenv("AKIF_VOICE_REPLIES") != "on":
-        raise HTTPException(status_code=503, detail="voice_replies_disabled")
-    if language not in VOICE_LANGUAGES:
-        raise HTTPException(status_code=503, detail="voice_language_not_allowed")
-    key = os.getenv("ELEVENLABS_API_KEY", "").strip()
-    if not key:
-        raise HTTPException(status_code=503, detail="elevenlabs_not_configured")
-    voice = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
-    if not voice or not voice.isalnum():
-        raise HTTPException(status_code=503, detail="elevenlabs_voice_not_set")
-    if language == "english":
-        model = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
-    else:
-        model = _MULTILINGUAL_MODEL
-    if model not in ELEVENLABS_MODELS:
-        raise HTTPException(status_code=503, detail="tts_model_not_allowed")
-    return key, model, voice
 
 
 MAX_CONVERSATIONAL_CHARS = 600
@@ -138,13 +111,8 @@ def _daily_cap_ok(chars: int = 0) -> bool:
 
 def speech_status() -> dict:
     provider = _provider()
-    base = {"provider": provider,
-            "fallback": "elevenlabs" if provider == "gemini" and _elevenlabs_ready() else None,
-            "automatic_provider_fallback": provider == "gemini" and _elevenlabs_ready()}
+    base = {"provider": provider, "automatic_provider_fallback": False}
     try:
-        if provider == "elevenlabs":
-            _, model, _voice = _elevenlabs_config()
-            return {**base, "configured": True, "model": model}
         if provider == "gemini":
             _, model, voice = _config()
             return {**base, "configured": True, "model": model, "voice": voice}
@@ -167,31 +135,6 @@ def wav_to_ogg_opus(wav: bytes, mime: str = "") -> bytes:
     return done.stdout
 
 
-def _synthesize_elevenlabs(text: str, language: str = "english") -> bytes:
-    key, model, voice = _elevenlabs_config(language)
-    if not _daily_cap_ok(len(text.strip())):
-        raise HTTPException(status_code=429, detail="tts_daily_cap_reached")
-    req = urllib.request.Request(
-        f"{_ELEVENLABS_URL}{voice}?output_format=mp3_44100_64",
-        data=json.dumps({"text": text.strip(), "model_id": model}).encode(), method="POST",
-        headers={"xi-api-key": key, "content-type": "application/json", "accept": "audio/mpeg"})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:  # no retries, no other provider
-            audio = resp.read()
-        if not audio:
-            raise ValueError("no_audio")
-    except urllib.error.HTTPError as exc:
-        # Provider bodies are uncontrolled and may echo private submitted text.
-        logger.warning(json.dumps({"event": "tts_provider_error", "provider": "elevenlabs",
-                                   "httpStatus": exc.code, "code": "provider_http_error"}))
-        raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
-    except Exception as exc:
-        logger.warning(json.dumps({"event": "tts_provider_error", "provider": "elevenlabs",
-                                   "httpStatus": None, "code": "provider_transport_error"}))
-        raise HTTPException(status_code=502, detail="speech_synthesis_failed") from exc
-    return wav_to_ogg_opus(audio)  # ffmpeg detects the input format (mp3 here)
-
-
 def synthesize(text: str, conversational: bool = False, language: str = "english") -> bytes:
     # Text checks run first, before any provider is chosen or contacted. Fixed sentences always pass.
     # Conversational text needs AKIF_VOICE_CONVERSATIONAL not "off" and must pass the privacy rules.
@@ -202,15 +145,8 @@ def synthesize(text: str, conversational: bool = False, language: str = "english
             raise HTTPException(status_code=422, detail="text_not_allowed_for_speech")
     provider = _provider()
     if provider == "gemini":
-        try:
-            return _synthesize_gemini(text, language)
-        except HTTPException as exc:
-            # Free-quota or provider failure: one ElevenLabs try, then the caller answers in text.
-            if exc.status_code in (429, 502) and _elevenlabs_ready():
-                return _synthesize_elevenlabs(text, language)
-            raise
-    if provider == "elevenlabs":
-        return _synthesize_elevenlabs(text, language)
+        # Free-quota or provider failure: raise and the caller answers in text.
+        return _synthesize_gemini(text, language)
     raise HTTPException(status_code=503, detail="tts_provider_unknown")
 
 
@@ -227,10 +163,6 @@ _GEMINI_STYLE = {
     "tamil": "warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Tamil speaker",
     "arabic": "warm, familiar friend: genuine audible smile, relaxed natural pace, gentle energy, native Arabic speaker",
 }
-
-
-def _elevenlabs_ready() -> bool:
-    return bool(os.getenv("ELEVENLABS_API_KEY", "").strip() and os.getenv("ELEVENLABS_VOICE_ID", "").strip())
 
 
 def _synthesize_gemini(text: str, language: str = "english") -> bytes:

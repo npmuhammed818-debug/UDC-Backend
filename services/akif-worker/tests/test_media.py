@@ -118,26 +118,25 @@ class _R:
     def __exit__(self, *a): return False
 
 
-def test_elevenlabs_stt_used_with_key_and_multilingual_language_returned(monkeypatch):
-    import json
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "k"); monkeypatch.delenv("AKIF_STT_PROVIDER", raising=False)
-    seen = []
-    import urllib.request
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: (seen.append(req), _R(json.dumps({"text": "नमस्ते, चावल का भाव?", "language_code": "hin"}).encode()))[1])
-    out = media.transcribe_audio(b"OggS....", "voice", "audio/ogg; codecs=opus")
-    assert out["text"].startswith("नमस्ते") and out["language"] == "hin" and out["provider"] == "elevenlabs"
-    assert seen[0].full_url == "https://api.elevenlabs.io/v1/speech-to-text" and seen[0].get_header("Xi-api-key") == "k"
-    assert b"scribe_v1" in seen[0].data
-
-
-def test_stt_falls_back_to_groq_and_never_invents_text(monkeypatch, capsys):
-    import urllib.request
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "SECRETKEY"); monkeypatch.setenv("GROQ_API_KEY", "g")
-    def boom(*a, **k): raise OSError("net")
-    monkeypatch.setattr(urllib.request, "urlopen", boom)
+def test_stt_is_groq_only_even_with_elevenlabs_key_present(monkeypatch):
+    # Owner direction, 14 Nov: ElevenLabs is out of the STT chain entirely, so a leftover
+    # ELEVENLABS_API_KEY in the environment must never be called.
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
     monkeypatch.setattr(media, "_transcribe_groq", lambda d, m: {"text": "hello", "language": None})
     out = media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
     assert out["text"] == "hello" and out["provider"] == "groq"
+    assert not hasattr(media, "_transcribe_elevenlabs")
+
+
+def test_stt_groq_failure_is_loud_and_never_invents_text(monkeypatch, capsys):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    def boom(d, m): raise ValueError("empty_transcript")
+    monkeypatch.setattr(media, "_transcribe_groq", boom)
+    with pytest.raises(HTTPException) as error:
+        media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
+    assert error.value.status_code == 502
+    assert "AKIF STT ALERT" in capsys.readouterr().out
     monkeypatch.setattr(media, "_transcribe_groq", lambda d, m: (_ for _ in ()).throw(ValueError("empty_transcript")))
     with pytest.raises(HTTPException) as e:
         media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
@@ -146,10 +145,9 @@ def test_stt_falls_back_to_groq_and_never_invents_text(monkeypatch, capsys):
     assert "SECRETKEY" not in logged and "OggS" not in logged
 
 
-def test_empty_elevenlabs_transcript_is_a_failure(monkeypatch):
-    import urllib.request, json
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "k"); monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _R(json.dumps({"text": "  ", "language_code": "eng"}).encode()))
+def test_empty_groq_transcript_is_a_failure(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setattr(media, "_transcribe_groq", lambda d, m: (_ for _ in ()).throw(ValueError("empty_transcript")))
     with pytest.raises(HTTPException) as e:
         media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
     assert e.value.status_code == 502
