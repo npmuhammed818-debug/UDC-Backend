@@ -3,7 +3,7 @@ import { runBackgroundTask } from "../lib/backgroundTask";
 import { runFreeChain } from "../akif/intelligence/freeProviderChain";
 import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
-import { pendingInbound, noteInboundForWatchdog, lastOutboundAt, outboundInFlight } from "./inboundWatchdogState";
+import { pendingInbound, noteInboundForWatchdog, lastOutboundAt, outboundInFlight, classifySendResult } from "./inboundWatchdogState";
 import { noteHumanRelayReplySent, pendingHumanRelay } from "../akif/humanRelay";
 
 // Owner rule (30s): a customer message with no answer after 30 seconds gets a
@@ -53,7 +53,7 @@ export async function sweepUnanswered(now = Date.now()) {
       }
       try {
         const result = await sendWhatsAppText(p.phone, reply) as { delivered?: boolean; reason?: string } | null;
-        if (result && result.delivered === false) {
+        if (classifySendResult(result) !== "delivered") {
           // Not delivered, or the outcome is unknown (timeout, network error, 5xx: Meta may have accepted it). Never record it as sent and never resend automatically.
           logger.warn({ flow: "inbound_watchdog", reason: result.reason ?? "not_delivered", unknownOutcome: result.reason === "provider_outcome_unknown", phoneTail: p.phone.slice(-4) }, "watchdog_not_delivered");
           continue;

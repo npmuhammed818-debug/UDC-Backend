@@ -41,3 +41,10 @@ test("in-flight sends are counted per phone and always released", () => {
   endOutboundForWatchdog("+15550009003");
   assert.equal(outboundInFlight.has("+15550009003"), false);
 });
+import { classifySendResult } from "../src/whatsapp/inboundWatchdogState.ts";
+test("send results: only delivered counts as sent, a timeout is unknown and never booked as sent", () => {
+  assert.equal(classifySendResult({ delivered: true }), "delivered");
+  assert.equal(classifySendResult({ delivered: false, reason: "provider_outcome_unknown" }), "unknown");
+  assert.equal(classifySendResult({ delivered: false, reason: "whatsapp_delivery_failed" }), "failed");
+  assert.equal(classifySendResult(null), "delivered");
+});

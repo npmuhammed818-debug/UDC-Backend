@@ -31,3 +31,9 @@ export function endOutboundForWatchdog(phone: string): void {
   const n = (outboundInFlight.get(phone) ?? 1) - 1;
   if (n <= 0) outboundInFlight.delete(phone); else outboundInFlight.set(phone, n);
 }
+
+/** How a send result must be booked. Only "delivered" may be recorded as sent; "unknown" (timeout, network error, 5xx) means Meta may have accepted it, so it is neither recorded nor automatically resent. */
+export function classifySendResult(result: { delivered?: boolean; reason?: string } | null | undefined): "delivered" | "unknown" | "failed" {
+  if (!result || result.delivered !== false) return "delivered";
+  return result.reason === "provider_outcome_unknown" ? "unknown" : "failed";
+}
