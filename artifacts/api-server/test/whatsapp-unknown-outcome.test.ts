@@ -16,3 +16,13 @@ test("a 502 from Meta is an unknown outcome, not a rejection", async () => {
   const r = await sendWhatsAppText("recipient", "hello") as any;
   assert.equal(r.reason, "provider_outcome_unknown"); assert.equal(calls, 1);
 });
+import { unknownOutboundAt } from "../src/whatsapp/inboundWatchdogState.ts";
+test("an unknown outcome marks the phone so the watchdog adds no second automatic line; a delivered send does not", async () => {
+  cfg(); unknownOutboundAt.clear();
+  globalThis.fetch = (async () => { throw new DOMException("timed out", "TimeoutError"); }) as typeof fetch;
+  await sendWhatsAppText("15550009771", "hello");
+  assert.ok(unknownOutboundAt.has("15550009771"));
+  globalThis.fetch = (async () => Response.json({ messages: [{ id: "w" }] })) as typeof fetch;
+  await sendWhatsAppText("15550009772", "hello");
+  assert.ok(!unknownOutboundAt.has("15550009772"));
+});

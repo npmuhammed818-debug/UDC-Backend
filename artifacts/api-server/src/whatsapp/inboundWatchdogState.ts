@@ -37,3 +37,10 @@ export function classifySendResult(result: { delivered?: boolean; reason?: strin
   if (!result || result.delivered !== false) return "delivered";
   return result.reason === "provider_outcome_unknown" ? "unknown" : "failed";
 }
+
+/** Phones whose last send had an unknown outcome (timeout, network error, 5xx): Meta may have accepted it. The watchdog must not add a second automatic line on top; the item stays open for a human. */
+export const unknownOutboundAt = new Map<string, number>();
+export function noteUnknownOutboundForWatchdog(phone: string, now = Date.now()): void {
+  if (unknownOutboundAt.size >= 500) { const oldest = unknownOutboundAt.keys().next().value; if (oldest !== undefined) unknownOutboundAt.delete(oldest); }
+  unknownOutboundAt.set(phone, now);
+}

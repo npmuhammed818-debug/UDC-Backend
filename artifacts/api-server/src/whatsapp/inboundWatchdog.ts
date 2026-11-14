@@ -3,7 +3,7 @@ import { runBackgroundTask } from "../lib/backgroundTask";
 import { runFreeChain } from "../akif/intelligence/freeProviderChain";
 import { accountFactsLine } from "../akif/fallbackContext";
 import { sendWhatsAppText } from "./client";
-import { pendingInbound, noteInboundForWatchdog, lastOutboundAt, outboundInFlight, classifySendResult } from "./inboundWatchdogState";
+import { pendingInbound, noteInboundForWatchdog, lastOutboundAt, outboundInFlight, classifySendResult, unknownOutboundAt } from "./inboundWatchdogState";
 import { noteHumanRelayReplySent, pendingHumanRelay } from "../akif/humanRelay";
 
 // Owner rule (30s): a customer message with no answer after 30 seconds gets a
@@ -47,6 +47,10 @@ export async function sweepUnanswered(now = Date.now()) {
       }
       // A human or the brain may have answered while the fallback reply was being composed: never double reply.
       if ((outboundInFlight.get(p.phone) ?? 0) > 0) { pendingInbound.set(id, p); lastIntervention.delete(p.phone); continue; } // someone started sending while we composed; if that send fails the next sweep answers
+      if ((unknownOutboundAt.get(p.phone) ?? 0) >= p.at) {
+        logger.warn({ flow: "inbound_watchdog", reason: "prior_send_outcome_unknown", phoneTail: p.phone.slice(-4) }, "watchdog_skipped");
+        continue;
+      }
       if ((lastOutboundAt.get(p.phone) ?? 0) >= p.at) {
         logger.info({ flow: "inbound_watchdog", reason: "answered_while_composing", phoneTail: p.phone.slice(-4) }, "watchdog_skipped");
         continue;
