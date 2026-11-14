@@ -13,6 +13,7 @@ import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
 import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
+import { startInboundWatchdog } from "./whatsapp/inboundWatchdog";
 import { startWhatsAppWebhookInboxRunner } from "./whatsapp/webhookInboxRunner";
 import { startEtaFollowupRunner } from "./tracking/etaFollowupRunner";
 import { startShipmentWatchRunner } from "./tracking/shipmentWatchRunner";
@@ -51,6 +52,7 @@ app.listen(port, (err) => {
   void startAcceptanceProbe();
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
+  startInboundWatchdog();
   startEtaFollowupRunner();
   startShipmentWatchRunner();
   startShipmentNotificationRunner();

@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { replySinkEnabled, replySinkSendAllowed, recordSunkReply } from "./replySink.ts";
 import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
 import { recordOutboundMessage } from "./outboundLog.ts";
+import { noteOutboundForWatchdog } from "./inboundWatchdogState.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
 // Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
@@ -66,6 +67,7 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     await takeOutboundToken(sleepImpl);
     const response = await maybeSubmitted(fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }));
+    if (response?.ok && url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"')) noteOutboundForWatchdog(to);
     if (!response || response.ok) return response;
     const peek = response.clone();
     const error = await providerError(peek);

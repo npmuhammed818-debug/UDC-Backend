@@ -40,6 +40,7 @@ import { chatAction, handleChatUi, sendChatHome, sendDocumentsLink, type ChatMes
 import { isAgentRegistrationRequest, registerWhatsAppAgent } from "../akif/agentRegistration";
 import { handleWhatsAppSignin, parseSigninCommand } from '../auth/whatsappSignin';
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages } from "../whatsapp/inboundDedup";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
 import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction } from "../whatsapp/client";
@@ -1593,6 +1594,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       if (!claimed) continue; // answer each Meta message id once
       claimedInbound.push(message.id);
+      noteInboundForWatchdog(message.from, message.id, String(message.type ?? 'text'), message.text?.body ?? '');
       if (message.from) { senderOf.set(message.id, message.from); if (humanRelayActiveFor(message.from)) { markRead(message.from, message.id); } else { markReadAndTyping(message.from, message.id); } }
       // Minimal text-only crisis first response before consent, trade, reactions or AI.
       // Captions are checked too, without downloading the attachment.
