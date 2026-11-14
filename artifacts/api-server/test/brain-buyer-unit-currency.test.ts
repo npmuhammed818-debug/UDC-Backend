@@ -48,3 +48,9 @@ test("an unreadable stated currency or unit blocks submit until clarified", () =
   assert.equal(buyerUnresolved(f), null);
   assert.equal(buyerUnresolved({}), null);
 });
+import { withoutRole } from "../src/akif/registrationArgs.ts";
+
+test("role is removed from registration args but unknown fields are kept", () => {
+  assert.deepEqual(withoutRole({ role: "buyer", full_name: "A B", bogus_field: "x" }), { full_name: "A B", bogus_field: "x" });
+  assert.deepEqual(withoutRole({ full_name: "A B" }), { full_name: "A B" });
+});

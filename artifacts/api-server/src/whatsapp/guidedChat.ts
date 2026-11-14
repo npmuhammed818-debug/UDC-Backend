@@ -72,11 +72,11 @@ async function sendNote(phone:string,text:string,languageOf?:string){
 const phoneHash = guidedChatPhoneHash;
 const expiry=()=>new Date(Date.now()+30*60_000);
 async function question(phone:string,purpose:FlowPurpose,step:number,data:Record<string,string>={}){
+  if(purpose==='buyer'&&buyerUnresolved(data)){await sendWhatsAppTextWithMenu(phone,(data.__bad_currency?'Which three letter currency code should I use for your price, for example EUR or USD?':'Which unit is your quantity in, for example kg or MT?'));return;}
   if(data.__paragraph==='1'&&data.__awaiting==='target_price'){await sendWhatsAppTextWithMenu(phone,buyerPriceLabel(data)+' Reply Skip to leave it blank.');return;}
   if(data.__paragraph==='1'){
     if(purpose==='seller'&&data.__started!=='1'){await sendWhatsAppTextWithMenu(phone,'Tell me about your offer in your own words. Share whatever details you have; I’ll keep them and ask one question at a time for anything needed.');return;}
     const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
-    if(purpose==='buyer'&&buyerUnresolved(data)){await sendWhatsAppTextWithMenu(phone,(data.__bad_currency?'Which three letter currency code should I use for your price, for example EUR or USD?':'Which unit is your quantity in, for example kg or MT?'));return;}
     if(next){await sendWhatsAppTextWithMenu(phone,purpose==='buyer'&&next.name==='quantity'?buyerQuantityLabel(data):next.label);return;}
     const labels=guidedQuestions(purpose).filter(q=>!q.optional&&!data[q.name]).map(q=>q.label);
     if(!labels.length){await sendWhatsAppTextWithMenu(phone,'Send just the details you want to change in one short message. I will keep the rest of your saved details.');return;}
@@ -150,14 +150,14 @@ async function review(phone:string,purpose:FlowPurpose,data:Record<string,string
 // Leave prose, corrections and questions to paragraph extraction; never guess
 // which of several facts the user intended to supply.
 function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>){
+  if(purpose==='buyer'&&data.__bad_currency&&/^[A-Za-z]{3}$/.test(text))return {currency:text} as Record<string,string>;
+  if(purpose==='buyer'&&!data.__bad_currency&&data.__bad_unit&&text.length<=24&&/^[\p{L}\p{N} ]+$/u.test(text))return {unit:text} as Record<string,string>;
   // The one optional price question asked after the required details: a plain number or Skip is a direct answer.
   if(data.__awaiting==='target_price'){
     if(/^skip$/i.test(text))return {target_price:'skip'} as Record<string,string>;
     if(/^\d+(?:\.\d+)?$/.test(text)&&Number(text)>0)return {target_price:text} as Record<string,string>;
     return null;
   }
-  if(purpose==='buyer'&&data.__bad_currency&&/^[A-Za-z]{3}$/.test(text))return {currency:text} as Record<string,string>;
-  if(purpose==='buyer'&&!data.__bad_currency&&data.__bad_unit&&text.length<=24&&/^[\p{L}\p{N} ]+$/u.test(text))return {unit:text} as Record<string,string>;
   const next=guidedQuestions(purpose).find(item=>!item.optional&&!data[item.name]);
   if(!next)return null;
   let scalar=false;

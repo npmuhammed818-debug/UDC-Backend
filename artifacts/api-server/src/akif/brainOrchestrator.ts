@@ -21,6 +21,7 @@ import { guidedQuestions, validate as validateGuidedAnswer, type Question } from
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
 import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
+import { withoutRole } from "./registrationArgs.ts";
 import { takeBuyerUnitCurrency, buyerRequirementPayload, buyerUnresolved } from "./buyerUnitCurrency.ts";
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerRequirement.ts";
 import { recordPendingSellerOffer, sellerOfferSchema } from "./recordPendingSellerOffer.ts";
@@ -167,8 +168,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const role = roleSchema.safeParse(args.role);
     if (!role.success) return { note: "Role must be buyer, seller or agent; ask the customer which one they are." };
     const purpose = ("profile_" + role.data) as FlowPurpose;
-    const { role: _role, ...details } = args;
-    return { note: collectFields(purpose, details, state).note };
+    return { note: collectFields(purpose, withoutRole(args), state).note };
   }
   if (name === "submit_registration") {
     const role = roleSchema.safeParse(args.role);
