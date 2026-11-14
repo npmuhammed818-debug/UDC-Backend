@@ -84,7 +84,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
-    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');return true;};export const completeInboundMessages=async()=>{};export const releaseInboundMessages=async()=>{};",
+    "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');if(s.redelivery)return false;return true;};export const completeInboundMessages=async()=>{};export const inboundClaimInProgress=async()=>s.redelivery==='unfinished';export const releaseInboundMessages=async()=>{};",
     "../whatsapp/client": "export const sendWhatsAppText=s.send;export const sendWhatsAppTextWithMenu=s.send;export const sendWhatsAppDocument=async(to,link)=>s.send(to,{link});export const sendWhatsAppImage=async(to,link,caption)=>{s.images=(s.images||[]).concat([{to,link,caption}]);return {delivered:true,messageId:'img-1'};};export const downloadWhatsAppMedia=async()=>({bytes:new Uint8Array([1,2,3]),mimeType:'application/pdf'});export const markReadAndTyping=()=>{};export const markRead=()=>{};export const sendWhatsAppReaction=async()=>({delivered:true,messageId:'rx-1'});export const trackReplyFailures=(fn)=>fn(new Set());export const sendWhatsAppVoiceNote=async(to)=>{s.voice=(s.voice||[]);s.voice.push(to);return s.voiceFail?{delivered:false,reason:'upload_failed'}:{delivered:true};};",
     "../auth/middleware": "export const requireRole=()=> (req,res)=>res.sendStatus(401);",
     "../akif/dealConversationAgent": "export const interpretActiveDealConversation=async()=>{s.dealCalls++;return s.dealDecision;};",
@@ -96,7 +96,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   };
   const output = fileURLToPath(new URL(`./webhook-${randomUUID()}.mjs`, import.meta.url));
   const bundle = await build({
-    stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},error(){}};next();});app.use(router);export default app;', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
+    stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(router);export default app;', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
     bundle: true, platform: "node", format: "esm", packages: "external", write: false,
     plugins: [{ name: "fixtures", setup(b) {
       b.onResolve({ filter: /.*/ }, args => {
@@ -123,7 +123,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     state.sent = []; state.signed = []; state.uploaded = []; state.intake = []; state.recorded = [];
     state.images = []; state.voice = [];
     state.saved = null; state.privacyReply = null; state.decision = null; state.dealDecision = null;
-    state.receipts=[];state.failReceipt=false;state.dedupFailure=false;
+    state.receipts=[];state.failReceipt=false;state.dedupFailure=false;state.redelivery=false;
     state.windowEvidence=[];
     state.fromWabaPhoneId="qa-sender-number";
     state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
@@ -173,6 +173,14 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal(response.status,503);
       assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);assert.deepEqual(state.intake,[]);
       assert.equal(state.dealCalls,0);assert.equal(state.homeCalls,0);
+    });
+    await t.test('redelivery of an unfinished claim is retried (503), a completed duplicate is acknowledged (200), neither sends anything', async () => {
+      reset();state.redelivery='unfinished';
+      assert.equal((await message({text:{body:'100 MT copper'}})).status,503);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);
+      reset();state.redelivery='completed';
+      assert.equal((await message({text:{body:'100 MT copper'}})).status,200);
+      assert.deepEqual(state.sent,[]);assert.deepEqual(state.recorded,[]);
     });
     await t.test('unverified quoted learning questions bypass deal and intake; voice questions answer without execution',async()=>{
       reset();rows.usersTable=[{id:'pending-buyer',phone:'10000000001',role:'buyer',status:'under_review'}];
