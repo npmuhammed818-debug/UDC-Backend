@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { logger } from "./logger.ts";
+import { redactForLog } from "./redactForLog.ts";
 
 // Final error handler. Express's default handler sends the stack trace in the
 // response when NODE_ENV is not "production" - an internals leak. This handler
@@ -19,7 +20,7 @@ export function errorHandler(
   const rawCause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
   const causeCode = rawCause instanceof Error ? (rawCause as { code?: unknown }).code : undefined;
   const cause = rawCause instanceof Error
-    ? { code: typeof causeCode === "string" ? causeCode.slice(0, 40) : undefined, message: rawCause.message.slice(0, 200) }
+    ? { code: typeof causeCode === "string" ? causeCode.slice(0, 40) : undefined, message: redactForLog(rawCause.message) }
     : undefined;
   (req.log ?? logger).error(
     { event: "unhandled_request_error", status: safeStatus, message, ...(cause ? { cause } : {}) },

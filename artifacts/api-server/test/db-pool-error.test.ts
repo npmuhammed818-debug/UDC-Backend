@@ -17,3 +17,15 @@ test("without the listener the same event would be uncaught (guard is what preve
   const bare = new EventEmitter();
   assert.throws(() => bare.emit("error", new Error("x")));
 });
+
+import { redactForLog as redactApi } from "../src/lib/redactForLog.ts";
+import { redactForLog as redactDb } from "../../../lib/db/src/connection.ts";
+for (const [name, fn] of [["api", redactApi], ["db", redactDb]] as const) {
+  test(`${name} log redaction removes connection strings, credentials and tokens`, () => {
+    const dirty = "connect failed postgresql://postgres.abc:Sup3rSecret@aws-0-ap-south-1.pooler.supabase.com:6543/postgres password=hunter2 Bearer abc.def.ghi key: re_AbCdEfGhIjKlMnOpQrStUvWxYz123456 sslmode=verify-full";
+    const out = fn(dirty);
+    for (const leak of ["Sup3rSecret", "pooler.supabase.com", "hunter2", "re_AbCd", "abc.def.ghi"]) assert.ok(!out.includes(leak), leak);
+    assert.ok(out.includes("connect failed"));
+    assert.ok(fn("x".repeat(500)).length <= 200);
+  });
+}
