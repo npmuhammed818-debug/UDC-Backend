@@ -38,7 +38,11 @@ globalThis.fetch = async (input, init) => {
     const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content ?? '';
     seenUser.push(lastUser);
     let content = 'How can I help?';
-    if (last.role !== 'tool') {
+    if (globalThis.__submitOnEmail && last.role !== 'tool' && lastUser.trim() === EMAIL) {
+      return Response.json({ choices: [{ message: { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'submit_registration', arguments: JSON.stringify({ role: 'agent' }) } }] } }] });
+    }
+    if (last.role === 'tool' && globalThis.__submitOnEmail) content = 'Done, you are registered as an agent.';
+    else if (last.role !== 'tool') {
       if (/^agent$/i.test(lastUser.trim())) content = 'Great. What is your full name?';
       else if (lastUser.trim() === TYPED) content = 'Thanks. What email should UDC use?';
       else if (lastUser.trim() === EMAIL) content = 'Got it. Say "I am an agent" to finish.';
@@ -96,6 +100,48 @@ try {
   assert.equal(mail.outbox.length, 1, 'one code email handed to the (simulated) provider');
   assert.match(texts().at(-1), /6-digit code/, 'code-sent line follows the real send');
   console.log('PASSED B: exact sequence stores typed name+email, one challenge, code line after real send');
+
+  // ---- Variant E: the ACTUAL failure order: Agent -> name -> "I'm an agent" -> email.
+  // SIMULATED model: scripted text; on the email it calls submit_registration (as a real model would be expected to).
+  globalThis.__submitOnEmail = true;
+  await pool.query('delete from email_auth_challenges where user_id in (select id from users where phone=$1)', [ME]);
+  await pool.query('delete from users where phone=$1', [ME]);
+  await pool.query("delete from whatsapp_chat_sessions where purpose='brain_orchestrator'");
+  mail.outbox.length = 0;
+  for (const t of ['Agent', TYPED, "I'm an agent", EMAIL]) { const n = metaSends.length; await post(t, ME); await settle();
+    console.log('  E inbound', JSON.stringify(t), '-> outbound', metaSends.slice(n).filter(s => s.status !== 'read').map(s => String(s.text?.body ?? s.type ?? '?').slice(0, 80))); }
+  const e = await user(); console.log('  E user rows', JSON.stringify(e));
+  assert.equal(e.length, 1); assert.equal(e[0].full_name, TYPED); assert.equal(e[0].email, EMAIL);
+  assert.equal((await pool.query('select count(*)::int c from email_auth_challenges where user_id=$1', [e[0].id])).rows[0].c, 1);
+  assert.equal(mail.outbox.length, 1);
+  console.log('PASSED E: actual failure order stores typed name+email, one challenge');
+
+  // ---- Variant D: current malformed state (pending row with PROFILE name, no email; brain session full_name and email both = the email).
+  await pool.query('delete from email_auth_challenges where user_id in (select id from users where phone=$1)', [ME]);
+  await pool.query('delete from users where phone=$1', [ME]);
+  await pool.query("insert into users (phone, full_name, role, status, password_hash) values ($1,$2,'agent','pending','x')", [ME, PROFILE]);
+  const seedId = (await user())[0].id;
+  await pool.query("delete from whatsapp_chat_sessions where purpose='brain_orchestrator'");
+  await post('Agent', ME); await settle();
+  await pool.query(`update whatsapp_chat_sessions set data = jsonb_set(data,'{brain,fields}', $1::jsonb) where purpose='brain_orchestrator'`, [JSON.stringify({ email: EMAIL, full_name: EMAIL })]);
+  mail.outbox.length = 0;
+  await post("I'm an agent", ME); await settle();
+  let d = await user(); console.log('  D after typed request, rows', JSON.stringify(d));
+  assert.equal(d.length, 1); assert.equal(d[0].id, seedId); assert.equal(d[0].full_name, PROFILE, 'typed shortcut did not touch the malformed row');
+  // The brain submit path would write the malformed fields: show what it would store.
+  await post(EMAIL, ME); await settle();
+  d = await user(); console.log('  D after email turn (model submits), rows', JSON.stringify(d));
+  await pool.query('delete from email_auth_challenges where user_id=$1', [seedId]);
+  await pool.query('update users set full_name=$2, email=null where id=$1', [seedId, PROFILE]); // back to the live pending-row shape
+  // ---- Variant R: proposed reset: remove only the bad full_name from the session; row untouched; brain asks the name then submits in place.
+  await pool.query("delete from whatsapp_chat_sessions where purpose='brain_orchestrator'");
+  await post('Agent', ME); await settle(); await post(TYPED, ME); await settle(); mail.outbox.length = 0;
+  await post(EMAIL, ME); await settle();
+  d = await user(); console.log('  R after clean session + name + email, rows', JSON.stringify(d));
+  assert.equal(d.length, 1); assert.equal(d[0].id, seedId, 'same row updated in place, not duplicated');
+  assert.equal(d[0].full_name, TYPED); assert.equal(d[0].email, EMAIL);
+  console.log('  R code emails handed to the simulated provider:', mail.outbox.length, '(informational: the code limiter is shared with the earlier D step in this same run)');
+  console.log('PASSED R: in-place update of the existing pending row after a clean session');
 
   // Relay must not hold registration turns.
   const held = await (await fetchBefore(`${localOrigin}/api/akif-relay/pending`)).text().catch(() => '');
