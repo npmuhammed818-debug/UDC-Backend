@@ -98,7 +98,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   };
   const output = fileURLToPath(new URL(`./webhook-${randomUUID()}.mjs`, import.meta.url));
   const bundle = await build({
-    stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(router);export default app;', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
+    stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(router);export default app;export {buildHumanRelayDraftWithRetry} from "../src/routes/whatsappWebhook.ts";', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
     bundle: true, platform: "node", format: "esm", packages: "external", write: false,
     plugins: [{ name: "fixtures", setup(b) {
       b.onResolve({ filter: /.*/ }, args => {
@@ -138,7 +138,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     rows.whatsappUserContextsTable = [{ userId: "buyer", activeDealId: "deal-a" }];
   }
   try {
-    const { default: app } = await import(output);
+    const { default: app, buildHumanRelayDraftWithRetry } = await import(output);
     server = app.listen(0, "127.0.0.1");
     await new Promise(resolve => server.once("listening", resolve));
     const base = `http://127.0.0.1:${server.address().port}`;
@@ -188,6 +188,33 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       }
       if (oldBurst === undefined) delete process.env.AKIF_BRAIN_BURST_MS; else process.env.AKIF_BRAIN_BURST_MS = oldBurst;
       state.brainMode = undefined;
+    });
+    await t.test('relay-draft retry and voice fallback after a possible send', async () => {
+      // Relay-draft path: no extra retry turn after a send; control without a send still retries once.
+      for (const [label, mode, expectCalls] of [
+        ["draft: send then null", { send: true, result: null }, 1],
+        ["draft: send then throw", { send: true, throws: true }, 1],
+        ["draft control: null, no send", { send: false, result: null }, 2],
+      ] as const) {
+        reset(); resetExternalSendsForTest(); state.brainMode = mode;
+        await buildHumanRelayDraftWithRetry("10000000001", "ask the seller", `wamid.draft.${label}`);
+        assert.equal(state.brainCalls.length, expectCalls, `${label}: brain calls`);
+      }
+      // Voice path: after a send plus a throw the brain is not re-run; the customer gets the existing scripted guidance answer only.
+      const oldVoice = process.env.AKIF_BRAIN_VOICE; process.env.AKIF_BRAIN_VOICE = "on";
+      try {
+        for (const [label, mode] of [["voice: send then throw", { send: true, throws: true }], ["voice: send then null", { send: true, result: null }]] as const) {
+          reset(); resetExternalSendsForTest(); state.brainMode = mode; state.guidanceReply = "Scripted guidance answer.";
+          const r = await message({ id: `wamid.${label}`, audio: { id: "voice-possible-send" } });
+          assert.equal(r.status, 200, label);
+          assert.equal(state.brainCalls.length, 1, `${label}: brain not re-run`);
+          const bodies = state.sent.map((m: any) => m.body);
+          assert.equal(bodies.at(-1), "Scripted guidance answer.", `${label}: scripted guidance is the final answer`);
+          assert.ok(bodies.every((b: string) => b === "Scripted guidance answer." || /^Voice is not working just now/.test(b)), `${label}: only the existing voice-off notice plus guidance: ${JSON.stringify(bodies)}`);
+          assert.ok(bodies.every((b: string) => !/passed|relay|forward/i.test(b)), `${label}: no relay or success claim`);
+          assert.equal(brainTurnHadExternalSend("10000000001", `wamid.${label}`), true, `${label}: mark`);
+        }
+      } finally { if (oldVoice === undefined) delete process.env.AKIF_BRAIN_VOICE; else process.env.AKIF_BRAIN_VOICE = oldVoice; state.brainMode = undefined; state.guidanceReply = undefined; }
     });
     await t.test('dedup outage returns retryable failure before any outbound or trade work', async () => {
       reset();state.dedupFailure=true;
