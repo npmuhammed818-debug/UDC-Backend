@@ -7,6 +7,7 @@ import { renderNote } from "../akif/composeReply";
 
 // Called only after signed Meta webhook, privacy consent and blocked-account gates.
 // Consume code commands before AI/memory routing so credentials never reach a model.
+export const EMAIL_UNAVAILABLE_REPLY = "Email verification is unavailable right now. Please try again later.";
 export async function handleEmailVerification(
   phone: string,
   text: string,
@@ -92,6 +93,6 @@ export async function handleEmailVerification(
         intent: "Tell the customer kindly that this code is invalid or has expired, and to send the words Verify email to get a fresh code. Warm and brief.",
         fallback: "That code is invalid or expired. Send Verify email to request another.",
         mustSay: ["Verify email"], languageOf: text, maxChars: 400 });
-    return "Email verification is unavailable right now. Please try again later.";
+    return EMAIL_UNAVAILABLE_REPLY;
   }
 }
