@@ -31,7 +31,7 @@ const pass = (l) => { checks++; console.log("PASSED: " + l); };
 try {
   await build({
     stdin: {
-      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { brainTurnHadExternalSend } from './src/akif/relayOutcome.ts';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
+      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { brainTurnHadExternalSend } from './src/akif/relayOutcome.ts';export { notifyMatchingSellers } from './src/marketplace/sellerRequirementNotify.ts';export { sellerListingsTable } from '@workspace/db';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
@@ -40,7 +40,7 @@ try {
   const app = await import(directory + "/app.mjs");
   pool = app.pool;
   const { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } = app;
-  const { db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
+  const { notifyMatchingSellers, sellerListingsTable, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
   const { readSunkReplies, brainTurnHadExternalSend } = app;
 
   assert.ok(isBrainOrchestratorEnabled(), "flag on");
@@ -427,6 +427,28 @@ try {
   assert.equal(brainTurnHadExternalSend(phone, "m19f"), true, "a confirmed send followed by a rejected reply marks the turn, so no re-run");
   assert.equal(brainTurnHadExternalSend(phone, "m19-other"), false, "other turns are unaffected");
   pass("a confirmed send followed by a rejected reply is marked so the webhook cannot relay twice");
+
+  // Seller notification audit must follow real delivery: not configured = nothing sent = no audit (sweep retries later);
+  // unknown outcome = possibly sent = audited (never sent twice).
+  {
+    const saved = { sink: process.env.AKIF_WHATSAPP_REPLY_SINK, env: process.env.UDC_APP_ENV };
+    delete process.env.AKIF_WHATSAPP_REPLY_SINK; delete process.env.UDC_APP_ENV;
+    const [nReq] = await db.insert(buyerRequestsTable).values({ buyerUserId: buyerUser.id, productId: product.id, quantity: "5", unit: "MT", destination: "Dubai", status: "approved" }).returning();
+    await db.insert(sellerListingsTable).values({ sellerUserId: sellerUser.id, productId: product.id, quantity: "10", unit: "MT", price: "400", status: "approved" });
+    const notified = async () => (await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'seller_requirement_notified' and ${auditLogsTable.entityId} = ${nReq.id}`)).length;
+    delete process.env.WHATSAPP_ACCESS_TOKEN; delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    assert.equal(await notifyMatchingSellers(nReq.id), 0, "not configured: nothing was sent");
+    assert.equal(await notified(), 0, "not configured: no 'notified' audit row, so the sweep retries later");
+    const fetchBefore = globalThis.fetch;
+    Object.assign(process.env, { WHATSAPP_ACCESS_TOKEN: "synthetic-token", WHATSAPP_PHONE_NUMBER_ID: "123456" });
+    globalThis.fetch = async () => new Response("upstream", { status: 502 });
+    assert.equal(await notifyMatchingSellers(nReq.id), 1, "unknown outcome counts as possibly sent");
+    assert.equal(await notified(), 1, "unknown outcome is audited so it is not sent twice");
+    assert.equal(await notifyMatchingSellers(nReq.id), 0, "second sweep does not resend");
+    globalThis.fetch = fetchBefore; delete process.env.WHATSAPP_ACCESS_TOKEN; delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (saved.sink !== undefined) process.env.AKIF_WHATSAPP_REPLY_SINK = saved.sink; if (saved.env !== undefined) process.env.UDC_APP_ENV = saved.env;
+    pass("seller notification audit follows real delivery: none when not sent, one when unknown, no resend");
+  }
   if (sinkBefore === undefined) delete process.env.AKIF_WHATSAPP_REPLY_SINK; else process.env.AKIF_WHATSAPP_REPLY_SINK = sinkBefore;
   process.env.AKIF_WHATSAPP_REPLY_SINK = "store";
 

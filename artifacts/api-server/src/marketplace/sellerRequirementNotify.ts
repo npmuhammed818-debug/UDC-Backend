@@ -45,11 +45,13 @@ export async function notifyMatchingSellers(requestId: string): Promise<number> 
     if (!seller?.phone || ['suspended', 'rejected'].includes(seller.status)) continue;
     if (await alreadyNotified(request.id, seller.id)) continue;
     try {
-      await sendWhatsAppInteractive(seller.phone, {
+      const delivery = await sendWhatsAppInteractive(seller.phone, {
         type: 'button',
         body: { text: requirementNotifyText(request, product?.name ?? 'this product') },
         action: { buttons: [['interested', 'Interested'], ['pass', 'Not now']].map(([id, title]) => ({ type: 'reply' as const, reply: { id: `udc:req:${id}:${request.id}`, title } })) },
       });
+      // Nothing was sent (for example not configured): same as a failure, no audit record. An unknown outcome is audited so it is never sent twice.
+      if (delivery?.delivered === false && delivery.reason !== 'provider_outcome_unknown') continue;
     } catch { continue; } // No audit record on delivery failure, so the sweep retries later.
     notifiedSellers.add(seller.id);
     await db.insert(auditLogsTable).values({

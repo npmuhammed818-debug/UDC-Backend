@@ -74,7 +74,10 @@ export async function runProactiveScan(now: Date = new Date()): Promise<{ sent: 
       if (guarded.replaced) { skipped++; continue; }
       text = guarded.text.split(/(?<=[.!?])\s+/).filter((s) => !/\bmenu\b/i.test(s)).join(" ").trim();
       if (!text) { skipped++; continue; }
-      await sendWhatsAppText(target.phone, text);
+      const delivery = await sendWhatsAppText(target.phone, text);
+      // sendWhatsAppText returns delivered:false instead of throwing when nothing was sent (not configured).
+      // An unknown outcome still counts as sent, so a possibly delivered nudge is never repeated.
+      if (delivery?.delivered === false && delivery.reason !== "provider_outcome_unknown") { skipped++; continue; }
       await db.insert(auditLogsTable).values({
         action: "whatsapp_proactive_nudge",
         entityType: target.kind === "stale_need" ? "buyer_request" : "deal",
