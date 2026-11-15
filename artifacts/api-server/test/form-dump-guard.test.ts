@@ -48,3 +48,14 @@ test("guard edge cases: independent asks without a list marker still count, one 
   assert.equal(formDumpFields("Which role would you like to register as, buyer or seller?"), 0);
   assert.equal(formDumpFields("What is your registration number?"), 1);
 });
+
+test("a greeting comma before one question is not a list (seen in a model run: 'Great, just one more detail - which country is your company registered in?')", () => {
+  assert.equal(formDumpFields("Great, just one more detail \u2013 which country is your company registered in?"), 1);
+  assert.equal(formDumpFields("Sure, which country is your company registered in?"), 1);
+  assert.equal(formDumpFields("Thanks, what is your company name?"), 1);
+});
+test("a real list after a greeting comma still counts as a dump", () => {
+  assert.ok(formDumpFields("Great, what is your company name, and your country?") >= 2);
+  assert.ok(formDumpFields("Sure, please share your email, company and country.") >= 2);
+  assert.ok(formDumpFields("Great, tell me your name, email and country?") >= 2);
+});

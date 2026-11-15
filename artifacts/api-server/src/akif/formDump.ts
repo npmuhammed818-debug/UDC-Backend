@@ -26,7 +26,9 @@ export function formDumpFields(reply: string): number {
     // names company and name but asks for one thing). Email and registration
     // number never collapse, imperatives ("Tell me your name company") do not
     // collapse, and "or" is not a list marker ("buyer or seller" is one choice).
-    const isList = /,|;|&|\/|\band\b|\balso\b/i.test(sentence);
+    // A leading one word interjection ("Great, ...", "Sure, ...") is a comma
+    // after a greeting, not a list of fields: drop it before the list test.
+    const isList = /,|;|&|\/|\band\b|\balso\b/i.test(sentence.replace(/^\s*[A-Za-z']{2,12},\s*/, ""));
     const interrogative = /\?\s*$/.test(sentence.trim());
     const collapsible = hits.length === 2 && hits.every((k) => k === "company" || k === "name" || k === "country");
     if (interrogative && !isList && collapsible) { found.add(hits[0]); continue; }
