@@ -45,7 +45,7 @@ export function relayUndeliveredKind(result: RelaySendResult, threw: boolean): R
 }
 
 // Brain turns that already did an external send. The webhook must not re-run such a turn: a re-run could send twice.
-const externalSends = new Map<string, number>();
+const externalSends: Map<string, number> = ((globalThis as { __akifExternalSends?: Map<string, number> }).__akifExternalSends ??= new Map<string, number>());
 const sendKey = (phone: string, messageId?: string) => `${phone}|${messageId ?? ""}`;
 export function noteExternalSend(phone: string, messageId?: string, now = Date.now()) {
   for (const [k, t] of externalSends) if (now - t > 15 * 60_000) externalSends.delete(k);

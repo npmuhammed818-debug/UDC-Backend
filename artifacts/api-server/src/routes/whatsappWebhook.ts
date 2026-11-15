@@ -223,7 +223,7 @@ export async function buildHumanRelayDraftWithRetry(phone: string, text: string,
     if (draft?.reply !== BRAIN_BUSY_REPLY) break;
     await new Promise((r) => setTimeout(r, 3000));
   }
-  if (!draft?.reply) {
+  if (!draft?.reply && !brainTurnHadExternalSend(phone, messageId)) {
     await new Promise((r) => setTimeout(r, 5000));
     const retry = await buildHumanRelayDraft(phone, text, messageId);
     if (retry?.reply) return retry;

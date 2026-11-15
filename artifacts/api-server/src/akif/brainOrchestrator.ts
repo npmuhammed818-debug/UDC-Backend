@@ -186,7 +186,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
       registration_number: state.fields.registration_number || undefined,
     });
     if (result.ok) state.fields = {};
-    return { note: result.ok ? `Registration submitted. System note: ${result.reply}` : `Registration could not be submitted: ${result.reply}` };
+    return { note: result.ok ? `Registration submitted. System note: ${result.reply}` : `Registration could not be submitted: ${result.reply}`, externalSend: result.ok };
   }
   if (name === "send_email_code") {
     const reply = await handleEmailVerification(phone, "verify email");
@@ -210,7 +210,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const input = buyerIntakeSchema.parse(buyerRequirementPayload(phone, user.fullName, f));
     await recordPendingBuyerRequirement(input);
     state.fields = {};
-    return { note: "Requirement submitted for UDC review. It stays private until review; updates come here in WhatsApp." };
+    return { note: "Requirement submitted for UDC review. It stays private until review; updates come here in WhatsApp.", externalSend: true };
   }
   if (name === "submit_offer") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
@@ -221,7 +221,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const input = sellerOfferSchema.parse({ phone, fullName: user.fullName || "WhatsApp seller", product: f.product, quantity: f.quantity, unit: f.unit || "MT", currency: f.currency || "USD", price: f.price, originCountry: f.origin, incoterm: f.incoterm, specification: f.specification || undefined, availability: f.availability || undefined, destination: f.destination || undefined, paymentTerms: f.payment_terms || undefined });
     await recordPendingSellerOffer(input);
     state.fields = {};
-    return { note: "Offer submitted for UDC review. It is not an approved offer yet." };
+    return { note: "Offer submitted for UDC review. It is not an approved offer yet.", externalSend: true };
   }
   if (name === "show_feature") {
     const feature = typeof args.feature === "string" && INFO_FEATURES.has(args.feature) ? args.feature : null;
@@ -248,7 +248,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
       return { note: `Nothing was sent. The customer's verification facts: account ${featureUser.status}; company review: ${company?.status ?? "no company details submitted"}; documents: ${docText}; email ${featureUser.emailVerifiedAt ? "confirmed" : "not confirmed"}. State these facts plainly in your own words - never invent a different status.` };
     }
     const handled = await handleChatUi(phone, { interactive: { type: "list_reply", list_reply: { id: `udc:${feature}` } } } as ChatMessage);
-    return { note: handled ? "The requested account information was just sent to the customer in chat. Do not repeat its contents; explain in your own words, in one or two short sentences, what was sent and the one next step." : "That feature is not available for this customer right now; say so plainly and offer the one next step." };
+    return { note: handled ? "The requested account information was just sent to the customer in chat. Do not repeat its contents; explain in your own words, in one or two short sentences, what was sent and the one next step." : "That feature is not available for this customer right now; say so plainly and offer the one next step.", externalSend: Boolean(handled) };
   }
   if (name === "track_shipment") {
     const [user] = await db.select().from(usersTable).where(eq(usersTable.phone, phone)).limit(1);

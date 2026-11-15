@@ -1,5 +1,6 @@
 process.env.WHATSAPP_INBOUND_PER_MINUTE = "100000"; // these fixtures reuse one phone; the cap has its own test
 import { test } from "node:test";
+import { noteExternalSend, brainTurnHadExternalSend, resetExternalSendsForTest } from "../src/akif/relayOutcome.ts";
 import assert from "node:assert/strict";
 import { createHmac, randomUUID } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
@@ -66,6 +67,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
   };
   state.db.execute = async () => [];
   state.db.transaction = async (callback: any) => callback(state.db);
+  state.brainCalls=[];state.markSend=noteExternalSend;
   (globalThis as any).__whatsappRoutes = state;
   const fixtures: Record<string, string> = {
     "../whatsapp/emailVerification": "export const handleEmailVerification=async(phone,text)=>{if(!/^(?:verify email|email code(?:\\s|$))/i.test(text))return null;s.emailCalls=(s.emailCalls||0)+1;return 'Fixture email verification reply';};",
@@ -81,7 +83,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const warmAkifWorker=()=>{};export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
     "../akif/brainOrchestrator":
-      "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];",
+      "export const isBrainOrchestratorEnabled=()=>Boolean(s.brainMode);export const runBrainTurn=async i=>{s.brainCalls.push(i);const m=s.brainMode;if(!m)return null;if(m.send)s.markSend(i.phone,i.messageId);if(m.throws)throw Error('synthetic_brain_throw');return m.result??null;};export const BRAIN_TOOLS=[];",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
     "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');if(s.redelivery)return false;return true;};export const completeInboundMessages=async()=>{};export const inboundClaimInProgress=async()=>s.redelivery==='unfinished';export const releaseInboundMessages=async()=>{};",
@@ -126,7 +128,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     state.receipts=[];state.failReceipt=false;state.dedupFailure=false;state.redelivery=false;
     state.windowEvidence=[];
     state.fromWabaPhoneId="qa-sender-number";
-    state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
+    state.brainMode=undefined;state.brainCalls=[];state.dealCalls = 0; state.homeCalls=0; state.guidanceReply=undefined;state.guidanceFailure=false;state.guidanceCalls=[];
   };
   function seedDeal() {
     rows.usersTable = [{ id: "buyer", phone: "10000000001", role: "buyer", status: "verified" }, { id: "seller", phone: "10000000002", role: "seller", status: "verified" }];
@@ -166,6 +168,26 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
         reset();state.transcript=undefined;
         assert.equal((await message({text:{body:'I want to die'}},false)).status,401);assert.equal(state.sent.length,0);
       } finally { if(oldEnv===undefined)delete process.env.UDC_APP_ENV;else process.env.UDC_APP_ENV=oldEnv;state.transcript=undefined; }
+    });
+    await t.test('brain turn that already sent externally is never re-run by the webhook (null, throw, rejected reply); unsent turns still get the one retry', async () => {
+      const oldBurst = process.env.AKIF_BRAIN_BURST_MS;
+      for (const [label, mode, expectCalls] of [
+        ["null after a send", { send: true, result: null }, 1],
+        ["throw after a send", { send: true, throws: true }, 1],
+        ["unhandled result after a send", { send: true, result: { handled: false } }, 1],
+        ["null with no send (control: one retry)", { send: false, result: null }, 2],
+        ["throw with no send (control: one retry)", { send: false, throws: true }, 2],
+      ] as const) {
+        reset(); resetExternalSendsForTest(); state.brainMode = mode;
+        const before = rows.humanRelayQueue?.length ?? 0;
+        const r = await message({ id: `wamid.noretry.${label}`, text: { body: "please ask the seller about the shipment date" } });
+        assert.equal(r.status, 200, label);
+        assert.equal(state.brainCalls.length, expectCalls, `${label}: brain calls`);
+        assert.equal(state.sent.length, 0, `${label}: nothing sent to the customer by the webhook`);
+        assert.equal(brainTurnHadExternalSend("10000000001", `wamid.noretry.${label}`), mode.send, `${label}: mark`);
+      }
+      if (oldBurst === undefined) delete process.env.AKIF_BRAIN_BURST_MS; else process.env.AKIF_BRAIN_BURST_MS = oldBurst;
+      state.brainMode = undefined;
     });
     await t.test('dedup outage returns retryable failure before any outbound or trade work', async () => {
       reset();state.dedupFailure=true;
