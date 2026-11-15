@@ -20,7 +20,8 @@ import { claimsUnverifiedFact } from "./conversationPolicy.ts";
 import { guidedQuestions, validate as validateGuidedAnswer, type Question } from "../whatsapp/guidedChat.ts";
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
-import { handleEmailVerification, EMAIL_UNAVAILABLE_REPLY } from "../whatsapp/emailVerification.ts";
+import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
+import { emailToolOutcome, guardEmailClaim } from "./emailOutcomeGuard.ts";
 import { withoutRole } from "./registrationArgs.ts";
 import { takeBuyerUnitCurrency, buyerRequirementPayload, buyerUnresolved } from "./buyerUnitCurrency.ts";
 import { recordPendingBuyerRequirement, buyerIntakeSchema } from "./recordBuyerRequirement.ts";
@@ -154,7 +155,7 @@ const FORGET_TOOL: GroqToolDefinition = { type: "function", function: { name: "f
 
 const INFO_FEATURES = new Set(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]);
 
-type ToolOutcome = { note: string; finalReply?: string };
+type ToolOutcome = { note: string; finalReply?: string; unavailable?: boolean };
 
 async function executeTool(phone: string, name: string, argsJson: string, state: BrainSession): Promise<ToolOutcome> {
   let args: Record<string, unknown> = {};
@@ -188,9 +189,8 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
   }
   if (name === "send_email_code") {
     const reply = await handleEmailVerification(phone, "verify email");
-    const outcomeText = reply ?? "Send Verify email first so I can email you a fresh 6-digit code.";
-    // The model must see what really happened. A bare "step ran" let it say a code was sent when delivery was unavailable.
-    return { note: `Email verification result (state exactly this meaning, never say a code was sent unless this says so): ${outcomeText}`, finalReply: outcomeText };
+    const o = emailToolOutcome(reply);
+    return { note: o.note, finalReply: o.finalReply, unavailable: o.unavailable };
   }
   if (name === "save_requirement_details") {
     const { rest, rejected } = takeBuyerUnitCurrency(args, state.fields);
@@ -562,13 +562,13 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
       const outcome = await executeTool(input.phone, call.name, call.argumentsJson, state);
       toolsUsed.push(call.name);
       if (outcome.finalReply) finalReply = outcome.finalReply;
-      if (call.name === "send_email_code" && outcome.finalReply === EMAIL_UNAVAILABLE_REPLY) emailUnavailable = true;
+      if (call.name === "send_email_code" && outcome.unavailable) emailUnavailable = true;
       messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content: outcome.note });
     }
   }
 
   // Delivery really failed: a model reply that says a code was sent would be false. Use the tool's own wording.
-  if (emailUnavailable && finalReply && /\b(?:sent|sending|check your (?:email|inbox))\b/i.test(finalReply)) finalReply = EMAIL_UNAVAILABLE_REPLY;
+  finalReply = guardEmailClaim(finalReply, emailUnavailable);
 
   // Pending acknowledgements cannot claim completion, even if the model
   // ignores the queued tool state. Rejection starts no background action.

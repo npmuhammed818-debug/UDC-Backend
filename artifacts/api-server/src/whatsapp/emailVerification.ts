@@ -4,10 +4,10 @@ import { emailAuth, EmailAuthError } from "../auth/emailAuth";
 
 import { isVerifyEmailRequest } from "./intentPhrases";
 import { renderNote } from "../akif/composeReply";
+import { EMAIL_UNAVAILABLE_REPLY } from "../akif/emailOutcomeGuard.ts";
 
 // Called only after signed Meta webhook, privacy consent and blocked-account gates.
 // Consume code commands before AI/memory routing so credentials never reach a model.
-export const EMAIL_UNAVAILABLE_REPLY = "Email verification is unavailable right now. Please try again later.";
 export async function handleEmailVerification(
   phone: string,
   text: string,
