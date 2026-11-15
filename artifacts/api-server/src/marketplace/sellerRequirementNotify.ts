@@ -37,29 +37,32 @@ export async function notifyMatchingSellers(requestId: string): Promise<number> 
     .orderBy(desc(sellerListingsTable.updatedAt)).limit(50);
   const notifiedSellers = new Set<string>();
   let sent = 0;
+  let unconfirmed = 0;
   for (const listing of listings) {
-    if (sent >= MAX_SELLERS_PER_REQUIREMENT) break;
+    if (sent + unconfirmed >= MAX_SELLERS_PER_REQUIREMENT) break;
     if (notifiedSellers.has(listing.sellerUserId)) continue;
     const [seller] = await db.select({ id: usersTable.id, phone: usersTable.phone, status: usersTable.status })
       .from(usersTable).where(eq(usersTable.id, listing.sellerUserId)).limit(1);
     if (!seller?.phone || ['suspended', 'rejected'].includes(seller.status)) continue;
     if (await alreadyNotified(request.id, seller.id)) continue;
+    let unknownOutcome = false;
     try {
       const delivery = await sendWhatsAppInteractive(seller.phone, {
         type: 'button',
         body: { text: requirementNotifyText(request, product?.name ?? 'this product') },
         action: { buttons: [['interested', 'Interested'], ['pass', 'Not now']].map(([id, title]) => ({ type: 'reply' as const, reply: { id: `udc:req:${id}:${request.id}`, title } })) },
       });
-      // Nothing was sent (for example not configured): same as a failure, no audit record. An unknown outcome is audited so it is never sent twice.
+      // Nothing was sent (for example not configured): same as a failure, no audit record. An unknown outcome is audited as unconfirmed so it is never sent twice.
       if (delivery?.delivered === false && delivery.reason !== 'provider_outcome_unknown') continue;
+      unknownOutcome = delivery?.delivered === false;
     } catch { continue; } // No audit record on delivery failure, so the sweep retries later.
     notifiedSellers.add(seller.id);
     await db.insert(auditLogsTable).values({
       actorUserId: seller.id, action: 'seller_requirement_notified',
       entityType: 'buyer_request', entityId: request.id,
-      metadata: { sellerUserId: seller.id, sellerListingId: listing.id },
+      metadata: { sellerUserId: seller.id, sellerListingId: listing.id, deliveryOutcome: unknownOutcome ? 'unconfirmed' : 'delivered' },
     });
-    sent++;
+    if (unknownOutcome) unconfirmed++; else sent++;
   }
   return sent;
 }

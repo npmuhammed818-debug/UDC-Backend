@@ -41,8 +41,8 @@ async function recentNudgeKeys(since: Date): Promise<Set<string>> {
   return keys;
 }
 
-export async function runProactiveScan(now: Date = new Date()): Promise<{ sent: number; skipped: number }> {
-  if (!isProactiveEnabled() || !isGroqConfigured()) return { sent: 0, skipped: 0 };
+export async function runProactiveScan(now: Date = new Date()): Promise<{ sent: number; skipped: number; unconfirmed: number }> {
+  if (!isProactiveEnabled() || !isGroqConfigured()) return { sent: 0, skipped: 0, unconfirmed: 0 };
   const dealWindow = await db.select({ id: dealsTable.id, status: dealsTable.status, updatedAt: dealsTable.updatedAt, buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
     .from(dealsTable)
     .where(gte(dealsTable.updatedAt, new Date(now.getTime() - STALLED_DEAL_MS - DEAL_UPDATE_MS)));
@@ -61,7 +61,7 @@ export async function runProactiveScan(now: Date = new Date()): Promise<{ sent: 
   const recent = await recentNudgeKeys(new Date(now.getTime() - NUDGE_COOLDOWN_MS));
   const targets = planNudges({ now, deals: dealWindow, requirements: reqs, phones, recentNudges: recent });
 
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, unconfirmed = 0;
   for (const target of targets) {
     try {
       const turn = await runGroqToolChat([
@@ -76,20 +76,22 @@ export async function runProactiveScan(now: Date = new Date()): Promise<{ sent: 
       if (!text) { skipped++; continue; }
       const delivery = await sendWhatsAppText(target.phone, text);
       // sendWhatsAppText returns delivered:false instead of throwing when nothing was sent (not configured).
-      // An unknown outcome still counts as sent, so a possibly delivered nudge is never repeated.
-      if (delivery?.delivered === false && delivery.reason !== "provider_outcome_unknown") { skipped++; continue; }
+      // An unknown outcome (Meta 5xx or network) may have been delivered: it is recorded as unconfirmed so it is
+      // never sent twice, but it is not counted or labelled as confirmed.
+      const unknownOutcome = delivery?.delivered === false && delivery.reason === "provider_outcome_unknown";
+      if (delivery?.delivered === false && !unknownOutcome) { skipped++; continue; }
       await db.insert(auditLogsTable).values({
         action: "whatsapp_proactive_nudge",
         entityType: target.kind === "stale_need" ? "buyer_request" : "deal",
         entityId: "dealId" in target ? target.dealId : target.requirementId,
-        metadata: { kind: target.kind, userId: target.userId, channel: "whatsapp" },
+        metadata: { kind: target.kind, userId: target.userId, channel: "whatsapp", deliveryOutcome: unknownOutcome ? "unconfirmed" : "delivered" },
       });
-      sent++;
+      if (unknownOutcome) unconfirmed++; else sent++;
     } catch {
       skipped++;
     }
   }
-  return { sent, skipped };
+  return { sent, skipped, unconfirmed };
 }
 
 let proactiveTimer: ReturnType<typeof setInterval> | null = null;

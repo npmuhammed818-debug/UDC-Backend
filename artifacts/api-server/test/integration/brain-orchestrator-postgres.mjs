@@ -31,7 +31,7 @@ const pass = (l) => { checks++; console.log("PASSED: " + l); };
 try {
   await build({
     stdin: {
-      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { brainTurnHadExternalSend } from './src/akif/relayOutcome.ts';export { notifyMatchingSellers } from './src/marketplace/sellerRequirementNotify.ts';export { sellerListingsTable } from '@workspace/db';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
+      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { brainTurnHadExternalSend } from './src/akif/relayOutcome.ts';export { notifyMatchingSellers } from './src/marketplace/sellerRequirementNotify.ts';export { runProactiveScan } from './src/akif/proactiveNudges.ts';export { sellerListingsTable } from '@workspace/db';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
@@ -40,7 +40,7 @@ try {
   const app = await import(directory + "/app.mjs");
   pool = app.pool;
   const { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } = app;
-  const { notifyMatchingSellers, sellerListingsTable, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
+  const { notifyMatchingSellers, runProactiveScan, sellerListingsTable, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
   const { readSunkReplies, brainTurnHadExternalSend } = app;
 
   assert.ok(isBrainOrchestratorEnabled(), "flag on");
@@ -442,12 +442,40 @@ try {
     const fetchBefore = globalThis.fetch;
     Object.assign(process.env, { WHATSAPP_ACCESS_TOKEN: "synthetic-token", WHATSAPP_PHONE_NUMBER_ID: "123456" });
     globalThis.fetch = async () => new Response("upstream", { status: 502 });
-    assert.equal(await notifyMatchingSellers(nReq.id), 1, "unknown outcome counts as possibly sent");
+    assert.equal(await notifyMatchingSellers(nReq.id), 0, "unknown outcome is not counted as confirmed sent");
     assert.equal(await notified(), 1, "unknown outcome is audited so it is not sent twice");
+    const [notifiedRow] = await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'seller_requirement_notified' and ${auditLogsTable.entityId} = ${nReq.id}`);
+    assert.equal(notifiedRow.metadata.deliveryOutcome, "unconfirmed", "audit labels the unknown outcome as unconfirmed, not delivered");
     assert.equal(await notifyMatchingSellers(nReq.id), 0, "second sweep does not resend");
+    // Proactive nudge path, same three outcomes. Groq is a stub; WhatsApp is stubbed per case.
+    Object.assign(process.env, { AKIF_PROACTIVE_ENABLED: "on" });
+    await db.insert(buyerRequestsTable).values({ buyerUserId: buyerUser.id, productId: product.id, quantity: "5", unit: "MT", destination: "Dubai", status: "open", updatedAt: new Date(Date.now() - 3 * 86_400_000) });
+    const nudges = async () => (await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_proactive_nudge'`));
+    const groq = () => new Response(JSON.stringify({ choices: [{ message: { content: "Hi, just checking if you still need help with your requirement.", tool_calls: [] } }] }), { status: 200 });
+    let waStatus = 502;
+    globalThis.fetch = async (u) => String(u).includes("chat/completions") ? groq() : waStatus === 200 ? new Response(JSON.stringify({ messages: [{ id: "wamid.QA1" }] }), { status: 200 }) : new Response("upstream", { status: waStatus });
+    delete process.env.WHATSAPP_ACCESS_TOKEN; delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+    let r = await runProactiveScan();
+    assert.deepEqual([r.sent, r.unconfirmed], [0, 0], "nudge not configured: nothing sent, nothing counted");
+    assert.equal((await nudges()).length, 0, "nudge not configured: no audit row");
+    Object.assign(process.env, { WHATSAPP_ACCESS_TOKEN: "synthetic-token", WHATSAPP_PHONE_NUMBER_ID: "123456" });
+    r = await runProactiveScan();
+    const nTargets = r.unconfirmed;
+    assert.ok(nTargets >= 1 && r.sent === 0, "nudge unknown outcome: counted unconfirmed, not sent");
+    let rows2 = await nudges();
+    assert.equal(rows2.length, nTargets); assert.ok(rows2.every((x) => x.metadata.deliveryOutcome === "unconfirmed"), "nudge audits labelled unconfirmed");
+    r = await runProactiveScan();
+    assert.deepEqual([r.sent, r.unconfirmed], [0, 0], "unconfirmed nudge is not repeated (cooldown)");
+    await db.delete(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_proactive_nudge'`);
+    waStatus = 200;
+    r = await runProactiveScan();
+    assert.deepEqual([r.sent, r.unconfirmed], [nTargets, 0], "nudge confirmed: counted sent");
+    rows2 = await nudges();
+    assert.equal(rows2.length, nTargets); assert.ok(rows2.every((x) => x.metadata.deliveryOutcome === "delivered"), "nudge audits labelled delivered");
+    delete process.env.AKIF_PROACTIVE_ENABLED;
     globalThis.fetch = fetchBefore; delete process.env.WHATSAPP_ACCESS_TOKEN; delete process.env.WHATSAPP_PHONE_NUMBER_ID;
     if (saved.sink !== undefined) process.env.AKIF_WHATSAPP_REPLY_SINK = saved.sink; if (saved.env !== undefined) process.env.UDC_APP_ENV = saved.env;
-    pass("seller notification audit follows real delivery: none when not sent, one when unknown, no resend");
+    pass("notification and nudge audits follow real delivery: none when not sent, labelled unconfirmed when unknown (no resend), delivered when confirmed");
   }
   if (sinkBefore === undefined) delete process.env.AKIF_WHATSAPP_REPLY_SINK; else process.env.AKIF_WHATSAPP_REPLY_SINK = sinkBefore;
   process.env.AKIF_WHATSAPP_REPLY_SINK = "store";
