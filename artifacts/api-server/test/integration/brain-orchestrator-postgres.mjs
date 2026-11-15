@@ -358,6 +358,38 @@ try {
   assert.equal(readSunkReplies(sellerPhone).length, 1, "no second message reached the seller");
   pass("money boundary: a relay claiming approval is blocked before sending");
 
+  // Turn 19c: the send function returns delivered:false (no WhatsApp configured: nothing is sent, nothing throws).
+  // The audit log must not record a relay, the model must be told it was not sent, and a reply that claims it was
+  // passed on must be dropped to the scripted chain. A truthful reply is kept.
+  const sinkBefore = process.env.AKIF_WHATSAPP_REPLY_SINK;
+  delete process.env.AKIF_WHATSAPP_REPLY_SINK;
+  const relayRowsBefore = (await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_brain_relay'`)).length;
+  let seenRelayNote = "";
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("relay_to_other_party", { message: "Can you ship on Friday?" })] };
+    seenRelayNote = tool.content;
+    return { content: "Done - I passed your message to the seller and will come back with their reply.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "ask the seller if he can ship Friday", messageId: "m19c" }, chat);
+  assert.doesNotMatch(seenRelayNote, /was relayed to the/, "model is not told it was relayed");
+  assert.match(seenRelayNote, /could not be sent/, "model is told it was not sent");
+  assert.equal(out, null, "a false 'passed on' reply is dropped to the scripted fallback chain");
+  assert.equal((await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_brain_relay'`)).length, relayRowsBefore, "no relay audit row when nothing was sent");
+  pass("false-success guard: an unsent relay is not audited and an overclaiming reply is dropped");
+
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("relay_to_other_party", { message: "Can you ship on Friday?" })] };
+    return { content: "That did not go through, so the seller has not seen it. Please send it again in a little while.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "ask the seller again", messageId: "m19d" }, chat);
+  assert.equal(out?.handled, true);
+  assert.match(out.reply, /did not go through/);
+  pass("false-success guard: a truthful not-sent reply is kept");
+  if (sinkBefore === undefined) delete process.env.AKIF_WHATSAPP_REPLY_SINK; else process.env.AKIF_WHATSAPP_REPLY_SINK = sinkBefore;
+  process.env.AKIF_WHATSAPP_REPLY_SINK = "store";
+
   // Turn 20 (owner rule, 8 Nov): an UNREGISTERED customer asking for the
   // vault link gets no card and no canned gate - the tool sends nothing and
   // the brain explains the link and guides registration in its own words.

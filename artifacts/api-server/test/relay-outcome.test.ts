@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { relayOutcomeNote, relayWasDelivered } from "../src/akif/relayOutcome.ts";
+import { guardRelayClaim, relayOutcomeNote, relayWasDelivered } from "../src/akif/relayOutcome.ts";
 
 test("only an explicit delivered true counts as passed on", () => {
   assert.equal(relayWasDelivered({ delivered: true }), true);
@@ -19,10 +19,25 @@ test("not configured never claims it was passed on", () => {
   const n = relayOutcomeNote({ delivered: false, reason: "not_configured" }, "seller", "D-1");
   assert.ok(!/was relayed|passed it on to/.test(n));
   assert.match(n, /could not be sent/);
+  assert.ok(!/try again shortly/.test(n), "no retry promise: nothing retries");
 });
 test("unknown outcome says delivery could not be confirmed and promises nothing", () => {
   const n = relayOutcomeNote({ delivered: false, reason: "provider_outcome_unknown" }, "buyer", "D-2");
   assert.match(n, /could not be confirmed/);
   assert.match(n, /Do not say it was passed on/);
   assert.ok(!/try again shortly/.test(n));
+});
+test("an overclaiming reply after an unsent relay is dropped, a truthful one is kept", () => {
+  for (const claim of [
+    "Done, I passed your message to the seller and will come back with their reply.",
+    "I have forwarded that to the buyer.",
+    "Message sent, I will get back with their answer.",
+    "I let him know.",
+  ]) assert.equal(guardRelayClaim(claim, true), null, claim);
+  for (const ok of [
+    "That did not go through, so the seller has not seen it. Please send it again later.",
+    "I could not confirm it was delivered to the seller.",
+    "What price would you like to offer?",
+  ]) assert.equal(guardRelayClaim(ok, true), ok, ok);
+  assert.equal(guardRelayClaim("Done, I passed your message to the seller.", false), "Done, I passed your message to the seller.");
 });
