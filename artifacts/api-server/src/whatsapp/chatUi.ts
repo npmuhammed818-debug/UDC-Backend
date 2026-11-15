@@ -196,7 +196,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
       if(!(await emailAuth.status(otpUserId)).emailVerified){
         // Quota or provider failure (owner direction, 10 Nov): say a short
         // honest line and let them retry later; registration must not break.
-        try{await emailAuth.requestVerification(otpUserId);}
+        try{if(!(await emailAuth.requestVerification(otpUserId)).sent)throw new Error('code_not_sent');}
         catch{return sayAi('Email codes are paused for a short while on our side. Your details are saved, please try again in some time.');}
         return sayAi('I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.');}
     }catch{/* email sending off or rate limited: user can still send Verify email later */}
@@ -240,7 +240,7 @@ export async function registerWhatsAppProfileDirect(phone:string,role:'buyer'|'s
     if(result.ok&&'userId' in result&&result.userId){
       try{
         if(isTesterPhone(phone))return {ok:true,reply:result.reply+' Email confirmed automatically (tester mode).'};
-        if(!(await emailAuth.status(result.userId)).emailVerified){await emailAuth.requestVerification(result.userId);return {ok:true,reply:await sayAi('A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.')};}
+        if(!(await emailAuth.status(result.userId)).emailVerified){if(!(await emailAuth.requestVerification(result.userId)).sent)return {ok:true,reply:await sayAi('Email codes are paused for a short while on our side. Your details are saved, please try again in some time.')};return {ok:true,reply:await sayAi('A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.')};}
       }catch{/* email sending off or rate limited: user can send Verify email later */}
       return {ok:true,reply:await sayAi(result.reply+' Email is not confirmed yet; a 6-digit email code confirms it.')};
     }

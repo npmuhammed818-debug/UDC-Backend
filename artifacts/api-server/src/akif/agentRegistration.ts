@@ -47,7 +47,7 @@ export async function registerWhatsAppAgent(phone: string, fullName?: string) {
   if (result.userId && result.email && !isTesterPhone(phone)) {
     try {
       if (!(await emailAuth.status(result.userId)).emailVerified) {
-        await emailAuth.requestVerification(result.userId);
+        if (!(await emailAuth.requestVerification(result.userId)).sent) return result.reply;
         return 'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.';
       }
     } catch { /* email sending off or rate limited: they can send Verify email later */ }

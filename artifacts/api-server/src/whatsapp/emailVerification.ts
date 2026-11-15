@@ -44,7 +44,7 @@ export async function handleEmailVerification(
           intent: "Tell the customer their email is already confirmed, so no new code is needed, and that company approval is a separate review by the UDC team. Warm and brief.",
           fallback: "Your email is already verified. Company approval is a separate UDC review.",
           languageOf: text, maxChars: 400 });
-      await emailAuth.requestVerification(user.id);
+      if (!(await emailAuth.requestVerification(user.id)).sent) return EMAIL_UNAVAILABLE_REPLY;
       return renderNote({
         intent: "Tell the customer a 6-digit code was just sent to their registered email, to reply here with that code, that it expires in 10 minutes, and to wait one minute before asking for another. Never say which email address it went to.",
         fallback: "Check your registered email for a 6-digit code. Reply here with the 6-digit code. It expires in 10 minutes; wait one minute before requesting another.",

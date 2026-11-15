@@ -76,7 +76,7 @@ for (const purpose of ["email/verification", "password/recovery"] as const) {
           ? undefined
           : z.object({ email }).strict().parse(req.body);
         const result = verification
-          ? await emailAuth.requestVerification(req.authUser!.id)
+          ? (({ sent: _sent, ...rest }) => rest)(await emailAuth.requestVerification(req.authUser!.id))
           : await emailAuth.requestReset(input!.email);
         res.status(202).json({ ...requested, ...result });
       } catch (error) {

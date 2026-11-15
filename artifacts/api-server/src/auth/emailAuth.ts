@@ -266,7 +266,7 @@ export function createEmailAuthService(
         // Reset request responses never distinguish unknown accounts or delivery failures.
       }
     }
-    return response;
+    return { response, sent: !!issued };
   }
 
   async function consume(
@@ -321,12 +321,16 @@ export function createEmailAuthService(
       };
     },
     // Routes charge IP limits before validation, including malformed/anonymous requests.
-    requestVerification: (userId: string) =>
-      issue("verify_email", userId, undefined),
+    // `sent` is false when no code was produced (ineligible or malformed
+    // account); callers must not tell the customer a code was sent then.
+    requestVerification: async (userId: string) => {
+      const { response, sent } = await issue("verify_email", userId, undefined);
+      return { ...response, sent };
+    },
     async requestReset(email: string) {
       const started = performance.now();
       try {
-        return await issue("reset_password", undefined, email);
+        return (await issue("reset_password", undefined, email)).response;
       } finally {
         // Match unknown/cooldown/eligible response timing under normal DB latency,
         // including the bounded 2-second provider attempt. No account-specific response.

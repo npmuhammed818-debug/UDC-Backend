@@ -481,6 +481,27 @@ try {
     await app.handleEmailVerification(phone, "ordinary conversation"),
     null,
   );
+  {
+    // Regression: no code is produced for a malformed stored email, so the
+    // customer must not be told a code was sent.
+    const goodEmail = (await pool.query("select email from users where id=$1", [waId])).rows[0].email;
+    const before = fixture.outbox.length;
+    await pool.query("update users set email='not-an-email' where id=$1", [waId]);
+    await pool.query("delete from email_auth_limits");
+    const direct = await service.requestVerification(waId);
+    assert.equal(direct.sent, false);
+    await pool.query("delete from email_auth_limits");
+    const reply = await app.handleEmailVerification(phone, "Verify email");
+    assert.doesNotMatch(reply, /6-digit|code was just sent|Check your registered email/);
+    assert.equal(fixture.outbox.length, before);
+    await pool.query("update users set email=$1 where id=$2", [goodEmail, waId]);
+    await pool.query("delete from email_auth_limits");
+    const ok = await service.requestVerification(waId);
+    assert.equal(ok.sent, true);
+    assert.equal(fixture.outbox.length, before + 1);
+    pass("verification request reports sent:false and WhatsApp reply admits no code went out when none was produced");
+  }
+  await pool.query("delete from email_auth_limits");
   assert.match(
     await app.handleEmailVerification(phone, "Verify email"),
     /6-digit/,

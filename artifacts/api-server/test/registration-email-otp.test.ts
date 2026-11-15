@@ -50,7 +50,7 @@ async function makeBundle(globalName: string, stdinContents: string, opts: { kno
     password: "export const hashPassword=async()=>'synthetic-unusable-hash';",
     sellerNotify: "export const asksForOpenRequirements=()=>false;export const openRequirementsReplyForSeller=async()=>null;export const respondToRequirementInterest=async()=>{};",
     roleChange: "export const requestRoleChange=async()=>({status:'pending'});export const roleChangeReply=(status,role)=>'Request saved for '+role+'.';",
-    emailAuth: `const s=globalThis.${G};export const emailAuth={status:async(userId)=>{s.emailCalls.push(['status',userId]);return {emailVerified:false};},requestVerification:async(userId)=>{s.emailCalls.push(['requestVerification',userId]);s.pendingChallengeId='ch-1';return {challengeId:'ch-1',expiresInSeconds:600};},verify:async(userId,id,code)=>{s.emailCalls.push(['verify',userId,id,code]);return true;},ipBudget:async()=>{}};export class EmailAuthError extends Error{constructor(kind){super(kind);this.kind=kind;}}`,
+    emailAuth: `const s=globalThis.${G};export const emailAuth={status:async(userId)=>{s.emailCalls.push(['status',userId]);return {emailVerified:false};},requestVerification:async(userId)=>{s.emailCalls.push(['requestVerification',userId]);s.pendingChallengeId='ch-1';return {challengeId:'ch-1',expiresInSeconds:600,sent:s.codeSent!==false};},verify:async(userId,id,code)=>{s.emailCalls.push(['verify',userId,id,code]);return true;},ipBudget:async()=>{}};export class EmailAuthError extends Error{constructor(kind){super(kind);this.kind=kind;}}`,
     adminAlerts: "export const queueAdminReviewAlert=()=>{};",
     tester: "export const isTesterPhone=()=>false;",
     humanRelay: `const s=globalThis.${G};export const knownFactsForContact=()=>({name:'Synthetic Agent',email:s.knownEmail});`,
@@ -82,6 +82,17 @@ async function makeBundle(globalName: string, stdinContents: string, opts: { kno
   await writeFile(output, bundle.outputFiles[0].text);
   return { state, output };
 }
+
+test('registration does not claim a code was sent when none was produced', async () => {
+  const { state, output } = await makeBundle('__otpNoCode', "export { registerWhatsAppAgent } from '../src/akif/agentRegistration';", { knownEmail: 'agent@example.invalid' });
+  try {
+    state.codeSent = false;
+    const m = await import(output);
+    const reply = await m.registerWhatsAppAgent('10000000020', 'Synthetic Agent');
+    assert.doesNotMatch(reply, /6-digit code/);
+    assert.match(reply, /pending UDC review/);
+  } finally { await unlink(output); }
+});
 
 test('quick agent registration asks for the OTP before confirming, and only Sandra\'s existing account is exempt', async () => {
   const { state, output } = await makeBundle('__otpAgent', "export { registerWhatsAppAgent } from '../src/akif/agentRegistration';", { knownEmail: 'agent@example.invalid' });
