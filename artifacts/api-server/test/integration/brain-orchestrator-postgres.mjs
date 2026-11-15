@@ -374,9 +374,11 @@ try {
   out = await runBrainTurn({ phone, text: "ask the seller if he can ship Friday", messageId: "m19c" }, chat);
   assert.doesNotMatch(seenRelayNote, /was relayed to the/, "model is not told it was relayed");
   assert.match(seenRelayNote, /could not be sent/, "model is told it was not sent");
-  assert.equal(out, null, "a false 'passed on' reply is dropped to the scripted fallback chain");
+  assert.equal(out?.handled, true, "handled, so the webhook does not re-run the brain turn (a re-run could relay twice)");
+  assert.equal(out?.reply, "I could not pass it to the other side just now.", "the false claim is replaced by the existing failure clause");
+  assert.doesNotMatch(out?.reply ?? "", /passed (it |your message )?on|will come back/i, "fallback does not claim success");
   assert.equal((await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_brain_relay'`)).length, relayRowsBefore, "no relay audit row when nothing was sent");
-  pass("false-success guard: an unsent relay is not audited and an overclaiming reply is dropped");
+  pass("false-success guard: an unsent relay is not audited and an overclaiming reply is replaced");
 
   chat = async (messages) => {
     const tool = messages.filter((m) => m.role === "tool").at(-1);

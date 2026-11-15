@@ -21,10 +21,14 @@ export function relayOutcomeNote(result: RelaySendResult, otherRole: string, dea
 const RELAY_CLAIM = /\b(?:passed (?:it |that |your message )?on|relayed|forwarded|sent (?:it|that|your message|the message)|delivered|told (?:him|her|them|the (?:buyer|seller))|let (?:him|her|them|the (?:buyer|seller)) know|(?:come|get) back (?:here )?with|their (?:reply|answer|response))\b/i;
 const RELAY_HONEST = /\b(?:could ?n[o']t|can ?n[o']t|unable|did ?n[o']t|was ?n[o']t|not (?:been )?(?:sent|delivered|confirmed|passed)|did not go through)\b/i;
 
-/** Relay was not confirmed delivered: a model reply that claims otherwise is dropped (null = existing scripted fallback chain).
+// Existing customer-facing clause for a failed relay (same wording as the photo relay failure in routes/whatsappWebhook.ts).
+// Returning null here is NOT safe: the webhook re-runs the whole brain turn once on a null, which could send the relay twice.
+export const RELAY_NOT_PASSED_REPLY = "I could not pass it to the other side just now.";
+
+/** Relay was not confirmed delivered: a model reply that claims otherwise is replaced by the existing failure clause.
  *  Replies that already say it was not sent or not confirmed are kept. */
 export function guardRelayClaim(reply: string | null, relayUndelivered: boolean): string | null {
   if (!relayUndelivered || !reply) return reply;
   if (RELAY_HONEST.test(reply)) return reply;
-  return RELAY_CLAIM.test(reply) ? null : reply;
+  return RELAY_CLAIM.test(reply) ? RELAY_NOT_PASSED_REPLY : reply;
 }
