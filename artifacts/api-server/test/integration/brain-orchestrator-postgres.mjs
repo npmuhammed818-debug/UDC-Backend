@@ -31,7 +31,7 @@ const pass = (l) => { checks++; console.log("PASSED: " + l); };
 try {
   await build({
     stdin: {
-      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
+      contents: `export { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } from './src/akif/brainOrchestrator.ts';export { brainTurnHadExternalSend } from './src/akif/relayOutcome.ts';export { pool, db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable } from '@workspace/db';export { eq, sql } from 'drizzle-orm';export { readSunkReplies } from './src/whatsapp/replySink.ts';`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
@@ -41,7 +41,7 @@ try {
   pool = app.pool;
   const { runBrainTurn, isBrainOrchestratorEnabled, BRAIN_TOOLS } = app;
   const { db, usersTable, companiesTable, auditLogsTable, whatsappChatSessionsTable, buyerRequestsTable, dealsTable, productsTable, eq, sql } = app;
-  const { readSunkReplies } = app;
+  const { readSunkReplies, brainTurnHadExternalSend } = app;
 
   assert.ok(isBrainOrchestratorEnabled(), "flag on");
   pass("orchestrator env flag reads on");
@@ -389,6 +389,44 @@ try {
   assert.equal(out?.handled, true);
   assert.match(out.reply, /did not go through/);
   pass("false-success guard: a truthful not-sent reply is kept");
+
+  // Turn 19e: Meta answers 5xx, so the outcome is UNKNOWN (the message may already have been sent). The model must
+  // not be told it was relayed, an overclaim becomes the uncertain wording (not "could not pass it"), and no relay is audited.
+  const realFetch = globalThis.fetch;
+  let metaCalls = 0;
+  globalThis.fetch = async () => { metaCalls++; return new Response("upstream", { status: 502 }); };
+  Object.assign(process.env, { WHATSAPP_ACCESS_TOKEN: "synthetic-token", WHATSAPP_PHONE_NUMBER_ID: "123456" });
+  let unknownNote = "";
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("relay_to_other_party", { message: "Can you ship on Friday?" })] };
+    unknownNote = tool.content;
+    return { content: "Done - I passed your message to the seller and will come back with their reply.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "ask the seller about Friday please", messageId: "m19e" }, chat);
+  delete process.env.WHATSAPP_ACCESS_TOKEN; delete process.env.WHATSAPP_PHONE_NUMBER_ID; globalThis.fetch = realFetch;
+  assert.ok(metaCalls >= 1, "the send was attempted against the stubbed provider only");
+  assert.match(unknownNote, /could not be confirmed/, "model is told delivery is unconfirmed");
+  assert.doesNotMatch(unknownNote, /could not be sent|try again/, "unknown is not described as not sent");
+  assert.equal(out?.handled, true);
+  assert.equal(out?.reply, "I couldn't confirm whether the message went through.");
+  assert.equal((await db.select().from(auditLogsTable).where(sql`${auditLogsTable.action} = 'whatsapp_brain_relay'`)).length, relayRowsBefore, "no relay audit row for an unconfirmed send");
+  assert.equal(brainTurnHadExternalSend(phone, "m19e"), true, "unknown outcome marks the turn so the webhook will not re-run it");
+  pass("unknown delivery: uncertain wording, no audit, and the turn is marked as possibly sent");
+
+  // Turn 19f: relay confirmed delivered, then the model's final reply is unsafe (validator rejects it, null).
+  // The turn must be marked so the webhook does not re-run it and relay again.
+  process.env.AKIF_WHATSAPP_REPLY_SINK = "store";
+  chat = async (messages) => {
+    const tool = messages.filter((m) => m.role === "tool").at(-1);
+    if (!tool) return { content: null, toolCalls: [toolCall("relay_to_other_party", { message: "Can you ship on Friday?" })] };
+    return { content: "Deal approved, payment is approved.", toolCalls: [] };
+  };
+  out = await runBrainTurn({ phone, text: "ask the seller about Friday once more", messageId: "m19f" }, chat);
+  assert.equal(out?.handled ?? false, false, "unsafe reply is rejected to the scripted path");
+  assert.equal(brainTurnHadExternalSend(phone, "m19f"), true, "a confirmed send followed by a rejected reply marks the turn, so no re-run");
+  assert.equal(brainTurnHadExternalSend(phone, "m19-other"), false, "other turns are unaffected");
+  pass("a confirmed send followed by a rejected reply is marked so the webhook cannot relay twice");
   if (sinkBefore === undefined) delete process.env.AKIF_WHATSAPP_REPLY_SINK; else process.env.AKIF_WHATSAPP_REPLY_SINK = sinkBefore;
   process.env.AKIF_WHATSAPP_REPLY_SINK = "store";
 

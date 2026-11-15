@@ -27,6 +27,7 @@ import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../d
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
 import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { brainTurnHadExternalSend } from "../akif/relayOutcome";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
 import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
@@ -2267,7 +2268,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           }
           if (brain?.reply === BRAIN_BUSY_REPLY) brain = null; // never send the floor line
         }
-        if (!brain?.handled) {
+        // Never re-run a turn that already did an external send: a re-run could send twice.
+        if (!brain?.handled && !brainTurnHadExternalSend(message.from, message.id)) {
           // One retry before any fallback: provider rate limits are the common
           // failure and often clear within seconds.
           await new Promise((resolve) => setTimeout(resolve, 3000));

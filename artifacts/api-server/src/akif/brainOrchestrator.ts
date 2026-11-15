@@ -20,7 +20,7 @@ import { claimsUnverifiedFact } from "./conversationPolicy.ts";
 import { guidedQuestions, validate as validateGuidedAnswer, type Question } from "../whatsapp/guidedChat.ts";
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
-import { guardRelayClaim, relayOutcomeNote, relayWasDelivered, type RelaySendResult } from "./relayOutcome.ts";
+import { guardRelayClaim, noteExternalSend, relayOutcomeNote, relayUndeliveredKind, relayWasDelivered, type RelaySendResult, type RelayUndelivered } from "./relayOutcome.ts";
 import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
 import { emailToolOutcome, guardEmailClaim } from "./emailOutcomeGuard.ts";
 import { withoutRole } from "./registrationArgs.ts";
@@ -156,7 +156,7 @@ const FORGET_TOOL: GroqToolDefinition = { type: "function", function: { name: "f
 
 const INFO_FEATURES = new Set(["deals", "track", "verification", "documents", "profile", "change_role", "referrals", "commissions", "invite", "meeting"]);
 
-type ToolOutcome = { note: string; finalReply?: string; unavailable?: boolean; relayUndelivered?: boolean };
+type ToolOutcome = { note: string; finalReply?: string; unavailable?: boolean; relayUndelivered?: RelayUndelivered; externalSend?: boolean };
 
 async function executeTool(phone: string, name: string, argsJson: string, state: BrainSession): Promise<ToolOutcome> {
   let args: Record<string, unknown> = {};
@@ -339,11 +339,11 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     try {
       relaySend = await sendWhatsAppText(other.phone, `Message from the ${role} on your UDC deal ${deal.dealNumber}, passed on by AKIF:\n\n"${relayText.slice(0, 900)}"\n\nReply here and I will pass your answer back.`) as RelaySendResult;
     } catch {
-      return { note: relayOutcomeNote(null, otherRole, deal.dealNumber), relayUndelivered: true };
+      return { note: relayOutcomeNote(null, otherRole, deal.dealNumber), relayUndelivered: relayUndeliveredKind(null, true) };
     }
-    if (!relayWasDelivered(relaySend)) return { note: relayOutcomeNote(relaySend, otherRole, deal.dealNumber), relayUndelivered: true };
+    if (!relayWasDelivered(relaySend)) return { note: relayOutcomeNote(relaySend, otherRole, deal.dealNumber), relayUndelivered: relayUndeliveredKind(relaySend, false), externalSend: relayUndeliveredKind(relaySend, false) === "unknown" };
     await db.insert(auditLogsTable).values({ actorUserId: user.id, action: "whatsapp_brain_relay", entityType: "deal", entityId: deal.id, metadata: { channel: "whatsapp", via: "brain_orchestrator", dealNumber: deal.dealNumber, from: role } }).catch(() => undefined);
-    return { note: relayOutcomeNote(relaySend, otherRole, deal.dealNumber) };
+    return { note: relayOutcomeNote(relaySend, otherRole, deal.dealNumber), externalSend: true };
   }
   if (name === "forget_everything") {
     const [u] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
@@ -536,7 +536,7 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
 
   let finalReply: string | null = null;
   let emailUnavailable = false;
-  let relayUndelivered = false;
+  let relayUndelivered: RelayUndelivered = false;
   const toolsUsed: string[] = [];
   let backgroundRequests: import("./intelligence/groqClient.ts").GroqToolCall[] | null = null;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -567,7 +567,8 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
       toolsUsed.push(call.name);
       if (outcome.finalReply) finalReply = outcome.finalReply;
       if (call.name === "send_email_code" && outcome.unavailable) emailUnavailable = true;
-      if (call.name === "relay_to_other_party" && outcome.relayUndelivered) relayUndelivered = true;
+      if (call.name === "relay_to_other_party" && outcome.relayUndelivered) relayUndelivered = outcome.relayUndelivered;
+      if (outcome.externalSend || (call.name === "send_email_code" && !outcome.unavailable)) noteExternalSend(input.phone, input.messageId);
       messages.push({ role: "tool", tool_call_id: call.id, name: call.name, content: outcome.note });
     }
   }

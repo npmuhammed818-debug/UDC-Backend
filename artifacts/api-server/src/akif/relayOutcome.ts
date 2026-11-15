@@ -18,7 +18,7 @@ export function relayOutcomeNote(result: RelaySendResult, otherRole: string, dea
 }
 
 // A reply that says the other party was told, or that their answer is coming, is false when nothing was confirmed sent.
-const RELAY_CLAIM = /\b(?:passed (?:it |that |your message )?on|relayed|forwarded|sent (?:it|that|your message|the message)|delivered|told (?:him|her|them|the (?:buyer|seller))|let (?:him|her|them|the (?:buyer|seller)) know|(?:come|get) back (?:here )?with|their (?:reply|answer|response))\b/i;
+const RELAY_CLAIM = /\b(?:pass(?:ed|ing)\b|relayed|forwarded|sent (?:it|that|your message|the message)|delivered|told (?:him|her|them|the (?:buyer|seller))|let (?:him|her|them|the (?:buyer|seller)) know|(?:come|get) back (?:here )?with|their (?:reply|answer|response))\b/i;
 const RELAY_HONEST = /\b(?:could ?n[o']t|can ?n[o']t|unable|did ?n[o']t|was ?n[o']t|not (?:been )?(?:sent|delivered|confirmed|passed)|did not go through)\b/i;
 
 // Existing customer-facing clause for a failed relay (same wording as the photo relay failure in routes/whatsappWebhook.ts).
@@ -27,8 +27,31 @@ export const RELAY_NOT_PASSED_REPLY = "I could not pass it to the other side jus
 
 /** Relay was not confirmed delivered: a model reply that claims otherwise is replaced by the existing failure clause.
  *  Replies that already say it was not sent or not confirmed are kept. */
-export function guardRelayClaim(reply: string | null, relayUndelivered: boolean): string | null {
+export type RelayUndelivered = false | "not_sent" | "unknown";
+// Wording for an uncertain delivery, as shown to the owner in WhatsApp on Nov 15 2026 before this change.
+export const RELAY_UNCONFIRMED_REPLY = "I couldn't confirm whether the message went through.";
+
+export function guardRelayClaim(reply: string | null, relayUndelivered: RelayUndelivered | boolean): string | null {
   if (!relayUndelivered || !reply) return reply;
   if (RELAY_HONEST.test(reply)) return reply;
-  return RELAY_CLAIM.test(reply) ? RELAY_NOT_PASSED_REPLY : reply;
+  if (!RELAY_CLAIM.test(reply)) return reply;
+  return relayUndelivered === "unknown" ? RELAY_UNCONFIRMED_REPLY : RELAY_NOT_PASSED_REPLY;
 }
+
+/** Which relay result classes mean the original may already have gone out. */
+export function relayUndeliveredKind(result: RelaySendResult, threw: boolean): RelayUndelivered {
+  if (!threw && result?.delivered === true) return false;
+  return !threw && result?.reason === "provider_outcome_unknown" ? "unknown" : "not_sent";
+}
+
+// Brain turns that already did an external send. The webhook must not re-run such a turn: a re-run could send twice.
+const externalSends = new Map<string, number>();
+const sendKey = (phone: string, messageId?: string) => `${phone}|${messageId ?? ""}`;
+export function noteExternalSend(phone: string, messageId?: string, now = Date.now()) {
+  for (const [k, t] of externalSends) if (now - t > 15 * 60_000) externalSends.delete(k);
+  externalSends.set(sendKey(phone, messageId), now);
+}
+export function brainTurnHadExternalSend(phone: string, messageId?: string): boolean {
+  return externalSends.has(sendKey(phone, messageId));
+}
+export function resetExternalSendsForTest() { externalSends.clear(); }
