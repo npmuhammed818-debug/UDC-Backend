@@ -106,7 +106,7 @@ async function knownBrainName(phone: string): Promise<string | null> {
   try { const m = (await import("../akif/brainOrchestrator")) as { brainKnownFullName?: (p: string) => Promise<string | null> }; return (await m.brainKnownFullName?.(phone)) ?? null; } catch { return null; }
 }
 async function brainOwnsRegistration(phone: string, text: string): Promise<boolean> {
-  if (isAgentRegistrationRequest(text)) return true;
+  if (isAgentRegistrationRequest(text) || /^(?:(?:i\s+(?:want|would like|wish)\s+to\s+)?(?:register|sign\s*up|join)(?:\s+as)?\s+)?(?:an?\s+)?(?:agent|broker)[.!\s]*$/i.test(text.trim())) return true;
   try { const m = (await import("../akif/brainOrchestrator")) as { brainHasOpenRegistration?: (p: string) => Promise<boolean> }; return (await m.brainHasOpenRegistration?.(phone)) ?? false; } catch { return false; }
 }
 async function knownBrainEmail(phone: string): Promise<string | null> {

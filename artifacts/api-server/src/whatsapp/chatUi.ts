@@ -1,3 +1,4 @@
+import { looksLikeFullName } from "./nameCheck.ts";
 import {offerHumanHelpButton} from './humanHelp';
 import {emailAuth} from '../auth/emailAuth';
 import { etaAdvisory, etaAdvisoryLabel } from "../tracking/etaAdvisory";
@@ -150,7 +151,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
     let user=existing;let reply:string;
     if(token.purpose.startsWith('profile_')){
       const role=token.purpose.slice(8);
-      const input=z.object({full_name:z.string().trim().min(2).max(120),email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),company_name:z.string().trim().max(200).optional(),country:z.string().trim().max(120).optional(),registration_number:z.string().trim().max(100).optional()}).parse(data);
+      const input=z.object({full_name:z.string().trim().min(2).max(120).refine(v=>looksLikeFullName(v),'not a name'),email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),company_name:z.string().trim().max(200).optional(),country:z.string().trim().max(120).optional(),registration_number:z.string().trim().max(100).optional()}).parse(data);
       if(existing&&existing.role!==role)return `Your account is already registered as ${existing.role}. UDC must review role changes.`;
       if(role!=='agent'&&(!businessEmail(input.email,phone)||!input.company_name||!input.country))return 'Buyers and sellers need a company email, company name and country. Open My profile to submit those details. Agents may use personal or business email.';
       // An email is contact data; never bind it to an unrelated existing web identity.

@@ -71,7 +71,11 @@ async function loadBrainSession(phone: string): Promise<{ key: string; state: Br
   if (!fresh) return { key, state: empty, found: false };
   try {
     const data = fresh.data as { brain?: BrainSession };
-    return { key, state: { fields: { ...(data.brain?.fields ?? {}) }, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned) }, found: true };
+    const loaded: Record<string, string> = { ...(data.brain?.fields ?? {}) };
+    // Write-boundary guard for stale persisted state: an email-shaped or otherwise invalid value is never kept as the name, and a non-email is never kept as the email.
+    if (loaded.full_name && !looksLikeFullName(loaded.full_name)) delete loaded.full_name;
+    if (loaded.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(loaded.email.trim())) delete loaded.email;
+    return { key, state: { fields: loaded, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned) }, found: true };
   } catch {
     return { key, state: empty, found: false };
   }
@@ -204,6 +208,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const role = roleSchema.safeParse(args.role);
     if (!role.success) return { note: "Role must be buyer, seller or agent." };
     const purpose = ("profile_" + role.data) as FlowPurpose;
+    if (state.fields.full_name && !looksLikeFullName(state.fields.full_name)) delete state.fields.full_name;
     const missing = missingRequired(purpose, state.fields);
     if (missing.length) return { note: `Cannot submit yet; still needed: ${missing.join(", ")}.` };
     const result = await registerWhatsAppProfileDirect(phone, role.data, {

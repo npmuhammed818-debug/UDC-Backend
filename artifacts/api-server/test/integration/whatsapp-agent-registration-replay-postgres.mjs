@@ -108,8 +108,11 @@ try {
   await pool.query('delete from users where phone=$1', [ME]);
   await pool.query("delete from whatsapp_chat_sessions where purpose='brain_orchestrator'");
   mail.outbox.length = 0;
+  let startOut = [];
   for (const t of ['Agent', TYPED, "I'm an agent", EMAIL]) { const n = metaSends.length; await post(t, ME); await settle();
+    if (t === 'Agent') startOut = metaSends.slice(n).filter(s => s.status !== 'read').map(s => String(s.text?.body ?? ''));
     console.log('  E inbound', JSON.stringify(t), '-> outbound', metaSends.slice(n).filter(s => s.status !== 'read').map(s => String(s.text?.body ?? s.type ?? '?').slice(0, 80))); }
+  assert.ok(startOut.length >= 1 && /full name/i.test(startOut.join(' ')), 'E: the bare Agent start is answered at once by the registration owner (not held for the relay)');
   const e = await user(); console.log('  E user rows', JSON.stringify(e));
   assert.equal(e.length, 1); assert.equal(e[0].full_name, TYPED); assert.equal(e[0].email, EMAIL);
   assert.equal((await pool.query('select count(*)::int c from email_auth_challenges where user_id=$1', [e[0].id])).rows[0].c, 1);
@@ -128,9 +131,13 @@ try {
   await post("I'm an agent", ME); await settle();
   let d = await user(); console.log('  D after typed request, rows', JSON.stringify(d));
   assert.equal(d.length, 1); assert.equal(d[0].id, seedId); assert.equal(d[0].full_name, PROFILE, 'typed shortcut did not touch the malformed row');
-  // The brain submit path would write the malformed fields: show what it would store.
+  // Write-boundary guard: even when the model submits against the stale malformed session, the email is never stored as the name.
   await post(EMAIL, ME); await settle();
   d = await user(); console.log('  D after email turn (model submits), rows', JSON.stringify(d));
+  assert.equal(d.length, 1); assert.equal(d[0].id, seedId);
+  assert.notEqual(d[0].full_name, EMAIL, 'D: email-shaped value never written as full_name');
+  assert.equal(d[0].full_name, PROFILE, 'D: row unchanged by a submit that lacks a valid typed name');
+  console.log('PASSED D: stale malformed session cannot write an email as the name');
   await pool.query('delete from email_auth_challenges where user_id=$1', [seedId]);
   await pool.query('update users set full_name=$2, email=null where id=$1', [seedId, PROFILE]); // back to the live pending-row shape
   // ---- Variant R: proposed reset: remove only the bad full_name from the session; row untouched; brain asks the name then submits in place.
