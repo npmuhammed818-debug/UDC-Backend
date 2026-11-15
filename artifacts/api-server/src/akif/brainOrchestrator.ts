@@ -20,6 +20,7 @@ import { claimsUnverifiedFact } from "./conversationPolicy.ts";
 import { guidedQuestions, validate as validateGuidedAnswer, type Question } from "../whatsapp/guidedChat.ts";
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
+import { relayOutcomeNote, relayWasDelivered, type RelaySendResult } from "./relayOutcome.ts";
 import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
 import { emailToolOutcome, guardEmailClaim } from "./emailOutcomeGuard.ts";
 import { withoutRole } from "./registrationArgs.ts";
@@ -334,13 +335,15 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const otherRole = role === "buyer" ? "seller" : "buyer";
     const [other] = await db.select().from(usersTable).where(eq(usersTable.id, role === "buyer" ? deal.sellerUserId : deal.buyerUserId)).limit(1);
     if (!other?.phone) return { note: "The other party cannot be reached here; tell the customer UDC will follow up." };
+    let relaySend: RelaySendResult;
     try {
-      await sendWhatsAppText(other.phone, `Message from the ${role} on your UDC deal ${deal.dealNumber}, passed on by AKIF:\n\n"${relayText.slice(0, 900)}"\n\nReply here and I will pass your answer back.`);
+      relaySend = await sendWhatsAppText(other.phone, `Message from the ${role} on your UDC deal ${deal.dealNumber}, passed on by AKIF:\n\n"${relayText.slice(0, 900)}"\n\nReply here and I will pass your answer back.`) as RelaySendResult;
     } catch {
-      return { note: "The relay could not be sent just now; tell the customer you will try again shortly." };
+      return { note: relayOutcomeNote(null, otherRole, deal.dealNumber) };
     }
+    if (!relayWasDelivered(relaySend)) return { note: relayOutcomeNote(relaySend, otherRole, deal.dealNumber) };
     await db.insert(auditLogsTable).values({ actorUserId: user.id, action: "whatsapp_brain_relay", entityType: "deal", entityId: deal.id, metadata: { channel: "whatsapp", via: "brain_orchestrator", dealNumber: deal.dealNumber, from: role } }).catch(() => undefined);
-    return { note: `The customer's message was relayed to the ${otherRole} for deal ${deal.dealNumber}. Tell the customer you passed it on to the ${otherRole} and will come back here with their reply. Never share the ${otherRole}'s contact details.` };
+    return { note: relayOutcomeNote(relaySend, otherRole, deal.dealNumber) };
   }
   if (name === "forget_everything") {
     const [u] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
