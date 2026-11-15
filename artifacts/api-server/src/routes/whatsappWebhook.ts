@@ -101,6 +101,10 @@ import { requestedWhatsAppDraft, mayPrepareWhatsAppDraft, whatsappDraftConfirmat
 import { contactsUnlocked } from "../deals/contactSharing";
 import type { SpaDraftInput } from "../deals/spaDraft";
 
+// Name already given in the brain chat, read-only; any failure falls back to the profile name.
+async function knownBrainName(phone: string): Promise<string | null> {
+  try { const m = (await import("../akif/brainOrchestrator")) as { brainKnownFullName?: (p: string) => Promise<string | null> }; return (await m.brainKnownFullName?.(phone)) ?? null; } catch { return null; }
+}
 const router: IRouter = Router();
 
 
@@ -2030,7 +2034,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
 
       if (message.from && isAgentRegistrationRequest(message.text.body)) {
-        try { await deliverWhatsAppReply(message.from, await registerWhatsAppAgent(message.from, fullName)); }
+        try { await deliverWhatsAppReply(message.from, await registerWhatsAppAgent(message.from, (await knownBrainName(message.from)) ?? fullName)); }
         catch { await deliverWhatsAppReply(message.from, "I couldn’t save the agent registration just now. Please try again shortly."); }
         continue;
       }

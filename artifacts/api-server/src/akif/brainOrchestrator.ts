@@ -19,6 +19,7 @@ import { isSafeConversationText } from "./dealDecisionSafety.ts";
 import { claimsUnverifiedFact } from "./conversationPolicy.ts";
 import { guidedQuestions, validate as validateGuidedAnswer, type Question } from "../whatsapp/guidedChat.ts";
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
+import { looksLikeFullName } from "../whatsapp/nameCheck.ts";
 import { captureBareAnswer, knownFactsBlock } from "./knownFacts.ts";
 import { guardRelayClaim, noteExternalSend, relayOutcomeNote, relayUndeliveredKind, relayWasDelivered, type RelaySendResult, type RelayUndelivered } from "./relayOutcome.ts";
 import { handleEmailVerification } from "../whatsapp/emailVerification.ts";
@@ -74,6 +75,15 @@ async function loadBrainSession(phone: string): Promise<{ key: string; state: Br
   } catch {
     return { key, state: empty, found: false };
   }
+}
+
+/** The full name this customer already gave in the brain chat (validated), if any. Read-only. */
+export async function brainKnownFullName(phone: string): Promise<string | null> {
+  try {
+    const { state } = await loadBrainSession(phone);
+    const name = state.fields.full_name?.trim();
+    return name && looksLikeFullName(name) ? name : null;
+  } catch { return null; }
 }
 
 // Durable menu lock: the word "menu" may be surfaced exactly once per
