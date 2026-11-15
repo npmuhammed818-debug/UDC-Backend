@@ -105,6 +105,13 @@ import type { SpaDraftInput } from "../deals/spaDraft";
 async function knownBrainName(phone: string): Promise<string | null> {
   try { const m = (await import("../akif/brainOrchestrator")) as { brainKnownFullName?: (p: string) => Promise<string | null> }; return (await m.brainKnownFullName?.(phone)) ?? null; } catch { return null; }
 }
+async function brainOwnsRegistration(phone: string, text: string): Promise<boolean> {
+  if (isAgentRegistrationRequest(text)) return true;
+  try { const m = (await import("../akif/brainOrchestrator")) as { brainHasOpenRegistration?: (p: string) => Promise<boolean> }; return (await m.brainHasOpenRegistration?.(phone)) ?? false; } catch { return false; }
+}
+async function knownBrainEmail(phone: string): Promise<string | null> {
+  try { const m = (await import("../akif/brainOrchestrator")) as { brainKnownEmail?: (p: string) => Promise<string | null> }; return (await m.brainKnownEmail?.(phone)) ?? null; } catch { return null; }
+}
 const router: IRouter = Router();
 
 
@@ -1788,7 +1795,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // not the relay - same skip as typed text (duplicate-question bug, 10 Nov).
       const relayVoiceIntake = message.from && typeof message.audio?.id === "string" ? await loadWhatsAppIntakeDraft(message.from) : null;
       const relayVoiceHasOpenIntake = Boolean(relayVoiceIntake && !relayVoiceIntake.stale);
-      if (message.from && typeof message.audio?.id === "string" && humanRelayActiveFor(message.from) && !relayVoiceHasOpenIntake) {
+      if (message.from && typeof message.audio?.id === "string" && humanRelayActiveFor(message.from) && !relayVoiceHasOpenIntake && !(await brainOwnsRegistration(message.from, ""))) {
         if (!isAkifWorkerMediaEnabled()) {
           await deliverWhatsAppReply(message.from, "Voice notes aren’t available right now. Please type your message.");
           continue;
@@ -2034,9 +2041,17 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
 
       if (message.from && isAgentRegistrationRequest(message.text.body)) {
-        try { await deliverWhatsAppReply(message.from, await registerWhatsAppAgent(message.from, (await knownBrainName(message.from)) ?? fullName)); }
-        catch { await deliverWhatsAppReply(message.from, "I couldn’t save the agent registration just now. Please try again shortly."); }
-        continue;
+        // One owner for an unfinished registration: the brain chat. The typed
+        // shortcut only completes when the customer already typed their own
+        // name and email there; it never uses the WhatsApp profile name.
+        const typedName = await knownBrainName(message.from);
+        const typedEmail = typedName ? await knownBrainEmail(message.from) : null;
+        let handled = false;
+        try {
+          const registered = await registerWhatsAppAgent(message.from, typedName ?? undefined, typedEmail);
+          if (registered !== null) { handled = true; await deliverWhatsAppReply(message.from, registered); }
+        } catch { handled = true; await deliverWhatsAppReply(message.from, "I couldn’t save the agent registration just now. Please try again shortly."); }
+        if (handled) continue;
       }
 
       const pendingIntake = message.from
@@ -2129,7 +2144,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       // intake draft, even a freshly opened one with no fields yet (the
       // duplicate-question bug the owner hit, 10 Nov).
       const hasOpenIntake = Boolean(pendingIntake && !pendingIntake.stale);
-      if (message.from && !dealActionDirect && !hasOpenIntake && humanRelayActiveFor(message.from)) {
+      if (message.from && !dealActionDirect && !hasOpenIntake && humanRelayActiveFor(message.from) && !(await brainOwnsRegistration(message.from, message.text.body))) {
         // Acknowledgements (ok, thanks, noted): a reaction, no text reply, no
         // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
         if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {

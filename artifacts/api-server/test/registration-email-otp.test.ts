@@ -88,7 +88,7 @@ test('registration does not claim a code was sent when none was produced', async
   try {
     state.codeSent = false;
     const m = await import(output);
-    const reply = await m.registerWhatsAppAgent('10000000020', 'Synthetic Agent');
+    const reply = await m.registerWhatsAppAgent('10000000020', 'Synthetic Agent', 'agent@example.invalid');
     assert.doesNotMatch(reply, /6-digit code/);
     assert.match(reply, /pending UDC review/);
   } finally { await unlink(output); }
@@ -98,7 +98,7 @@ test('quick agent registration asks for the OTP before confirming, and only Sand
   const { state, output } = await makeBundle('__otpAgent', "export { registerWhatsAppAgent } from '../src/akif/agentRegistration';", { knownEmail: 'agent@example.invalid' });
   try {
     const m = await import(output);
-    const reply = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent');
+    const reply = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent', 'agent@example.invalid');
     assert.match(reply, /6-digit code/);
     assert.match(reply, /finish your registration/);
     assert.doesNotMatch(reply, /pending UDC review\. Agent deal access/);
@@ -108,7 +108,7 @@ test('quick agent registration asks for the OTP before confirming, and only Sand
     // Second call: the account exists with an unverified email. Owner rule
     // (10 Nov): OTP for everyone except Sandra, so a fresh code goes out.
     state.emailCalls.length = 0;
-    const again = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent');
+    const again = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent', 'agent@example.invalid');
     assert.match(again, /6-digit code/);
     assert.equal(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 1);
 
@@ -122,9 +122,11 @@ test('quick agent registration asks for the OTP before confirming, and only Sand
 
     // No email collected: registration saves with the classic reply, no code.
     state.knownEmail = null;
+    // No customer-typed name and email: nothing is created and nothing is claimed.
+    const before = rows_agent(state).length;
     const plain = await m.registerWhatsAppAgent('10000000011');
-    assert.match(plain, /pending UDC review/);
-    assert.doesNotMatch(plain, /6-digit code/);
+    assert.equal(plain, null);
+    assert.equal(rows_agent(state).length, before);
   } finally { await unlink(output); }
   function rows_agent(s: any) { return s.rows.usersTable; }
 });

@@ -83,7 +83,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../akif/recordPendingSellerOffer": "export const recordPendingSellerOffer=async x=>{s.recorded.push(x);return {id:'offer',status:'pending_admin_review'};};",
     "../akif/intelligence/workerClient": "export const isAkifWorkerMediaEnabled=()=>true;export const warmAkifWorker=()=>{};export const transcribeAkifAudioDetailed=async()=>({text:s.transcript??'100 MT copper',language:s.language??null});export const synthesizeAkifSpeechTimed=async()=>({bytes:new Uint8Array([1,2]),seconds:s.voiceSeconds??5});",
     "../akif/brainOrchestrator":
-      "export const isBrainOrchestratorEnabled=()=>Boolean(s.brainMode);export const runBrainTurn=async i=>{s.brainCalls.push(i);const m=s.brainMode;if(!m)return null;if(m.send)s.markSend(i.phone,i.messageId);if(m.throws)throw Error('synthetic_brain_throw');return m.result??null;};export const BRAIN_TOOLS=[];",
+      "export const brainKnownFullName=async()=>s.typedName??null;export const brainKnownEmail=async()=>s.typedEmail??null;export const brainHasOpenRegistration=async()=>false;export const isBrainOrchestratorEnabled=()=>Boolean(s.brainMode);export const runBrainTurn=async i=>{s.brainCalls.push(i);const m=s.brainMode;if(!m)return null;if(m.send)s.markSend(i.phone,i.messageId);if(m.throws)throw Error('synthetic_brain_throw');return m.result??null;};export const BRAIN_TOOLS=[];",
     "../akif/queueResearch": "export const queueWhatsAppResearch=async()=>null;",
     "../whatsapp/voicePreference": "export const parseVoiceCommand=t=>/^text only$/i.test((t||'').trim())?'text_only':null;export const setTextOnly=async()=>true;export const TEXT_ONLY_CONFIRMATION='Fixture text only';export const VOICE_ON_CONFIRMATION='Fixture voice on';export const getVoiceState=async()=>s.voiceState??'voice';export const recordNotice=async()=>{s.noticeRecorded=(s.noticeRecorded||0)+1;return true;};export const VOICE_NOTICE='Fixture voice notice';",
     "../whatsapp/inboundDedup": "export const claimInboundMessage=async()=>{if(s.dedupFailure)throw Error('synthetic_dedup_failure');if(s.redelivery)return false;return true;};export const completeInboundMessages=async()=>{};export const inboundClaimInProgress=async()=>s.redelivery==='unfinished';export const releaseInboundMessages=async()=>{};",
@@ -421,9 +421,12 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       await message({ text: { body: "Register me as an agent" } }); assert.equal(rows.usersTable.length, 0);
       state.privacyReply = null;
       rows.usersTable.push({ id: "admin", role: "admin", status: "verified" });
+      // No customer-typed name and email yet: nothing is created (the brain chat collects them); the WhatsApp profile name is never used.
+      await message({ text: { body: "Register me as an agent" } }); assert.equal(rows.usersTable.length, 1); state.intake.length = 0; state.brainCalls.length = 0;
+      state.typedName = "Typed Name"; state.typedEmail = "typed@example.invalid";
       await message({ text: { body: "Register me as an agent" } });
       const agent = rows.usersTable.find(user => user.phone === "10000000001");
-      assert.equal(agent.role, "agent"); assert.equal(agent.status, "pending");
+      assert.equal(agent.role, "agent"); assert.equal(agent.status, "pending"); assert.equal(agent.fullName, "Typed Name"); assert.equal(agent.email, "typed@example.invalid");
       assert.equal(rows.auditLogsTable.filter(row => row.action === "agent_registration_requested").length, 1);
       assert.equal(rows.notificationsTable[0].userId, "admin"); assert.deepEqual(state.intake, []); assert.equal(state.dealCalls, 0);
       await message({ text: { body: "I'm a broker" } }); assert.equal(rows.usersTable.length, 2);

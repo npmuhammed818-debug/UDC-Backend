@@ -14,7 +14,8 @@ export function isAgentRegistrationRequest(text: string) {
   return /^(?:(?:please\s+)?register me as (?:an?\s+)?(?:agent|broker)|i (?:am|want to (?:join|register) as) (?:an?\s+)?(?:agent|broker)|i['’]m (?:an?\s+)?(?:agent|broker))[.!\s]*$/i.test(text.trim());
 }
 
-export async function registerWhatsAppAgent(phone: string, fullName?: string) {
+/** Returns null (nothing created, nothing said) when the phone has no account yet and the customer has not typed both a name and an email: the brain chat owns collecting them. */
+export async function registerWhatsAppAgent(phone: string, fullName?: string, typedEmail?: string | null) {
   const result = await db.transaction(async tx => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'agent_registration:' + phone}))`);
     const [existing] = await tx.select({ id: usersTable.id, role: usersTable.role, status: usersTable.status, email: usersTable.email }).from(usersTable).where(eq(usersTable.phone, phone)).limit(1);
@@ -29,21 +30,23 @@ export async function registerWhatsAppAgent(phone: string, fullName?: string) {
       const otpExempt = phone === OTP_EXEMPT_PHONE;
       return { reply, userId: otpExempt ? null : (existing.id as string | null), email: otpExempt ? null : (existing.email ?? null) as string | null };
     }
+    if (!fullName?.trim() || !typedEmail) return { reply: null as string | null, userId: null as string | null, email: null as string | null };
     // Registration must keep what the customer already gave in chat (owner
     // feedback, 10 Nov): name and email collected in the relay thread land
     // on the account instead of being lost and re-asked.
     const known = knownFactsForContact(phone);
-    const [agent] = await tx.insert(usersTable).values({phone,fullName:fullName?.trim().slice(0,120) || known.name?.slice(0,120) || 'WhatsApp Agent',email:known.email ?? null,role:'agent',status:'pending',passwordHash:await hashPassword(randomUUID())}).returning({id:usersTable.id});
+    const [agent] = await tx.insert(usersTable).values({phone,fullName:fullName?.trim().slice(0,120) || known.name?.slice(0,120) || 'WhatsApp Agent',email:typedEmail ?? known.email ?? null,role:'agent',status:'pending',passwordHash:await hashPassword(randomUUID())}).returning({id:usersTable.id});
     await tx.insert(auditLogsTable).values({actorUserId:agent.id,action:'agent_registration_requested',entityType:'user',entityId:agent.id,metadata:{channel:'whatsapp',requiresAdminReview:true}});
     const admins = await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),inArray(usersTable.status,['verified','active']))).limit(100);
     if(admins.length) await tx.insert(notificationsTable).values(admins.map(admin=>({userId:admin.id,type:'agent_registration_requested',title:'Agent registration needs review',body:'A WhatsApp agent registration is pending your review.',link:'/admin'})));
     queueAdminReviewAlert("agent registration", fullName);
-    return { reply: 'Your agent registration is pending UDC review. Agent deal access starts after approval.', userId: agent.id as string | null, email: (known.email ?? null) as string | null };
+    return { reply: 'Your agent registration is pending UDC review. Agent deal access starts after approval.', userId: agent.id as string | null, email: (typedEmail ?? known.email ?? null) as string | null };
   });
   // Owner rule (10 Nov): the email OTP is part of registration itself, asked
   // right after the email is given, before registration is treated as done.
   // New registrations and non-exempt existing accounts with an email trigger a
   // code here; Sandra's exempt account returns userId/email null above.
+  if (result.reply === null) return null;
   if (result.userId && result.email && !isTesterPhone(phone)) {
     try {
       if (!(await emailAuth.status(result.userId)).emailVerified) {

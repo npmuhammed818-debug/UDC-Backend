@@ -86,6 +86,24 @@ export async function brainKnownFullName(phone: string): Promise<string | null> 
   } catch { return null; }
 }
 
+export async function brainKnownEmail(phone: string): Promise<string | null> {
+  try {
+    const { state } = await loadBrainSession(phone);
+    const e = state.fields.email?.trim();
+    return e && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e) ? e : null;
+  } catch { return null; }
+}
+
+/** True while the customer is partway through registration in the brain chat (details saved, not yet submitted). The relay must not hold or answer these turns. Read-only. */
+export async function brainHasOpenRegistration(phone: string): Promise<boolean> {
+  try {
+    const { state } = await loadBrainSession(phone);
+    if (Object.keys(state.fields).some((k) => !k.startsWith("_") && Boolean(state.fields[k]))) return true;
+    const lastAsk = [...state.history].reverse().find((h) => h.role === "assistant")?.content ?? "";
+    return /(full name|your name|e-?mail)/i.test(lastAsk) && /\?/.test(lastAsk);
+  } catch { return false; }
+}
+
 // Durable menu lock: the word "menu" may be surfaced exactly once per
 async function saveBrainSession(key: string, state: BrainSession) {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
