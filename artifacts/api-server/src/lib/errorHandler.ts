@@ -14,8 +14,15 @@ export function errorHandler(
   const safeStatus =
     typeof status === "number" && status >= 400 && status < 500 ? status : 500;
   const message = err instanceof Error ? err.message.slice(0, 200) : "unknown";
+  // Query wrappers hide the real reason in `cause` (for example a dropped
+  // connection). Log its code and a bounded message, never query parameters.
+  const rawCause = err instanceof Error ? (err as { cause?: unknown }).cause : undefined;
+  const causeCode = rawCause instanceof Error ? (rawCause as { code?: unknown }).code : undefined;
+  const cause = rawCause instanceof Error
+    ? { code: typeof causeCode === "string" ? causeCode.slice(0, 40) : undefined, message: rawCause.message.slice(0, 200) }
+    : undefined;
   (req.log ?? logger).error(
-    { event: "unhandled_request_error", status: safeStatus, message },
+    { event: "unhandled_request_error", status: safeStatus, message, ...(cause ? { cause } : {}) },
     "Unhandled request error",
   );
   if (res.headersSent) return;

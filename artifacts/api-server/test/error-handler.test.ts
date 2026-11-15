@@ -53,3 +53,17 @@ test("error handler does not double-send when headers are already sent", () => {
   errorHandler(new Error("late"), fakeReq, res as never, noop);
   assert.equal(res.statusCode, 0);
 });
+
+test("error handler logs the wrapped cause code and a bounded message, never the response", () => {
+  const logged: Record<string, unknown>[] = [];
+  const req = { log: { error(o: Record<string, unknown>) { logged.push(o); } } } as never;
+  const res = fakeRes();
+  const err = Object.assign(new Error("Failed query: select 1\nparams: secret"), {
+    cause: Object.assign(new Error("Connection terminated unexpectedly " + "x".repeat(400)), { code: "ECONNRESET" }),
+  });
+  errorHandler(err, req, res as never, noop);
+  assert.deepEqual(res.body, { error: "internal_error" });
+  const cause = logged[0].cause as { code: string; message: string };
+  assert.equal(cause.code, "ECONNRESET");
+  assert.ok(cause.message.startsWith("Connection terminated") && cause.message.length <= 200);
+});

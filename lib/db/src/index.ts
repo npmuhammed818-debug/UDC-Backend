@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "./schema";
-import { databaseConnectionOptions } from "./connection";
+import { attachPoolErrorLogger, databaseConnectionOptions } from "./connection";
 
 const { Pool } = pg;
 
@@ -14,6 +14,7 @@ if (!databaseUrl) {
 }
 
 export const pool = new Pool(databaseConnectionOptions(databaseUrl));
+attachPoolErrorLogger(pool);
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

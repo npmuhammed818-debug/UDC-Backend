@@ -17,3 +17,20 @@ export function databaseConnectionOptions(value: string) {
   url.searchParams.set('sslmode', 'verify-full');
   return { connectionString: url.href, ssl: { rejectUnauthorized: true as const } };
 }
+
+// An idle pooled client can be dropped by the database or pooler. node-pg
+// re-emits that on the pool as 'error'; with no listener Node treats it as an
+// uncaught exception and the process exits. Log a bounded line instead.
+export function attachPoolErrorLogger(
+  pool: { on(event: 'error', listener: (error: Error & { code?: string }) => void): unknown },
+  write: (line: string) => void = (line) => console.error(line),
+) {
+  pool.on('error', (error) => {
+    write(JSON.stringify({
+      level: 50,
+      event: 'db_pool_idle_client_error',
+      code: typeof error?.code === 'string' ? error.code.slice(0, 40) : undefined,
+      message: String(error?.message ?? 'unknown').slice(0, 200),
+    }));
+  });
+}
