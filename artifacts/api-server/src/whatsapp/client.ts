@@ -60,6 +60,7 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
       init={...init,body:JSON.stringify(payload)};
     }
   }
+  if (!outboundAllowed(to)) return Response.json({ error: { code: 0, message: "recipient_not_in_scope" } }, { status: 403 });
   if (replySinkEnabled() && url.endsWith("/messages") && !sinkBypassForAllowlistedRecipient(to)) { // staging reply sink: store, never send (except allowlisted test recipients with real credentials)
     let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
     return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
@@ -170,7 +171,10 @@ export async function ensureWhatsAppWebhookSubscription() {
   }
 }
 
+import { outboundAllowed } from "./outboundScope.ts";
+const outOfScope=()=>({delivered:false as const,reason:'recipient_not_in_scope' as const});
 export async function sendWhatsAppText(to: string, body: string) {
+  if (!outboundAllowed(to)) return outOfScope();
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
@@ -209,6 +213,7 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   if (interactive.body.text.length > 1024) throw new Error('interactive_body_too_long');
   if (interactive.type === 'button' && (interactive.action.buttons.length < 1 || interactive.action.buttons.length > 3 || interactive.action.buttons.some(b=>b.reply.title.length>20))) throw new Error('interactive_buttons_invalid');
   if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
+  if (!outboundAllowed(to)) return outOfScope();
   const config=getConfig();
   if(!config)return {delivered:false as const,reason:'not_configured' as const};
   const response=await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
@@ -229,6 +234,7 @@ export async function sendWhatsAppDocument(
   filename: string,
   caption?: string,
 ) {
+  if (!outboundAllowed(to)) return outOfScope();
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
@@ -265,6 +271,7 @@ export async function sendWhatsAppImage(
   link: string,
   caption?: string,
 ) {
+  if (!outboundAllowed(to)) return outOfScope();
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
 
@@ -368,6 +375,7 @@ export async function downloadWhatsAppMedia(mediaId: string) {
 
 /** Emoji reaction on an inbound message (Cloud API `reaction` type). Best effort. */
 export async function sendWhatsAppReaction(to: string, inboundMessageId: string, emoji: string) {
+  if (!outboundAllowed(to)) return outOfScope();
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
   const response = await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{
@@ -385,6 +393,7 @@ export async function sendWhatsAppReaction(to: string, inboundMessageId: string,
 export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
+  if (!outboundAllowed(to)) return outOfScope();
   if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { const id = recordSunkReply(to, { type: "audio" }).id; return readMessageAcknowledgement(Response.json({ messages: [{ id }] })); }
   const form = new FormData();
   form.set("messaging_product", "whatsapp");
@@ -418,6 +427,7 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
  *  bubble would promise a reply that may not come (owner rule, 10 Nov). */
 export function markRead(to: string, inboundMessageId: string | null | undefined): void {
   if (typeof inboundMessageId !== "string" || !inboundMessageId) return;
+  if (!outboundAllowed(to)) return;
   if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { recordSunkReply(to, { type: "read_typing" }); return; }
   const config = getConfig();
   if (!config) return;
@@ -430,6 +440,7 @@ export function markRead(to: string, inboundMessageId: string | null | undefined
 
 export function markReadAndTyping(to: string, inboundMessageId: string | null | undefined): void {
   if (process.env["UDC_WHATSAPP_TYPING"] !== "on" || typeof inboundMessageId !== "string" || !inboundMessageId) return;
+  if (!outboundAllowed(to)) return;
   if (replySinkEnabled() && !sinkBypassForAllowlistedRecipient(to)) { recordSunkReply(to, { type: "read_typing" }); return; }
   const config = getConfig();
   if (!config) return;

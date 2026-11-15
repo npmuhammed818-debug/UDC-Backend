@@ -1,3 +1,4 @@
+import { outboundAllowed } from './outboundScope.ts';
 import {parseMessageAcknowledgement,readMetaJson} from './messageAcknowledgement.ts';
 import { getWhatsAppConfig } from './client.ts';
 import { GENERIC_NOTIFICATION_TEMPLATE_BODY } from '../notifications/deliveryContent.ts';
@@ -14,6 +15,7 @@ export async function sendWhatsAppNotification(input: {
 }, options: { transport?: typeof fetch; env?: NodeJS.ProcessEnv } = {}): Promise<NotificationTransportResult> {
   const env = options.env ?? process.env, transport = options.transport ?? fetch;
   if (env.UDC_SHIPMENT_WHATSAPP_SEND_ENABLED !== 'true') return { delivered: false, reason: 'not_configured' };
+  if (!outboundAllowed(input.phone, env)) return { delivered: false, reason: 'not_configured' };
   const config=getWhatsAppConfig(env);
   const token=config?.accessToken, sender=config?.phoneNumberId;
   if (!token || !/^\d{5,30}$/.test(sender ?? '') || !/^\d{7,20}$/.test(input.phone))
