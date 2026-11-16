@@ -5,11 +5,12 @@ import { runGroqToolChat } from '../src/akif/intelligence/groqClient.ts';
 const ok = (content: string) => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
 
 async function withEnv(env: Record<string, string | undefined>, fn: () => Promise<void>) {
-  const keys = ['GROQ_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL'];
+  const keys = ['UDC_CUSTOMER_BACKUP_ROUTES', 'GROQ_API_KEY', 'NVIDIA_API_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_MODEL'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const f = globalThis.fetch;
   for (const k of keys) delete process.env[k];
   process.env.GROQ_API_KEY = 'synthetic-groq';
+  process.env.UDC_CUSTOMER_BACKUP_ROUTES = 'nvidia,openrouter';
   for (const [k, v] of Object.entries(env)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   try { await fn(); } finally {
     for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
@@ -44,6 +45,15 @@ test('no OpenRouter key: nothing is sent to OpenRouter', async () => {
     let called = 0;
     globalThis.fetch = (async (url: string) => { if (String(url).includes('openrouter')) called++; return new Response('limit', { status: 503 }); }) as typeof fetch;
     await assert.rejects(runGroqToolChat([{ role: 'user', content: 'hi' }], [], 2000), /HTTP 503/);
+    assert.equal(called, 0);
+  });
+});
+
+test('default: no backup route is called even when keys are set', async () => {
+  await withEnv({ NVIDIA_API_KEY: 'synthetic-n', OPENROUTER_API_KEY: 'synthetic-o', UDC_CUSTOMER_BACKUP_ROUTES: '' }, async () => {
+    let called = 0;
+    globalThis.fetch = (async (url: string) => { if (!String(url).includes('groq')) called++; return new Response('limit', { status: 429 }); }) as typeof fetch;
+    await assert.rejects(runGroqToolChat([{ role: 'user', content: 'hi' }], [], 2000), /Groq returned HTTP 429/);
     assert.equal(called, 0);
   });
 });

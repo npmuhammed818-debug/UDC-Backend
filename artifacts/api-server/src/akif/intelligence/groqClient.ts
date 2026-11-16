@@ -137,6 +137,13 @@ export async function runGroqToolChat(
   return { content, toolCalls };
 }
 
+/** Third-party free-tier backups are OFF unless named in UDC_CUSTOMER_BACKUP_ROUTES (comma list). The NVIDIA API Catalog
+ *  trial terms forbid production use, and free OpenRouter routes can reach the same trial endpoint, so customer text never
+ *  goes there by default. Keys stay in env for isolated synthetic tests only. */
+export function backupRouteEnabled(name: 'nvidia' | 'openrouter'): boolean {
+  return (process.env.UDC_CUSTOMER_BACKUP_ROUTES ?? '').split(',').map((x) => x.trim().toLowerCase()).includes(name);
+}
+
 /** Free NVIDIA NIM backup for the brain when Groq is capped or down (owner plan Nov 14: Groq first, NVIDIA next).
  *  Used only when NVIDIA_API_KEY is set. Same messages and tools; no change to prompts or policy. */
 export async function runNvidiaToolBackup(
@@ -144,6 +151,7 @@ export async function runNvidiaToolBackup(
   tools: GroqToolDefinition[],
   timeoutMs: number,
 ): Promise<{ content: string | null; toolCalls: GroqToolCall[] } | null> {
+  if (!backupRouteEnabled('nvidia')) return null;
   const apiKey = process.env.NVIDIA_API_KEY?.trim();
   if (!apiKey) return null;
   const baseUrl = (process.env.NVIDIA_BASE_URL?.trim() || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
@@ -174,6 +182,7 @@ export async function runOpenRouterToolBackup(
   tools: GroqToolDefinition[],
   timeoutMs: number,
 ): Promise<{ content: string | null; toolCalls: GroqToolCall[] } | null> {
+  if (!backupRouteEnabled('openrouter')) return null;
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) return null;
   const model = process.env.OPENROUTER_MODEL?.trim() || 'nvidia/nemotron-3.5-lightning:free';

@@ -7,6 +7,7 @@ const ok = (content: string) => new Response(JSON.stringify({ choices: [{ messag
 async function withEnv(fn: () => Promise<void>) {
   const saved = { g: process.env.GROQ_API_KEY, n: process.env.NVIDIA_API_KEY, f: globalThis.fetch };
   process.env.GROQ_API_KEY = 'synthetic-groq';
+  process.env.UDC_CUSTOMER_BACKUP_ROUTES = 'nvidia,openrouter';
   try { await fn(); } finally {
     if (saved.g === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = saved.g;
     if (saved.n === undefined) delete process.env.NVIDIA_API_KEY; else process.env.NVIDIA_API_KEY = saved.n;
