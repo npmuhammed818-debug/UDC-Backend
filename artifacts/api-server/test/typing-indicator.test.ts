@@ -52,3 +52,17 @@ test("a saved guided form reacts with one complete beat", async () => {
   const src = await readFile(new URL("../src/whatsapp/guidedChat.ts", import.meta.url), "utf8");
   assert.ok(src.includes("if(saved)react('complete',phone,message.id)"));
 });
+test("brain-handled text turn shows typing, refreshes it, and stops the refresh", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  const i = src.indexOf("const typingRefresh = setInterval(() => markReadAndTyping(message.from, message.id), 20_000)");
+  assert.ok(i > 0);
+  assert.ok(src.lastIndexOf("markReadAndTyping(message.from, message.id);", i) > i - 700);
+  assert.ok(src.includes("clearInterval(typingRefresh);"));
+});
+test("typing call logs only the Meta status, no ids", async () => {
+  const restore = env({ UDC_WHATSAPP_TYPING: "on", WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  const logs: unknown[][] = []; const real = console.info; console.info = (...a: unknown[]) => { logs.push(a); };
+  try { await withFetch(() => { markReadAndTyping("15555550101", "wamid.SECRET1"); }, async () => new Response("{}", { status: 200 })); } finally { console.info = real; restore(); }
+  assert.deepEqual(logs, [["whatsapp_typing_result", { status: 200 }]]);
+});

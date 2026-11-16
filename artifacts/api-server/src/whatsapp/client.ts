@@ -420,7 +420,7 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
 
 /**
  * Marks an inbound message as read (blue ticks) and shows "typing..." until we reply (WhatsApp drops it after 25 s).
- * Off unless UDC_WHATSAPP_TYPING=on. Fire-and-forget: short timeout, no retry, never throws, never logs.
+ * Off unless UDC_WHATSAPP_TYPING=on. Fire-and-forget: short timeout, no retry, never throws; logs only the Meta HTTP status class.
  * With the staging reply sink on, nothing is sent to Meta; a "read_typing" entry is stored instead.
  */
 /** Read receipt only (blue ticks, no typing bubble). Used where a typing
@@ -448,7 +448,7 @@ export function markReadAndTyping(to: string, inboundMessageId: string | null | 
     method: "POST", signal: AbortSignal.timeout(3_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", status: "read", message_id: inboundMessageId, typing_indicator: { type: "text" } }),
-  }).then(r => r.body?.cancel(), () => undefined).catch(() => undefined);
+  }).then(r => { console.info("whatsapp_typing_result", { status: r.status }); return r.body?.cancel(); }, () => { console.info("whatsapp_typing_result", { status: "network_error" }); }).catch(() => undefined);
 }
 
 /** Private synthetic image sink only. Never uploads bytes to Meta or a public

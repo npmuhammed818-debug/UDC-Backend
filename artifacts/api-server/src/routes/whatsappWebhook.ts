@@ -2268,6 +2268,12 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         const slowNotice = brainSlowNudgeEnabled()
           ? setTimeout(() => { void deliverWhatsAppReply(message.from!, "On it, one minute."); }, RELAY_SLOW_NUDGE_MS || 12000)
           : null;
+        // The brain is preparing a real reply for this customer, so show the
+        // typing bubble (user request 12:58 IST, 16 Nov). WhatsApp drops it
+        // after about 25 s, so refresh while the turn runs. Same flags and the
+        // same outbound-scope guard as every other typing call.
+        markReadAndTyping(message.from, message.id);
+        const typingRefresh = setInterval(() => markReadAndTyping(message.from, message.id), 20_000);
         try {
         const callBrain = () => runBrainTurn({
           phone: message.from!,
@@ -2310,6 +2316,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         brainFailed = true;
         } finally {
           if (slowNotice) clearTimeout(slowNotice);
+          clearInterval(typingRefresh);
         }
       }
 
