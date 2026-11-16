@@ -13,3 +13,9 @@ test("brain prompt tells the model not to hyphenate its own words but to copy da
   assert.ok(src.includes("never write a dash or hyphen inside words you compose yourself"));
   assert.ok(src.includes("copy people's names, company names, codes, links, emails, numbers and quoted customer data exactly as given"));
 });
+test("scope redirect gives hyphen free example wording", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/akif/brainOrchestrator.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("Example wording, without any hyphen"));
+  assert.ok(src.includes("do not copy that wording; write it fresh with no hyphen"));
+});
