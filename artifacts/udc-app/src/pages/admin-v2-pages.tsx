@@ -2,7 +2,8 @@ import { useActionLock } from '@/hooks/use-action-lock';
 import {DraftControls} from './admin-v2-draft-controls';
 import {DocumentControls} from './admin-v2-document-controls';
 import { useState } from 'react';
-import { useAdminV2Data, type AnyRecord } from './admin-v2-data';
+import { useQuery } from '@tanstack/react-query';
+import { useAdminV2Data, loadJson, type AnyRecord } from './admin-v2-data';
 import { AdminV2Gate, AdminV2Shell, QueueCards } from './admin-v2-shell';
 import '../admin-v2.css';
 import {CompanyControls} from './admin-v2-company-controls';
@@ -33,8 +34,12 @@ function QueuePage({ user, active, title, sub, chips, emptyText }: {
 }) {
   const { data, busy, error, setError, run } = useQueuePage();
   const items = data.queue.filter((item) => chips.includes(item.chip));
+  const roleReq = useQuery({ queryKey: ['v2-role-requests'], queryFn: () => loadJson<{ requests: AnyRecord[] }>('/api/admin/role-change-requests'), enabled: active === 'people' });
+  const pendingRoles = active === 'people' ? (roleReq.data?.requests ?? []).filter((r) => r.status === 'pending').length : 0;
+  const waiting = items.length + pendingRoles;
   return <AdminV2Shell user={user} active={active} title={title} sub={sub} queueCount={data.pendingCount || undefined}>
-    <h1 className="av2-h1">{data.queuesLoading ? 'Loading…' : items.length === 0 ? 'Nothing waiting here.' : <><em>{items.length}</em> waiting for your OK</>}</h1>
+    <h1 className="av2-h1">{data.queuesLoading ? 'Loading…' : waiting === 0 ? 'Nothing waiting here.' : <><em>{waiting}</em> waiting for your OK</>}</h1>
+    {pendingRoles > 0 && <p role="status" className="av2-d" data-testid="v2-role-pending-note">{pendingRoles} role change {pendingRoles === 1 ? 'request is' : 'requests are'} waiting. Scroll down to Role-change requests to review.</p>}
     {error && <div className="av2-err">{error}</div>}
     {data.queuesFailed && <div className="av2-err">Some lists did not load. <button className="av2-btn ghost sm" onClick={() => void data.refreshAll()}>Retry</button></div>}
     {data.queuesLoading ? <><div className="av2-skel" /><div className="av2-skel" /></>

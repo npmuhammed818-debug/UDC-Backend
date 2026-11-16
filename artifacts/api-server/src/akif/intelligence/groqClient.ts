@@ -102,7 +102,17 @@ export async function runGroqToolChat(
     console.warn('Groq main model rate-limited; retrying on the fallback model', { model: groqModel(), fallback });
     response = await call(fallback);
   }
-  if (!response.ok) throw new Error(`Groq returned HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  if (!response.ok) {
+    const groqFailure = `Groq returned HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`;
+    if (response.status === 429 || response.status >= 500) {
+      const backup = await runNvidiaToolBackup(messages, tools, timeoutMs).catch((error: unknown) => {
+        console.warn('NVIDIA tool backup failed', { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
+      if (backup) return backup;
+    }
+    throw new Error(groqFailure);
+  }
   const raw = await response.json() as {
     choices?: Array<{
       message?: {
@@ -119,5 +129,35 @@ export async function runGroqToolChat(
     .map((call) => ({ id: call.id, name: call.function.name, argumentsJson: call.function.arguments }));
   const content = typeof message.content === 'string' && message.content.trim() ? message.content.trim() : null;
   if (!content && toolCalls.length === 0) throw new Error('Groq returned an empty turn');
+  return { content, toolCalls };
+}
+
+/** Free NVIDIA NIM backup for the brain when Groq is capped or down (owner plan Nov 14: Groq first, NVIDIA next).
+ *  Used only when NVIDIA_API_KEY is set. Same messages and tools; no change to prompts or policy. */
+export async function runNvidiaToolBackup(
+  messages: GroqToolChatMessage[],
+  tools: GroqToolDefinition[],
+  timeoutMs: number,
+): Promise<{ content: string | null; toolCalls: GroqToolCall[] } | null> {
+  const apiKey = process.env.NVIDIA_API_KEY?.trim();
+  if (!apiKey) return null;
+  const baseUrl = (process.env.NVIDIA_BASE_URL?.trim() || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, '');
+  const model = process.env.NVIDIA_MODEL?.trim() || 'nvidia/nemotron-3.5-lightning-30b-a3b';
+  console.warn('Groq unavailable; trying NVIDIA backup', { model });
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, tools, tool_choice: 'auto', temperature: 0.3 }),
+  });
+  if (!response.ok) throw new Error(`NVIDIA returned HTTP ${response.status}`);
+  const raw = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }> };
+  const message = raw.choices?.[0]?.message;
+  if (!message) return null;
+  const toolCalls = (message.tool_calls ?? [])
+    .filter((call) => typeof call?.id === 'string' && typeof call?.function?.name === 'string' && typeof call?.function?.arguments === 'string')
+    .map((call) => ({ id: call.id as string, name: call.function!.name as string, argumentsJson: call.function!.arguments as string }));
+  const content = typeof message.content === 'string' && message.content.trim() ? message.content.trim() : null;
+  if (!content && toolCalls.length === 0) return null;
   return { content, toolCalls };
 }
