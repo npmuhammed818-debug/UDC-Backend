@@ -13,3 +13,7 @@ test("codes, emails, links, numbers keep their hyphens", () => {
   assert.equal(stripDashBreaks("https://wa.me/1?text=JOIN+UDC-AB-1"), "https://wa.me/1?text=JOIN+UDC-AB-1");
   assert.equal(stripDashBreaks("in 5-10 days"), "in 5-10 days");
 });
+test("names and capitalised identifiers keep their hyphens", () => {
+  assert.equal(stripDashBreaks("Al-Rashid Trading and Coca-Cola, Jean-Luc"), "Al-Rashid Trading and Coca-Cola, Jean-Luc");
+  assert.equal(stripDashBreaks("Trade-related help"), "Trade related help");
+});

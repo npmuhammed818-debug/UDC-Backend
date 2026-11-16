@@ -72,7 +72,7 @@ export function brainVoiceEnabled(env: NodeJS.ProcessEnv = process.env): boolean
  *  Tokens holding digits, @, / or : (invite codes, emails, links, dates,
  *  phone numbers) are left alone so they keep working. */
 export function stripWordDashes(text: string): string {
-  return text.replace(/\S+/g, (tok) => /[\d@/:]/.test(tok) ? tok : tok.replace(/(?<=\p{L})[-\u2010-\u2015\u2212](?=\p{L})/gu, " "));
+  return text.replace(/\S+/g, (tok) => /[\d@/:]/.test(tok) ? tok : tok.replace(/(?<=\p{Ll})[-\u2010-\u2015\u2212](?=\p{Ll})/gu, " "));
 }
 
 /** Dash sentence-breaks are never sent to customers (owner style rule, 10
