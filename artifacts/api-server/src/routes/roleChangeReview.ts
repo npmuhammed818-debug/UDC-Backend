@@ -4,6 +4,7 @@ import {z} from "zod/v4";
 import {db,userRoleChangeRequestsTable,usersTable,auditLogsTable,notificationsTable} from "@workspace/db";
 import {requireRole,type AuthenticatedRequest} from "../auth/middleware";
 import {guidedChatPhoneHash} from "../whatsapp/phoneFingerprint";
+import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,isStagingEnv} from "../testPrincipal";
 const router:IRouter=Router();
 
 // No email, phone, bank documents, or identity papers in the review list.
@@ -153,6 +154,50 @@ router.post("/admin/role-change-requests/:requestId/review",
   }catch(e){
     if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
     res.status(503).json({error:"role_change_review_unavailable"});
+  }
+});
+
+// OWNER TEST SETUP (staging only). Switches the role of the ONE hard-coded owner test account so the owner can
+// try buyer/seller/agent flows. It is not a verification: no company is created or marked verified, no
+// documents are checked, users.status is never changed here, and the audit row says so. Every other user is refused.
+const ownerTestSwitch=z.object({toRole:z.enum(["agent","buyer","seller"])}).strict();
+router.post("/admin/owner-test/switch-role",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    if(!isStagingEnv()){res.status(404).json({error:"not_available"});return;}
+    const input=ownerTestSwitch.parse(req.body);
+    const result=await db.transaction(async tx=>{
+      const rows=await tx.execute(sql`SELECT id,phone,email,role,status FROM public.users WHERE id=${OWNER_TEST_USER_ID} FOR UPDATE`);
+      const u=rows.rows[0] as {id:string;phone:string|null;email:string|null;role:string;status:string}|undefined;
+      if(!u||!isOwnerTestPrincipal(u))return "not_owner_test_account" as const;
+      if(u.role===input.toRole)return "already_that_role" as const;
+      const o=await tx.execute(sql`
+        SELECT
+          EXISTS(SELECT 1 FROM public.deals d WHERE (d.buyer_user_id=${u.id} OR d.seller_user_id=${u.id} OR d.agent_id=${u.id}) AND d.status NOT IN ('completed','cancelled','rejected')) AS has_deals,
+          EXISTS(SELECT 1 FROM public.referrals WHERE (agent_user_id=${u.id} OR referred_user_id=${u.id}) AND status NOT IN ('paid','cancelled')) AS has_referrals,
+          EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${u.id} AND status NOT IN ('converted','cancelled','rejected')) AS has_requests,
+          EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${u.id} AND status NOT IN ('sold','cancelled','rejected')) AS has_listings
+      `);
+      const f=o.rows[0] as Record<string,boolean>|undefined;
+      if(!f||Object.values(f).some(Boolean))return "existing_obligations" as const;
+      await tx.execute(sql`UPDATE public.users SET role=${input.toRole},updated_at=now() WHERE id=${u.id}`);
+      await tx.execute(sql`UPDATE public.auth_sessions SET revoked_at=now() WHERE user_id=${u.id} AND revoked_at IS NULL`);
+      await tx.execute(sql`UPDATE public.whatsapp_signin_challenges SET status='expired' WHERE (link_user_id=${u.id} OR approved_user_id=${u.id}) AND status='pending'`);
+      if(u.phone){
+        await tx.execute(sql`DELETE FROM public.whatsapp_intake_drafts WHERE phone=${u.phone}`);
+        await tx.execute(sql`DELETE FROM public.whatsapp_chat_sessions WHERE phone_hash=${guidedChatPhoneHash(u.phone)}`);
+      }
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"owner_test_role_switch",entityType:"user",entityId:u.id,
+        metadata:{synthetic:true,ownerTestAccount:true,fromRole:u.role,toRole:input.toRole,statusUnchanged:u.status,
+          companyVerificationPerformed:false,documentsChecked:false,note:"Owner test account role switch. This is not a verification."},
+      });
+      return "switched" as const;
+    },{isolationLevel:"serializable"});
+    if(result!=="switched"){res.status(409).json({error:result});return;}
+    res.set("Cache-Control","no-store").json({switched:true,verification:false,statusChanged:false});
+  }catch(e){
+    if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    res.status(503).json({error:"owner_test_switch_unavailable"});
   }
 });
 export default router;
