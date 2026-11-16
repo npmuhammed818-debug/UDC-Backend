@@ -172,8 +172,10 @@ export async function ensureWhatsAppWebhookSubscription() {
 }
 
 import { outboundAllowed } from "./outboundScope.ts";
+import { noDash } from "./noDash.ts";
 const outOfScope=()=>({delivered:false as const,reason:'recipient_not_in_scope' as const});
-export async function sendWhatsAppText(to: string, body: string) {
+export async function sendWhatsAppText(to: string, rawBody: string) {
+  const body = noDash(rawBody);
   if (!outboundAllowed(to)) return outOfScope();
   const config = getConfig();
   if (!config) return { delivered: false as const, reason: "not_configured" as const };
@@ -209,7 +211,8 @@ export type WhatsAppInteractive =
   | { type: 'list'; body: { text: string }; action: { button: string; sections: Array<{title:string;rows:Array<{id:string;title:string;description?:string}>}> } }
   | { type: 'flow'; body: { text: string }; action: { name:'flow'; parameters: Record<string,unknown> } };
 
-export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppInteractive) {
+export async function sendWhatsAppInteractive(to: string, rawInteractive: WhatsAppInteractive) {
+  const interactive = { ...rawInteractive, body: { ...rawInteractive.body, text: noDash(rawInteractive.body.text) } } as WhatsAppInteractive;
   if (interactive.body.text.length > 1024) throw new Error('interactive_body_too_long');
   if (interactive.type === 'button' && (interactive.action.buttons.length < 1 || interactive.action.buttons.length > 3 || interactive.action.buttons.some(b=>b.reply.title.length>20))) throw new Error('interactive_buttons_invalid');
   if (interactive.type === 'list' && (interactive.action.button.length>20 || interactive.action.sections.flatMap(s=>s.rows).length>10 || interactive.action.sections.some(s=>s.rows.some(r=>r.title.length>24 || (r.description?.length??0)>72)))) throw new Error('interactive_list_invalid');
@@ -252,7 +255,7 @@ export async function sendWhatsAppDocument(
         document: {
           link,
           filename,
-          ...(caption ? { caption } : {}),
+          ...(caption ? { caption: noDash(caption) } : {}),
         },
       }),
     });
@@ -288,7 +291,7 @@ export async function sendWhatsAppImage(
         type: "image",
         image: {
           link,
-          ...(caption ? { caption } : {}),
+          ...(caption ? { caption: noDash(caption) } : {}),
         },
       }),
     });
