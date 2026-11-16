@@ -79,4 +79,17 @@ router.post("/admin/capacity-probe", requireRole("admin"), async (req, res) => {
   res.json({ scope: "route-only: production Groq key and model, handbook-size system prompt, no tools, no customer context, concurrency 1", model: groqModel(), calls: samples.length, samples });
 });
 
+/** TEMPORARY read-only config report (admin only). Enumerated flags show their value; everything else only
+ *  set/unset plus the number of entries, never phone numbers, keys or URLs. Remove with this file. */
+const VALUE_FLAGS = ["UDC_APP_ENV", "NODE_ENV", "AKIF_WHATSAPP_REPLY_SINK", "AKIF_PROACTIVE_ENABLED", "UDC_PRICE_WATCH_ENABLED", "UDC_DEAL_REMINDERS_ENABLED", "UDC_EMAIL_PILOT_MODE", "UDC_TESTER_MODE", "UDC_SHIPMENT_WATCH_ENABLED", "UDC_SHIPMENT_WATCH_FAKE_EVENTS", "UDC_OWNER_TEST_SWITCH", "UDC_CUSTOMER_BACKUP_ROUTES", "AKIF_HUMAN_RELAY_ENABLED", "AKIF_BRAIN_ORCHESTRATOR", "UDC_EMAIL_OUTBOUND", "UDC_EMAIL_RELAY_QUARANTINE", "UDC_INVITE_ONLY", "UDC_AUTH_EMAIL_SEND_ENABLED", "UDC_AUTH_EMAIL_TRANSPORT"];
+const LIST_FLAGS = ["UDC_WHATSAPP_ONLY_TO", "AKIF_WHATSAPP_REPLY_ALLOWLIST", "UDC_ALLOWED_PHONES", "UDC_MUTED_PHONES", "UDC_TESTER_PHONES", "AKIF_HUMAN_RELAY_NUMBERS", "UDC_TEST_FIXTURE_IDS"];
+router.get("/admin/runtime-flags", requireRole("admin"), (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  const values: Record<string, string | null> = {};
+  for (const k of VALUE_FLAGS) { const v = process.env[k]; values[k] = v === undefined ? null : v.length > 40 ? `[${v.length} chars]` : JSON.stringify(v); }
+  const lists: Record<string, string> = {};
+  for (const k of LIST_FLAGS) { const v = process.env[k]; lists[k] = v === undefined ? "unset" : `set, ${v.split(",").map((x) => x.trim()).filter(Boolean).length} entries`; }
+  res.json({ values, lists, note: "temporary read-only report; phone numbers, keys and URLs are never returned" });
+});
+
 export default router;
