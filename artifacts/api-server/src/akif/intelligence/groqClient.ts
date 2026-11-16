@@ -176,7 +176,7 @@ export async function runOpenRouterToolBackup(
 ): Promise<{ content: string | null; toolCalls: GroqToolCall[] } | null> {
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) return null;
-  const model = process.env.OPENROUTER_MODEL?.trim() || 'openai/gpt-oss-120b:free';
+  const model = process.env.OPENROUTER_MODEL?.trim() || 'nvidia/nemotron-3.5-lightning:free';
   if (!model.endsWith(':free')) {
     console.warn('OpenRouter backup skipped: model is not a free (:free) model', { model });
     return null;
