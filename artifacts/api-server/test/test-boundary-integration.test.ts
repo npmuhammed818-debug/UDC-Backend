@@ -19,7 +19,7 @@ const REAL_BUYER = '88888888-8888-8888-8888-888888888888';
 const REAL_USER = '99999999-9999-9999-9999-999999999999';
 const OWNER = '30b6dc9b-8409-4b43-9b81-05e5f2869321';
 
-const tableNames = ['usersTable','referralsTable','auditLogsTable','buyerRequestsTable','sellerListingsTable','productsTable','matchesTable','notificationsTable','dealsTable','commissionsTable','dealParticipantsTable','companiesTable','companyVerificationDocumentsTable'];
+const tableNames = ['usersTable','referralsTable','auditLogsTable','buyerRequestsTable','sellerListingsTable','productsTable','matchesTable','notificationsTable','dealsTable','commissionsTable','dealParticipantsTable','companiesTable','companyVerificationDocumentsTable','buyerPoolsTable','buyerPoolAllocationsTable','dealMeetingsTable'];
 
 let mod: any;
 let rows: Record<string, any[]>;
@@ -39,19 +39,22 @@ function makeDb() {
     if (node?.kind === 'or') return node.args.some((n: any) => evaluate(n, row));
     if (node?.kind === 'in' && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
     if (node?.kind === 'notIn' && Array.isArray(node.query)) return !node.query.includes(evaluate(node.a, row));
-    if (node?.kind === 'notIn' && Array.isArray(node.query)) return !node.query.includes(evaluate(node.a, row));
     return node; // sql`` fragments return true from the mock; literals return themselves
   };
   function select(fields?: any) {
     let table = '', condition: any = true, maximum = Infinity;
+    const joins: any[] = [];
     const q: any = {
       from(t: any) { table = t._tableName; return q; },
       where(c: any) { condition = c; return q; },
       orderBy() { return q; }, for() { return q; }, limit(n: number) { maximum = n; return q; },
-      innerJoin() { return q; },
+      innerJoin(t: any, on: any) { joins.push({ table: t._tableName, on }); return q; },
       run() {
-        return rows[table].filter((r) => evaluate(condition, { [table]: r })).slice(0, maximum)
-          .map((r) => fields ? Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, evaluate(v, { [table]: r })])) : { ...r });
+        let values = rows[table].map((r) => ({ [table]: r }));
+        for (const join of joins) values = values.flatMap((r) => rows[join.table]
+          .map((v) => ({ ...r, [join.table]: v })).filter((r) => evaluate(join.on, r)));
+        return values.filter((r) => evaluate(condition, r)).slice(0, maximum)
+          .map((r) => fields ? Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, evaluate(v, r)])) : { ...r[table] });
       },
       then(resolve: any, reject: any) { return Promise.resolve().then(q.run).then(resolve, reject); },
     };
@@ -318,4 +321,33 @@ test('registry alone never confers fixture status: shape + provenance required (
   rows.referralsTable.push({ id: 'ref-y', agentUserId: FIXTURE_AGENT, referredUserId: OWNER, status: 'pending' });
   const inWorld = await mod.obligationCounterpartIds(OWNER, db);
   assert.deepEqual(inWorld, [FIXTURE_AGENT], 'same-world obligation loads for the world check to pass');
+});
+
+test('full historic linkage (includeTerminal): terminal rows, pool allocations, matches and meetings are all found', async () => {
+  reset(); // a COMPLETED deal with a real counterparty: invisible to the default scan, caught by the full scan
+  rows.dealsTable.push({ id: 'deal-done', buyerUserId: OWNER, sellerUserId: REAL_SELLER, status: 'completed' });
+  assert.deepEqual(await mod.obligationCounterpartIds(OWNER, db), [], 'default scan is live-obligations only');
+  assert.deepEqual(await mod.obligationCounterpartIds(OWNER, db, { includeTerminal: true }), [REAL_SELLER], 'terminal deal counterpart must surface in the full scan');
+
+  reset(); // buyer-pool allocation on a real deal's pool links the deal parties
+  rows.dealsTable.push({ id: 'deal-pool', buyerUserId: REAL_BUYER, sellerUserId: REAL_SELLER, status: 'completed' });
+  rows.buyerPoolsTable.push({ id: 'pool-1', dealId: 'deal-pool' });
+  rows.buyerPoolAllocationsTable.push({ id: 'alloc-1', poolId: 'pool-1', buyerUserId: OWNER });
+  assert.deepEqual(await mod.obligationCounterpartIds(OWNER, db, { includeTerminal: true }).then(r => r.sort()), [REAL_BUYER, REAL_SELLER].sort(), 'pool allocation must link the pool deal parties');
+
+  reset(); // a match on the owner's request against a real seller's listing links the seller
+  rows.buyerRequestsTable.push({ id: 'req-1', buyerUserId: OWNER });
+  rows.sellerListingsTable.push({ id: 'list-1', sellerUserId: REAL_SELLER });
+  rows.matchesTable.push({ id: 'match-1', buyerRequestId: 'req-1', sellerListingId: 'list-1', status: 'approved' });
+  assert.deepEqual(await mod.obligationCounterpartIds(OWNER, db, { includeTerminal: true }), [REAL_SELLER], 'match counterpart must surface');
+
+  reset(); // a meeting the owner requested on a real deal links the deal parties
+  rows.dealsTable.push({ id: 'deal-meet', buyerUserId: REAL_BUYER, sellerUserId: REAL_SELLER, status: 'completed' });
+  rows.dealMeetingsTable.push({ id: 'meet-1', dealId: 'deal-meet', requestedBy: OWNER });
+  assert.deepEqual(await mod.obligationCounterpartIds(OWNER, db, { includeTerminal: true }).then(r => r.sort()), [REAL_BUYER, REAL_SELLER].sort(), 'meeting counterparties must surface');
+
+  reset(); // same-world history stays clean: fixture-only links produce no crossing
+  rows.dealsTable.push({ id: 'deal-ok', buyerUserId: FIXTURE_BUYER, sellerUserId: OWNER, status: 'completed' });
+  const clean = await mod.obligationCounterpartIds(OWNER, db, { includeTerminal: true });
+  assert.deepEqual(clean, [FIXTURE_BUYER], 'same-world history loads so the world check can pass');
 });

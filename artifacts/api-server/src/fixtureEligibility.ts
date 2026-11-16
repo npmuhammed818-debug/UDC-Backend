@@ -1,5 +1,5 @@
 import { and, eq, inArray, notInArray, or } from "drizzle-orm";
-import { db, usersTable, auditLogsTable, referralsTable, dealsTable, dealParticipantsTable, commissionsTable } from "@workspace/db";
+import { db, usersTable, auditLogsTable, referralsTable, dealsTable, dealParticipantsTable, commissionsTable, buyerPoolAllocationsTable, buyerPoolsTable, buyerRequestsTable, sellerListingsTable, matchesTable, dealMeetingsTable } from "@workspace/db";
 import { isStagingEnv, fixtureUserIds, SYNTHETIC_EMAIL_SUFFIX } from "./testPrincipal.ts";
 
 type Executor = Pick<typeof db, "select">;
@@ -68,51 +68,102 @@ const OPEN_REWARD_STATUSES = ["paid", "cancelled"];
 export async function obligationCounterpartIds(
   userId: string,
   executor: Executor = db,
+  opts: { includeTerminal?: boolean } = {},
 ): Promise<string[]> {
+  // includeTerminal=false: active/non-terminal obligations only (switch-role probe).
+  // includeTerminal=true: full historic linkage - every row ever tying this user to
+  // a counterparty, any status, including buyer-pool allocations through their pool's
+  // deal. Owner/fixture classification is ID-stable and role/status-independent, so
+  // pre-enable must rule out mixed HISTORY, not only open work.
+  const open = !opts.includeTerminal;
   const counterparts = new Set<string>();
   const referrals = await executor
     .select({ agentUserId: referralsTable.agentUserId, referredUserId: referralsTable.referredUserId })
     .from(referralsTable)
-    .where(and(
-      or(eq(referralsTable.agentUserId, userId), eq(referralsTable.referredUserId, userId)),
-      notInArray(referralsTable.status, OPEN_REWARD_STATUSES),
-    ));
+    .where(open
+      ? and(
+          or(eq(referralsTable.agentUserId, userId), eq(referralsTable.referredUserId, userId)),
+          notInArray(referralsTable.status, OPEN_REWARD_STATUSES),
+        )
+      : or(eq(referralsTable.agentUserId, userId), eq(referralsTable.referredUserId, userId)));
   for (const row of referrals) {
     counterparts.add(row.agentUserId === userId ? row.referredUserId : row.agentUserId);
   }
-  const deals = await executor
-    .select({ buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
-    .from(dealsTable)
-    .where(and(
-      or(eq(dealsTable.buyerUserId, userId), eq(dealsTable.sellerUserId, userId), eq(dealsTable.agentId, userId)),
-      notInArray(dealsTable.status, OPEN_DEAL_STATUSES),
-    ));
   const dealIds = new Set<string>();
-  for (const row of deals) {
-    counterparts.add(row.buyerUserId);
-    counterparts.add(row.sellerUserId);
-  }
+  const collectDeal = (row: { buyerUserId: string | null; sellerUserId: string | null }, id?: string | null) => {
+    if (row.buyerUserId) counterparts.add(row.buyerUserId);
+    if (row.sellerUserId) counterparts.add(row.sellerUserId);
+    if (id) dealIds.add(id);
+  };
+  const deals = await executor
+    .select({ id: dealsTable.id, buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
+    .from(dealsTable)
+    .where(open
+      ? and(
+          or(eq(dealsTable.buyerUserId, userId), eq(dealsTable.sellerUserId, userId), eq(dealsTable.agentId, userId)),
+          notInArray(dealsTable.status, OPEN_DEAL_STATUSES),
+        )
+      : or(eq(dealsTable.buyerUserId, userId), eq(dealsTable.sellerUserId, userId), eq(dealsTable.agentId, userId)));
+  for (const row of deals) collectDeal(row);
   const participations = await executor
     .select({ dealId: dealParticipantsTable.dealId })
     .from(dealParticipantsTable)
-    .where(and(eq(dealParticipantsTable.userId, userId), eq(dealParticipantsTable.status, "active")));
+    .where(open
+      ? and(eq(dealParticipantsTable.userId, userId), eq(dealParticipantsTable.status, "active"))
+      : eq(dealParticipantsTable.userId, userId));
   for (const row of participations) dealIds.add(row.dealId);
   const commissions = await executor
     .select({ dealId: commissionsTable.dealId })
     .from(commissionsTable)
-    .where(and(eq(commissionsTable.beneficiaryUserId, userId), notInArray(commissionsTable.status, OPEN_REWARD_STATUSES)));
+    .where(open
+      ? and(eq(commissionsTable.beneficiaryUserId, userId), notInArray(commissionsTable.status, OPEN_REWARD_STATUSES))
+      : eq(commissionsTable.beneficiaryUserId, userId));
   for (const row of commissions) dealIds.add(row.dealId);
+  // Matches and meetings tie the user to counterparties without an obligation status:
+  // every match on the user's requests/listings links the other side's owner, and every
+  // meeting the user requested/scheduled (or that sits on the user's deals) links its
+  // attendees. Counted in both modes - a planted match is a live crossing, not history.
+  const asBuyer = await executor
+    .select({ counterpart: sellerListingsTable.sellerUserId })
+    .from(matchesTable)
+    .innerJoin(buyerRequestsTable, eq(matchesTable.buyerRequestId, buyerRequestsTable.id))
+    .innerJoin(sellerListingsTable, eq(matchesTable.sellerListingId, sellerListingsTable.id))
+    .where(eq(buyerRequestsTable.buyerUserId, userId));
+  for (const row of asBuyer) if (row.counterpart) counterparts.add(row.counterpart);
+  const asSeller = await executor
+    .select({ counterpart: buyerRequestsTable.buyerUserId })
+    .from(matchesTable)
+    .innerJoin(sellerListingsTable, eq(matchesTable.sellerListingId, sellerListingsTable.id))
+    .innerJoin(buyerRequestsTable, eq(matchesTable.buyerRequestId, buyerRequestsTable.id))
+    .where(eq(sellerListingsTable.sellerUserId, userId));
+  for (const row of asSeller) if (row.counterpart) counterparts.add(row.counterpart);
+  const myMeetings = await executor
+    .select({ dealId: dealMeetingsTable.dealId, requestedBy: dealMeetingsTable.requestedBy, scheduledBy: dealMeetingsTable.scheduledBy })
+    .from(dealMeetingsTable)
+    .where(or(eq(dealMeetingsTable.requestedBy, userId), eq(dealMeetingsTable.scheduledBy, userId)));
+  for (const row of myMeetings) {
+    if (row.requestedBy) counterparts.add(row.requestedBy);
+    if (row.scheduledBy) counterparts.add(row.scheduledBy);
+    dealIds.add(row.dealId);
+  }
+  if (!open) {
+    const allocations = await executor
+      .select({ dealId: buyerPoolsTable.dealId })
+      .from(buyerPoolAllocationsTable)
+      .innerJoin(buyerPoolsTable, eq(buyerPoolAllocationsTable.poolId, buyerPoolsTable.id))
+      .where(eq(buyerPoolAllocationsTable.buyerUserId, userId));
+    for (const row of allocations) dealIds.add(row.dealId);
+  }
   const remainingDealIds = [...dealIds];
   if (remainingDealIds.length) {
     const linkedDeals = await executor
       .select({ buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId })
       .from(dealsTable)
-      .where(and(inArray(dealsTable.id, remainingDealIds), notInArray(dealsTable.status, OPEN_DEAL_STATUSES)));
-    for (const row of linkedDeals) {
-      counterparts.add(row.buyerUserId);
-      counterparts.add(row.sellerUserId);
-    }
+      .where(open
+        ? and(inArray(dealsTable.id, remainingDealIds), notInArray(dealsTable.status, OPEN_DEAL_STATUSES))
+        : inArray(dealsTable.id, remainingDealIds));
+    for (const row of linkedDeals) collectDeal(row);
   }
   counterparts.delete(userId);
-  return [...counterparts].filter(Boolean);
+  return [...counterparts].filter(Boolean).sort();
 }

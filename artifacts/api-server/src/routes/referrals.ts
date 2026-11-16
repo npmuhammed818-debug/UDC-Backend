@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
-import { isTestWorldId, SYNTHETIC_EMAIL_SUFFIX } from "../testPrincipal.ts";
+import { isTestWorldId, sameWorldIds, SYNTHETIC_EMAIL_SUFFIX } from "../testPrincipal.ts";
+
 import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { agentJoinLink } from "../referrals/joinInvite";
 import { createAgentInvitation, agentReferralCode } from "../referrals/invitation";
@@ -100,7 +101,8 @@ router.get("/referrals", requireAuth, async (req, res) => {
     .where(eq(referralsTable.agentUserId, req.authUser!.id))
     .orderBy(desc(referralsTable.updatedAt));
 
-  res.json({ referrals });
+  // Test-world boundary on reads: an agent only sees referred users of their own world.
+  res.json({ referrals: referrals.filter((r) => sameWorldIds(req.authUser!.id, r.referredUserId)) });
 });
 
 router.get("/agent/invite", requireAuth, async (req, res) => {

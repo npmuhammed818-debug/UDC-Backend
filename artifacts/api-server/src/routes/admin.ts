@@ -1839,7 +1839,7 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       const [current] = await tx.select({ status: usersTable.status }).from(usersTable)
         .where(eq(usersTable.id, userId)).limit(1);
       if (!current) throw new Error("user_not_found");
-      if(input.status==='verified'&&['buyer','seller'].includes(existingUser.role)&&!await approvedCompanyEvidence(userId,tx)){
+      if(input.status==='verified'){
         // Test-world accounts are documentless on purpose: on staging, and only for the
         // owner test account (id AND phone) or a DB-proven fixture (shape + creation
         // provenance, never the env registry alone), verified status is allowed without
@@ -1849,12 +1849,17 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
           const proven=await provenFixtureIds([userId],tx);
           testWorldTarget=proven.has(userId.toLowerCase());
         }
-        if(!testWorldTarget)throw new AgreementError('verified_company_and_approved_document_required');
-        // Pre-enable invariant: a test-world account with any non-terminal obligation
-        // to an opposite-world party (planted or historical) must not be enabled -
-        // guards stop new crossings, existing mixed rows are refused here instead.
-        const counterparts=await obligationCounterpartIds(userId,tx);
-        if(!sameWorldIds(userId,...counterparts))throw new AgreementError('test_boundary_crossing');
+        if(testWorldTarget){
+          // Pre-enable invariant: test-world classification is ID-stable and
+          // role/status-independent, so ANY historic link to an opposite-world party -
+          // any status, including terminal deals/referrals/commissions, participations,
+          // pool allocations, matches and meetings - blocks the verified transition,
+          // in every role (agent included, not only buyer/seller evidence checks).
+          const counterparts=await obligationCounterpartIds(userId,tx,{includeTerminal:true});
+          if(!sameWorldIds(userId,...counterparts))throw new AgreementError('test_boundary_crossing');
+        }else if(['buyer','seller'].includes(existingUser.role)&&!await approvedCompanyEvidence(userId,tx)){
+          throw new AgreementError('verified_company_and_approved_document_required');
+        }
       }
       const [updated] = await tx.update(usersTable)
         .set({ status: input.status, updatedAt: new Date() })

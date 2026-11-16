@@ -9,7 +9,7 @@ import { build } from "esbuild";
 // Exercise the real signed webhook, including route ordering and DB predicates.
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("launch simulation: agent, seller and buyer chats both directions with latency", async (t) => {
-  const names = ["referralsTable","commissionsTable","notificationPreferencesTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable","notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
+  const names = ["buyerPoolAllocationsTable","buyerPoolsTable","matchesTable","referralsTable","commissionsTable","notificationPreferencesTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable","notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
     "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "buyerRequestsTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable", "dealFinancialsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },

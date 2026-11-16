@@ -4,7 +4,8 @@ import {z} from "zod/v4";
 import {db,userRoleChangeRequestsTable,usersTable,auditLogsTable,notificationsTable} from "@workspace/db";
 import {requireRole,type AuthenticatedRequest} from "../auth/middleware";
 import {guidedChatPhoneHash} from "../whatsapp/phoneFingerprint";
-import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,ownerTestSwitchEnabled,SYNTHETIC_EMAIL_SUFFIX} from "../testPrincipal";
+import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,isTestWorldId,ownerTestSwitchEnabled,sameWorldIds,SYNTHETIC_EMAIL_SUFFIX} from "../testPrincipal";
+import {obligationCounterpartIds} from "../fixtureEligibility";
 import {hashPassword} from "../auth/passwords";
 import {randomBytes} from "node:crypto";
 const router:IRouter=Router();
@@ -72,6 +73,14 @@ router.post("/admin/role-change-requests/:requestId/review",
         `);
         const flags=obligations.rows[0] as Record<string,boolean>|undefined;
         if(!flags||Object.values(flags).some(Boolean))return "existing_obligations" as const;
+        // Test-world accounts: classification is ID-stable, so the same full historic
+        // linkage gate as pre-enable applies on every switch - any opposite-world link
+        // (any status, including terminal rows, pool allocations, matches, meetings)
+        // blocks the role change even when no live obligation remains.
+        if(isTestWorldId(item.user_id)){
+          const counterparts=await obligationCounterpartIds(item.user_id,tx,{includeTerminal:true});
+          if(!sameWorldIds(item.user_id,...counterparts))return "existing_obligations" as const;
+        }
         // Buyer and seller roles need a human-verified company. Agents need none, and an
         // agent switching to buyer/seller has no company yet, so that stays blocked.
         if(item.to_role==="buyer"||item.to_role==="seller"){

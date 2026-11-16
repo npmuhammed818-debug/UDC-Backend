@@ -12,7 +12,7 @@ test("admin role review cannot grant a different role or bypass authentication",
    account:{id:userId,role:"buyer",status:"verified",phone:"10000000001"},
    requests:[{id,userId,fromRole:"buyer",toRole:"agent",status:"pending",createdAt:new Date()}],
    audits:[],notifications:[],reads:0,failAudit:false};
- const names=["userRoleChangeRequestsTable","usersTable","auditLogsTable","notificationsTable"];
+ const names=["userRoleChangeRequestsTable","usersTable","auditLogsTable","notificationsTable","referralsTable","dealsTable","commissionsTable","dealParticipantsTable","buyerPoolAllocationsTable","buyerPoolsTable","matchesTable","buyerRequestsTable","sellerListingsTable","dealMeetingsTable"];
  const tables=Object.fromEntries(names.map(name=>[name,new Proxy({_table:name},{
    get:(_,key)=>key==="_table"?name:{column:key},
  })]));
@@ -69,7 +69,7 @@ test("admin role review cannot grant a different role or bypass authentication",
      b.onLoad({filter:/.*/,namespace:"fixture"},args=>({loader:"js",contents:
        args.path==="db"?"const s=globalThis.__roleReviewQa;export const db=s.db;"+
          names.map(name=>`export const ${name}=s.tables.${name};`).join(""):
-       args.path==="orm"?"export const sql=(parts,...values)=>({parts,values});export const desc=x=>x;export const eq=(a,b)=>({a,b});export const and=(...args)=>args;":
+       args.path==="orm"?"export const sql=(parts,...values)=>({parts,values});export const desc=x=>x;export const eq=(a,b)=>({a,b});export const and=(...args)=>args;export const or=(...args)=>args;export const inArray=(a,q)=>({inlist:q});export const notInArray=(a,q)=>({notinlist:q});":
          "export const requireRole=role=>(req,res,next)=>{if(req.authUser?.role!==role){res.status(403).json({error:'forbidden'});return;}next();};",
      }));
    }}]});
