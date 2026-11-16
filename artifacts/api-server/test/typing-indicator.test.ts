@@ -71,5 +71,7 @@ test("brain system prompt carries the trade-only scope rule and no language over
   const src = await readFile(new URL("../src/akif/brainOrchestrator.ts", import.meta.url), "utf8");
   assert.ok(src.includes("SCOPE: you only help with import and export trade"));
   assert.ok(src.includes("Never refuse a legitimate trade question because of an ambiguous word"));
+  assert.ok(src.includes("never suggest registering, becoming a buyer or seller"));
+  assert.ok(src.includes("ROLE WORDS:"));
   assert.ok(!src.includes("LANGUAGE: answer in the language the customer writes in"));
 });
