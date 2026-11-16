@@ -54,7 +54,7 @@ test("akif reflexion: one honest self-lesson from a real reply problem, clean-or
   const bundle=await build({stdin:{contents:"export * from '../src/akif/reflexion';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'fixture',setup(b){
     const fixtures={
       db:'export const db=globalThis.__reflexionFixture.db;export const akifSharedLessonsTable=globalThis.__reflexionFixture.db.__tables.akifSharedLessonsTable;',
-      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});export const inArray=(a,list)=>({kind:'in',a,list});",
+      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});export const inArray=(a,list)=>({kind:'in',a,list});export const notInArray=(a,query)=>({kind:'notIn',a,query});",
     };
     db.__tables=tables;
     for(const [filter,path] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm']])b.onResolve({filter},()=>({path,namespace:'fixture'}));

@@ -1,4 +1,4 @@
-import { isStagingEnv, isTestPrincipal, isTestWorldId, type PrincipalLike } from "./testPrincipal.ts";
+import { isOwnerTestPrincipal, isStagingEnv, isTestPrincipal, isTestWorldId, type PrincipalLike } from "./testPrincipal.ts";
 
 export const TEST_BOUNDARY_ERROR = "test_boundary_crossing";
 
@@ -44,14 +44,18 @@ export type CounterpartyRow = PrincipalLike & { role?: string | null; status?: s
 
 /** Both-sides-test-world pairs trade without company evidence, but only as verified
  *  buyer/seller rows whose full identity is a test principal (owner needs id AND phone;
- *  fixtures need registry membership). */
+ *  fixtures need registry membership). When `proven` is given (the DB-backed eligibility
+ *  proof from provenFixtureIds), fixture membership must come from that set - the env
+ *  registry alone is then not enough. */
 export function testWorldCounterpartyRowsOk(
   users: CounterpartyRow[],
   buyerId: string,
   sellerId: string,
+  proven?: Set<string>,
 ): boolean {
+  const eligible = (u: CounterpartyRow) => isOwnerTestPrincipal(u) || (proven ? proven.has((u.id ?? "").toLowerCase()) : isTestPrincipal(u));
   return (
-    users.some((u) => u.id === buyerId && u.role === "buyer" && u.status === "verified" && isTestPrincipal(u)) &&
-    users.some((u) => u.id === sellerId && u.role === "seller" && u.status === "verified" && isTestPrincipal(u))
+    users.some((u) => u.id === buyerId && u.role === "buyer" && u.status === "verified" && eligible(u)) &&
+    users.some((u) => u.id === sellerId && u.role === "seller" && u.status === "verified" && eligible(u))
   );
 }

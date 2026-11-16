@@ -28,7 +28,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
       destination: "Dubai",
     },
   };
-  const names = ["sellerListingsTable","companyVerificationDocumentsTable","messagesTable",
+  const names = ["referralsTable","commissionsTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable",
     "usersTable", "buyerRequestsTable",
     "notificationsTable", "auditLogsTable",
     "notificationPreferencesTable",
@@ -155,7 +155,7 @@ test("buyer intake → UDC → seller → UDC → buyer with memory and selectiv
     "../auth/whatsappSignin": "export const parseSigninCommand=()=>null;export const handleWhatsAppSignin=async()=>null;",
     "@workspace/db": `export const db=globalThis.__udcChatTest.db;${names.map((n) => `export const ${n}=new Proxy({_name:'${n}'},{get:(t,k)=>k==='_name'?t._name:{key:k}});`).join("")}`,
     "drizzle-orm":
-      `export const eq=(c,v)=>r=>r[c.key]===v;export const ne=(c,v)=>r=>r[c.key]!==v;export const and=(...ps)=>r=>ps.every(p=>p(r));export const or=(...ps)=>r=>ps.some(p=>p(r));export const inArray=()=>{throw Error('unexpected document lookup');};export const gte=(c,v)=>r=>r[c.key]>=v;export const lt=(c,v)=>r=>r[c.key]<v;export const desc=x=>x;export const sql=(strings,...values)=>strings.join("").includes("fingerprint") ? (r=>r.metadata?.fingerprint===values.at(-1)) : {};`,
+      `export const eq=(c,v)=>r=>r[c.key]===v;export const ne=(c,v)=>r=>r[c.key]!==v;export const and=(...ps)=>r=>ps.every(p=>p(r));export const or=(...ps)=>r=>ps.some(p=>p(r));export const inArray=()=>{throw Error('unexpected document lookup');};export const notInArray=()=>{throw Error('unexpected document lookup');};export const gte=(c,v)=>r=>r[c.key]>=v;export const lt=(c,v)=>r=>r[c.key]<v;export const desc=x=>x;export const sql=(strings,...values)=>strings.join("").includes("fingerprint") ? (r=>r.metadata?.fingerprint===values.at(-1)) : {};`,
     "../auth/middleware": "export const requireRole=()=>()=>{};",
     "../akif/brainOrchestrator":
       "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];",

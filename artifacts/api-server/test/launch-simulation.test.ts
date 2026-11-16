@@ -9,7 +9,7 @@ import { build } from "esbuild";
 // Exercise the real signed webhook, including route ordering and DB predicates.
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("launch simulation: agent, seller and buyer chats both directions with latency", async (t) => {
-  const names = ["notificationPreferencesTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable","notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
+  const names = ["referralsTable","commissionsTable","notificationPreferencesTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable","notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
     "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "buyerRequestsTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable", "dealFinancialsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
@@ -23,6 +23,7 @@ test("launch simulation: agent, seller and buyer chats both directions with late
     if (node?.kind === "or") return node.args.some((n: any) => evaluate(n, row));
     if (node?.kind === "in" && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
     if (node?.kind === "in") return node.query.run().some((r: any) => Object.values(r)[0] === evaluate(node.a, row));
+    if (node?.kind === "notIn" && Array.isArray(node.query)) return !node.query.includes(evaluate(node.a, row));
     return node;
   };
   function select(fields?: any) {
@@ -112,7 +113,7 @@ test("launch simulation: agent, seller and buyer chats both directions with late
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents:
         'const s=globalThis.__whatsappRoutes;' + (args.path === "db"
           ? 'export const db=s.db;' + names.map(n => `export const ${n}=s.tables.${n};`).join("")
-          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});export const desc=x=>x;'
+          : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const notInArray=(a,query)=>({kind:"notIn",a,query});export const sql=()=>true;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});export const desc=x=>x;'
           : fixtures[args.path]) }));
     } }],
   });

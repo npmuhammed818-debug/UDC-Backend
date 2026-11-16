@@ -7,6 +7,7 @@ import {
 } from "@workspace/db";
 import { isStagingEnv, isTestPrincipal, isTestWorldId } from "../testPrincipal.ts";
 import { testWorldCounterpartyRowsOk, testWorldPair } from "../testBoundary.ts";
+import { provenFixtureIds } from "../fixtureEligibility.ts";
 
 export async function verifiedCounterparties(
   buyerId: string,
@@ -22,7 +23,9 @@ export async function verifiedCounterparties(
   if (pair === true) {
     // Test-world pairs trade only inside the test world, and without company
     // evidence: the owner test account and its fixtures are documentless on
-    // purpose. Verified status, roles and full principal identity still apply.
+    // purpose. Verified status, roles and full principal identity still apply,
+    // and fixture eligibility needs the DB-backed proof (shape + provenance),
+    // never the env registry alone.
     const testUsers = await executor
       .select()
       .from(usersTable)
@@ -32,7 +35,8 @@ export async function verifiedCounterparties(
           eq(usersTable.status, "verified"),
         ),
       );
-    return testWorldCounterpartyRowsOk(testUsers, buyerId, sellerId);
+    const proven = await provenFixtureIds([buyerId, sellerId], executor);
+    return testWorldCounterpartyRowsOk(testUsers, buyerId, sellerId, proven);
   }
   const users = await executor
     .select()

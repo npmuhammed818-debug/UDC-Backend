@@ -175,7 +175,9 @@ router.post("/admin/owner-test/switch-role",requireRole("admin"),async(req:Authe
       const o=await tx.execute(sql`
         SELECT
           EXISTS(SELECT 1 FROM public.deals d WHERE (d.buyer_user_id=${u.id} OR d.seller_user_id=${u.id} OR d.agent_id=${u.id}) AND d.status NOT IN ('completed','cancelled','rejected')) AS has_deals,
+          EXISTS(SELECT 1 FROM public.deal_participants p JOIN public.deals d ON d.id=p.deal_id WHERE p.user_id=${u.id} AND p.status='active' AND d.status NOT IN ('completed','cancelled','rejected')) AS has_participations,
           EXISTS(SELECT 1 FROM public.referrals WHERE (agent_user_id=${u.id} OR referred_user_id=${u.id}) AND status NOT IN ('paid','cancelled')) AS has_referrals,
+          EXISTS(SELECT 1 FROM public.commissions c WHERE c.beneficiary_user_id=${u.id} AND c.status NOT IN ('paid','cancelled')) AS has_commissions,
           EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${u.id} AND status NOT IN ('converted','cancelled','rejected')) AS has_requests,
           EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${u.id} AND status NOT IN ('sold','cancelled','rejected')) AS has_listings
       `);

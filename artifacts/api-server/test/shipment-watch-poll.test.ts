@@ -91,7 +91,7 @@ test("shipment watch poll: sparing, deduplicated, honest and transactionally saf
   const bundle=await build({stdin:{contents:"export * from '../src/tracking/shipmentWatch';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'fixture',setup(b){
     const fixtures={
       db:'export const db=globalThis.__watchFixture.db;'+tableNames.map(n=>`export const ${n}=globalThis.__watchFixture.db.__tables.${n};`).join(''),
-      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const gt=(a,b)=>({kind:'gt',a,b});export const lt=(a,b)=>({kind:'lt',a,b});export const isNull=(a)=>({kind:'isnull',a});export const asc=x=>x;export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});export const inArray=(a,values)=>({kind:'in',a,values});",
+      orm:"export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const gt=(a,b)=>({kind:'gt',a,b});export const lt=(a,b)=>({kind:'lt',a,b});export const isNull=(a)=>({kind:'isnull',a});export const asc=x=>x;export const desc=x=>x;export const sql=(parts,...values)=>({kind:'sql',parts,values});export const inArray=(a,values)=>({kind:'in',a,values});export const notInArray=(a,values)=>({kind:'notIn',a,values});",
       tracker:'export const activeTracker=()=>globalThis.__watchFixture.tracker;',
     };
     db.__tables=tables;

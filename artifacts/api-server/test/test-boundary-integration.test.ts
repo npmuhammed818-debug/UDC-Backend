@@ -16,6 +16,7 @@ const FIXTURE_AGENT = '55555555-5555-5555-5555-555555555555';
 const REAL_AGENT = '66666666-6666-6666-6666-666666666666';
 const REAL_SELLER = '77777777-7777-7777-7777-777777777777';
 const REAL_BUYER = '88888888-8888-8888-8888-888888888888';
+const REAL_USER = '99999999-9999-9999-9999-999999999999';
 const OWNER = '30b6dc9b-8409-4b43-9b81-05e5f2869321';
 
 const tableNames = ['usersTable','referralsTable','auditLogsTable','buyerRequestsTable','sellerListingsTable','productsTable','matchesTable','notificationsTable','dealsTable','commissionsTable','dealParticipantsTable','companiesTable','companyVerificationDocumentsTable'];
@@ -37,6 +38,8 @@ function makeDb() {
     if (node?.kind === 'and') return node.args.every((n: any) => evaluate(n, row));
     if (node?.kind === 'or') return node.args.some((n: any) => evaluate(n, row));
     if (node?.kind === 'in' && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
+    if (node?.kind === 'notIn' && Array.isArray(node.query)) return !node.query.includes(evaluate(node.a, row));
+    if (node?.kind === 'notIn' && Array.isArray(node.query)) return !node.query.includes(evaluate(node.a, row));
     return node; // sql`` fragments return true from the mock; literals return themselves
   };
   function select(fields?: any) {
@@ -87,6 +90,7 @@ before(async () => {
         'export { notifyMatchingSellers, respondToRequirementInterest, openRequirementsReplyForSeller } from "../src/marketplace/sellerRequirementNotify.ts";',
         'export { prepareCommissionProposals, approveCommissionProposal, ProposalError } from "../src/referrals/commissionProposal.ts";',
         'export { verifiedCounterparties } from "../src/marketplace/verifiedCounterparties.ts";',
+        'export { provenFixtureIds, obligationCounterpartIds } from "../src/fixtureEligibility.ts";',
       ].join('\n'),
       resolveDir: fileURLToPath(new URL('.', import.meta.url)), loader: 'ts',
     },
@@ -101,7 +105,7 @@ before(async () => {
         'const s=globalThis.__boundary;' + (args.path === 'db'
           ? 'export const db=s.db;' + tableNames.map((n) => `export const ${n}=s.db.tables.${n};`).join('')
           : args.path === 'orm'
-            ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const sql=()=>true;export const desc=x=>x;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});'
+            ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const notInArray=(a,query)=>({kind:"notIn",a,query});export const sql=()=>true;export const desc=x=>x;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});'
             : 'export const sendWhatsAppText=async(to,body)=>{s.sent.push({kind:"text",to,body});return {delivered:true,messageId:"m-1"};};export const sendWhatsAppInteractive=async(to,body)=>{s.sent.push({kind:"interactive",to,body});return {delivered:true,messageId:"m-2"};};') }));
     } }],
   });
@@ -266,9 +270,10 @@ test('verifiedCounterparties (real module): mixed pair fails closed, test pair t
   reset();
   rows.usersTable.push(
     { id: OWNER, role: 'seller', status: 'verified', phone: '+917994133604' },
-    { id: FIXTURE_BUYER, role: 'buyer', status: 'verified', phone: null },
-    { id: REAL_SELLER, role: 'seller', status: 'verified', phone: '+911000000010' },
+    { id: FIXTURE_BUYER, role: 'buyer', status: 'verified', phone: null, email: 'test-buyer@udc-test.invalid', passwordRecoveryEnabled: false },
+    { id: REAL_SELLER, role: 'seller', status: 'verified', phone: '+911000000010', email: 'real@example.com', passwordRecoveryEnabled: true },
   );
+  rows.auditLogsTable.push({ id: 'prov-1', action: 'owner_test_fixture_created', entityType: 'user', entityId: FIXTURE_BUYER, metadata: { synthetic: true } });
   assert.equal(await mod.verifiedCounterparties(FIXTURE_BUYER, OWNER, db), true, 'documentless test-world pair must pass');
   assert.equal(await mod.verifiedCounterparties(OWNER, REAL_SELLER, db), false, 'mixed pair must fail closed');
   assert.equal(await mod.verifiedCounterparties(FIXTURE_BUYER, REAL_SELLER, db), false, 'mixed pair must fail closed');
@@ -281,4 +286,36 @@ test('verifiedCounterparties (real module): mixed pair fails closed, test pair t
   );
   assert.equal(await mod.verifiedCounterparties(FIXTURE_BUYER, FIXTURE_SELLER, db), false, 'outside staging the test world does not exist');
   process.env.UDC_APP_ENV = savedEnv;
+});
+
+test('registry alone never confers fixture status: shape + provenance required (provenFixtureIds)', async () => {
+  reset();
+  // Misconfiguration attempt: the env registry points at a REAL account id.
+  rows.usersTable.push(
+    { id: REAL_USER, role: 'buyer', status: 'verified', phone: '+911000000011', email: 'person@gmail.com', passwordRecoveryEnabled: true },
+    { id: OWNER, role: 'seller', status: 'verified', phone: '+917994133604' },
+  );
+  const savedEnv = process.env.UDC_TEST_FIXTURE_IDS;
+  process.env.UDC_TEST_FIXTURE_IDS = REAL_USER;
+  try {
+    assert.deepEqual([...await mod.provenFixtureIds([REAL_USER], db)], [], 'real-shaped row must not be proven');
+    assert.equal(await mod.verifiedCounterparties(REAL_USER, OWNER, db), false, 'registry listing alone must not unlock documentless eligibility');
+  } finally {
+    process.env.UDC_TEST_FIXTURE_IDS = savedEnv;
+  }
+
+  reset(); // shaped but unprovenanced (no creation audit row): still not a fixture
+  rows.usersTable.push({ id: FIXTURE_BUYER, role: 'buyer', status: 'verified', phone: null, email: 'test-buyer@udc-test.invalid', passwordRecoveryEnabled: false });
+  assert.deepEqual([...await mod.provenFixtureIds([FIXTURE_BUYER], db)], [], 'shape without provenance must not be enough');
+  rows.auditLogsTable.push({ id: 'prov-2', action: 'owner_test_fixture_created', entityType: 'user', entityId: FIXTURE_BUYER, metadata: { synthetic: true } });
+  assert.deepEqual([...await mod.provenFixtureIds([FIXTURE_BUYER], db)], [FIXTURE_BUYER], 'shape + provenance proves the fixture');
+
+  reset(); // pre-enable mixed-obligation loader: planted referral owner<->real is found
+  rows.referralsTable.push({ id: 'ref-x', agentUserId: REAL_AGENT, referredUserId: OWNER, status: 'pending' });
+  const counterparts = await mod.obligationCounterpartIds(OWNER, db);
+  assert.deepEqual(counterparts, [REAL_AGENT], 'planted cross-world obligation must be discovered');
+  reset();
+  rows.referralsTable.push({ id: 'ref-y', agentUserId: FIXTURE_AGENT, referredUserId: OWNER, status: 'pending' });
+  const inWorld = await mod.obligationCounterpartIds(OWNER, db);
+  assert.deepEqual(inWorld, [FIXTURE_AGENT], 'same-world obligation loads for the world check to pass');
 });

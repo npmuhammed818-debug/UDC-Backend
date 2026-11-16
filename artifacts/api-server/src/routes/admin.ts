@@ -1,5 +1,6 @@
 import {prepareCommissionProposals} from '../referrals/commissionProposal';
-import { isStagingEnv, isTestPrincipal, isTestWorldId, sameWorldIds } from '../testPrincipal.ts';
+import { isStagingEnv, isOwnerTestPrincipal, isTestWorldId, sameWorldIds } from '../testPrincipal.ts';
+import { provenFixtureIds, obligationCounterpartIds } from '../fixtureEligibility.ts';
 import {generateWhatsAppDraftPdf,whatsappDraftConfirmation} from '../deals/whatsappDraft';
 import { screenCompanyEvidence, companyProfileFingerprint } from '../akif/companyScreening';
 import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/verifiedCounterparties';
@@ -1840,10 +1841,20 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       if (!current) throw new Error("user_not_found");
       if(input.status==='verified'&&['buyer','seller'].includes(existingUser.role)&&!await approvedCompanyEvidence(userId,tx)){
         // Test-world accounts are documentless on purpose: on staging, and only for the
-        // owner test account or a registered fixture, verified status is allowed without
+        // owner test account (id AND phone) or a DB-proven fixture (shape + creation
+        // provenance, never the env registry alone), verified status is allowed without
         // company evidence. Real accounts keep the hard requirement unchanged.
-        const testWorldTarget=isStagingEnv()&&isTestWorldId(userId)&&isTestPrincipal({id:existingUser.id,phone:existingUser.phone});
+        let testWorldTarget=isStagingEnv()&&isOwnerTestPrincipal({id:existingUser.id,phone:existingUser.phone});
+        if(!testWorldTarget&&isStagingEnv()&&isTestWorldId(userId)){
+          const proven=await provenFixtureIds([userId],tx);
+          testWorldTarget=proven.has(userId.toLowerCase());
+        }
         if(!testWorldTarget)throw new AgreementError('verified_company_and_approved_document_required');
+        // Pre-enable invariant: a test-world account with any non-terminal obligation
+        // to an opposite-world party (planted or historical) must not be enabled -
+        // guards stop new crossings, existing mixed rows are refused here instead.
+        const counterparts=await obligationCounterpartIds(userId,tx);
+        if(!sameWorldIds(userId,...counterparts))throw new AgreementError('test_boundary_crossing');
       }
       const [updated] = await tx.update(usersTable)
         .set({ status: input.status, updatedAt: new Date() })
