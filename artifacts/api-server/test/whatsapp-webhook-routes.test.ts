@@ -392,7 +392,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       state.privacyReply='Reply AGREE';await message(text);assert.equal(state.signins,0);
       state.privacyReply=null;rows.usersTable.push({phone:'10000000001',status:'suspended'});
       await message(text);assert.equal(state.signins,0);rows.usersTable=[];
-      await message(text);assert.equal(state.signins,1);assert.equal(state.sent.at(-1).body,'Fixture sign-in confirmation');assert.deepEqual(state.intake,[]);
+      await message(text);assert.equal(state.signins,1);assert.equal(state.sent.at(-1).body,'Fixture sign in confirmation');assert.deepEqual(state.intake,[]);
     });
     await t.test("phone recovery remains behind Meta signature and consent and never reaches AI",async()=>{
       reset();state.recoveryCalls=0;

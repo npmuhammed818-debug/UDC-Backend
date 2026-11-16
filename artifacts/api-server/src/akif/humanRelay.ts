@@ -66,17 +66,26 @@ export function brainVoiceEnabled(env: NodeJS.ProcessEnv = process.env): boolean
   return env.AKIF_BRAIN_VOICE === "on";
 }
 
+
+/** User rule, 16 Nov 14:18 IST ("No dash"): hyphens between letters, including
+ *  non-breaking hyphens, become a space ("trade-related" -> "trade related").
+ *  Tokens holding digits, @, / or : (invite codes, emails, links, dates,
+ *  phone numbers) are left alone so they keep working. */
+export function stripWordDashes(text: string): string {
+  return text.replace(/\S+/g, (tok) => /[\d@/:]/.test(tok) ? tok : tok.replace(/(?<=\p{L})[-\u2010-\u2015\u2212](?=\p{L})/gu, " "));
+}
+
 /** Dash sentence-breaks are never sent to customers (owner style rule, 10
  *  Nov). Shared by the relay reply cleaner and the main outbound cleaner. */
 export function stripDashBreaks(text: string): string {
-  return text
+  return stripWordDashes(text
     // Spaced dash breaks ("word - word", "word — word") become a comma.
     .replace(/(?<=[A-Za-z0-9])\s+[-–—]\s+(?=[A-Za-z])/g, ", ")
     // Unspaced em/en dashes ("word—word") too. Plain hyphens inside words
     // (single-use, 6-digit) stay untouched.
     .replace(/(?<=[A-Za-z0-9])[–—]\s*(?=[A-Za-z])/g, ", ")
     .replace(/,\s*,/g, ",")
-    .replace(/,([.!?])/g, "$1");
+    .replace(/,([.!?])/g, "$1"));
 }
 
 export function sanitizeRelayReplyText(text: string): string {

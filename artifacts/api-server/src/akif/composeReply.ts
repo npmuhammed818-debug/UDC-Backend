@@ -12,7 +12,8 @@ function stripDashBreaks(text: string): string {
     .replace(/(?<=[A-Za-z0-9])\s+[-–—]\s+(?=[A-Za-z])/g, ", ")
     .replace(/(?<=[A-Za-z0-9])[–—]\s*(?=[A-Za-z])/g, ", ")
     .replace(/,\s*,/g, ",")
-    .replace(/,([.!?])/g, "$1");
+    .replace(/,([.!?])/g, "$1")
+    .replace(/\S+/g, (tok) => /[\d@/:]/.test(tok) ? tok : tok.replace(/(?<=\p{L})[-\u2010-\u2015\u2212](?=\p{L})/gu, " "));
 }
 
 // AI wording for the post-handshake account flows (owner rule, 14 Nov): after
