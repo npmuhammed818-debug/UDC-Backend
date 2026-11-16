@@ -3,10 +3,17 @@ import assert from 'node:assert/strict';
 import { isTestPrincipal, isOwnerTestPrincipal, crossesTestBoundary, OWNER_TEST_USER_ID } from '../src/testPrincipal.ts';
 
 const owner = { id: OWNER_TEST_USER_ID, phone: '+917994133604', email: 'x@gmail.com' };
+const KEYS = ['UDC_TEST_WORLD', 'SUPABASE_URL', 'SUPABASE_DATABASE_URL'];
+// 'staging' here means: explicit test world flag on, bound to the pinned staging project.
 async function env(v: string | undefined, fn: () => void) {
-  const s = process.env.UDC_APP_ENV;
-  if (v === undefined) delete process.env.UDC_APP_ENV; else process.env.UDC_APP_ENV = v;
-  try { fn(); } finally { if (s === undefined) delete process.env.UDC_APP_ENV; else process.env.UDC_APP_ENV = s; }
+  const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
+  for (const k of KEYS) delete process.env[k];
+  if (v === 'staging') {
+    process.env.UDC_TEST_WORLD = '1';
+    process.env.SUPABASE_URL = 'https://lfqmfozvdaszpbbropqo.supabase.co';
+    process.env.SUPABASE_DATABASE_URL = 'postgres://postgres.lfqmfozvdaszpbbropqo:pw@aws-0-x.pooler.supabase.com:6543/postgres';
+  }
+  try { fn(); } finally { for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
 }
 test('owner principal needs id, phone and staging', async () => {
   await env('staging', () => {

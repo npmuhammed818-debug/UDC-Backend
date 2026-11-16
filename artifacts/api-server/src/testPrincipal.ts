@@ -9,9 +9,31 @@ export const SYNTHETIC_EMAIL_SUFFIX = "@udc-test.invalid";
 export type PrincipalLike = { id?: string | null; phone?: string | null; email?: string | null };
 const digits = (v?: string | null) => (v ?? "").replace(/\D/g, "");
 export const isStagingEnv = () => process.env.UDC_APP_ENV === "staging";
+/** The one DB project this isolated test world may ever run against (pinned in code). */
+export const TEST_WORLD_DB_REF = "lfqmfozvdaszpbbropqo";
+/** True only when the connection URL really targets the pinned project: the host is db.<ref>.supabase.co,
+ *  or the pooler user is postgres.<ref>. Substrings elsewhere (password, path) never count. */
+export function dbUrlTargetsTestWorld(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return u.hostname.toLowerCase() === `db.${TEST_WORLD_DB_REF}.supabase.co`
+      || decodeURIComponent(u.username).toLowerCase() === `postgres.${TEST_WORLD_DB_REF}`;
+  } catch { return false; }
+}
+/** The isolated owner test world is on only with the explicit UDC_TEST_WORLD=1 flag AND a database
+ *  connection that targets the pinned staging project. The pg pool connects through
+ *  SUPABASE_DATABASE_URL only (lib/db/src/index.ts), so that is the binding source; SUPABASE_URL must
+ *  agree. It never reads or changes UDC_APP_ENV, so no other staging-gated feature wakes up. Any
+ *  missing flag, other project or unparsable URL fails closed. */
+export function isTestWorldEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.UDC_TEST_WORLD === "1"
+    && dbUrlTargetsTestWorld(env.SUPABASE_DATABASE_URL)
+    && (env.SUPABASE_URL ?? "").toLowerCase().includes(`//${TEST_WORLD_DB_REF}.supabase.co`);
+}
 
 export function isOwnerTestPrincipal(u: PrincipalLike | null | undefined): boolean {
-  return !!u && isStagingEnv() && u.id === OWNER_TEST_USER_ID && digits(u.phone) === OWNER_TEST_PHONE_DIGITS;
+  return !!u && isTestWorldEnabled() && u.id === OWNER_TEST_USER_ID && digits(u.phone) === OWNER_TEST_PHONE_DIGITS;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -21,7 +43,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *  never makes an account a fixture, and the owner test account itself is never a fixture.
  *  Outside staging the registry is always empty (fail closed). */
 export function fixtureUserIds(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (!isStagingEnv()) return [];
+  if (!isTestWorldEnabled()) return [];
   return (env.UDC_TEST_FIXTURE_IDS ?? "")
     .split(",")
     .map((value) => value.trim().toLowerCase())
@@ -32,7 +54,7 @@ export function isSyntheticFixture(u: PrincipalLike | null | undefined): boolean
   return !!u?.id && fixtureUserIds().includes(u.id.toLowerCase());
 }
 /** The owner-test switch stays off unless this explicit server flag is set to 1 (unset = disabled). */
-export const ownerTestSwitchEnabled = () => isStagingEnv() && process.env.UDC_OWNER_TEST_SWITCH === "1";
+export const ownerTestSwitchEnabled = () => isTestWorldEnabled() && process.env.UDC_OWNER_TEST_SWITCH === "1";
 export const isTestPrincipal = (u: PrincipalLike | null | undefined) => isOwnerTestPrincipal(u) || isSyntheticFixture(u);
 
 /** True when an interaction would cross between a test principal and a real one (either direction). */
@@ -45,7 +67,7 @@ export function crossesTestBoundary(a: PrincipalLike | null | undefined, b: Prin
  *  verified status, and the boundary must hold unchanged through all of it.
  *  Fail closed outside staging. */
 export function isTestWorldId(id: string | null | undefined): boolean {
-  if (!id || !isStagingEnv()) return false;
+  if (!id || !isTestWorldEnabled()) return false;
   const normalized = id.toLowerCase();
   return normalized === OWNER_TEST_USER_ID || fixtureUserIds().includes(normalized);
 }

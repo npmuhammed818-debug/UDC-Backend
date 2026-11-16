@@ -1,5 +1,5 @@
 import {prepareCommissionProposals} from '../referrals/commissionProposal';
-import { isStagingEnv, isOwnerTestPrincipal, isTestWorldId, sameWorldIds } from '../testPrincipal.ts';
+import { isTestWorldEnabled, isOwnerTestPrincipal, isTestWorldId, sameWorldIds } from '../testPrincipal.ts';
 import { provenFixtureIds, obligationCounterpartIds } from '../fixtureEligibility.ts';
 import {generateWhatsAppDraftPdf,whatsappDraftConfirmation} from '../deals/whatsappDraft';
 import { screenCompanyEvidence, companyProfileFingerprint } from '../akif/companyScreening';
@@ -1844,8 +1844,8 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
         // owner test account (id AND phone) or a DB-proven fixture (shape + creation
         // provenance, never the env registry alone), verified status is allowed without
         // company evidence. Real accounts keep the hard requirement unchanged.
-        let testWorldTarget=isStagingEnv()&&isOwnerTestPrincipal({id:existingUser.id,phone:existingUser.phone});
-        if(!testWorldTarget&&isStagingEnv()&&isTestWorldId(userId)){
+        let testWorldTarget=isTestWorldEnabled()&&isOwnerTestPrincipal({id:existingUser.id,phone:existingUser.phone});
+        if(!testWorldTarget&&isTestWorldEnabled()&&isTestWorldId(userId)){
           const proven=await provenFixtureIds([userId],tx);
           testWorldTarget=proven.has(userId.toLowerCase());
         }

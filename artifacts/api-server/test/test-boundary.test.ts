@@ -16,7 +16,7 @@ const REAL_USER_2 = '44444444-4444-4444-4444-444444444444';
 const owner = { id: OWNER_TEST_USER_ID, phone: '+917994133604', email: 'owner@gmail.com' };
 
 async function withEnv(env: Record<string, string | undefined>, fn: () => void | Promise<void>) {
-  const keys = ['UDC_APP_ENV', 'UDC_TEST_FIXTURE_IDS', 'UDC_OWNER_TEST_SWITCH'];
+  const keys = ['UDC_APP_ENV', 'UDC_TEST_WORLD', 'SUPABASE_URL', 'SUPABASE_DATABASE_URL', 'UDC_TEST_FIXTURE_IDS', 'UDC_OWNER_TEST_SWITCH'];
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) {
     const value = env[key];
@@ -30,8 +30,9 @@ async function withEnv(env: Record<string, string | undefined>, fn: () => void |
   }
 }
 
+const WORLD = { UDC_APP_ENV: 'production', UDC_TEST_WORLD: '1', SUPABASE_URL: 'https://lfqmfozvdaszpbbropqo.supabase.co', SUPABASE_DATABASE_URL: 'postgres://postgres.lfqmfozvdaszpbbropqo:pw@aws-0-x.pooler.supabase.com:6543/postgres' };
 const stagingWithFixtures = {
-  UDC_APP_ENV: 'staging',
+  ...WORLD,
   UDC_TEST_FIXTURE_IDS: `${FIXTURE_BUYER}, ${FIXTURE_SELLER.toUpperCase()},junk-entry,${OWNER_TEST_USER_ID}`,
 };
 
@@ -43,7 +44,7 @@ test('fixture registry parses only valid non-owner uuids, staging only', async (
     assert.deepEqual(fixtureUserIds(), []);
     assert.equal(isStagingEnv(), false);
   });
-  await withEnv({ UDC_APP_ENV: 'staging' }, () => {
+  await withEnv({ ...WORLD }, () => {
     assert.deepEqual(fixtureUserIds(), []);
   });
 });
@@ -149,4 +150,21 @@ test('testWorldCounterpartyRowsOk: verified documentless pairs pass, every weake
 
 test('OWNER_TEST_PHONE_DIGITS matches the owner principal phone digits', () => {
   assert.equal(OWNER_TEST_PHONE_DIGITS, '917994133604');
+});
+
+test("test world flag needs the pinned staging DB binding and ignores UDC_APP_ENV", async () => {
+  const { isTestWorldEnabled, dbUrlTargetsTestWorld } = await import("../src/testPrincipal.ts");
+  const good = { UDC_TEST_WORLD: "1", SUPABASE_URL: WORLD.SUPABASE_URL, SUPABASE_DATABASE_URL: WORLD.SUPABASE_DATABASE_URL };
+  const e = (o: Record<string, string>) => o as unknown as NodeJS.ProcessEnv;
+  assert.equal(isTestWorldEnabled(e({ ...good })), true);
+  assert.equal(isTestWorldEnabled(e({ ...good, UDC_APP_ENV: "production" })), true, "does not depend on app env");
+  assert.equal(isTestWorldEnabled(e({ UDC_APP_ENV: "staging" })), false, "staging app env alone enables nothing");
+  assert.equal(isTestWorldEnabled(e({ ...good, UDC_TEST_WORLD: "true" })), false);
+  assert.equal(isTestWorldEnabled(e({ ...good, UDC_TEST_WORLD: "" })), false);
+  assert.equal(isTestWorldEnabled(e({ ...good, SUPABASE_DATABASE_URL: "postgres://postgres.otherproject:pw@h:6543/postgres" })), false, "other project fails closed");
+  assert.equal(isTestWorldEnabled(e({ ...good, SUPABASE_DATABASE_URL: "postgres://postgres.prodref:lfqmfozvdaszpbbropqo@h:6543/postgres" })), false, "ref in the password does not count");
+  assert.equal(isTestWorldEnabled(e({ ...good, SUPABASE_URL: "https://prodref.supabase.co" })), false, "mismatched API url fails closed");
+  assert.equal(isTestWorldEnabled(e({ ...good, SUPABASE_DATABASE_URL: "not a url" })), false);
+  assert.equal(dbUrlTargetsTestWorld("postgresql://postgres:pw@db.lfqmfozvdaszpbbropqo.supabase.co:5432/postgres"), true);
+  assert.equal(dbUrlTargetsTestWorld(undefined), false);
 });

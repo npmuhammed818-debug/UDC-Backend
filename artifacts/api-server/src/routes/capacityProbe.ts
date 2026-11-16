@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { requireRole } from "../auth/middleware";
-import { isStagingEnv } from "../testPrincipal";
+import { isTestWorldEnabled, dbUrlTargetsTestWorld } from "../testPrincipal";
 import { udcHandbookForRole } from "../akif/udcHandbook";
 import { groqModel } from "../akif/intelligence/groqClient";
 
@@ -21,7 +21,7 @@ const wanted = ["x-ratelimit-limit-requests", "x-ratelimit-remaining-requests", 
 
 router.post("/admin/capacity-probe", requireRole("admin"), async (req, res) => {
   res.set("Cache-Control", "no-store");
-  if (!isStagingEnv()) { res.sendStatus(404); return; }
+  if (!isTestWorldEnabled()) { res.sendStatus(404); return; }
   const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) { res.status(503).json({ error: "groq_not_configured" }); return; }
   if (running) { res.status(409).json({ error: "probe_running" }); return; }
@@ -98,8 +98,9 @@ router.get("/admin/runtime-flags", requireRole("admin"), (_req, res) => {
     ownerOnly[k] = digits.length === 0 ? "empty" : digits.every((d) => d === OWNER) ? "owner_only" : digits.includes(OWNER) ? "owner_plus_others" : "others_only";
   }
   const REF = "lfqmfozvdaszpbbropqo";
-  const dbTarget = { SUPABASE_URL_is_staging_project: (process.env.SUPABASE_URL ?? "").includes(REF), SUPABASE_DATABASE_URL_is_staging_project: (process.env.SUPABASE_DATABASE_URL ?? "").includes(REF) };
-  res.json({ values, lists, ownerOnly, dbTarget, note: "temporary read-only report; phone numbers, keys and URLs are never returned" });
+  const dbTarget: Record<string, boolean> = { SUPABASE_URL_is_staging_project: (process.env.SUPABASE_URL ?? "").includes(REF), SUPABASE_DATABASE_URL_is_staging_project: (process.env.SUPABASE_DATABASE_URL ?? "").includes(REF) };
+  dbTarget["pool_url_targets_pinned_project"] = dbUrlTargetsTestWorld(process.env.SUPABASE_DATABASE_URL);
+  res.json({ values, lists, ownerOnly, dbTarget, testWorld: { UDC_TEST_WORLD: process.env.UDC_TEST_WORLD ?? null, enabled: isTestWorldEnabled() }, note: "temporary read-only report; phone numbers, keys and URLs are never returned" });
 });
 
 export default router;

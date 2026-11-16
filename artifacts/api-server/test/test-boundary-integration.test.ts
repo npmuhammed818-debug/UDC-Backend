@@ -113,7 +113,9 @@ before(async () => {
     } }],
   });
   await writeFile(output, bundle.outputFiles[0].text);
-  process.env.UDC_APP_ENV = 'staging';
+  process.env.UDC_TEST_WORLD = '1';
+  process.env.SUPABASE_URL = 'https://lfqmfozvdaszpbbropqo.supabase.co';
+  process.env.SUPABASE_DATABASE_URL = 'postgres://postgres.lfqmfozvdaszpbbropqo:pw@aws-0-x.pooler.supabase.com:6543/postgres';
   process.env.UDC_TEST_FIXTURE_IDS = [FIXTURE_BUYER, FIXTURE_SELLER, FIXTURE_AGENT].join(',');
   mod = await import(output);
 });
@@ -281,14 +283,14 @@ test('verifiedCounterparties (real module): mixed pair fails closed, test pair t
   assert.equal(await mod.verifiedCounterparties(OWNER, REAL_SELLER, db), false, 'mixed pair must fail closed');
   assert.equal(await mod.verifiedCounterparties(FIXTURE_BUYER, REAL_SELLER, db), false, 'mixed pair must fail closed');
   reset(); // outside staging every id is ordinary: same rows, no evidence -> false
-  const savedEnv = process.env.UDC_APP_ENV;
-  process.env.UDC_APP_ENV = 'production';
+  const savedEnv = process.env.UDC_TEST_WORLD;
+  delete process.env.UDC_TEST_WORLD;
   rows.usersTable.push(
     { id: FIXTURE_BUYER, role: 'buyer', status: 'verified' },
     { id: FIXTURE_SELLER, role: 'seller', status: 'verified' },
   );
   assert.equal(await mod.verifiedCounterparties(FIXTURE_BUYER, FIXTURE_SELLER, db), false, 'outside staging the test world does not exist');
-  process.env.UDC_APP_ENV = savedEnv;
+  process.env.UDC_TEST_WORLD = savedEnv;
 });
 
 test('registry alone never confers fixture status: shape + provenance required (provenFixtureIds)', async () => {

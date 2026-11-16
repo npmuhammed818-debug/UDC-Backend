@@ -1,6 +1,6 @@
 import { and, eq, inArray, notInArray, or } from "drizzle-orm";
 import { db, usersTable, auditLogsTable, referralsTable, dealsTable, dealParticipantsTable, commissionsTable, buyerPoolAllocationsTable, buyerPoolsTable, buyerRequestsTable, sellerListingsTable, matchesTable, dealMeetingsTable } from "@workspace/db";
-import { isStagingEnv, fixtureUserIds, SYNTHETIC_EMAIL_SUFFIX } from "./testPrincipal.ts";
+import { isTestWorldEnabled, fixtureUserIds, SYNTHETIC_EMAIL_SUFFIX } from "./testPrincipal.ts";
 
 type Executor = Pick<typeof db, "select">;
 
@@ -22,7 +22,7 @@ export async function provenFixtureIds(
   ids: (string | null | undefined)[],
   executor: Executor = db,
 ): Promise<Set<string>> {
-  if (!isStagingEnv()) return new Set();
+  if (!isTestWorldEnabled()) return new Set();
   const candidates = [...new Set(
     ids.filter((id): id is string => Boolean(id)).map((id) => id.toLowerCase())
       .filter((id) => fixtureUserIds().includes(id)),

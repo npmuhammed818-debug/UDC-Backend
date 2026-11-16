@@ -5,7 +5,7 @@ import {
   companiesTable,
   companyVerificationDocumentsTable,
 } from "@workspace/db";
-import { isStagingEnv, isTestPrincipal, isTestWorldId } from "../testPrincipal.ts";
+import { isTestWorldEnabled, isTestPrincipal, isTestWorldId } from "../testPrincipal.ts";
 import { testWorldCounterpartyRowsOk, testWorldPair } from "../testBoundary.ts";
 import { provenFixtureIds } from "../fixtureEligibility.ts";
 

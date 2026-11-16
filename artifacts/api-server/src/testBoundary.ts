@@ -1,4 +1,4 @@
-import { isOwnerTestPrincipal, isStagingEnv, isTestPrincipal, isTestWorldId, type PrincipalLike } from "./testPrincipal.ts";
+import { isOwnerTestPrincipal, isTestWorldEnabled, isTestPrincipal, isTestWorldId, type PrincipalLike } from "./testPrincipal.ts";
 
 export const TEST_BOUNDARY_ERROR = "test_boundary_crossing";
 
@@ -36,7 +36,7 @@ export function assertSameWorld(...ids: (string | null | undefined)[]): void {
  *    testWorldCounterpartyRowsOk (verified status, roles, full principal identity).
  */
 export function testWorldPair(buyerId: string, sellerId: string): boolean | null {
-  if (!isStagingEnv() || (!isTestWorldId(buyerId) && !isTestWorldId(sellerId))) return null;
+  if (!isTestWorldEnabled() || (!isTestWorldId(buyerId) && !isTestWorldId(sellerId))) return null;
   return isTestWorldId(buyerId) && isTestWorldId(sellerId);
 }
 
