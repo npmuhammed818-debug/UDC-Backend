@@ -13,9 +13,12 @@ export const isStagingEnv = () => process.env.UDC_APP_ENV === "staging";
 export function isOwnerTestPrincipal(u: PrincipalLike | null | undefined): boolean {
   return !!u && isStagingEnv() && u.id === OWNER_TEST_USER_ID && digits(u.phone) === OWNER_TEST_PHONE_DIGITS;
 }
-export function isSyntheticFixture(u: PrincipalLike | null | undefined): boolean {
-  return !!u && isStagingEnv() && (u.email ?? "").toLowerCase().endsWith(SYNTHETIC_EMAIL_SUFFIX);
+/** No trusted fixture registry exists yet, and an email suffix is user-controlled, so nothing is a synthetic fixture. Fail closed. */
+export function isSyntheticFixture(_u: PrincipalLike | null | undefined): boolean {
+  return false;
 }
+/** The owner-test switch stays off unless this explicit server flag is set to 1 (unset = disabled). */
+export const ownerTestSwitchEnabled = () => isStagingEnv() && process.env.UDC_OWNER_TEST_SWITCH === "1";
 export const isTestPrincipal = (u: PrincipalLike | null | undefined) => isOwnerTestPrincipal(u) || isSyntheticFixture(u);
 
 /** True when an interaction would cross between a test principal and a real one (either direction). */

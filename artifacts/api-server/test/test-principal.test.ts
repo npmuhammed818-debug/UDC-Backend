@@ -21,9 +21,9 @@ test('outside staging nothing is a test principal (fail closed)', async () => {
     assert.equal(isTestPrincipal({ id: 'a', email: 'f@udc-test.invalid' }), false);
   });
 });
-test('synthetic fixtures use the reserved invalid domain only', async () => {
+test('email suffix alone never makes a synthetic fixture (no trusted registry yet)', async () => {
   await env('staging', () => {
-    assert.equal(isTestPrincipal({ id: 'a', email: 'f1@udc-test.invalid' }), true);
+    assert.equal(isTestPrincipal({ id: 'a', email: 'f1@udc-test.invalid' }), false);
     assert.equal(isTestPrincipal({ id: 'a', email: 'f1@udc-test.com' }), false);
   });
 });
@@ -32,7 +32,7 @@ test('crossing between test and real principals is detected both ways', async ()
     const real = { id: 'r', phone: '+911', email: 'r@x.com' };
     assert.equal(crossesTestBoundary(owner, real), true);
     assert.equal(crossesTestBoundary(real, owner), true);
-    assert.equal(crossesTestBoundary(owner, { id: 'f', email: 'f@udc-test.invalid' }), false);
+    assert.equal(crossesTestBoundary(owner, { id: 'f', email: 'f@udc-test.invalid' }), true);
     assert.equal(crossesTestBoundary(real, { id: 'r2', email: 'r2@x.com' }), false);
   });
 });

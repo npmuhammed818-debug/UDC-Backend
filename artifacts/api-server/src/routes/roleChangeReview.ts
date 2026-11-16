@@ -4,7 +4,7 @@ import {z} from "zod/v4";
 import {db,userRoleChangeRequestsTable,usersTable,auditLogsTable,notificationsTable} from "@workspace/db";
 import {requireRole,type AuthenticatedRequest} from "../auth/middleware";
 import {guidedChatPhoneHash} from "../whatsapp/phoneFingerprint";
-import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,isStagingEnv} from "../testPrincipal";
+import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,ownerTestSwitchEnabled} from "../testPrincipal";
 const router:IRouter=Router();
 
 // No email, phone, bank documents, or identity papers in the review list.
@@ -163,7 +163,7 @@ router.post("/admin/role-change-requests/:requestId/review",
 const ownerTestSwitch=z.object({toRole:z.enum(["agent","buyer","seller"])}).strict();
 router.post("/admin/owner-test/switch-role",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
   try{
-    if(!isStagingEnv()){res.status(404).json({error:"not_available"});return;}
+    if(!ownerTestSwitchEnabled()){res.status(404).json({error:"not_available"});return;}
     const input=ownerTestSwitch.parse(req.body);
     const result=await db.transaction(async tx=>{
       const rows=await tx.execute(sql`SELECT id,phone,email,role,status FROM public.users WHERE id=${OWNER_TEST_USER_ID} FOR UPDATE`);
