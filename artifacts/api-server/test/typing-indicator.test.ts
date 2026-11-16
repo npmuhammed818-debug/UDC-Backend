@@ -66,3 +66,10 @@ test("typing call logs only the Meta status, no ids", async () => {
   try { await withFetch(() => { markReadAndTyping("15555550101", "wamid.SECRET1"); }, async () => new Response("{}", { status: 200 })); } finally { console.info = real; restore(); }
   assert.deepEqual(logs, [["whatsapp_typing_result", { status: 200 }]]);
 });
+test("brain system prompt carries the trade-only scope rule and no language override", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/akif/brainOrchestrator.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("SCOPE: you only help with import and export trade"));
+  assert.ok(src.includes("Never refuse a legitimate trade question because of an ambiguous word"));
+  assert.ok(!src.includes("LANGUAGE: answer in the language the customer writes in"));
+});
