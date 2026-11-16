@@ -12,8 +12,7 @@ function stripDashBreaks(text: string): string {
     .replace(/(?<=[A-Za-z0-9])\s+[-–—]\s+(?=[A-Za-z])/g, ", ")
     .replace(/(?<=[A-Za-z0-9])[–—]\s*(?=[A-Za-z])/g, ", ")
     .replace(/,\s*,/g, ",")
-    .replace(/,([.!?])/g, "$1")
-    .replace(/\S+/g, (tok) => /[\d@/:]/.test(tok) ? tok : tok.replace(/(?<=\p{Ll})[-\u2010-\u2015\u2212](?=\p{Ll})/gu, " "));
+    .replace(/,([.!?])/g, "$1");
 }
 
 // AI wording for the post-handshake account flows (owner rule, 14 Nov): after
@@ -65,7 +64,7 @@ export async function composeAkifWording(spec: ComposeSpec): Promise<string | nu
         EMOTION_REFERENCE,
         "Never claim to be human: you are UDC's AI assistant.",
         "No markdown, no menus, no numbered or bulleted lists, no labels, no decorative punctuation, no canned stock lines.",
-        "Never use hyphens or dashes as sentence breaks; write like a person texting, with commas or full stops. Plain hyphens inside words like single-use or 6-digit are fine.",
+        "Never use hyphens or dashes as sentence breaks; write like a person texting, with commas or full stops. Never put a hyphen inside words you compose, write single use and 6 digit instead; copy names, codes, links and numbers exactly.",
         "Never invent facts, links, codes, reference numbers, dates or outcomes. State only what the task states.",
         "Never claim or hint that an account is verified, approved, registered or complete, and never claim an email was definitely sent or definitely exists, unless the task says it in so many words.",
         "Keep every string in mustKeepExact exactly as written, even inside another language.",

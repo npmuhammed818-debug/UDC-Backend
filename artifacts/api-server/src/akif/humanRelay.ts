@@ -66,26 +66,17 @@ export function brainVoiceEnabled(env: NodeJS.ProcessEnv = process.env): boolean
   return env.AKIF_BRAIN_VOICE === "on";
 }
 
-
-/** User rule, 16 Nov 14:18 IST ("No dash"): hyphens between letters, including
- *  non-breaking hyphens, become a space ("trade-related" -> "trade related").
- *  Tokens holding digits, @, / or : (invite codes, emails, links, dates,
- *  phone numbers) are left alone so they keep working. */
-export function stripWordDashes(text: string): string {
-  return text.replace(/\S+/g, (tok) => /[\d@/:]/.test(tok) ? tok : tok.replace(/(?<=\p{Ll})[-\u2010-\u2015\u2212](?=\p{Ll})/gu, " "));
-}
-
 /** Dash sentence-breaks are never sent to customers (owner style rule, 10
  *  Nov). Shared by the relay reply cleaner and the main outbound cleaner. */
 export function stripDashBreaks(text: string): string {
-  return stripWordDashes(text
+  return text
     // Spaced dash breaks ("word - word", "word — word") become a comma.
     .replace(/(?<=[A-Za-z0-9])\s+[-–—]\s+(?=[A-Za-z])/g, ", ")
     // Unspaced em/en dashes ("word—word") too. Plain hyphens inside words
-    // (single-use, 6-digit) stay untouched.
+    // (single use, 6 digit) stay untouched.
     .replace(/(?<=[A-Za-z0-9])[–—]\s*(?=[A-Za-z])/g, ", ")
     .replace(/,\s*,/g, ",")
-    .replace(/,([.!?])/g, "$1"));
+    .replace(/,([.!?])/g, "$1");
 }
 
 export function sanitizeRelayReplyText(text: string): string {
@@ -435,7 +426,7 @@ export const RELAY_REPLY_STYLE_NOTE =
   "Read the whole thread first (thread shows every message from first to last), then continue from its last topic like a real person: never restart with a generic greeting or opener, and never repeat a line already used in this chat (recentReplies shows what was already said). " +
   "If they sent several messages, answer each one as its own bubble from you, one reply per message. " +
   "If they share grief or ask to pause business: one short warm reply about what they said, at most one gentle question, never Menu, never sales talk. " +
-  "When they need to send KYC, ID or bank documents, issue the secure single-use link with the doclink tool; never collect documents over chat.";
+  "When they need to send KYC, ID or bank documents, issue the secure single use link with the doclink tool; never collect documents over chat.";
 
 /** Per-contact briefing from the relay owner to the reply workers (10 Nov:
  *  e.g. "no email needed for this customer, do not promise one"). Kept in

@@ -17,14 +17,14 @@ import { isTesterPhone } from "../auth/testerMode";
 const emailSchema = z.email().max(254);
 // Deterministic fallbacks: sent only when every AI provider is down (logged in
 // renderNote). Normal operation is Akif's own words around these exact facts.
-const generic = "If this verified UDC email is eligible, a 6-digit sign-in code will arrive by email. Reply with the 6-digit code here. It expires in 10 minutes.";
+const generic = "If this verified UDC email is eligible, a 6 digit sign in code will arrive by email. Reply with the 6 digit code here. It expires in 10 minutes.";
 const denied = "That code is invalid, expired or unavailable. You can request a new code, or contact UDC for account review.";
 const linked = "Your original UDC account is now linked to this WhatsApp number. Your deals and verification history are preserved. The old number can no longer access it. Open Menu to continue.";
 
 // Anti-enumeration stays deterministic: one identical intent for delivered,
 // absent, blocked, unverified and rate-limited identities. Only the wording is AI.
 const GENERIC_INTENT =
-  "Tell the customer: if this email belongs to a UDC account that can use it, a 6-digit sign-in code is on its way to that email, and it expires in 10 minutes. Ask them to reply here with the 6-digit code from the email. Never confirm or deny whether the email exists, is registered, or is eligible. Warm and brief.";
+  "Tell the customer: if this email belongs to a UDC account that can use it, a 6 digit sign in code is on its way to that email, and it expires in 10 minutes. Ask them to reply here with the 6 digit code from the email. Never confirm or deny whether the email exists, is registered, or is eligible. Warm and brief.";
 const DENIED_INTENT =
   "Tell the customer kindly that this code is invalid, expired or no longer available, and that they can request a fresh code or contact UDC for an account review. Warm and brief.";
 const LINKED_INTENT =
@@ -236,7 +236,7 @@ export function createPhoneRecoveryService(options: {
   async function handle(phone: string, text: string) {
     const action = phoneRecoveryCommand(text);
     if (!action) {
-      // A bare 6-digit reply counts as the code while a sign-in code is waiting
+      // A bare 6 digit reply counts as the code while a sign in code is waiting
       // for this phone (same courtesy as email verification); anything else
       // falls through to the normal conversation.
       const digits = text.trim();

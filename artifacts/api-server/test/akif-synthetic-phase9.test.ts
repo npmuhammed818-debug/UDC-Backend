@@ -122,7 +122,7 @@ test("accuracy guard: risky drafts are rejected before they reach a customer", (
 test("UDC stays WhatsApp-only and agents never see buyer/seller document steps", () => {
   assert.match(udcHandbook, /no app, mobile app, dashboard or portal/i);
   const agentBook = udcHandbookForRole("agent");
-  assert.ok(!/single-use upload link/.test(agentBook), "agents never get buyer/seller document steps");
+  assert.ok(!/single use upload link/.test(agentBook), "agents never get buyer/seller document steps");
   assert.match(agentBook, /AGENT/);
 });
 

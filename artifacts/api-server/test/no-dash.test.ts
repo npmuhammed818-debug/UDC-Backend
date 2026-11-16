@@ -1,19 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stripDashBreaks, sanitizeRelayReplyText } from "../src/akif/humanRelay.ts";
-test("customer text has no dashes between words", () => {
-  assert.equal(stripDashBreaks("a trade\u2011related question"), "a trade related question");
-  assert.equal(stripDashBreaks("a trade-related question"), "a trade related question");
-  assert.equal(stripDashBreaks("import\u2013export rules"), "import, export rules");
-  assert.equal(sanitizeRelayReplyText("Yes - sure, single-use"), "Yes, sure, single use");
+import { stripDashBreaks } from "../src/akif/humanRelay.ts";
+test("the cleaner never rewrites data: names, codes, links and ranges keep hyphens", () => {
+  for (const v of ["Al-Rashid Trading", "al-rashid traders", "Coca-Cola", "code UDC-30B6DC9B8409", "a-b@x.com", "https://wa.me/1?text=JOIN+UDC-AB-1", "in 5-10 days", "-5 degrees", "single-use"]) assert.equal(stripDashBreaks(v), v);
 });
-test("codes, emails, links, numbers keep their hyphens", () => {
-  assert.equal(stripDashBreaks("code UDC-30B6DC9B8409"), "code UDC-30B6DC9B8409");
-  assert.equal(stripDashBreaks("a-b@x.com"), "a-b@x.com");
-  assert.equal(stripDashBreaks("https://wa.me/1?text=JOIN+UDC-AB-1"), "https://wa.me/1?text=JOIN+UDC-AB-1");
-  assert.equal(stripDashBreaks("in 5-10 days"), "in 5-10 days");
+test("sentence break dashes still become commas", () => {
+  assert.equal(stripDashBreaks("Sure \u2013 here you go"), "Sure, here you go");
 });
-test("names and capitalised identifiers keep their hyphens", () => {
-  assert.equal(stripDashBreaks("Al-Rashid Trading and Coca-Cola, Jean-Luc"), "Al-Rashid Trading and Coca-Cola, Jean-Luc");
-  assert.equal(stripDashBreaks("Trade-related help"), "Trade related help");
+test("brain prompt tells the model not to hyphenate its own words but to copy data exactly", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/akif/brainOrchestrator.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("never write a dash or hyphen inside words you compose yourself"));
+  assert.ok(src.includes("copy people's names, company names, codes, links, emails, numbers and quoted customer data exactly as given"));
 });

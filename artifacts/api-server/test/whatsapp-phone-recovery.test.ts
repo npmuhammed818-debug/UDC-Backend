@@ -108,7 +108,7 @@ test("verified email is required before migrating a WhatsApp number to its origi
       const unverified=await x.service.request("22222222222","owner@example.invalid");
       assert.equal(unknown,unverified);assert.equal(x.emailOutbox.length,0);assert.equal(r.accounts[0].phone,"11111111111");
     });
-    await t.test("correct bound 6-digit OTP moves number, preserves user ID and revokes old access",async()=>{
+    await t.test("correct bound 6 digit OTP moves number, preserves user ID and revokes old access",async()=>{
       const r=records();const x=create(r);
       await x.service.request("22222222222","OWNER@example.invalid");
       assert.equal(x.emailOutbox.length,1);assert.match(x.emailOutbox[0].code,/^\d{6}$/);

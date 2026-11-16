@@ -5,7 +5,7 @@ test('photo text preserves exact price and full product suffix with review cavea
  const product='A'.repeat(110)+' grade XYZ';
  const text=photoQuoteText({dealNumber:'UDC-SYNTHETIC',items:[{product,unitPrice:'900719925474099.000001',currency:'USD',unit:'carton'}],notice:'Unverified extraction. No seller matched or order created.'});
  assert.ok(text.includes(product+': 900719925474099.000001 USD per carton'));
- assert.match(text,/1 unverified extracted price-list rows/);
+ assert.match(text,/1 unverified extracted price list rows/);
  assert.match(text,/No seller matched or order created/);
 });
 test('photo text calls out omitted rows and keeps unverified source caveat',()=>{

@@ -14,7 +14,7 @@ export async function handleEmailVerification(
 ): Promise<string | null> {
   const request = isVerifyEmailRequest(text);
   let confirm = /^email code(?:\s+(.*))?$/i.exec(text.trim());
-  // A bare 6-digit reply counts as the code only while a code is waiting for this phone.
+  // A bare 6 digit reply counts as the code only while a code is waiting for this phone.
   if (!request && !confirm && /^\d{6}$/.test(text.trim())) {
     const { rows: waiting } = await db.execute(
       sql`select 1 from email_auth_challenges c join users u on u.id=c.user_id where u.phone=${phone} and c.purpose='verify_email' and c.consumed_at is null and c.expires_at>now() limit 1`,
@@ -46,14 +46,14 @@ export async function handleEmailVerification(
           languageOf: text, maxChars: 400 });
       if (!(await emailAuth.requestVerification(user.id)).sent) return EMAIL_UNAVAILABLE_REPLY;
       return renderNote({
-        intent: "Tell the customer a 6-digit code was just sent to their registered email, to reply here with that code, that it expires in 10 minutes, and to wait one minute before asking for another. Never say which email address it went to.",
-        fallback: "Check your registered email for a 6-digit code. Reply here with the 6-digit code. It expires in 10 minutes; wait one minute before requesting another.",
+        intent: "Tell the customer a 6 digit code was just sent to their registered email, to reply here with that code, that it expires in 10 minutes, and to wait one minute before asking for another. Never say which email address it went to.",
+        fallback: "Check your registered email for a 6 digit code. Reply here with the 6 digit code. It expires in 10 minutes; wait one minute before requesting another.",
         mustSay: ["10 minutes"], languageOf: text, maxChars: 500 });
     }
     if (!/^\d{6}$/.test(confirm![1] ?? ""))
       return renderNote({
-        intent: "Politely ask the customer to reply with just the 6-digit code from their email. Warm and very short.",
-        fallback: "Reply here with the 6-digit code from your email.",
+        intent: "Politely ask the customer to reply with just the 6 digit code from their email. Warm and very short.",
+        fallback: "Reply here with the 6 digit code from your email.",
         languageOf: text, maxChars: 300 });
     // The user row lock in verify rechecks ownership and serializes one-time use.
     const { rows: challenges } = await db.execute(
@@ -72,10 +72,10 @@ export async function handleEmailVerification(
       return renderNote({
         intent: user.role === "agent"
           ? "Congratulate the customer warmly: their email is confirmed and their agent registration is now saved for UDC review. Ask them to send Menu to check their verification status."
-          : "Congratulate the customer warmly: their email is confirmed and their registration is now saved for UDC review. Tell them to send Menu, tap More options, then Documents, and you will send a private, single-use upload link for their company registration or trade-license PDF. Add that they can submit a requirement or offer now and it stays private until verification and review.",
+          : "Congratulate the customer warmly: their email is confirmed and their registration is now saved for UDC review. Tell them to send Menu, tap More options, then Documents, and you will send a private, single use upload link for their company registration or trade-license PDF. Add that they can submit a requirement or offer now and it stays private until verification and review.",
         fallback: user.role === "agent"
           ? "Your email is verified and your agent registration is now saved for UDC review. Type Menu to check your verification status."
-          : "Your email is verified and your registration is now saved for UDC review. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF. You can submit your requirement or offer now; it stays private until verification and review.",
+          : "Your email is verified and your registration is now saved for UDC review. Send Menu, tap More options, then Documents, and I will send you a private, single use upload link for your company registration or trade-license PDF. You can submit your requirement or offer now; it stays private until verification and review.",
         mustSay: ["Menu"], languageOf: text, maxChars: 800 });
     }
     return renderNote({

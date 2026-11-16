@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 // Owner rule (10 Nov): once a customer gives an email in chat registration, a
-// 6-digit OTP goes to that email immediately, the code is collected in chat,
+// 6 digit OTP goes to that email immediately, the code is collected in chat,
 // and registration is confirmed only after it verifies. Synthetic fixtures;
 // emailAuth is stubbed at the module seam so no real email or DB is touched.
 
@@ -89,7 +89,7 @@ test('registration does not claim a code was sent when none was produced', async
     state.codeSent = false;
     const m = await import(output);
     const reply = await m.registerWhatsAppAgent('10000000020', 'Synthetic Agent', 'agent@example.invalid');
-    assert.doesNotMatch(reply, /6-digit code/);
+    assert.doesNotMatch(reply, /6 digit code/);
     assert.match(reply, /pending UDC review/);
   } finally { await unlink(output); }
 });
@@ -99,7 +99,7 @@ test('quick agent registration asks for the OTP before confirming, and only Sand
   try {
     const m = await import(output);
     const reply = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent', 'agent@example.invalid');
-    assert.match(reply, /6-digit code/);
+    assert.match(reply, /6 digit code/);
     assert.match(reply, /finish your registration/);
     assert.doesNotMatch(reply, /pending UDC review\. Agent deal access/);
     assert.deepEqual(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 1);
@@ -109,7 +109,7 @@ test('quick agent registration asks for the OTP before confirming, and only Sand
     // (10 Nov): OTP for everyone except Sandra, so a fresh code goes out.
     state.emailCalls.length = 0;
     const again = await m.registerWhatsAppAgent('10000000010', 'Synthetic Agent', 'agent@example.invalid');
-    assert.match(again, /6-digit code/);
+    assert.match(again, /6 digit code/);
     assert.equal(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 1);
 
     // Sandra's existing account is the single exemption: no code, status reply.
@@ -117,7 +117,7 @@ test('quick agent registration asks for the OTP before confirming, and only Sand
     state.rows.usersTable.push({ id: 'u-sandra', phone: '917028815509', email: 'trinitysandra2512@gmail.com', status: 'verified', role: 'agent' });
     const sandra = await m.registerWhatsAppAgent('917028815509', 'Sandra Victor');
     assert.match(sandra, /already approved/);
-    assert.doesNotMatch(sandra, /6-digit code/);
+    assert.doesNotMatch(sandra, /6 digit code/);
     assert.equal(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 0);
 
     // No email collected: registration saves with the classic reply, no code.
@@ -138,7 +138,7 @@ test('menu form registration asks for the OTP first instead of declaring registr
     const m = await import(output);
     const phone = '10000000012';
     const reply = await m.submitChatFlow(phone, JSON.stringify({ flow_token: m.issueFlowToken(phone, 'profile_agent'), full_name: 'Synthetic Agent', email: 'agent@gmail.com' }));
-    assert.match(reply, /6-digit code/);
+    assert.match(reply, /6 digit code/);
     assert.match(reply, /finish your registration/);
     assert.doesNotMatch(reply, /saved for UDC review/);
     assert.equal(state.emailCalls.filter((c: any) => c[0] === 'requestVerification').length, 1);

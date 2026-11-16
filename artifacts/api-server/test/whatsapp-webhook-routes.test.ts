@@ -75,7 +75,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../whatsapp/customerServiceWindow": "export const recordSignedCustomerInbound=async input=>{s.windowEvidence.push(input);return {recorded:true};};",
     "../whatsapp/shipmentDeliveryReceipts": "export const recordSignedShipmentStatuses=async values=>{s.receipts.push(...values);if(s.failReceipt)throw Error('synthetic_DB_error');return {received:values.length};};",
     "../whatsapp/chatUi": "export const sendDocumentsLink=async()=>false;export const chatAction=(message)=>/^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')?'menu':null;export const handleChatUi=async(phone,message)=>{if(message.interactive || /^(?:menu|open menu)$/i.test(message.text?.body?.trim()||'')){s.uiCalls=(s.uiCalls||0)+1;return true;}return false;};export const sendChatHome=async(phone)=>{s.homeCalls=(s.homeCalls||0)+1;};",
-    "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign-in confirmation';};",
+    "../auth/whatsappSignin": "export const parseSigninCommand=text=>/^(?:CONFIRM LOGIN|LOGIN) [A-F0-9]{16}$/i.test(text)?{}:null;export const handleWhatsAppSignin=async()=>{s.signins=(s.signins||0)+1;return 'Fixture sign in confirmation';};",
     "../akif/intakeConversation": "export const interpretIntakeConversation=async x=>{s.intake.push(x);return s.decision;};",
     "../akif/recordBuyerRequirement": "export const recordPendingBuyerRequirement=async x=>{s.recorded.push(x);return {id:'requirement',status:'pending_admin_review'};};",
     "../whatsapp/guidance": "export const isGuidanceQuestion=x=>s.guidanceReply!==undefined;export const answerGuidance=async(...args)=>{s.guidanceCalls.push(args);if(s.guidanceFailure)throw Error('PRIVATE_MODEL_FAILURE');return s.guidanceReply??null;};export const guidanceMainLanguage=async()=>'';",
@@ -837,7 +837,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       rows.dealMeetingsTable = [{ id: "m2", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() - 86400000), provider: "zoom", meetingUrl: "https://zoom.us/j/999", agenda: null }];
       await message({ text: { body: "When is our meeting?" } });
       assert.match(state.sent.at(-1).body, /No meeting is scheduled on this deal yet/);
-      // An in-person meeting keeps its agenda labelled as agenda, never as a place.
+      // An in person meeting keeps its agenda labelled as agenda, never as a place.
       rows.dealMeetingsTable = [{ id: "m3", dealId: "deal-a", status: "scheduled", scheduledAt: new Date(Date.now() + 86400000), provider: "in_person", meetingUrl: null, agenda: "final terms" }];
       await message({ text: { body: "Where is the meeting?" } });
       assert.match(state.sent.at(-1).body, /in person \(agenda: final terms\)/);

@@ -655,7 +655,7 @@ async function resolveActiveDealForUser(userId: string, replyToProviderMessageId
 export function noDealFileReply(role: string) {
   return role === "agent"
     ? "I got the file. Agents do not upload documents here, so I have not kept it."
-    : "I got the file, but you have no active deal yet. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF.";
+    : "I got the file, but you have no active deal yet. Send Menu, tap More options, then Documents, and I will send you a private, single use upload link for your company registration or trade-license PDF.";
 }
 
 async function handleWhatsAppDealDocument(

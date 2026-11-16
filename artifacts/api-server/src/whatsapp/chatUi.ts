@@ -48,9 +48,9 @@ const CHAT_NOTE_INTENTS:Record<string,NoteSpec>={
   'Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.':{intent:"Welcome the customer warmly to UDC (UpDownCircle, the B2B trade platform). Ask whether they are joining as a buyer, seller or agent, and mention they can choose below. Add that if they already registered from another number, they can send the words Sign in followed by their registered email. Friendly and brief.",fallback:'Welcome to UDC. Buyer, seller or agent? Choose below. Already registered on another number? Send Sign in followed by your registered email.',mustSay:["Sign in"]},
   'What would you like to do? Choose below, or message Akif normally.':{intent:"Ask the customer warmly what they would like to do; they can pick an option below or simply message Akif in their own words. Very brief.",fallback:'What would you like to do? Choose below, or message Akif normally.'},
   'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.':{intent:"Tell the customer that this email already belongs to a UDC account. To use it from this WhatsApp number, they can send the words Sign in followed by that email address, and a code will go to that email. Reassure them that profiles are never merged automatically. Warm, clear, brief.",fallback:'This email already belongs to a UDC account. To access it from your new WhatsApp number, send Sign in followed by your email. An email OTP is required. Profiles are never merged automatically.',mustSay:["Sign in"]},
-  'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.':{intent:"Tell the customer you just sent a 6-digit code to their email, to reply here with that code to confirm the email and finish registration, and that it expires in 10 minutes. Warm and brief. Never name the email address.",fallback:'I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.',mustSay:["10 minutes"]},
+  'I sent a 6 digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.':{intent:"Tell the customer you just sent a 6 digit code to their email, to reply here with that code to confirm the email and finish registration, and that it expires in 10 minutes. Warm and brief. Never name the email address.",fallback:'I sent a 6 digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.',mustSay:["10 minutes"]},
   'Email codes are paused for a short while on our side. Your details are saved, please try again in some time.':{intent:"Apologize lightly and tell the customer that email codes are paused for a short while on our side, their details are saved, and they should please try again in some time. Warm and honest.",fallback:'Email codes are paused for a short while on our side. Your details are saved, please try again in some time.'},
-  'A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.':{intent:"Tell the customer a 6-digit code was sent to their email, to reply here with that code to confirm the email and finish registration, and that it expires in 10 minutes. Warm and brief. Never name the email address.",fallback:'A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.',mustSay:["10 minutes"]},
+  'A 6 digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.':{intent:"Tell the customer a 6 digit code was sent to their email, to reply here with that code to confirm the email and finish registration, and that it expires in 10 minutes. Warm and brief. Never name the email address.",fallback:'A 6 digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.',mustSay:["10 minutes"]},
 };
 async function sayAi(text:string,languageOf?:string):Promise<string>{
   const spec=CHAT_NOTE_INTENTS[text]??{intent:`Say this to the customer in your own natural warm words, keeping the exact meaning, every instruction and every example unchanged: ${JSON.stringify(text)}. Do not add or remove facts or steps.`,fallback:text};
@@ -166,7 +166,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.{{VERIFY_HINT}}':'Registration saved. Verification pending. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF. You can submit your requirement or offer now; it stays private until verification and review.{{VERIFY_HINT}}';
+      reply=role==='agent'?'Your agent registration is saved for UDC review. Type Menu to check your verification status.{{VERIFY_HINT}}':'Registration saved. Verification pending. Send Menu, tap More options, then Documents, and I will send you a private, single use upload link for your company registration or trade-license PDF. You can submit your requirement or offer now; it stays private until verification and review.{{VERIFY_HINT}}';
       if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+='\n\n'+inviteNote;}
     }else{
       if(!user)return 'Register first using Menu, then choose your role.';
@@ -199,7 +199,7 @@ export async function submitChatFlow(phone:string,raw:unknown){
         // honest line and let them retry later; registration must not break.
         try{if(!(await emailAuth.requestVerification(otpUserId)).sent)throw new Error('code_not_sent');}
         catch{return sayAi('Email codes are paused for a short while on our side. Your details are saved, please try again in some time.');}
-        return sayAi('I sent a 6-digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.');}
+        return sayAi('I sent a 6 digit code to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.');}
     }catch{/* email sending off or rate limited: user can still send Verify email later */}
   }
   return sayAi(saved.split('{{VERIFY_HINT}}').join(' To confirm your email, send Verify email.'));
@@ -231,7 +231,7 @@ export async function registerWhatsAppProfileDirect(phone:string,role:'buyer'|'s
         if(company){const changed=company.companyName!==fields.companyName||company.registrationNumber!==fields.registrationNumber||company.country!==fields.country;if(changed){await tx.update(companiesTable).set({...fields,verificationStatus:'pending',updatedAt:new Date()}).where(eq(companiesTable.id,company.id));if(user.status==='verified')await tx.update(usersTable).set({status:'under_review'}).where(eq(usersTable.id,user.id));}}
         else await tx.insert(companiesTable).values({ownerUserId:user.id,...fields,verificationStatus:'pending'});
       }
-      let reply=role==='agent'?'Agent registration is saved for UDC review.':'Registration is saved. Verification is pending; company documents can be uploaded through a private, single-use link, and requirements or offers stay private until verification and review.';
+      let reply=role==='agent'?'Agent registration is saved for UDC review.':'Registration is saved. Verification is pending; company documents can be uploaded through a private, single use link, and requirements or offers stay private until verification and review.';
       if(role!=='agent'){const inviteNote=await claimInviteAfterRegistration(tx as any,phone,user);if(inviteNote)reply+=' '+inviteNote;}
       await tx.insert(auditLogsTable).values({actorUserId:user.id,action:'whatsapp_brain_registration_saved',entityType:'user',entityId:user.id,metadata:{purpose:'profile_'+role,channel:'whatsapp',via:'brain_orchestrator',requiresAdminReview:true}});
       const admins=await tx.select({id:usersTable.id}).from(usersTable).where(and(eq(usersTable.role,'admin'),or(eq(usersTable.status,'active'),eq(usersTable.status,'verified')))).limit(100);
@@ -241,9 +241,9 @@ export async function registerWhatsAppProfileDirect(phone:string,role:'buyer'|'s
     if(result.ok&&'userId' in result&&result.userId){
       try{
         if(isTesterPhone(phone))return {ok:true,reply:result.reply+' Email confirmed automatically (tester mode).'};
-        if(!(await emailAuth.status(result.userId)).emailVerified){if(!(await emailAuth.requestVerification(result.userId)).sent)return {ok:true,reply:await sayAi('Email codes are paused for a short while on our side. Your details are saved, please try again in some time.')};return {ok:true,reply:await sayAi('A 6-digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.')};}
+        if(!(await emailAuth.status(result.userId)).emailVerified){if(!(await emailAuth.requestVerification(result.userId)).sent)return {ok:true,reply:await sayAi('Email codes are paused for a short while on our side. Your details are saved, please try again in some time.')};return {ok:true,reply:await sayAi('A 6 digit code was sent to your email. Reply here with the code to confirm your email and finish your registration. It expires in 10 minutes.')};}
       }catch{/* email sending off or rate limited: user can send Verify email later */}
-      return {ok:true,reply:await sayAi(result.reply+' Email is not confirmed yet; a 6-digit email code confirms it.')};
+      return {ok:true,reply:await sayAi(result.reply+' Email is not confirmed yet; a 6 digit email code confirms it.')};
     }
     return {ok:result.ok,reply:result.ok?result.reply:await sayAi(result.reply)};
   }catch(error){
@@ -367,22 +367,22 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
     const docRows=company?await db.select({documentType:companyVerificationDocumentsTable.documentType,status:companyVerificationDocumentsTable.status}).from(companyVerificationDocumentsTable).where(eq(companyVerificationDocumentsTable.companyId,company.id)).orderBy(desc(companyVerificationDocumentsTable.updatedAt)):[];
     const seenTypes=new Set<string>();
     const docs=docRows.filter(d=>seenTypes.has(d.documentType)?false:(seenTypes.add(d.documentType),true));
-    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Send Menu, tap More options, then Documents, and I will send you a private, single-use upload link for your company registration or trade-license PDF.';
+    const docLine=docs.length?`\nDocuments: ${docs.map(d=>`${String(d.documentType).replace(/_/g,' ')} - ${publicDocumentStatus(d.status)}`).join('; ')}.`:'\nDocuments: none received yet. Send Menu, tap More options, then Documents, and I will send you a private, single use upload link for your company registration or trade-license PDF.';
     if(!company){
       const u=user as {status:string;emailVerifiedAt?:Date|string|null};
       const t=['suspended','rejected'].includes(u.status)?'Your account is not active. Please contact service@updowncircle.site.'
         :u.status==='verified'?'Your account is verified by UDC.'
         :u.emailVerifiedAt?'Your email is confirmed. UDC approval is still pending. You can chat, upload documents and use your invite link meanwhile.'
-        :'Your email is not confirmed yet. Send "Verify email" and I will email you a 6-digit code.';
+        :'Your email is not confirmed yet. Send "Verify email" and I will email you a 6 digit code.';
       await sendWhatsAppTextWithMenu(phone,t);return true;
     }
     await sendWhatsAppTextWithMenu(phone,`Your account: ${user.status}. Company review: ${company?.status??'details not submitted'}.${docLine} UDC reviews evidence before approval. To confirm your email ownership, send Verify email.`);return true;}
   if(action==='documents'){await sendDocumentsOverview(phone,user);return true;}
   if(action.startsWith('doc:upload:')){const key=action.slice('doc:upload:'.length);await issueDocumentUploadLinks(phone,user,key==='all'?'all':[key]);return true;}
   if(action==='ask'){await sendWhatsAppTextWithMenu(phone,'Ask your trade question here, or send a voice note. I can explain trade terms, documents and the UDC process.');return true;}
-  if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in-person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
+  if(action==='meeting'){await sendWhatsAppTextWithMenu(phone,'Open My deals, choose the deal, then ask to arrange a video or in person meeting. UDC reviews meetings and both trading parties must be verified.');return true;}
   if(['invite','referrals','commissions'].includes(action)){
-    if(!agentMenuOpen(user)){await sendWhatsAppTextWithMenu(phone,user.role==='agent'?'Confirm your email first: send "Verify email" and I will email you a 6-digit code. Then your agent menu opens.':'These features are for agents.');return true;}
+    if(!agentMenuOpen(user)){await sendWhatsAppTextWithMenu(phone,user.role==='agent'?'Confirm your email first: send "Verify email" and I will email you a 6 digit code. Then your agent menu opens.':'These features are for agents.');return true;}
     if(action==='invite'){
        const joinLink=agentJoinLink(user.id,process.env.UDC_WHATSAPP_PUBLIC_NUMBER);
        if(joinLink){
@@ -576,7 +576,7 @@ export async function handleChatUi(phone:string,message:ChatMessage,directOnly=f
         if(user.role!=='agent'){
           if(event.location)lines.push(`Location recorded: ${safe(event.location)}`);
           if(event.note)lines.push(`UDC note: ${safe(event.note)}`);
-          const source=event.source==='carrier_reported'?'carrier-reported':event.source==='document_checked'?'document-checked':'manually recorded';
+          const source=event.source==='carrier_reported'?'carrier reported':event.source==='document_checked'?'document checked':'manually recorded';
           lines.push(`Source: ${source}`);
         }
       }

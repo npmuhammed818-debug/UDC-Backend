@@ -160,7 +160,7 @@ test('Akif guidance remembers language and follow-ups without verification or tr
  assert.match(offlineDlc,/bank’s undertaking to pay/);
  assert.equal(state.calls.length,beforeOfflineDlc,'saved fact answers never touch the model');
  const offlineGeneral=await answerGuidance('phone-offline','Explain export insurance?','offline-general');
- assert.match(offlineGeneral,/detailed trade-answer service is busy right now/);
+ assert.match(offlineGeneral,/detailed trade answer service is busy right now/);
  assert.doesNotMatch(offlineGeneral,/couldn’t prepare that answer just now/);
  // Brevity: "summary" uses history, sets the brief preference and never hits the scope line.
  state.modelFailure=false;

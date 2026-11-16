@@ -229,7 +229,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       assert.match(last(),/Recorded ETA has passed; arrival is not confirmed/);
       assert.doesNotMatch(last(),/SECRET-AWB|SECRET FLIGHT/);
       assert.match(last(),/Recent shipment milestones/);assert.match(last(),/Shipment 1: departed/);
-      assert.match(last(),/Mundra Port/);assert.match(last(),/document-checked/);
+      assert.match(last(),/Mundra Port/);assert.match(last(),/document checked/);
       assert.doesNotMatch(last(),/PRIVATE PORT|SECRET DOCUMENT/);
       assert.match(last(),/UDC-OWN/);assert.match(last(),/Synthetic Carrier/);assert.match(last(),/QA-100/);
       assert.match(last(),/Last UDC update: 2026-11-01 10:00 UTC/);
@@ -267,7 +267,7 @@ test('native WhatsApp menus and forms preserve role, privacy, review and replay 
       assert.match(last(),/Shipment 1: in_transit/);
       assert.doesNotMatch(last(),/QA-100|Synthetic Carrier|Kochi|Jebel Ali|SECRET-999/);
       assert.match(last(),/sea cargo/);assert.doesNotMatch(last(),/QA-CONTAINER-123|Synthetic Vessel|QA-BL-101|Synthetic Harbour/);
-      assert.match(last(),/departed/);assert.doesNotMatch(last(),/Mundra Port|QA carrier document checked|document-checked|PRIVATE PORT/);
+      assert.match(last(),/departed/);assert.doesNotMatch(last(),/Mundra Port|QA carrier document checked|document checked|PRIVATE PORT/);
       rows.dealParticipantsTable[0].status='revoked';await m.handleChatUi(agent.phone,ui('deals'));assert.match(last(),/No approved deals/);await m.handleChatUi(agent.phone,ui('deal:'+own));assert.match(last(),/unavailable/);
       await m.handleChatUi(agent.phone,ui('track'));assert.match(last(),/no longer available/);assert.doesNotMatch(last(),/QA-100|Synthetic Carrier/);
     });
