@@ -1,5 +1,5 @@
 import { verifyAgentInvitation, agentReferralCode } from "../referrals/invitation";
-import { isTestWorldId } from "../testPrincipal.ts";
+import { isTestWorldId, SYNTHETIC_EMAIL_SUFFIX } from "../testPrincipal.ts";
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
@@ -75,6 +75,11 @@ router.post("/auth/register", async (req, res) => {
 
   try {
     const input = registrationSchema.parse(req.body);
+    // The reserved synthetic-fixture domain is never registerable, in any environment.
+    if (input.email.toLowerCase().endsWith(SYNTHETIC_EMAIL_SUFFIX)) {
+      res.status(400).json({ error: "reserved_email_domain" });
+      return;
+    }
     const [existing] = await db
       .select({ id: usersTable.id })
       .from(usersTable)

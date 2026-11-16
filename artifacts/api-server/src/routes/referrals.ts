@@ -1,5 +1,5 @@
 import QRCode from "qrcode";
-import { isTestWorldId } from "../testPrincipal.ts";
+import { isTestWorldId, SYNTHETIC_EMAIL_SUFFIX } from "../testPrincipal.ts";
 import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { agentJoinLink } from "../referrals/joinInvite";
 import { createAgentInvitation, agentReferralCode } from "../referrals/invitation";
@@ -37,6 +37,12 @@ router.post("/referrals/request", requireAuth, async (req, res) => {
   const parsed = referralRequestSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "valid_email_and_contact_consent_required" }); return; }
   try {
+    // The reserved synthetic-fixture domain is never referable or discoverable,
+    // registered or not, in any environment. Same generic reply, no record.
+    if (parsed.data.email.toLowerCase().endsWith(SYNTHETIC_EMAIL_SUFFIX)) {
+      res.status(202).json({ message: "If the person has a UDC buyer or seller account, the request will be reviewed. No commission is promised." });
+      return;
+    }
     const [referred] = await db.select({ id: usersTable.id }).from(usersTable)
       .where(and(sql`lower(${usersTable.email}) = ${parsed.data.email}`, inArray(usersTable.role, ["buyer", "seller"])))
       .limit(1);
