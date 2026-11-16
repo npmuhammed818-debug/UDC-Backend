@@ -38,7 +38,6 @@ import whatsappBuyerIntakeRouter from "./whatsappBuyerIntake";
 import whatsappWebhookRouter from "./whatsappWebhook";
 import whatsappTemplateReadinessRouter from "./whatsappTemplateReadiness";
 import roleChangeReviewRouter from "./roleChangeReview";
-import capacityProbeRouter from "./capacityProbe";
 import stagingReadinessRouter from "./stagingReadiness";
 import vaultRouter from "./vault";
 
@@ -83,7 +82,6 @@ router.use(whatsappBuyerIntakeRouter);
 router.use(whatsappWebhookRouter);
 router.use(whatsappTemplateReadinessRouter);
 router.use(roleChangeReviewRouter);
-router.use(capacityProbeRouter);
 router.use(stagingReadinessRouter);
 router.use(vaultRouter);
 
