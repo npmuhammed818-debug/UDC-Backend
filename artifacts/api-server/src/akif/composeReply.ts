@@ -7,8 +7,31 @@ import { EMOTION_REFERENCE } from "./emotionNotes";
 // Dash sentence-breaks are never sent to customers (owner style rule, 10 Nov).
 // Kept local so test fixtures that stub ./humanRelay never affect this module;
 // the regexes mirror humanRelay.stripDashBreaks exactly.
+
+// User rule (owner, repeated 16 Nov): no dash in customer prose, including inside ordinary
+// compound words ("trade-related" -> "trade related"). Deliberately NOT a global hyphen strip:
+// only a lowercase word or number joined to a closed list of ordinary English second words (or
+// after a few common prefixes) is split, and only when the whole token has no @ / : _ . or
+// digits-with-letters mixing, so names, emails, links, codes, ids, dates and ranges are never touched.
+const COMPOUND_SECOND = "related|based|use|in|up|out|off|free|time|term|check|checked|digit|digits|step|day|days|wise|like|ready|friendly|specific|level|style|party|made|owned|held|known|only|facing|handed|word|way|sized|on|by|to|day|long|short|run|call|back|over|down|side|line|cut|off";
+const COMPOUND_RE = new RegExp(`^((?:[a-z]{2,}|\\d{1,3}))-(${COMPOUND_SECOND})$`);
+const COMPOUND_PREFIX_RE = /^(well|non|pre|multi|self|semi|cross|high|low|real|full|half|first|last|one|two|three|long|short)-([a-z]{3,})$/;
+function splitOrdinaryCompounds(text: string): string {
+  return text.replace(/\S+/g, (token) => {
+    const m = token.match(/^([^A-Za-z0-9]*)([A-Za-z0-9-]+)([^A-Za-z0-9-]*)$/);
+    if (!m || !m[2].includes("-")) return token;
+    const [, lead, core, tail] = m;
+    if (/["'`<>@\/:_=#]/.test(lead) || /["'`<>@\/:_=#]/.test(tail)) return token;
+    if (core !== core.toLowerCase()) return token;
+    const parts = core.split("-");
+    if (parts.length !== 2) return token;
+    if (COMPOUND_RE.test(core) || COMPOUND_PREFIX_RE.test(core)) return `${lead}${parts[0]} ${parts[1]}${tail}`;
+    return token;
+  });
+}
+
 function stripDashBreaks(text: string): string {
-  return text
+  return splitOrdinaryCompounds(text)
     .replace(/(?<=[A-Za-z0-9])\s+[-–—]\s+(?=[A-Za-z])/g, ", ")
     .replace(/(?<=[A-Za-z0-9])[–—]\s*(?=[A-Za-z])/g, ", ")
     .replace(/,\s*,/g, ",")

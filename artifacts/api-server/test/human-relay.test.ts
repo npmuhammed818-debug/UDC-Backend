@@ -255,7 +255,7 @@ test("relay reply sanitizer removes dash sentence breaks but keeps ranges and hy
   assert.equal(sanitizeRelayReplyText("Nice choice! Best country depends on the nut - Vietnam and Ivory Coast are strong for cashew"), "Nice choice! Best country depends on the nut, Vietnam and Ivory Coast are strong for cashew");
   assert.equal(sanitizeRelayReplyText("works 15 minutes - one tap uploads them all"), "works 15 minutes, one tap uploads them all");
   assert.equal(sanitizeRelayReplyText("10 - 15 kg is fine"), "10 - 15 kg is fine");
-  assert.equal(sanitizeRelayReplyText("single-use link"), "single-use link");
+  assert.equal(sanitizeRelayReplyText("single-use link"), "single use link");
 });
 
 test("brain-first reply safety: short safe answers pass, risky ones hold", async () => {

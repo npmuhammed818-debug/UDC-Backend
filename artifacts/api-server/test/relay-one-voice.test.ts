@@ -14,7 +14,7 @@ test("dash stripper catches spaced AND unspaced em/en dashes, keeps hyphenated w
   assert.equal(stripDashBreaks("Sure thing—feel free"), "Sure thing, feel free");
   assert.equal(stripDashBreaks("word – word"), "word, word");
   assert.equal(stripDashBreaks("word - word"), "word, word");
-  assert.equal(stripDashBreaks("single-use link and 6-digit code"), "single-use link and 6-digit code");
+  assert.equal(stripDashBreaks("single-use link and 6-digit code"), "single use link and 6 digit code");
   assert.equal(sanitizeRelayReplyText("a—b"), "a, b");
 });
 
