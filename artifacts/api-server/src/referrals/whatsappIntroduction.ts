@@ -3,6 +3,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { db, usersTable, referralsTable, auditLogsTable } from '@workspace/db';
 import { sendWhatsAppInteractive, sendWhatsAppText } from '../whatsapp/client';
 import { agentReferralCode } from './invitation';
+import { isTestWorldId } from '../testPrincipal.ts';
 
 export async function handleWhatsAppIntroduction(phone:string,message:{text?:{body?:string};interactive?:{button_reply?:{id?:string}}}){
  const code=/^referral\s+UDC-([a-f0-9-]{8,36})$/i.exec(message.text?.body?.trim()??'');
@@ -19,6 +20,7 @@ export async function handleWhatsAppIntroduction(phone:string,message:{text?:{bo
    : await db.select().from(usersTable).where(and(sql`${usersTable.id}::text LIKE ${normalized+'%'}`,eq(usersTable.role,'agent'),eq(usersTable.status,'verified'))).limit(2);
   const agent=candidates.length===1?candidates[0]:undefined;
   if(!agent||agent.id===user.id){await sendWhatsAppText(phone,candidates.length>1?'That referral code is ambiguous. Ask the agent to share their current code.':'That verified agent referral is unavailable.');return true;}
+  if(isTestWorldId(agent.id)!==isTestWorldId(user.id)){await sendWhatsAppText(phone,'That verified agent referral is unavailable.');return true;}
   const [existing]=await db.select({id:referralsTable.id}).from(referralsTable).where(eq(referralsTable.referredUserId,user.id)).limit(1);
   if(existing){await sendWhatsAppText(phone,'An introduction is already recorded for your account. Ask UDC to review any correction.');return true;}
   const id=randomUUID();await db.insert(auditLogsTable).values({id,actorUserId:user.id,action:'whatsapp_referral_requested',entityType:'user',entityId:user.id,metadata:{agentUserId:agent.id,expiresAt:new Date(Date.now()+24*60*60_000).toISOString()}});
@@ -34,6 +36,7 @@ export async function handleWhatsAppIntroduction(phone:string,message:{text?:{bo
   const [current]=await tx.select().from(usersTable).where(eq(usersTable.id,user.id)).limit(1);
   const [agent]=await tx.select().from(usersTable).where(and(eq(usersTable.id,metadata.agentUserId),eq(usersTable.role,'agent'),eq(usersTable.status,'verified'))).limit(1);
   if(!current||!['buyer','seller'].includes(current.role)||['suspended','rejected'].includes(current.status)||!agent)return 'This introduction needs UDC review.';
+  if(isTestWorldId(agent.id)!==isTestWorldId(user.id))return 'This introduction needs UDC review.';
   const [existing]=await tx.select({id:referralsTable.id}).from(referralsTable).where(eq(referralsTable.referredUserId,user.id)).limit(1);
   if(existing)return 'An introduction is already recorded. UDC must review corrections.';
   const accept=button![1]==='accept';

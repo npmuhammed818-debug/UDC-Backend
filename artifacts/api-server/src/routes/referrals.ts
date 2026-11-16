@@ -1,4 +1,5 @@
 import QRCode from "qrcode";
+import { isTestWorldId } from "../testPrincipal.ts";
 import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { agentJoinLink } from "../referrals/joinInvite";
 import { createAgentInvitation, agentReferralCode } from "../referrals/invitation";
@@ -39,7 +40,7 @@ router.post("/referrals/request", requireAuth, async (req, res) => {
     const [referred] = await db.select({ id: usersTable.id }).from(usersTable)
       .where(and(sql`lower(${usersTable.email}) = ${parsed.data.email}`, inArray(usersTable.role, ["buyer", "seller"])))
       .limit(1);
-    if (referred && referred.id !== req.authUser!.id) {
+    if (referred && referred.id !== req.authUser!.id && isTestWorldId(referred.id) === isTestWorldId(req.authUser!.id)) {
       await db.transaction(async (tx) => {
         const [referral] = await tx.insert(referralsTable).values({
           agentUserId: req.authUser!.id,

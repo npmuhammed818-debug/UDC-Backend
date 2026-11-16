@@ -12,6 +12,7 @@ import { and, eq } from "drizzle-orm";
 import { db, usersTable, companiesTable, companyVerificationDocumentsTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable, shipmentsTable, shipmentTrackingEventsTable, whatsappUserContextsTable, dealParticipantsTable } from "@workspace/db";
 import { desc, or } from "drizzle-orm";
 import { sendWhatsAppText } from "../whatsapp/client.ts";
+import { isTestWorldId } from "../testPrincipal.ts";
 import { runGroqToolChat, type GroqToolChatMessage, type GroqToolDefinition } from "./intelligence/groqClient.ts";
 import { udcHandbookForRole } from "./udcHandbook.ts";
 import { agentReferralCode } from "../referrals/invitation.ts";
@@ -367,6 +368,7 @@ async function executeTool(phone: string, name: string, argsJson: string, state:
     const role = deal.buyerUserId === user.id ? "buyer" : "seller";
     const otherRole = role === "buyer" ? "seller" : "buyer";
     const [other] = await db.select().from(usersTable).where(eq(usersTable.id, role === "buyer" ? deal.sellerUserId : deal.buyerUserId)).limit(1);
+    if (isTestWorldId(user.id) !== isTestWorldId(other?.id)) return { note: "The other party cannot be reached here; tell the customer UDC will follow up." };
     if (!other?.phone) return { note: "The other party cannot be reached here; tell the customer UDC will follow up." };
     let relaySend: RelaySendResult;
     try {

@@ -4,7 +4,9 @@ import {z} from "zod/v4";
 import {db,userRoleChangeRequestsTable,usersTable,auditLogsTable,notificationsTable} from "@workspace/db";
 import {requireRole,type AuthenticatedRequest} from "../auth/middleware";
 import {guidedChatPhoneHash} from "../whatsapp/phoneFingerprint";
-import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,ownerTestSwitchEnabled} from "../testPrincipal";
+import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,ownerTestSwitchEnabled,SYNTHETIC_EMAIL_SUFFIX} from "../testPrincipal";
+import {hashPassword} from "../auth/passwords";
+import {randomBytes} from "node:crypto";
 const router:IRouter=Router();
 
 // No email, phone, bank documents, or identity papers in the review list.
@@ -17,7 +19,7 @@ router.get("/admin/role-change-requests",requireRole("admin"),async(_req,res)=>{
       reviewedAt:userRoleChangeRequestsTable.reviewedAt,
     }).from(userRoleChangeRequestsTable)
       .orderBy(desc(userRoleChangeRequestsTable.createdAt)).limit(50);
-    res.set("Cache-Control","no-store").json({requests,autoSwitchEnabled:false});
+    res.set("Cache-Control","no-store").json({requests,autoSwitchEnabled:false,ownerTestSwitchEnabled:ownerTestSwitchEnabled()});
   }catch{res.status(503).json({error:"role_change_review_unavailable"});}
 });
 const review=z.object({
@@ -199,5 +201,41 @@ router.post("/admin/owner-test/switch-role",requireRole("admin"),async(req:Authe
     if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
     res.status(503).json({error:"owner_test_switch_unavailable"});
   }
+});
+// OWNER TEST FIXTURES (staging only, behind the same explicit switch). Provisions the documentless
+// synthetic counterparties the owner test account trades with: ordinary users rows with reserved
+// .invalid emails and a random unrecoverable password, marked verified with an audit row that says
+// it is NOT a real verification (no company, no documents). They only become test-world members
+// once their ids are added to UDC_TEST_FIXTURE_IDS; until then the evidence gate keeps them inert.
+const fixtureSpecs=[
+  {key:"buyer",email:`test-buyer${SYNTHETIC_EMAIL_SUFFIX}`,fullName:"UDC Test Fixture Buyer",role:"buyer"},
+  {key:"seller",email:`test-seller${SYNTHETIC_EMAIL_SUFFIX}`,fullName:"UDC Test Fixture Seller",role:"seller"},
+] as const;
+router.post("/admin/owner-test/fixtures",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    if(!ownerTestSwitchEnabled()){res.status(404).json({error:"not_available"});return;}
+    const fixtures=[];
+    for(const spec of fixtureSpecs){
+      const [existing]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(sql`lower(${usersTable.email})=${spec.email}`).limit(1);
+      if(existing){fixtures.push({key:spec.key,id:existing.id,email:spec.email,role:spec.role,created:false});continue;}
+      const passwordHash=await hashPassword(randomBytes(24).toString("hex"));
+      const [created]=await db.insert(usersTable).values({
+        fullName:spec.fullName,email:spec.email,passwordHash,passwordRecoveryEnabled:false,
+        role:spec.role,status:"verified",
+      }).returning({id:usersTable.id});
+      await db.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"owner_test_fixture_created",entityType:"user",entityId:created.id,
+        metadata:{synthetic:true,testAccount:true,role:spec.role,statusSetTo:"verified",
+          companyVerificationPerformed:false,documentsChecked:false,
+          note:"Synthetic owner-test fixture. This is not a real verification."},
+      });
+      fixtures.push({key:spec.key,id:created.id,email:spec.email,role:spec.role,created:true});
+    }
+    res.set("Cache-Control","no-store").json({
+      fixtures,
+      fixtureIds:fixtures.map((fixture)=>fixture.id),
+      note:"Add fixtureIds to UDC_TEST_FIXTURE_IDS in the staging environment to activate the isolated test world.",
+    });
+  }catch{res.status(503).json({error:"owner_test_fixtures_unavailable"});}
 });
 export default router;

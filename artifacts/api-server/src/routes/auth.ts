@@ -1,4 +1,5 @@
 import { verifyAgentInvitation, agentReferralCode } from "../referrals/invitation";
+import { isTestWorldId } from "../testPrincipal.ts";
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
@@ -90,7 +91,8 @@ router.post("/auth/register", async (req, res) => {
       const id = verifyAgentInvitation(input.referral_token, process.env.WHATSAPP_APP_SECRET ?? "");
       const [agent] = id ? await db.select({ id: usersTable.id }).from(usersTable)
         .where(and(eq(usersTable.id, id), eq(usersTable.role, "agent"), eq(usersTable.status, "verified"))).limit(1) : [];
-      if (!agent || input.role === "agent") { res.status(400).json({ error: "invalid_referral_invitation" }); return; }
+      // A new registrant is always real-world, so a test-world agent can never refer one.
+      if (!agent || input.role === "agent" || isTestWorldId(agent.id)) { res.status(400).json({ error: "invalid_referral_invitation" }); return; }
       referringAgentId = agent.id;
     }
     const passwordHash = await hashPassword(input.password);

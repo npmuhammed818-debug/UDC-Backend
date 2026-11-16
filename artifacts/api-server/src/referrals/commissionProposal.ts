@@ -1,5 +1,6 @@
 import {db,auditLogsTable,commissionsTable,dealsTable,dealParticipantsTable,usersTable,notificationsTable} from '@workspace/db';
 import {and,eq,desc,sql} from 'drizzle-orm';import {calculateCommissionAmount} from './commissionAmount.ts';import {commissionAmountFitsStorage} from './currencyPrecision.ts';
+import {sameWorldIds} from '../testPrincipal.ts';
 export class ProposalError extends Error{}
 export type ProposalTx=Parameters<Parameters<typeof db.transaction>[0]>[0];
 export async function prepareCommissionProposals(tx:ProposalTx,dealId:string){
@@ -7,7 +8,11 @@ export async function prepareCommissionProposals(tx:ProposalTx,dealId:string){
  const [deal]=await tx.select().from(dealsTable).where(eq(dealsTable.id,dealId)).limit(1);if(!deal||deal.status!=='completed')return [];
  const terms=await tx.select().from(auditLogsTable).where(and(eq(auditLogsTable.entityType,'deal'),eq(auditLogsTable.entityId,dealId),eq(auditLogsTable.action,'commission_terms_agreed'))).orderBy(desc(auditLogsTable.createdAt));
  const proposals=[];const seen=new Set<string>();
- for(const record of terms){const rule=record.metadata as any;if(!rule?.beneficiaryUserId||seen.has(rule.beneficiaryUserId))continue;seen.add(rule.beneficiaryUserId);
+ for(const record of terms){const rule=record.metadata as any;if(!rule?.beneficiaryUserId||seen.has(rule.beneficiaryUserId))continue;
+  // Test-world isolation: a synthetic deal never spawns a proposal for a real
+  // beneficiary, and a real deal never spawns one for a test-world beneficiary.
+  if(!sameWorldIds(rule.beneficiaryUserId,deal.buyerUserId,deal.sellerUserId))continue;
+  seen.add(rule.beneficiaryUserId);
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'commission:'+dealId+':'+rule.beneficiaryUserId}))`);
   const [existing]=await tx.select({id:auditLogsTable.id}).from(auditLogsTable).where(and(eq(auditLogsTable.action,'commission_proposal_prepared'),eq(auditLogsTable.entityId,record.id))).limit(1);if(existing)continue;
   const [owed]=await tx.select({id:commissionsTable.id}).from(commissionsTable).where(and(eq(commissionsTable.dealId,dealId),eq(commissionsTable.beneficiaryUserId,rule.beneficiaryUserId))).limit(1);if(owed)continue;
@@ -20,6 +25,7 @@ export async function approveCommissionProposal(proposalId:string,adminId:string
  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'commission_proposals:'+p.dealId}))`);
  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'commission:'+p.dealId+':'+p.beneficiaryUserId}))`);
  const [deal]=await tx.select().from(dealsTable).where(eq(dealsTable.id,p.dealId)).limit(1);if(!deal||deal.status!=='completed')throw new ProposalError('completed_deal_required');
+ if(!sameWorldIds(p.beneficiaryUserId,deal.buyerUserId,deal.sellerUserId))throw new ProposalError('test_boundary_crossing');
  const rules=await tx.select().from(auditLogsTable).where(and(eq(auditLogsTable.entityType,'deal'),eq(auditLogsTable.entityId,p.dealId),eq(auditLogsTable.action,'commission_terms_agreed'))).orderBy(desc(auditLogsTable.createdAt));const rule=rules.find(r=>(r.metadata as any)?.beneficiaryUserId===p.beneficiaryUserId);if(!rule||rule.id!==p.termsRecordId)throw new ProposalError('commission_agreed_terms_changed');
  const amount=calculateCommissionAmount({method:p.method,quantity:deal.quantity,unit:deal.unit,agreedPrice:deal.agreedPrice,rate:p.rate??undefined,amount:p.amount,currency:p.currency});if((p.method!=='fixed_amount'&&deal.currency.toUpperCase()!==p.currency)||amount!==p.amount||deal.quantity!==p.quantity||deal.unit!==p.unit||deal.agreedPrice!==p.agreedPrice)throw new ProposalError('commission_deal_terms_changed');if(!commissionAmountFitsStorage(amount))throw new ProposalError('commission_precision_exceeds_storage');
  const [user]=await tx.select().from(usersTable).where(eq(usersTable.id,p.beneficiaryUserId)).limit(1);if(!user||['suspended','rejected'].includes(user.status))throw new ProposalError('beneficiary_unavailable');

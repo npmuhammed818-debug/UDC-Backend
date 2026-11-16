@@ -11,6 +11,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../auth/middleware";
+import { sameWorldIds } from "../testPrincipal.ts";
 import { PoolAllocationError, inviteExpiresAt, isInviteExpired, respondToPoolInvite, sendPoolInviteMessage } from "../marketplace/poolInvites";
 
 const router: IRouter = Router();
@@ -80,6 +81,9 @@ router.post("/admin/buyer-pools/:poolId/allocations", requireRole("admin"), asyn
       const [pool] = await tx.select().from(buyerPoolsTable)
         .where(eq(buyerPoolsTable.id, poolId)).limit(1).for("update");
       if (!pool) throw new PoolAllocationError(404, "buyer_pool_not_found");
+      const [poolDeal] = await tx.select({ buyerUserId: dealsTable.buyerUserId }).from(dealsTable)
+        .where(eq(dealsTable.id, pool.dealId)).limit(1);
+      if (!sameWorldIds(poolDeal?.buyerUserId, input.buyerUserId)) throw new PoolAllocationError(409, "test_boundary_crossing");
       if (pool.status !== "forming") throw new PoolAllocationError(409, "buyer_pool_not_forming");
       if(poolPilotEnabled()){const policy=await poolCountry(tx,pool,input.buyerUserId);if(!policy.ok)throw new PoolAllocationError(409,policy.reason);if(policy.unit!==pool.unit)throw new PoolAllocationError(409,'pool_unit_changed');}
       const [buyer] = await tx.select({ id: usersTable.id }).from(usersTable)

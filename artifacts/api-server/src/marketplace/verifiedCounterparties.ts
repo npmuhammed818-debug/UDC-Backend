@@ -5,12 +5,35 @@ import {
   companiesTable,
   companyVerificationDocumentsTable,
 } from "@workspace/db";
+import { isStagingEnv, isTestPrincipal, isTestWorldId } from "../testPrincipal.ts";
+import { testWorldCounterpartyRowsOk, testWorldPair } from "../testBoundary.ts";
 
 export async function verifiedCounterparties(
   buyerId: string,
   sellerId: string,
   executor: Pick<typeof db, "select"> = db,
 ) {
+  const pair = testWorldPair(buyerId, sellerId);
+  if (pair === false) {
+    // Mixed pair (one real account, one test-world account): never verified
+    // counterparties, in either direction.
+    return false;
+  }
+  if (pair === true) {
+    // Test-world pairs trade only inside the test world, and without company
+    // evidence: the owner test account and its fixtures are documentless on
+    // purpose. Verified status, roles and full principal identity still apply.
+    const testUsers = await executor
+      .select()
+      .from(usersTable)
+      .where(
+        and(
+          inArray(usersTable.id, [buyerId, sellerId]),
+          eq(usersTable.status, "verified"),
+        ),
+      );
+    return testWorldCounterpartyRowsOk(testUsers, buyerId, sellerId);
+  }
   const users = await executor
     .select()
     .from(usersTable)

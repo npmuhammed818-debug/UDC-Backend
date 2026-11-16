@@ -1,4 +1,5 @@
 import { runBackgroundTask } from "../lib/backgroundTask.ts";
+import { isTestWorldId } from "../testPrincipal.ts";
 import {handleDocumentCheck} from '../whatsapp/documentCheck';
 import {handleDealReadSummary} from '../whatsapp/dealReadSummary';
 import {handleSellerReviewCard} from '../whatsapp/sellerReviewCard';
@@ -1070,6 +1071,12 @@ async function handleDealWhatsAppMessage(
       : null;
 
   if (!receiverUserId) return null;
+
+  // Test-world isolation: a deal message never relays between a test-world
+  // participant and a real one, in either direction.
+  if (isTestWorldId(sender.id) !== isTestWorldId(receiverUserId)) {
+    return { reply: "I can’t reach the other party on this deal right now. UDC will follow up here.", deliveredToCounterparty: false };
+  }
 
   // Meta can retry the same webhook when an AI turn is slow. Claim the inbound
   // provider message id before any model call so the same commercial message

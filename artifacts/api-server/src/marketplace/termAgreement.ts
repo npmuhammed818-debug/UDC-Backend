@@ -1,4 +1,5 @@
 import { verifiedCounterparties } from "./verifiedCounterparties";
+import { isTestWorldId } from "../testPrincipal.ts";
 import { queueAdminReviewAlert } from "../whatsapp/adminReviewAlerts";
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -472,7 +473,7 @@ export async function presentInitialVerifiedOffer(requirementId:string){
   const priorSellers=attempts.length?await tx.select({sellerUserId:sellerListingsTable.sellerUserId}).from(sellerListingsTable).where(inArray(sellerListingsTable.id,attempts.map(match=>match.sellerListingId))):[];
   const ranked=[];
   for(const offer of offers){
-   if(priorSellers.some(seller=>seller.sellerUserId===offer.sellerUserId)||attempts.some(match=>match.sellerListingId===offer.id)||!await verifiedCounterparties(buyer.buyerUserId,offer.sellerUserId,tx))continue;
+   if(priorSellers.some(seller=>seller.sellerUserId===offer.sellerUserId)||attempts.some(match=>match.sellerListingId===offer.id)||isTestWorldId(offer.sellerUserId)!==isTestWorldId(buyer.buyerUserId)||!await verifiedCounterparties(buyer.buyerUserId,offer.sellerUserId,tx))continue;
    ranked.push({offer,...scoreTradeMatch(buyer,offer)});
   }
   const preferred=(buyer.paymentTerms||udcPaymentTerms).trim().toLowerCase();

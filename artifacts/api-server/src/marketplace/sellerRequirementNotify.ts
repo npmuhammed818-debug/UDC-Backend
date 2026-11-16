@@ -10,6 +10,7 @@ import {
   sellerListingsTable, usersTable,
 } from '@workspace/db';
 import { sendWhatsAppInteractive, sendWhatsAppText } from '../whatsapp/client';
+import { isTestWorldId } from '../testPrincipal.ts';
 import {
   MAX_SELLERS_PER_REQUIREMENT, REQUIREMENT_INTEREST_RECORDED, REQUIREMENT_INTEREST_REPEAT,
   REQUIREMENT_INTEREST_UNAVAILABLE, REQUIREMENT_PASS_REPLY, openRequirementsReply, requirementNotifyText,
@@ -40,6 +41,9 @@ export async function notifyMatchingSellers(requestId: string): Promise<number> 
   let unconfirmed = 0;
   for (const listing of listings) {
     if (sent + unconfirmed >= MAX_SELLERS_PER_REQUIREMENT) break;
+    // Test-world isolation: a synthetic requirement never notifies a real seller,
+    // and a real requirement never notifies a test fixture.
+    if (isTestWorldId(listing.sellerUserId) !== isTestWorldId(request.buyerUserId)) continue;
     if (notifiedSellers.has(listing.sellerUserId)) continue;
     const [seller] = await db.select({ id: usersTable.id, phone: usersTable.phone, status: usersTable.status })
       .from(usersTable).where(eq(usersTable.id, listing.sellerUserId)).limit(1);
@@ -72,9 +76,10 @@ export async function respondToRequirementInterest(phone: string, requestId: str
     .where(eq(usersTable.phone, phone)).limit(1);
   if (!user || user.role !== 'seller') { await sendWhatsAppText(phone, REQUIREMENT_INTEREST_UNAVAILABLE); return; }
   if (!interested) { await sendWhatsAppText(phone, REQUIREMENT_PASS_REPLY); return; }
-  const [request] = await db.select({ id: buyerRequestsTable.id, productId: buyerRequestsTable.productId, status: buyerRequestsTable.status })
+  const [request] = await db.select({ id: buyerRequestsTable.id, productId: buyerRequestsTable.productId, status: buyerRequestsTable.status, buyerUserId: buyerRequestsTable.buyerUserId })
     .from(buyerRequestsTable).where(eq(buyerRequestsTable.id, requestId)).limit(1);
   if (!request || request.status !== 'approved') { await sendWhatsAppText(phone, REQUIREMENT_INTEREST_UNAVAILABLE); return; }
+  if (isTestWorldId(user.id) !== isTestWorldId(request.buyerUserId)) { await sendWhatsAppText(phone, REQUIREMENT_INTEREST_UNAVAILABLE); return; }
   const [listing] = await db.select({ id: sellerListingsTable.id }).from(sellerListingsTable)
     .where(and(eq(sellerListingsTable.sellerUserId, user.id), eq(sellerListingsTable.productId, request.productId), eq(sellerListingsTable.status, 'approved')))
     .orderBy(desc(sellerListingsTable.updatedAt)).limit(1);
@@ -100,7 +105,8 @@ export async function openRequirementsReplyForSeller(phone: string): Promise<str
     .where(and(eq(sellerListingsTable.sellerUserId, user.id), eq(sellerListingsTable.status, 'approved'))).limit(100);
   if (!listings.length) return 'You have no approved products yet. Send your offer first, and I will tell you when buyers match.';
   const productIds = [...new Set(listings.map((l) => l.productId))];
-  const requests = await db.select({ id: buyerRequestsTable.id }).from(buyerRequestsTable)
+  const requests = await db.select({ id: buyerRequestsTable.id, buyerUserId: buyerRequestsTable.buyerUserId }).from(buyerRequestsTable)
     .where(and(eq(buyerRequestsTable.status, 'approved'), inArray(buyerRequestsTable.productId, productIds))).limit(100);
-  return openRequirementsReply(requests.length);
+  const sameWorldRequests = requests.filter((request) => isTestWorldId(request.buyerUserId) === isTestWorldId(user.id));
+  return openRequirementsReply(sameWorldRequests.length);
 }

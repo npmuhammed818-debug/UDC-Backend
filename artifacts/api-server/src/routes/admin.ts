@@ -1,4 +1,5 @@
 import {prepareCommissionProposals} from '../referrals/commissionProposal';
+import { isStagingEnv, isTestPrincipal, isTestWorldId, sameWorldIds } from '../testPrincipal.ts';
 import {generateWhatsAppDraftPdf,whatsappDraftConfirmation} from '../deals/whatsappDraft';
 import { screenCompanyEvidence, companyProfileFingerprint } from '../akif/companyScreening';
 import { verifiedCounterparties, approvedCompanyEvidence } from '../marketplace/verifiedCounterparties';
@@ -1042,6 +1043,7 @@ router.post("/admin/referrals", requireRole("admin"), async (req: AuthenticatedR
       db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, input.referredUserId)).limit(1),
     ]);
     if (agent?.role !== "agent" || !referred || agent.id === referred.id) { res.status(409).json({ error: "invalid_referral_parties" }); return; }
+    if (!sameWorldIds(agent.id, referred.id)) { res.status(409).json({ error: "test_boundary_crossing" }); return; }
     const referral=await db.transaction(async tx=>{
     const [referral] = await tx.insert(referralsTable).values({
       agentUserId: agent.id,
@@ -1446,6 +1448,10 @@ router.post("/admin/commissions", requireRole("admin"), async (req: Authenticate
         res.status(404).json({ error: "commission_record_not_found" });
         return;
       }
+      if (!sameWorldIds(deal.buyerUserId, deal.sellerUserId, beneficiary.id)) {
+        res.status(409).json({ error: "test_boundary_crossing" });
+        return;
+      }
       const method = input.commissionType ?? "fixed_amount";
       const recordCurrency = (input.currency ?? deal.currency).toUpperCase();
       if (method !== "fixed_amount" && input.confirmAgreedTerms !== true) {
@@ -1832,7 +1838,13 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
       const [current] = await tx.select({ status: usersTable.status }).from(usersTable)
         .where(eq(usersTable.id, userId)).limit(1);
       if (!current) throw new Error("user_not_found");
-      if(input.status==='verified'&&['buyer','seller'].includes(existingUser.role)&&!await approvedCompanyEvidence(userId,tx))throw new AgreementError('verified_company_and_approved_document_required');
+      if(input.status==='verified'&&['buyer','seller'].includes(existingUser.role)&&!await approvedCompanyEvidence(userId,tx)){
+        // Test-world accounts are documentless on purpose: on staging, and only for the
+        // owner test account or a registered fixture, verified status is allowed without
+        // company evidence. Real accounts keep the hard requirement unchanged.
+        const testWorldTarget=isStagingEnv()&&isTestWorldId(userId)&&isTestPrincipal({id:existingUser.id,phone:existingUser.phone});
+        if(!testWorldTarget)throw new AgreementError('verified_company_and_approved_document_required');
+      }
       const [updated] = await tx.update(usersTable)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(usersTable.id, userId))
@@ -1842,7 +1854,7 @@ router.patch("/admin/users/:userId/verification", requireRole("admin"), async (r
         action: "user_verification_status_updated",
         entityType: "user",
         entityId: updated.id,
-        metadata: { previousStatus: current.status, newStatus: updated.status },
+        metadata: { previousStatus: current.status, newStatus: updated.status, testAccount: isTestWorldId(userId) },
       });
       if (current.status !== updated.status) await tx.insert(notificationsTable).values({
         userId: updated.id, type: "verification_status_updated", title: "Verification status updated",
@@ -2480,7 +2492,7 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
     const result=await db.transaction(async tx=>{
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"deal-agent:"+dealId}))`);
     const [[deal], [agent], existingAgents] = await Promise.all([
-      tx.select({ id: dealsTable.id }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
+      tx.select({ id: dealsTable.id, buyerUserId: dealsTable.buyerUserId, sellerUserId: dealsTable.sellerUserId }).from(dealsTable).where(eq(dealsTable.id, dealId)).limit(1),
       tx.select({ id: usersTable.id, role: usersTable.role }).from(usersTable).where(eq(usersTable.id, input.userId)).limit(1),
       tx.select({
         userId: dealParticipantsTable.userId,
@@ -2498,6 +2510,9 @@ router.post("/admin/deals/:dealId/agents", requireRole("admin"), async (req: Aut
     }
     if (agent?.role !== "agent") {
       return {error:"user_is_not_agent",status:409} as const;
+    }
+    if (!sameWorldIds(deal.buyerUserId, deal.sellerUserId, agent.id)) {
+      return {error:"test_boundary_crossing",status:409} as const;
     }
     if (input.referredByAgentUserId && !existingAgents.some((member) => member.userId === input.referredByAgentUserId)) {
       return {error:"referring_agent_not_on_deal",status:409} as const;
