@@ -1,5 +1,6 @@
 import { createTransport } from "nodemailer";
 import { EMAIL_RELAY_MAILBOX } from "./emailRelayChannel.ts";
+import { assertEmailFreeze } from "./emailFreeze.ts";
 
 /**
  * Outbound email (owner direction, 10 Nov): worker answers to inbound
@@ -66,7 +67,8 @@ export async function sendRelayEmail(
   payload: RelayEmailPayload,
   deps: OutboundDeps,
 ): Promise<{ id: string }> {
-  if (deps.sendMail) return deps.sendMail(payload);
+  if (deps.sendMail) return deps.sendMail(payload); // test injection only; production never sets it
+  assertEmailFreeze(payload.to);
   if (deps.resendApiKey) return sendViaResend(payload, deps.resendApiKey, deps.fetchImpl);
   if (!deps.config) throw new Error("smtp_not_configured");
   const transporter = createTransport({

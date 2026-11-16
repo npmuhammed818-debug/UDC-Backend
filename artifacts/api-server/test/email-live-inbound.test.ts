@@ -234,7 +234,8 @@ test("sendRelayEmail delivers the exact approved payload and refuses a missing m
     calls.push(payload);
     return { id: "<sent-1@smtp.example>" };
   };
-  const payload = buildRelayEmailPayload({ to: "a@b.example", text: "approved words" }, {});
+  const payload = buildRelayEmailPayload({ to: "npmuhammed818@gmail.com", text: "approved words" }, {});
+  await assert.rejects(() => sendRelayEmail(buildRelayEmailPayload({ to: "a@b.example", text: "x" }, {}), { config: null }), /email_freeze_recipient_blocked/);
   const result = await sendRelayEmail(payload, { config: null, sendMail: sendMail as never });
   assert.equal(result.id, "<sent-1@smtp.example>");
   assert.equal(calls[0].from, "udc@updowncircle.site");
@@ -310,7 +311,7 @@ test("a worker answer auto-sends to a live customer and only drafts for syntheti
 
   // SMTP failure: not delivered, reason carried, nothing recorded as sent.
   const fail = await sendEmailRelayAnswer(
-    { to: "buyer@example.com", text: "retry me" },
+    { to: "npmuhammed818+wa1@gmail.com", text: "retry me" },
     ports({ subject: "s" }) as never,
     { config: null },
   );

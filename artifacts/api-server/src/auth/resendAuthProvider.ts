@@ -7,6 +7,7 @@ export type ResendAuthConfig={
   verifiedDomain:string;
   idempotencySecret:string;
 };
+import {assertEmailFreeze} from "../channels/emailFreeze.ts";
 const RESEND_API="https://api.resend.com/emails";
 const MAX_RECEIPT_BYTES=4_096;
 
@@ -72,6 +73,7 @@ export function createResendAuthSender(config:ResendAuthConfig,transport:typeof 
   if(!validateResendConfig(config))throw Error("email_delivery_unavailable");
   return async(message,signal)=>{
     if(signal.aborted||!validateResendConfig(config))throw Error("email_delivery_unavailable");
+    if(transport===fetch)assertEmailFreeze(message.to); // customer email freeze; injected test transports skip
     const text=makeAuthEmailText(message);
     const idempotencyKey=createHmac("sha256",config.idempotencySecret)
       .update(JSON.stringify(["udc-auth-email-v1",message.to,message.code,message.purpose,message.expiresAt.toISOString()]))

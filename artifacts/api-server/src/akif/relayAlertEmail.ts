@@ -5,6 +5,7 @@
 // auth OTP email: UDC_AUTH_EMAIL_SEND_ENABLED stays untouched, no customer
 // ever receives these, and failures only log - the relay itself never breaks.
 
+import { emailRecipientAllowed } from "../channels/emailFreeze.ts";
 const RESEND_API = "https://api.resend.com/emails";
 
 export function relayAlertEmailConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -20,6 +21,7 @@ export async function sendRelayHeldAlert(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   if (!relayAlertEmailConfigured(env)) return false;
+  if (!emailRecipientAllowed(env.AKIF_RELAY_ALERT_EMAIL)) return false;
   try {
     const res = await fetch(RESEND_API, {
       method: "POST",

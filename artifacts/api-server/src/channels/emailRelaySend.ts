@@ -1,3 +1,4 @@
+import { emailRecipientAllowed } from "./emailFreeze.ts";
 import { EMAIL_RELAY_MAILBOX } from "./emailRelayChannel.ts";
 import { buildRelayEmailPayload, outboundDepsFromEnv, sendRelayEmail, type EmailThreadContext, type OutboundDeps } from "./emailOutbound.ts";
 // saveEmailRelayDraft is imported lazily in recordDraft so unit tests never load the db layer.
@@ -66,6 +67,11 @@ export async function sendEmailRelayAnswer(
   ports: EmailRelaySendPorts,
   deps: OutboundDeps,
 ): Promise<{ delivered: boolean; reason?: string }> {
+  if (!deps.sendMail && !emailRecipientAllowed(input.to)) {
+    // Customer email freeze: keep the answer as a draft, send nothing.
+    await ports.recordDraft(input);
+    return { delivered: true, reason: "email_freeze_draft" };
+  }
   const thread = await ports.findLatestLiveThread(input.to);
   if (!thread) {
     // No live intake for this address: synthetic fixture. Draft only.
