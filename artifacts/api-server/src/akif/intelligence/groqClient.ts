@@ -110,6 +110,11 @@ export async function runGroqToolChat(
         return null;
       });
       if (backup) return backup;
+      const openRouter = await runOpenRouterToolBackup(messages, tools, timeoutMs).catch((error: unknown) => {
+        console.warn('OpenRouter tool backup failed', { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
+      if (openRouter) return openRouter;
     }
     throw new Error(groqFailure);
   }
@@ -151,6 +156,39 @@ export async function runNvidiaToolBackup(
     body: JSON.stringify({ model, messages, tools, tool_choice: 'auto', temperature: 0.3 }),
   });
   if (!response.ok) throw new Error(`NVIDIA returned HTTP ${response.status}`);
+  const raw = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }> };
+  const message = raw.choices?.[0]?.message;
+  if (!message) return null;
+  const toolCalls = (message.tool_calls ?? [])
+    .filter((call) => typeof call?.id === 'string' && typeof call?.function?.name === 'string' && typeof call?.function?.arguments === 'string')
+    .map((call) => ({ id: call.id as string, name: call.function!.name as string, argumentsJson: call.function!.arguments as string }));
+  const content = typeof message.content === 'string' && message.content.trim() ? message.content.trim() : null;
+  if (!content && toolCalls.length === 0) return null;
+  return { content, toolCalls };
+}
+
+/** Free OpenRouter backup, tried after NVIDIA. Zero cost only: the model id must end in ":free", otherwise
+ *  nothing is sent. Used only when OPENROUTER_API_KEY is set. Same messages and tools; no prompt or policy change. */
+export async function runOpenRouterToolBackup(
+  messages: GroqToolChatMessage[],
+  tools: GroqToolDefinition[],
+  timeoutMs: number,
+): Promise<{ content: string | null; toolCalls: GroqToolCall[] } | null> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+  const model = process.env.OPENROUTER_MODEL?.trim() || 'openai/gpt-oss-120b:free';
+  if (!model.endsWith(':free')) {
+    console.warn('OpenRouter backup skipped: model is not a free (:free) model', { model });
+    return null;
+  }
+  console.warn('Groq and NVIDIA unavailable; trying OpenRouter free backup', { model });
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, messages, tools, tool_choice: 'auto', temperature: 0.3 }),
+  });
+  if (!response.ok) throw new Error(`OpenRouter returned HTTP ${response.status}`);
   const raw = await response.json() as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }> };
   const message = raw.choices?.[0]?.message;
   if (!message) return null;
