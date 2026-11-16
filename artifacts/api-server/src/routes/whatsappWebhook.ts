@@ -713,7 +713,6 @@ async function handleWhatsAppDealDocument(
     }
   }
 
-  react("ack", from, inboundProviderMessageId);
   const media = await downloadWhatsAppMedia(document.id);
   if (media.bytes.byteLength > 25 * 1024 * 1024) {
     return { reply: "That file is over the 25 MB limit. Send a smaller copy and I’ll take it from there." };
