@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq, inArray, lt, sql, and, isNull } from "drizzle-orm";
 import { db, whatsappInboundDedupTable } from "@workspace/db";
+import { logger } from "../lib/logger";
 
 // Durable claims are required before processing. Database errors (including a
 // missing table) fail closed so the webhook can return 503 and Meta can retry.
@@ -21,6 +22,7 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
   // A transient database blip (cold pooler connection, brief reconnect) must not
   // cost a customer their reply: retry the durable claim a few times before
   // failing closed. Still no process-local substitute for the durable claim.
+  let lastCause: unknown;
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt += 1) {
     try {
       const claimed = await db.insert(whatsappInboundDedupTable).values({ idHash: hash })
@@ -33,11 +35,19 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
         await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
       }
       return claimed.length === 1;
-    } catch {
+    } catch (error) {
+      lastCause = error;
       if (attempt === CLAIM_ATTEMPTS - 1) break;
       await new Promise((resolve) => setTimeout(resolve, CLAIM_RETRY_DELAY_MS * (attempt + 1)));
     }
   }
+  // Keep the real database cause (for example a read-only session, SQLSTATE 25006) in a bounded,
+  // redacted form so a repeated 503 is diagnosable. No message content, phone or id is logged.
+  const cause = lastCause as { code?: unknown; message?: unknown; cause?: { code?: unknown; message?: unknown } } | undefined;
+  const code = cause?.code ?? cause?.cause?.code;
+  const message = String(cause?.cause?.message ?? cause?.message ?? "unknown")
+    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "[url]").slice(0, 160);
+  logger.error({ flow: "whatsapp_inbound", reason: "dedup_claim_cause", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, cause: message, attempts: CLAIM_ATTEMPTS }, "Inbound claim failed after retries");
   throw new InboundDedupUnavailable();
 }
 
