@@ -89,7 +89,17 @@ router.get("/admin/runtime-flags", requireRole("admin"), (_req, res) => {
   for (const k of VALUE_FLAGS) { const v = process.env[k]; values[k] = v === undefined ? null : v.length > 40 ? `[${v.length} chars]` : JSON.stringify(v); }
   const lists: Record<string, string> = {};
   for (const k of LIST_FLAGS) { const v = process.env[k]; lists[k] = v === undefined ? "unset" : `set, ${v.split(",").map((x) => x.trim()).filter(Boolean).length} entries`; }
-  res.json({ values, lists, note: "temporary read-only report; phone numbers, keys and URLs are never returned" });
+  const OWNER = "917994133604";
+  const ownerOnly: Record<string, string> = {};
+  for (const k of LIST_FLAGS.filter((x) => x !== "UDC_TEST_FIXTURE_IDS")) {
+    const v = process.env[k];
+    if (v === undefined) { ownerOnly[k] = "unset"; continue; }
+    const digits = v.split(",").map((x) => x.replace(/\D/g, "")).filter(Boolean);
+    ownerOnly[k] = digits.length === 0 ? "empty" : digits.every((d) => d === OWNER) ? "owner_only" : digits.includes(OWNER) ? "owner_plus_others" : "others_only";
+  }
+  const REF = "lfqmfozvdaszpbbropqo";
+  const dbTarget = { SUPABASE_URL_is_staging_project: (process.env.SUPABASE_URL ?? "").includes(REF), SUPABASE_DATABASE_URL_is_staging_project: (process.env.SUPABASE_DATABASE_URL ?? "").includes(REF) };
+  res.json({ values, lists, ownerOnly, dbTarget, note: "temporary read-only report; phone numbers, keys and URLs are never returned" });
 });
 
 export default router;
