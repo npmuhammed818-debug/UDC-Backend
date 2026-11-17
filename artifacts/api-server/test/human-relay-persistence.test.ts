@@ -23,8 +23,8 @@ function fakeStore() {
   const calls: string[] = [];
   const persistence: RelayPersistence = {
     async upsertItem(item) { calls.push("upsert"); const i = rows.findIndex((r) => r.id === item.id); if (i >= 0) rows[i] = { ...item }; else rows.push({ ...item }); },
-    async markAnswered(ids, at, replyText) { calls.push("markAnswered"); for (const r of rows) if (ids.includes(r.id)) { r.answeredAt = at; if (replyText !== undefined) r.draft = replyText; } },
-    async markPhoneAnswered(phone, at, replyText) { calls.push("markPhoneAnswered"); for (const r of rows) if (r.phone === phone && !r.answeredAt) r.answeredAt = at; if (replyText !== undefined) { const mine = rows.filter((r) => r.phone === phone && r.answeredAt); const last = mine[mine.length - 1]; if (last) last.draft = replyText; } },
+    async markAnswered(ids, at, replyText) { calls.push("markAnswered"); for (const r of rows) if (ids.includes(r.id)) { r.answeredAt = at; if (replyText !== undefined) { r.preAnswerDraft = r.preAnswerDraft ?? r.draft; r.draft = replyText; } } },
+    async markPhoneAnswered(phone, at, replyText) { calls.push("markPhoneAnswered"); for (const r of rows) if (r.phone === phone && !r.answeredAt) r.answeredAt = at; if (replyText !== undefined) { const mine = rows.filter((r) => r.phone === phone && r.answeredAt); const last = mine[mine.length - 1]; if (last) { last.preAnswerDraft = last.preAnswerDraft ?? last.draft; last.draft = replyText; } } },
     async setClaim(id, workerId, at) { calls.push("setClaim"); const r = rows.find((x) => x.id === id); if (r) { r.claimedBy = workerId; r.claimedAt = at; } },
     async releaseClaims(ids) { calls.push("releaseClaims"); for (const r of rows) if (ids.includes(r.id)) { r.claimedBy = undefined; r.claimedAt = undefined; } },
     async deleteItems(ids) { calls.push("deleteItems"); for (let i = rows.length - 1; i >= 0; i--) if (ids.includes(rows[i].id)) rows.splice(i, 1); },
@@ -113,6 +113,42 @@ test("bot reply memory survives a restart and still blocks restatements", async 
   assert.equal(thread[1].from, "akif");
   // The repeat guard has its memory back after the restart.
   assert.equal(relayReplyResetsConversation(phone, "On commission, we only earn when a deal closes. Rates are not fixed yet. Buyer and seller deal directly, we just introduce them and help with the paperwork."), true, "restatement still blocked after restart");
+
+  __setRelayPersistenceForTests(null);
+  resetHumanRelay();
+});
+
+test("a human reply snapshots the pre-claim draft instead of erasing it", async () => {
+  const { rows, persistence } = fakeStore();
+  __setRelayPersistenceForTests(persistence);
+  resetHumanRelay();
+
+  const phone = "917022032531";
+  const item = enqueueHumanRelay({ phone, kind: "text", text: "price of copper?", draft: "Copper is around Rs 900/kg today, sir." });
+  await flush();
+  const claim = claimHumanRelay("worker-test");
+  answerClaimedHumanRelayItem(claim!.id, "worker-test", "Copper is Rs 912/kg today.");
+  await flush();
+  assert.equal(rows[0].draft, "Copper is Rs 912/kg today.", "the sent reply replaces draft");
+  assert.equal(rows[0].preAnswerDraft, "Copper is around Rs 900/kg today, sir.", "the pre-claim draft survives for attribution");
+
+  // The app refuses a second answer to the same item (answeredAt guard), and
+  // even if persistence were retried directly, the FIRST snapshot survives
+  // (production SQL uses COALESCE(pre_answer_draft, draft)).
+  assert.equal(answerClaimedHumanRelayItem(claim!.id, "worker-test", "Correcting: Rs 913/kg."), null, "a second answer to an answered item is refused");
+  await persistence.markAnswered([rows[0].id], new Date().toISOString(), "Correcting: Rs 913/kg.");
+  assert.equal(rows[0].draft, "Correcting: Rs 913/kg.");
+  assert.equal(rows[0].preAnswerDraft, "Copper is around Rs 900/kg today, sir.", "a retried overwrite keeps the original snapshot");
+
+  // A null draft snapshots as null, not as a crash.
+  const item2 = enqueueHumanRelay({ phone, kind: "text", text: "and delivery?", draft: null });
+  await flush();
+  const claim2 = claimHumanRelay("worker-test");
+  answerClaimedHumanRelayItem(claim2!.id, "worker-test", "Delivery in 3 days.");
+  await flush();
+  const row2 = rows.find((r) => r.id === item2.id)!;
+  assert.equal(row2.draft, "Delivery in 3 days.");
+  assert.equal(row2.preAnswerDraft ?? null, null, "no phantom snapshot when there was no draft");
 
   __setRelayPersistenceForTests(null);
   resetHumanRelay();

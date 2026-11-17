@@ -249,6 +249,10 @@ export type HumanRelayItem = {
   heardLanguage?: string;
   draft: string | null;
   draftBackgroundDiscarded: boolean;
+  // The draft as it stood the moment before a human reply overwrote it
+  // (17 Nov): without this snapshot, answer==draft comparisons are circular,
+  // because markAnswered stores the reply into draft itself.
+  preAnswerDraft?: string | null;
   answeredAt: string | null;
   autoAnswered?: boolean;
   autoNote?: string;
@@ -1018,7 +1022,7 @@ export function resetHumanRelay(): void {
 // tests keep running without a database.
 type RelayRow = {
   id: string; phone: string; at: Date | string; kind: string; text: string;
-  message_id: string | null; heard_language: string | null; draft: string | null; draft_background_discarded: boolean;
+  message_id: string | null; heard_language: string | null; draft: string | null; pre_answer_draft: string | null; draft_background_discarded: boolean;
   answered_at: Date | string | null; auto_answered: boolean; auto_note: string | null;
   claimed_by: string | null; claimed_at: Date | string | null; customer_note: string | null;
 };
@@ -1033,6 +1037,7 @@ function relayRowToItem(r: RelayRow): HumanRelayItem {
     messageId: r.message_id ?? undefined,
     heardLanguage: r.heard_language ?? undefined,
     draft: r.draft,
+    preAnswerDraft: r.pre_answer_draft ?? null,
     draftBackgroundDiscarded: Boolean(r.draft_background_discarded),
     answeredAt: r.answered_at ? new Date(r.answered_at).toISOString() : null,
     autoAnswered: r.auto_answered || undefined,
@@ -1074,7 +1079,7 @@ async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
       async markAnswered(ids, at, replyText) {
         if (!ids.length) return;
         if (replyText !== undefined) {
-          await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at}, draft = ${replyText} WHERE id IN (${idList(ids)})`);
+          await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at}, pre_answer_draft = COALESCE(pre_answer_draft, draft), draft = ${replyText} WHERE id IN (${idList(ids)})`);
           return;
         }
         await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at} WHERE answered_at IS NULL AND id IN (${idList(ids)})`);
@@ -1082,7 +1087,7 @@ async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
       async markPhoneAnswered(phone, at, replyText) {
         await db.execute(sql`UPDATE akif_human_relay_items SET answered_at = ${at} WHERE phone = ${phone} AND answered_at IS NULL`);
         if (replyText !== undefined) {
-          await db.execute(sql`UPDATE akif_human_relay_items SET draft = ${replyText} WHERE id = (SELECT id FROM akif_human_relay_items WHERE phone = ${phone} AND answered_at IS NOT NULL ORDER BY at DESC LIMIT 1)`);
+          await db.execute(sql`UPDATE akif_human_relay_items SET pre_answer_draft = COALESCE(pre_answer_draft, draft), draft = ${replyText} WHERE id = (SELECT id FROM akif_human_relay_items WHERE phone = ${phone} AND answered_at IS NOT NULL ORDER BY at DESC LIMIT 1)`);
         }
       },
       async setClaim(id, workerId, at) {
