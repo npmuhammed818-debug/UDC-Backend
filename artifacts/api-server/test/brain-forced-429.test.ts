@@ -14,7 +14,7 @@ process.env.GROQ_MODEL = process.env.GROQ_MODEL || 'synthetic-model';
 process.env.GROQ_BASE_URL = 'http://127.0.0.1:1'; // any real provider call fails fast, never reaches a network
 
 // 16 Nov incident, the conversational regression main asked for: forced 429s
-// on consecutive turns must not lose Kenya / 5000mt, the next successful turn
+// on consecutive turns must not lose Kenya / 5000mt / the quoted price, the next successful turn
 // must see them, and a turn-end merge racing a concurrent capture must
 // re-merge instead of dropping it. Drives the REAL runBrainTurn with an
 // injected chat (its documented seam) and a stateful fixture db that emulates
@@ -121,7 +121,7 @@ test('forced 429s preserve facts across turns; turn-end merge survives a racing 
     const m = await import(output);
     const phone = '91000000099';
     const seenPayloads: any[][] = [];
-    let failNext = 2;
+    let failNext = 3;
     const chat = async (messages: any[]) => {
       seenPayloads.push(messages);
       if (failNext > 0) {
@@ -134,22 +134,25 @@ test('forced 429s preserve facts across turns; turn-end merge survives a racing 
     // Turn 1 and 2: the provider rejects both - the incident condition.
     await assert.rejects(() => m.runBrainTurn({ phone, text: 'Kenya', messageId: 'm1' }, chat), /429/);
     await assert.rejects(() => m.runBrainTurn({ phone, text: '5000mt', messageId: 'm2' }, chat), /429/);
+    await assert.rejects(() => m.runBrainTurn({ phone, text: 'price 480 USD per mt', messageId: 'm2b' }, chat), /429/);
 
     // Facts survived the failed turns, durable in the session record.
     let brain = g.row.data.brain;
     assert.deepEqual(brain.history.map((h: any) => [h.role, h.content, h.messageId]), [
       ['user', 'Kenya', 'm1'],
       ['user', '5000mt', 'm2'],
-    ], 'both facts captured before the model calls that failed');
+      ['user', 'price 480 USD per mt', 'm2b'],
+    ], 'all three facts captured before the model calls that failed');
 
-    // Turn 3 succeeds: its request to the provider must carry the facts -
+    // Turn 4 succeeds: its request to the provider must carry the facts -
     // this is the regression that caused the Kenya / 5000mt re-asks.
     g.competeOnNextCAS = true; // turn-end merge will race a concurrent capture
     const out = await m.runBrainTurn({ phone, text: 'what did I tell you?', messageId: 'm3' }, chat);
-    assert.ok(out && out.handled, 'turn 3 answered');
-    const payloadText = JSON.stringify(seenPayloads[2]);
-    assert.ok(payloadText.includes('Kenya'), 'turn 3 payload carries Kenya');
-    assert.ok(payloadText.includes('5000mt'), 'turn 3 payload carries 5000mt');
+    assert.ok(out && out.handled, 'turn 4 answered');
+    const payloadText = JSON.stringify(seenPayloads[3]);
+    assert.ok(payloadText.includes('Kenya'), 'turn 4 payload carries Kenya');
+    assert.ok(payloadText.includes('5000mt'), 'turn 4 payload carries 5000mt');
+    assert.ok(payloadText.includes('480 USD per mt'), 'turn 4 payload carries the price');
 
     // The raced merge re-read and re-merged: competing capture AND the
     // assistant reply both survived, nothing dropped, order preserved.
@@ -158,7 +161,7 @@ test('forced 429s preserve facts across turns; turn-end merge survives a racing 
     assert.ok(contents.includes('competing capture'), 'competing capture not overwritten by the merge');
     assert.ok(contents.includes('Thanks! Noted.'), 'assistant reply merged');
     assert.ok(g.casAttempts >= 2, `lost race forced a retried merge (attempts: ${g.casAttempts})`);
-    assert.deepEqual(contents.slice(0, 3), ['Kenya', '5000mt', 'what did I tell you?'], 'rapid successive turns stay ordered');
+    assert.deepEqual(contents.slice(0, 4), ['Kenya', '5000mt', 'price 480 USD per mt', 'what did I tell you?'], 'rapid successive turns stay ordered');
   } finally { await unlink(output); }
 });
 
