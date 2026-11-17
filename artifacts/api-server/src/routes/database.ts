@@ -1,4 +1,6 @@
 import { Router, type IRouter } from "express";
+import { requireRole } from "../auth/middleware.ts";
+import { makeWriteProbeHandler } from "./dbWriteProbe.ts";
 import { pool } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -38,5 +40,7 @@ router.get("/db/healthz", async (req, res) => {
     res.status(503).json({ status: "error", database: "unavailable" });
   }
 });
+
+router.post("/admin/db-write-probe", requireRole("admin"), makeWriteProbeHandler(pool) as never);
 
 export default router;

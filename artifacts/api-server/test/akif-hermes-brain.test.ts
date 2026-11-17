@@ -215,6 +215,9 @@ const dbFixture = `
     delete: () => ({ where: async () => [] }),
     transaction: async (f) => f({ execute: async () => ({ rows: [] }) }),
   };
+  // dbWrite mirrors the real module: run the write against the fixture db
+  // (no pool eviction in the harness - alignment, not behavior under test).
+  export const dbWrite = async (run) => run(db);
   export const pool = {};
   ${TABLES.map(n => `export const ${n}=new Proxy({_tableName:'${n}'},{get:(t,k)=>typeof k==='symbol'?undefined:(k==='_tableName'?t._tableName:{key:String(k)})});`).join('\n  ')}
 `;

@@ -29,3 +29,129 @@ for (const [name, fn] of [["api", redactApi], ["db", redactDb]] as const) {
     assert.ok(fn("x".repeat(500)).length <= 200);
   });
 }
+
+import { writeWithEviction, READ_ONLY_SQLSTATE } from "../../../lib/db/src/connection.ts";
+
+test("a read-only write failure evicts the poisoned client and retries once", async () => {
+  const released: Array<unknown> = [];
+  let calls = 0;
+  const poisoned = { release: (e?: unknown) => released.push(e ?? "clean") };
+  const healthy = { release: (e?: unknown) => released.push(e ?? "clean") };
+  const pool = { connect: async () => (calls++ === 0 ? poisoned : healthy) };
+  const out = await writeWithEviction(pool as never, async (client) => {
+    if (client === poisoned) throw Object.assign(new Error("cannot execute INSERT in a read-only transaction"), { code: "25006" });
+    return "written";
+  }, () => {});
+  assert.equal(out, "written");
+  assert.equal(calls, 2);
+  assert.ok(released[0] instanceof Error, "poisoned client released with an error so node-pg destroys it");
+  assert.equal(released[1], "clean");
+});
+
+test("a second 25006 still fails: one retry, never a loop", async () => {
+  const released: Array<unknown> = [];
+  let calls = 0;
+  const pool = { connect: async () => { calls++; return { release: (e?: unknown) => released.push(e ?? "clean") }; } };
+  await assert.rejects(
+    writeWithEviction(pool as never, async () => { throw Object.assign(new Error("ro"), { code: READ_ONLY_SQLSTATE }); }, () => {}),
+    (e: Error & { code?: string }) => e.code === "25006",
+  );
+  assert.equal(calls, 2);
+  assert.equal(released.length, 2);
+  assert.ok(released.every((r) => r instanceof Error));
+});
+
+test("other errors release cleanly and are not retried", async () => {
+  const released: Array<unknown> = [];
+  let calls = 0;
+  const pool = { connect: async () => { calls++; return { release: (e?: unknown) => released.push(e ?? "clean") }; } };
+  await assert.rejects(
+    writeWithEviction(pool as never, async () => { throw Object.assign(new Error("unique violation"), { code: "23505" }); }, () => {}),
+    (e: Error & { code?: string }) => e.code === "23505",
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(released, ["clean"]);
+});
+
+import { transactionPinnedRetry } from "../../../lib/db/src/connection.ts";
+
+function fakeClient(ro: string, calls: string[], fail?: { match: string; code: string; message: string }) {
+  return {
+    calls,
+    async query(text: string) {
+      calls.push(text);
+      if (fail && text.toUpperCase().startsWith(fail.match.toUpperCase())) {
+        throw Object.assign(new Error(fail.message), { code: fail.code });
+      }
+      if (text.startsWith("select current_setting")) return { rows: [{ ro }] };
+      return { rows: [] };
+    },
+    release(e?: unknown) { calls.push(e ? "release(err)" : "release()"); },
+  };
+}
+
+test("pinned retry: BEGIN, check, write, COMMIT in one transaction on one client", async () => {
+  const calls: string[] = [];
+  const client = fakeClient("off", calls);
+  const out = await transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); return "written"; });
+  assert.equal(out, "written");
+  assert.deepEqual(calls, ["BEGIN", "select current_setting('transaction_read_only') as ro", "WRITE", "COMMIT"]);
+});
+
+test("pinned retry: a still-read-only retry session aborts BEFORE the write, then rolls back", async () => {
+  const calls: string[] = [];
+  const client = fakeClient("on", calls);
+  await assert.rejects(
+    transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); }),
+    (e: Error & { code?: string }) => e.code === "25006",
+  );
+  assert.deepEqual(calls, ["BEGIN", "select current_setting('transaction_read_only') as ro", "ROLLBACK"]);
+});
+
+test("pinned retry: write failure rolls back and rethrows; COMMIT failure rolls back and rethrows", async () => {
+  const c1: string[] = [];
+  await assert.rejects(
+    transactionPinnedRetry(fakeClient("off", c1) as never, async () => {
+      throw Object.assign(new Error("write broke"), { code: "25007" });
+    }),
+    (e: Error & { code?: string }) => e.code === "25007",
+  );
+  assert.deepEqual(c1, ["BEGIN", "select current_setting('transaction_read_only') as ro", "ROLLBACK"]);
+  const c2: string[] = [];
+  const client2 = fakeClient("off", c2, { match: "COMMIT", code: "ECONN", message: "commit dropped" });
+  await assert.rejects(
+    transactionPinnedRetry(client2 as never, async () => "written"),
+    (e: Error & { code?: string }) => e.code === "ECONN",
+  );
+  assert.deepEqual(c2, ["BEGIN", "select current_setting('transaction_read_only') as ro", "COMMIT", "ROLLBACK"]);
+});
+
+test("writeWithEviction with a pinned retry: one retry on 25006, wrapped failure destroys the client", async () => {
+  const released: Array<unknown> = [];
+  let calls = 0;
+  const pool = { connect: async () => { calls++; return { release: (e?: unknown) => released.push(e ?? "clean"), query: async () => ({ rows: [{ ro: "off" }] }) }; } };
+  const out = await writeWithEviction(pool as never, async () => {
+    if (calls === 1) throw Object.assign(new Error("ro"), { code: "25006" });
+    return "written";
+  }, () => {}, async (client, runOnce) => transactionPinnedRetry(client as never, runOnce));
+  assert.equal(out, "written");
+  assert.equal(calls, 2);
+  assert.ok(released[0] instanceof Error, "the poisoned session is destroyed");
+  assert.equal(released[1], "clean", "the successful retry session returns to the pool");
+});
+
+test("writeWithEviction with a pinned retry: non-25006 inside the retry is not retried and destroys the client", async () => {
+  const released: Array<unknown> = [];
+  let calls = 0, runs = 0;
+  const pool = { connect: async () => { calls++; return { release: (e?: unknown) => released.push(e ?? "clean"), query: async () => ({ rows: [{ ro: "off" }] }) }; } };
+  await assert.rejects(
+    writeWithEviction(pool as never, async () => {
+      runs++;
+      throw Object.assign(new Error("x"), { code: calls === 1 ? "25006" : "23505" });
+    }, () => {}, async (client, runOnce) => transactionPinnedRetry(client as never, runOnce)),
+    (e: Error & { code?: string }) => e.code === "23505",
+  );
+  assert.equal(calls, 2);
+  assert.equal(runs, 2, "first attempt + one retry, never a third");
+  assert.ok(released.every((r) => r instanceof Error));
+});

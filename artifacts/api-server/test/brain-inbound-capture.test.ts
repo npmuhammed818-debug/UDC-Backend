@@ -45,7 +45,10 @@ function dbFixture(state: { rowCount: number; existing: boolean }) {
       delete: () => ({ where: async () => [] }),
       transaction: async (f) => f({ execute: async () => ({ rows: [] }) }),
     };
-    export const pool = {};
+    // dbWrite mirrors the real module: run the write against the fixture db
+  // (no pool eviction in the harness - alignment, not behavior under test).
+  export const dbWrite = async (run) => run(db);
+  export const pool = {};
     export const akifCustomerMemoriesTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const akifEmotionalStatesTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const akifResearchRunsTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});

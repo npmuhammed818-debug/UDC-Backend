@@ -125,7 +125,7 @@ test("burned daily cap vs the real owner with the correct password", async () =>
           sessions: "const s=globalThis.__loginLockout;export const SESSION_COOKIE='fixture-session';export const createSession=async()=>{s.sessions++;return {token:'synthetic-session',expiresAt:new Date(Date.now()+60000)}};export const revokeSession=async()=>{};export const getAuthenticatedUser=async()=>null;",
           profile: "export const getSafeUserProfile=async id=>({id});",
         };
-        for (const [filter, path] of [[/^@workspace\/db$/, "db"], [/^drizzle-orm$/, "orm"], [/auth\/sessions$|^\.\/sessions$/, "sessions"], [/auth\/userProfile$/, "profile"]] as const)
+        for (const [filter, path] of [[/^@workspace\/db$/, "db"], [/^drizzle-orm$/, "orm"], [/auth\/sessions(\.ts)?$|^\.\/sessions(\.ts)?$/, "sessions"], [/auth\/userProfile$/, "profile"]] as const)
           b.onResolve({ filter }, () => ({ path, namespace: "fixture" }));
         b.onLoad({ filter: /.*/, namespace: "fixture" }, (args) => ({ contents: fixtures[args.path] }));
       },

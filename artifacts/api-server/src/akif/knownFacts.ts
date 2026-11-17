@@ -1,5 +1,5 @@
 /** A short bare reply right after we asked for one detail IS that detail ("Siman Ltd" after "what is your company name?"). Save it so it is never asked again. */
-import { looksLikeFullName } from "../whatsapp/nameCheck.ts";
+import { looksLikeFullName, looksLikeCompanyName } from "../whatsapp/nameCheck.ts";
 export function captureBareAnswer(history: Array<{ role: string; content: string }>, text: string, fields: Record<string, string>): string | null {
   const lastAsk = [...history].reverse().find((h) => h.role === "assistant")?.content ?? "";
   const t = text.trim();
@@ -17,6 +17,10 @@ export function captureBareAnswer(history: Array<{ role: string; content: string
   else if (/which country|what country|country are you/.test(q)) name = "country";
   if (!name || fields[name]) return null;
   if (name === "full_name" && !looksLikeFullName(t)) return null;
+  // 17 Nov incident: "Pls explain in Malayalam" was stored as a company
+  // name through this path - company and country get the same plausibility
+  // guard the full name already had.
+  if ((name === "company_name" || name === "country") && !looksLikeCompanyName(t)) return null;
   fields[name] = t.slice(0, 120);
   return name;
 }

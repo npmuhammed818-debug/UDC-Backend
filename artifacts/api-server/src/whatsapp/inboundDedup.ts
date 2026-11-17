@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq, inArray, lt, sql, and, isNull } from "drizzle-orm";
-import { db, whatsappInboundDedupTable } from "@workspace/db";
+import { db, dbWrite, whatsappInboundDedupTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 
 // Durable claims are required before processing. Database errors (including a
@@ -25,12 +25,14 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
   let lastCause: unknown;
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt += 1) {
     try {
-      const claimed = await db.insert(whatsappInboundDedupTable).values({ idHash: hash })
+      // dbWrite: evict a poisoned read-only pooled session and retry once,
+      // so one bad session cannot reject every inbound claim (16-18 Nov).
+      const claimed = await dbWrite((wdb) => wdb.insert(whatsappInboundDedupTable).values({ idHash: hash })
         .onConflictDoUpdate({
           target: whatsappInboundDedupTable.idHash,
           set: { claimedAt: new Date() },
           setWhere: and(isNull(whatsappInboundDedupTable.completedAt), sql`${whatsappInboundDedupTable.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`),
-        }).returning({ idHash: whatsappInboundDedupTable.idHash });
+        }).returning({ idHash: whatsappInboundDedupTable.idHash }));
       if (Math.random() < 0.02) {
         await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
       }

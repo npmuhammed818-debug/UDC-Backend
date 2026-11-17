@@ -96,7 +96,7 @@ test("private deal routes enforce membership, sharing, suspension and agent revo
       b.onResolve({ filter: /^@workspace\/db$/ }, () => ({ path: "db", namespace: "fixture" }));
       b.onResolve({ filter: /^drizzle-orm$/ }, () => ({ path: "orm", namespace: "fixture" }));
       b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "storage", namespace: "fixture" }));
-      b.onResolve({ filter: /^\.\/sessions$/ }, args => args.importer.includes("/auth/") ? { path: "sessions", namespace: "fixture" } : undefined);
+      b.onResolve({ filter: /^\.\/sessions(\.ts)?$/ }, args => args.importer.includes("/auth/") ? { path: "sessions", namespace: "fixture" } : undefined);
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents: args.path === "db"
         ? 'const s=globalThis.__privateDealRoutes;export const db=s.db;' + tableNames.map(name => `export const ${name}=s.tables.${name};`).join("")
         : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const notInArray=(a,query)=>({kind:"notIn",a,query});export const desc=x=>x;export const sql=(strings)=>{if(strings.join("").trim()!=="true")throw Error("unsupported test SQL");return true;};'

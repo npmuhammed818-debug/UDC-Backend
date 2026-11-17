@@ -1,5 +1,5 @@
 import { extractLabelledParagraph, extractParagraph } from './paragraphIntake';
-import { looksLikeFullName, NAME_REJECTION } from './nameCheck';
+import { looksLikeFullName, NAME_REJECTION, looksLikeCompanyName, COMPANY_REJECTION } from './nameCheck';
 import { randomUUID } from 'node:crypto';
 import { guidedChatPhoneHash } from './phoneFingerprint';
 import { and, eq, lt, sql } from 'drizzle-orm';
@@ -136,7 +136,10 @@ export function validate(question:Question,text:string,purpose:FlowPurpose){
     if(!/^[A-Za-z]{3}$/.test(text))throw new Error('Send the three-letter currency code, for example USD, AED or EUR.');return text.toUpperCase();
   }
   if(question.kind==='incoterm'){const term=text.toUpperCase();if(!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))throw new Error('Choose EXW, FCA, FAS, FOB, CFR, CIF, CPT, CIP, DAP, DPU or DDP.');return term;}
-  if(question.name==='full_name'&&!looksLikeFullName(text))throw new Error(text.trim().length<2?'Please send your full name.':NAME_REJECTION);return text;
+  if(question.name==='full_name'&&!looksLikeFullName(text))throw new Error(text.trim().length<2?'Please send your full name.':NAME_REJECTION);
+  // Company and country got no plausibility check before the 17 Nov incident
+  // stored "Pls explain in Malayalam" as a company name.
+  if((question.name==='company_name'||question.name==='country')&&!looksLikeCompanyName(text))throw new Error(COMPANY_REJECTION);return text;
 }
 async function review(phone:string,purpose:FlowPurpose,data:Record<string,string>){
   const label:Record<string,string>={full_name:'Name',email:'Email',company_name:'Company',country:'Country',registration_number:'Registration number',product:'Product',quantity:'Quantity',unit:'Unit / price basis',currency:'Currency',specification:'Grade/specification',destination:'Destination',incoterm:'Incoterm',target_price:'Target price',price:'Price',origin:'Origin',delivery_time:'Delivery',availability:'Availability',payment_terms:'Proposed payment terms'};
@@ -170,7 +173,7 @@ function directAnswer(purpose:FlowPurpose,text:string,data:Record<string,string>
     scalar=text.split(/\s+/).length<=8
       && /^[\p{L}\p{N}][\p{L}\p{M}\p{N} .&'’()/-]*$/u.test(text)
       && /\p{L}/u.test(text)
-      && !/^(?:i|we|my|our|hi|hello|hey|yes|no|ok|okay|thanks|thank you|please|what|where|when|which|how|why|can|could|would|should|is|are|do|does|some|need|want|buy|sell|supply|submit|skip|tell|explain|teach|speak|talk|answer)\b/i.test(text)
+      && !/^(?:i|we|my|our|hi|hello|hey|yes|no|ok|okay|thanks|thank you|pls|please|what|where|when|which|how|why|can|could|would|should|is|are|do|does|some|need|want|buy|sell|supply|submit|skip|tell|explain|teach|speak|talk|answer)\b/i.test(text)
       && !/malayalam|മലയാളം|എന്ത്|എങ്ങനെ|என்ன|தமிழ்/i.test(text)
       && !/\b(?:is|am|are|email|country|quantity|price|incoterm)\b/i.test(text);
     // A quantity, price or named Incoterm makes this a multi-field message.

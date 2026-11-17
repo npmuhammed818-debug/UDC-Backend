@@ -16,6 +16,7 @@ test('durable inbound claims fail closed on outages and reject invalid ids', asy
         const s=globalThis.__dedupFixture;
         export const whatsappInboundDedupTable={};
         export const db={insert(){s.insertCalls++;let hash;return {values(v){hash=v.idHash;return this},onConflictDoUpdate(){return this},async returning(){if(s.failure)throw Object.assign(Error('fixture private outage'),{code:s.failure});if(s.hashes.has(hash))return [];s.hashes.add(hash);return [{idHash:hash}]}}},delete(){return {where(){return Promise.resolve()}}}};
+        export const dbWrite=async(run)=>run(db);
       `,loader:'js'}));
     }}],
   });

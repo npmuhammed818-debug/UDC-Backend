@@ -75,7 +75,7 @@ test('admin trade workflows preserve verification, ownership, review and payment
       screening:'export const companyProfileFingerprint=company=>JSON.stringify([company.companyName,company.registrationNumber||null,company.country||null]);export const screenCompanyEvidence=async()=>{globalThis.__adminMeetingFixture.screeningCalls=(globalThis.__adminMeetingFixture.screeningCalls||0)+1;return {status:"needs_human_review",authenticityVerified:false,observations:[],comparisons:[],confidence:0};};',
       intelligence:'export const processDocumentIntelligence=async()=>null;export const refreshDealIntelligenceSnapshot=async()=>null;',
     };
-    for(const [pattern,name] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/auth\/sessions$|^\.\/sessions$/,'sessions'],[/whatsapp\/client$/,'whatsapp'],[/supabase\/storage$/,'storage'],[/akif\/companyScreening$/,'screening'],[/akif\/documentIntelligence$/,'intelligence']] as const)
+    for(const [pattern,name] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/auth\/sessions(\.ts)?$|^\.\/sessions(\.ts)?$/,'sessions'],[/whatsapp\/client$/,'whatsapp'],[/supabase\/storage$/,'storage'],[/akif\/companyScreening$/,'screening'],[/akif\/documentIntelligence$/,'intelligence']] as const)
       b.onResolve({filter:pattern},()=>({path:name,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:mocks[args.path]}));
   }}]});

@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 // unchanged.
 import { z } from "zod/v4";
 import { and, eq } from "drizzle-orm";
-import { db, usersTable, companiesTable, companyVerificationDocumentsTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable, shipmentsTable, shipmentTrackingEventsTable, whatsappUserContextsTable, dealParticipantsTable } from "@workspace/db";
+import { db, dbWrite, usersTable, companiesTable, companyVerificationDocumentsTable, whatsappChatSessionsTable as sessions, dealsTable, productsTable, auditLogsTable, shipmentsTable, shipmentTrackingEventsTable, whatsappUserContextsTable, dealParticipantsTable } from "@workspace/db";
 import { desc, or, sql } from "drizzle-orm";
 import { sendWhatsAppText } from "../whatsapp/client.ts";
 import { isTestWorldId } from "../testPrincipal.ts";
@@ -133,7 +133,9 @@ async function saveBrainSession(key: string, state: BrainSession) {
   // array from the stored row instead of overwriting it with this turn's
   // stale in-memory copy. Without this a turn-end save wipes a reservation
   // that landed mid-turn and the customer gets double answers.
-  await db.execute(sql`
+  // dbWrite: a poisoned read-only pooled session is evicted and the save
+  // retried once on a fresh session (16-18 Nov write-outage incident).
+  await dbWrite((wdb) => wdb.execute(sql`
     insert into whatsapp_chat_sessions (phone_hash, purpose, step, data, last_message_id, expires_at, updated_at)
     values (${key}, 'brain_orchestrator', 0, ${data}::jsonb, null, ${expiresAt}, now())
     on conflict (phone_hash) do update set
@@ -142,7 +144,7 @@ async function saveBrainSession(key: string, state: BrainSession) {
       data = jsonb_set(excluded.data, '{brain,outbound}', coalesce(whatsapp_chat_sessions.data->'brain'->'outbound', '[]'::jsonb)),
       last_message_id = excluded.last_message_id,
       expires_at = excluded.expires_at,
-      updated_at = now()`);
+      updated_at = now()`));
 }
 
 // Per-phone serialization for whole-row session writes (single instance):
@@ -167,7 +169,7 @@ function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 async function insertBrainSessionRow(key: string, state: BrainSession): Promise<boolean> {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   const versioned: BrainSession = { ...state, v: state.v ?? 1 };
-  const inserted = await db.insert(sessions).values({ phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: versioned } as never, lastMessageId: null, expiresAt, updatedAt: new Date() }).onConflictDoNothing().returning({ phoneHash: sessions.phoneHash });
+  const inserted = await dbWrite((wdb) => wdb.insert(sessions).values({ phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: versioned } as never, lastMessageId: null, expiresAt, updatedAt: new Date() }).onConflictDoNothing().returning({ phoneHash: sessions.phoneHash }));
   return inserted.length > 0;
 }
 
@@ -185,7 +187,7 @@ async function appendBrainHistoryEntry(phone: string, entry: { role: "user" | "a
   if (entry.messageId) stored.messageId = entry.messageId;
   const entryJson = JSON.stringify(stored);
   const mid = entry.messageId ?? null;
-  const result = await db.execute(sql`
+  const result = await dbWrite((wdb) => wdb.execute(sql`
     update whatsapp_chat_sessions
     set data = jsonb_set(
           jsonb_set(data, '{brain,history}', coalesce(data->'brain'->'history', '[]'::jsonb) || ${entryJson}::jsonb),
@@ -196,7 +198,7 @@ async function appendBrainHistoryEntry(phone: string, entry: { role: "user" | "a
       and (${mid}::text is null or not exists (
         select 1 from jsonb_array_elements(coalesce(data->'brain'->'history', '[]'::jsonb)) as e
         where e->>'messageId' = ${mid}
-      ))`);
+      ))`));
   const updated = (result as { rowCount?: number }).rowCount ?? 0;
   if (updated === 0) {
     // Either no row yet (insert one) or the entry was already there (idempotent no-op).
@@ -1066,7 +1068,9 @@ export async function reserveOutboundSend(phone: string, covers: OutboundCover[]
   });
   const key = identity.key + ":brain1";
   const at = new Date().toISOString();
-  const result = await db.execute(sql`
+  // dbWrite: this reservation UPDATE was the first write to fail in the
+  // 16-18 Nov incident; evict a poisoned read-only session and retry once.
+  const result = await dbWrite((wdb) => wdb.execute(sql`
     update whatsapp_chat_sessions
     set data = jsonb_set(
           jsonb_set(data, '{brain,outbound}',
@@ -1079,7 +1083,7 @@ export async function reserveOutboundSend(phone: string, covers: OutboundCover[]
       and not exists (
         select 1 from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e
         where (e->>'key') in (select k from jsonb_array_elements_text(${keysJson}::jsonb) as k)
-      )`);
+      )`));
   const updated = (result as { rowCount?: number }).rowCount ?? 0;
   if (updated > 0) return "reserved";
   // Classify the blocking entry for the caller's recovery decision.

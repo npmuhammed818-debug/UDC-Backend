@@ -52,7 +52,7 @@ import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction }
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
-import { db, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
+import { db, dbWrite, auditLogsTable, productsTable, dealConversationEventsTable, dealParticipantsTable, dealsTable, documentAccessTable, documentExtractionsTable, documentsTable, companiesTable, usersTable, whatsappMessageContextsTable, whatsappUserContextsTable } from "@workspace/db";
 import { contractSummaryRequest, renderContractSummary } from "../akif/contractSummary";
 import { meetingDetailsQuestion, upcomingDealMeetingsReply } from "../whatsapp/dealMeetings";
 import { dealPaymentStatusReply, paymentStatusQuestion } from "../whatsapp/dealPayments";
@@ -1617,7 +1617,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       value?.metadata?.phone_number_id===process.env.WHATSAPP_PHONE_NUMBER_ID &&
       Boolean(process.env.WHATSAPP_PHONE_NUMBER_ID)){
       try{
-        await recordSignedShipmentStatuses(value.statuses.slice(0,50));
+        // dbWrite-backed executor: a poisoned read-only pooled session is
+        // evicted and the receipt write retried once (16-18 Nov incident).
+        const receiptExecutor={execute:(q:Parameters<typeof db.execute>[0])=>dbWrite((wdb)=>wdb.execute(q))} as unknown as {execute:typeof db.execute};
+        await recordSignedShipmentStatuses(value.statuses.slice(0,50),{executor:receiptExecutor});
       }catch{
         // Returning non-2xx gives Meta a chance to retry an otherwise lost
         // receipt. No raw phone/provider payloads are logged.

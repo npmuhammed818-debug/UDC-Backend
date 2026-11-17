@@ -112,7 +112,7 @@ test("launch simulation: agent, seller and buyer chats both directions with late
       });
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents:
         'const s=globalThis.__whatsappRoutes;' + (args.path === "db"
-          ? 'export const db=s.db;' + names.map(n => `export const ${n}=s.tables.${n};`).join("")
+          ? 'export const db=s.db;export const dbWrite=async(run)=>run(s.db);' + names.map(n => `export const ${n}=s.tables.${n};`).join("")
           : args.path === "orm" ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const notInArray=(a,query)=>({kind:"notIn",a,query});export const sql=()=>true;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});export const desc=x=>x;'
           : fixtures[args.path]) }));
     } }],
