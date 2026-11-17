@@ -242,6 +242,10 @@ export type HumanRelayItem = {
   at: string;
   kind: "text" | "voice";
   text: string;
+  // The provider message id (wamid) of the inbound this item holds: the
+  // stable identity the cross-path outbound reservation arbitrates on, so two
+  // distinct customer messages with the same words never conflate.
+  messageId?: string;
   heardLanguage?: string;
   draft: string | null;
   draftBackgroundDiscarded: boolean;
@@ -395,6 +399,7 @@ export function enqueueHumanRelay(input: {
   phone: string;
   kind: "text" | "voice";
   text: string;
+  messageId?: string;
   heardLanguage?: string;
   draft?: string | null;
   draftBackgroundDiscarded?: boolean;
@@ -410,6 +415,7 @@ export function enqueueHumanRelay(input: {
     at: new Date().toISOString(),
     kind: input.kind,
     text: input.text.slice(0, 4000),
+    messageId: input.messageId,
     heardLanguage: input.heardLanguage,
     draft: input.draft ?? null,
     draftBackgroundDiscarded: input.draftBackgroundDiscarded ?? false,
@@ -797,16 +803,38 @@ export function releaseHumanRelayClaim(phone: string): number {
 
 /** Customer text carried by a relay item - the arbitration key the
  *  cross-path outbound reservation uses (relay items hold no WhatsApp id). */
-export function humanRelayItemText(itemId: string): string | null {
-  return items.find((i) => i.id === itemId)?.text ?? null;
+/** The inbound identity a relay item covers, for cross-path outbound
+ *  arbitration: its wamid when known, else its text (synthetic paths only). */
+export function humanRelayItemCover(itemId: string): { messageId?: string; text?: string } | null {
+  const item = items.find((i) => i.id === itemId);
+  if (!item) return null;
+  return { messageId: item.messageId, text: item.text };
 }
 
-/** Text of the newest still-open relay item for this customer - the same
+/** Cover of the newest still-open relay item for this customer - the same
  *  item a phone-level reply would answer (items are appended in order). */
-export function newestOpenHumanRelayText(phone: string): string | null {
+export function newestOpenHumanRelayCover(phone: string): { messageId?: string; text?: string } | null {
   const key = relayContactKey(phone);
   const open = items.filter((i) => !i.answeredAt && !i.autoAnswered && i.phone === key);
-  return open[open.length - 1]?.text ?? null;
+  const item = open[open.length - 1];
+  return item ? { messageId: item.messageId, text: item.text } : null;
+}
+
+/** Close a held item whose turn was answered by the OTHER path (the brain):
+ *  the customer already has an answer, so the item must not be reclaimed and
+ *  answered again - but nothing was sent by the relay, so nothing is recorded
+ *  as a relay reply and no worker cooldown arms. */
+export function autoCloseHumanRelayItem(itemId: string | null, phone: string, note: string): number {
+  const key = relayContactKey(phone);
+  const item = itemId
+    ? items.find((i) => i.id === itemId && !i.answeredAt)
+    : items.filter((i) => !i.answeredAt && !i.autoAnswered && i.phone === key).pop();
+  if (!item) return 0;
+  item.answeredAt = new Date().toISOString();
+  item.autoAnswered = true;
+  item.autoNote = note;
+  persist((p) => p.markAnswered([item.id], item.answeredAt!));
+  return 1;
 }
 
 export function markHumanRelayAnswered(phone: string, replyText?: string): number {

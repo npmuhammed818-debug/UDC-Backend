@@ -9,7 +9,7 @@ import {
   stickyWorkerFor,
   lastHeardLanguageFor,
   markHumanRelayAnswered, releaseHumanRelayClaim, claimHumanRelay, claimHumanRelayWithWait, answerClaimedHumanRelayItem,
-  humanRelayItemText, newestOpenHumanRelayText,
+  autoCloseHumanRelayItem, humanRelayItemCover, newestOpenHumanRelayCover,
   relayReplyCooldownActive, noteHumanRelayReplySent, relayClaimStillValid, relayReplyResetsConversation,
   pendingHumanRelay,
   relayBodyAuthorized,
@@ -20,7 +20,7 @@ import {
   replyAsksKnownDetail,
   setRelayContactBriefing,
 } from "../akif/humanRelay";
-import { isBrainOrchestratorEnabled, recordBrainRelayAnswer, reserveOutboundSend } from "../akif/brainOrchestrator";
+import { isBrainOrchestratorEnabled, markOutboundSend, recordBrainRelayAnswer, reserveOutboundSend, type OutboundCover } from "../akif/brainOrchestrator";
 import { resendTransportConfigured } from "../auth/resendAuthProvider.ts";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
@@ -337,19 +337,28 @@ router.post("/akif-relay/reply", async (req, res) => {
     return;
   }
   // Cross-path send authority: the brain answers the same customer turns, so
-  // a relay answer must win an atomic reservation for the customer text it
-  // answers before anything is sent. If the brain (or a prior relay answer)
-  // already holds that turn, refuse instead of doubling the customer. A
-  // provider timeout/5xx below leaves the reservation in place - an unknown
-  // send is never permission for a competing send or a blind retry. The
-  // email channel is a separate surface the brain does not answer.
+  // a relay answer must win an atomic reservation for the inbound it covers
+  // (its wamid; text is the no-wamid fallback) before anything is sent.
+  // Blocked handling follows the blocking entry's state: only a CONFIRMED
+  // send is delivered proof (the item is closed so it is never reclaimed);
+  // unknown/pending/stale_pending keep the item open - none of them prove
+  // the customer got anything, and no worker assertion alone can clear a
+  // stuck reservation (that reconciliation is owner/admin-only).
+  let relayCover: OutboundCover[] = [];
   if (!emailTo) {
-    const coveredText = parsed.data!.itemId ? humanRelayItemText(parsed.data!.itemId) : newestOpenHumanRelayText(phone);
-    if (coveredText) {
-      const reserved = await reserveOutboundSend(phone, [coveredText], "relay").catch(() => true);
-      if (!reserved) {
-        console.warn("AKIF human relay reply held; the brain already answered this message", { reason: "outbound_reserved" });
+    const cover = parsed.data!.itemId ? humanRelayItemCover(parsed.data!.itemId) : newestOpenHumanRelayCover(phone);
+    relayCover = cover ? [cover] : [];
+    if (relayCover.length) {
+      const reservation = await reserveOutboundSend(phone, relayCover, "relay").catch(() => "reserved" as const);
+      if (reservation === "confirmed") {
+        console.warn("AKIF human relay reply held; this message already has a confirmed answer", { reason: "outbound_reserved" });
+        autoCloseHumanRelayItem(parsed.data!.itemId ?? null, phone, "Already answered by AKIF - no relay reply sent.");
         res.status(409).json({ ok: false, error: "already_answered" });
+        return;
+      }
+      if (reservation !== "reserved") {
+        console.warn("AKIF human relay reply held; reservation state blocks send", { reason: "outbound_reserved", state: reservation });
+        res.status(409).json({ ok: false, error: reservation === "pending" ? "answer_in_progress" : reservation === "stale_pending" ? "answer_stuck" : "outcome_unknown", detail: "Check the conversation before resending; a stuck reservation is cleared only by an authorized operator." });
         return;
       }
     }
@@ -362,6 +371,9 @@ router.post("/akif-relay/reply", async (req, res) => {
         voice,
         heardLanguage: lastHeardLanguageFor(phone),
       });
+  if (!emailTo && relayCover.length) {
+    await markOutboundSend(phone, relayCover, delivery.delivered ? "confirmed" : "unknown").catch(() => undefined);
+  }
   if (!delivery.delivered) {
     // An unknown outcome (timeout, network error, 5xx) is NOT a rejection: the customer may already have the message, so the worker must check before resending.
     res.status(502).json(relayDeliveryFailureBody(delivery.reason));

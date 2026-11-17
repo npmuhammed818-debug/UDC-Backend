@@ -38,7 +38,7 @@ test('draft retry returns instantly while the orchestrator is off (no dead 5s wa
     + "export const typeAkifTaskStep={};export const typeWhatsAppIntakeDraftPayload={};";
   const { output } = await bundle('__latDraft', "export { buildHumanRelayDraftWithRetry } from '../src/routes/whatsappWebhook';", {
     db: dbStub,
-    brain: "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];export const BRAIN_BUSY_REPLY='busy';export const reserveOutboundSend=async()=>true;",
+    brain: "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];export const BRAIN_BUSY_REPLY='busy';export const reserveOutboundSend=async()=>'reserved';export const markOutboundSend=async()=>{};export const backgroundStillCurrent=async()=>true;",
   }, [
     [/^@workspace\/db$/, 'db'],
     [/akif\/brainOrchestrator(\.ts)?$/, 'brain'],

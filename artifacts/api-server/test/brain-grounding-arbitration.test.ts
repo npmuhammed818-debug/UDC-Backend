@@ -73,19 +73,41 @@ const dbFixture = `
       // emulate it atomically - reserve all keys or none, TTL 10 minutes.
       const keysJson = p.find(v => typeof v === 'string' && v.startsWith('["'));
       const pathParam = p.find(v => v === 'brain' || v === 'relay');
+      const stateParam = p.find(v => v === 'confirmed' || v === 'unknown');
       if (keysJson && pathParam) {
+        // Reserve: block on ANY matching key entry, any state, any age.
         const keysArr = JSON.parse(keysJson);
-        const path = pathParam;
         const key = p.find(v => typeof v === 'string' && /:brain1$/.test(v));
         if (!g.row || g.row.phoneHash !== key) return { rowCount: 0 };
         const brain = g.row.data.brain;
         brain.outbound = brain.outbound || [];
-        const nowMs = Date.now();
-        const live = brain.outbound.filter(e => nowMs - Date.parse(e.at) < 600000);
-        if (live.some(e => keysArr.includes(e.textKey))) return { rowCount: 0 };
+        const blocked = brain.outbound.some(e => keysArr.includes(e.key));
+        if (blocked) return { rowCount: 0 };
         const atIso = new Date().toISOString();
-        for (const k of keysArr) brain.outbound.push({ textKey: k, path, messageId: null, at: atIso });
+        for (const k of keysArr) brain.outbound.push({ key: k, path: pathParam, state: 'pending', at: atIso });
         brain.v = (brain.v ?? 0) + 1;
+        return { rowCount: 1 };
+      }
+      if (keysJson && !pathParam && !stateParam) {
+        // clearStalePendingOutbound: delete only stale pending entries for the keys.
+        const keysArr = JSON.parse(keysJson);
+        const key = p.find(v => typeof v === 'string' && /:brain1$/.test(v));
+        if (g.row && g.row.phoneHash === key) {
+          const brain = g.row.data.brain;
+          brain.outbound = (brain.outbound || []).filter(e =>
+            !(keysArr.includes(e.key) && e.state === 'pending' && Date.now() - Date.parse(e.at) >= 600000));
+        }
+        return { rowCount: 1 };
+      }
+      if (keysJson && stateParam) {
+        // Mark outcome: pending -> confirmed/unknown.
+        const keysArr = JSON.parse(keysJson);
+        const key = p.find(v => typeof v === 'string' && /:brain1$/.test(v));
+        if (g.row && g.row.phoneHash === key) {
+          for (const e of (g.row.data.brain.outbound || [])) {
+            if (keysArr.includes(e.key) && e.state === 'pending') e.state = stateParam;
+          }
+        }
         return { rowCount: 1 };
       }
       const entryRaw = p.find(v => typeof v === 'string' && v.startsWith('{"role"'));
@@ -238,10 +260,10 @@ test('cross-path arbitration: a relay answer mid-turn suppresses the brain reply
   } finally { await unlink(output); }
 });
 
-test('outbound reservation ledger: first path wins, expiry frees, distinct messages never block, unknown-send stays blocked', async () => {
+test('outbound reservation ledger: strict states - nothing auto-frees, blocked-by classification, explicit stale-pending clear', async () => {
   (globalThis as any).__fga = {};
   const output = await bundleOut(
-    "export { reserveOutboundSend, recordBrainInbound, OUTBOUND_RESERVE_TTL_SECS } from '../src/akif/brainOrchestrator';",
+    "export { reserveOutboundSend, clearStalePendingOutbound, markOutboundSend, recordBrainInbound, OUTBOUND_RESERVE_TTL_SECS } from '../src/akif/brainOrchestrator';",
     { db: dbFixture },
     [[/^@workspace\/db$/, 'db']],
   );
@@ -250,25 +272,68 @@ test('outbound reservation ledger: first path wins, expiry frees, distinct messa
     const m = await import(output);
     const phone = '91000000096';
     await m.recordBrainInbound(phone, 'hello', 'k1');
-    // The brain reserves the turn; the relay competing on the same text loses.
-    assert.equal(await m.reserveOutboundSend(phone, ['how much sugar?'], 'brain', 'w10'), true);
-    assert.equal(await m.reserveOutboundSend(phone, ['how much sugar?'], 'relay'), false, 'relay competitor blocked');
-    // Normalization: case and whitespace variants are the same customer text.
-    assert.equal(await m.reserveOutboundSend(phone, ['  HOW  MUCH sugar? '], 'relay'), false, 'normalized variant blocked');
-    // A distinct customer message is never blocked by another message's reservation.
-    assert.equal(await m.reserveOutboundSend(phone, ['and the port?'], 'relay'), true, 'distinct message not blocked');
-    // Multi-key reserve is all-or-nothing: one held key fails the whole
-    // attempt and records nothing for the other keys.
-    assert.equal(await m.reserveOutboundSend(phone, ['fresh question', 'how much sugar?'], 'relay'), false, 'multi-key with a held key fails');
-    assert.equal(await m.reserveOutboundSend(phone, ['fresh question'], 'relay'), true, 'failed multi-key attempt recorded nothing');
-    // Unknown-send modeling: a reservation whose send outcome was never
-    // confirmed stays in place - it is not permission for a competing send.
-    assert.equal(await m.reserveOutboundSend(phone, ['and the port?'], 'brain'), false, 'relay reservation (unknown-send tolerant) blocks brain');
-    // Expiry: reservations older than the TTL no longer block, so a crash
-    // cannot wedge the line and a repeated genuine message can be answered.
+    const cover1 = [{ messageId: 'w10', text: 'how much sugar?' }];
+    // First path wins; the relay competing on the same wamid loses.
+    assert.equal(await m.reserveOutboundSend(phone, cover1, 'brain'), 'reserved');
+    assert.equal(await m.reserveOutboundSend(phone, cover1, 'relay'), 'pending', 'competitor sees pending');
+    // The same path re-reserving is NOT a safe retry - it is blocked too
+    // (a crash after provider-accept before the outcome write must not dup).
+    assert.equal(await m.reserveOutboundSend(phone, cover1, 'brain'), 'pending', 'same-path re-reserve blocked');
+    // Distinct wamids always pass - two legitimate same-text messages are
+    // never conflated.
+    const cover2 = [{ messageId: 'w11', text: 'how much sugar?' }];
+    assert.equal(await m.reserveOutboundSend(phone, cover2, 'relay'), 'reserved', 'distinct wamid not blocked');
+    // Text-key fallback (no wamid, e.g. a relay item that never captured
+    // one): a text-covered turn blocks normalized variants of the same text.
+    const coverText = [{ text: 'packing in 50kg bags?' }];
+    assert.equal(await m.reserveOutboundSend(phone, coverText, 'brain'), 'reserved');
+    assert.equal(await m.reserveOutboundSend(phone, [{ text: '  PACKING in 50kg  bags? ' }], 'relay'), 'pending', 'normalized text variant blocked');
+    // markOutboundSend settles the state; confirmed blocks indefinitely.
+    await m.markOutboundSend(phone, cover1, 'confirmed');
+    assert.equal(await m.reserveOutboundSend(phone, cover1, 'relay'), 'confirmed', 'confirmed state returned');
+    // Unknown outcome is unresolved, not permission for a competing send.
+    await m.markOutboundSend(phone, cover2, 'unknown');
+    assert.equal(await m.reserveOutboundSend(phone, cover2, 'relay'), 'unknown', 'unknown outcome never frees');
+    // Aging out does NOT free anything: stale pending is classified, and
+    // confirmed/unknown entries stay blocking past the TTL.
     for (const e of g.row.data.brain.outbound) e.at = new Date(Date.now() - (m.OUTBOUND_RESERVE_TTL_SECS + 10) * 1000).toISOString();
-    assert.equal(await m.reserveOutboundSend(phone, ['how much sugar?'], 'relay'), true, 'expired reservation frees the turn');
-    assert.equal(await m.reserveOutboundSend(phone, ['how much sugar?'], 'brain'), false, 'fresh reservation blocks again');
+    assert.equal(await m.reserveOutboundSend(phone, cover1, 'relay'), 'confirmed', 'confirmed never expires');
+    assert.equal(await m.reserveOutboundSend(phone, cover2, 'relay'), 'unknown', 'unknown never expires');
+    const cover3 = [{ messageId: 'w12', text: 'and the port?' }];
+    assert.equal(await m.reserveOutboundSend(phone, cover3, 'brain'), 'reserved');
+    for (const e of g.row.data.brain.outbound) e.at = new Date(Date.now() - (m.OUTBOUND_RESERVE_TTL_SECS + 10) * 1000).toISOString();
+    assert.equal(await m.reserveOutboundSend(phone, cover3, 'relay'), 'stale_pending', 'aged pending classified stale_pending, still blocked');
+    // Explicit human-reconciled clear removes ONLY stale pending entries.
+    await m.clearStalePendingOutbound(phone, cover3);
+    assert.equal(await m.reserveOutboundSend(phone, cover3, 'relay'), 'reserved', 'after explicit clear, reserve succeeds');
+    // The clear never touches confirmed/unknown entries.
+    await m.clearStalePendingOutbound(phone, cover1);
+    assert.equal(await m.reserveOutboundSend(phone, cover1, 'relay'), 'confirmed', 'confirmed survives a clear attempt');
+  } finally { await unlink(output); }
+});
+
+test('background continuation staleness: a reply computed before a newer inbound must not send', async () => {
+  (globalThis as any).__fga = {};
+  const output = await bundleOut(
+    "export { backgroundStillCurrent, recordBrainInbound } from '../src/akif/brainOrchestrator';",
+    { db: dbFixture },
+    [[/^@workspace\/db$/, 'db']],
+  );
+  try {
+    const g = (globalThis as any).__fga;
+    const m = await import(output);
+    const phone = '91000000097';
+    // The inbound the background reply is answering; its reply gets recorded.
+    await m.recordBrainInbound(phone, 'can you do 4000?', 'bg1');
+    g.row.data.brain.history.push({ role: 'assistant', content: 'Let me check.', messageId: 'reply:bg1', at: new Date().toISOString() });
+    assert.equal(await m.backgroundStillCurrent(phone, 'bg1'), true, 'no newer inbound: reply still current');
+    // A customer follow-up lands AFTER the reply was computed: it is stale.
+    await m.recordBrainInbound(phone, 'actually 3900', 'bg2');
+    assert.equal(await m.backgroundStillCurrent(phone, 'bg1'), false, 'newer customer inbound: stale reply suppressed');
+    // A relay answer recorded mid-turn also makes the background reply stale.
+    g.row.data.brain.history.pop(); // drop bg2 for a clean relay case
+    g.row.data.brain.history.push({ role: 'user', content: 'relay answer', messageId: 'relay:item-9', at: new Date().toISOString() });
+    assert.equal(await m.backgroundStillCurrent(phone, 'bg1'), false, 'newer relay answer: stale reply suppressed');
   } finally { await unlink(output); }
 });
 
@@ -282,7 +347,7 @@ test('relay reply route uses the arbitration ledger: held by a brain reservation
     [
       "export { default as relayRouter } from '../src/routes/akifHumanRelay';",
       "export { enqueueHumanRelay, pendingHumanRelay, __clearRelayMemoryForTests } from '../src/akif/humanRelay';",
-      "export { reserveOutboundSend, recordBrainInbound } from '../src/akif/brainOrchestrator';",
+      "export { reserveOutboundSend, markOutboundSend, recordBrainInbound } from '../src/akif/brainOrchestrator';",
     ].join('\n'),
     {
       db: dbFixture,
@@ -343,22 +408,38 @@ test('relay reply route uses the arbitration ledger: held by a brain reservation
       });
       return { status: res.status, body: await res.json() };
     };
-    // The brain answered this customer text already (its reservation holds):
-    // the relay reply is refused and nothing is sent or marked answered.
-    assert.equal(await m.reserveOutboundSend(phone, ['how much sugar?'], 'brain', 'w10'), true);
+    // The brain holds a pending reservation for this customer text: the relay
+    // reply is refused (answer_in_progress) and nothing is sent or answered.
+    const cover = [{ text: 'how much sugar?' }];
+    assert.equal(await m.reserveOutboundSend(phone, cover, 'brain'), 'reserved');
     const blocked = await post({ phone, text: 'About 4200 USD per mt.' });
     assert.equal(blocked.status, 409, 'relay reply held when the brain holds the turn');
-    assert.equal(blocked.body.error, 'already_answered');
+    assert.equal(blocked.body.error, 'answer_in_progress');
     assert.equal(g.deliverCalls.length, 0, 'nothing sent for a held turn');
     assert.equal(m.pendingHumanRelay().length, 1, 'held item stays open, not marked answered');
-    // A turn nobody reserved: the relay answer goes out, and its reservation
-    // then blocks a competing brain send for the same customer text.
+    // Aging the reservation to stale_pending keeps it blocked with the
+    // distinct stuck error - no worker flag can bypass it.
     for (const e of g.row.data.brain.outbound) e.at = new Date(Date.now() - 700 * 1000).toISOString();
-    const sent = await post({ phone, text: 'About 4200 USD per mt.' });
+    const stuck = await post({ phone, text: 'About 4200 USD per mt.' });
+    assert.equal(stuck.status, 409);
+    assert.equal(stuck.body.error, 'answer_stuck', 'stale pending reported distinctly');
+    assert.equal(m.pendingHumanRelay().length, 1, 'stuck item stays open');
+    // A CONFIRMED send by the brain auto-closes the held item (delivered
+    // proof), and it can never be reclaimed.
+    await m.markOutboundSend(phone, cover, 'confirmed');
+    const dup = await post({ phone, text: 'About 4200 USD per mt.' });
+    assert.equal(dup.status, 409);
+    assert.equal(dup.body.error, 'already_answered');
+    assert.equal(m.pendingHumanRelay().length, 0, 'confirmed answer auto-closes the held item');
+    assert.equal(g.deliverCalls.length, 0, 'still nothing sent');
+    // A turn nobody reserved: the relay answer goes out, and its confirmed
+    // reservation then blocks a competing brain send for the same text.
+    m.enqueueHumanRelay({ phone, kind: 'text', text: 'what is the moisture?' });
+    const sent = await post({ phone, text: 'About 12 percent.' });
     assert.equal(sent.status, 200, 'relay reply sends when the turn is free');
     assert.equal(sent.body.delivered, true);
     assert.equal(g.deliverCalls.length, 1, 'exactly one send');
-    assert.equal(await m.reserveOutboundSend(phone, ['how much sugar?'], 'brain'), false, 'relay reservation now blocks the brain');
+    assert.equal(await m.reserveOutboundSend(phone, [{ text: 'what is the moisture?' }], 'brain'), 'confirmed', 'relay confirmed send blocks the brain');
   } finally {
     if (server) await new Promise((r) => server!.close(() => r(undefined)));
     await unlink(output);

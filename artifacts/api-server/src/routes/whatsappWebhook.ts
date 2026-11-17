@@ -27,7 +27,7 @@ import { crisisSafetyReply } from "../akif/crisisSafety";
 import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
-import { isBrainOrchestratorEnabled, reserveOutboundSend, runBrainTurn } from "../akif/brainOrchestrator";
+import { backgroundStillCurrent, isBrainOrchestratorEnabled, markOutboundSend, reserveOutboundSend, runBrainTurn, type OutboundCover } from "../akif/brainOrchestrator";
 import { brainTurnHadExternalSend } from "../akif/relayOutcome";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
@@ -1836,7 +1836,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           if (voiceFeature) {
             try {
               if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${voiceFeature}` } } } as ChatMessage)) {
-                enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: `Auto-handled by the ${voiceFeature} feature, no reply needed unless it looks wrong.` });
+                enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: `Auto-handled by the ${voiceFeature} feature, no reply needed unless it looks wrong.` });
                 continue;
               }
             } catch { /* fall through to the relay draft */ }
@@ -1848,7 +1848,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             let menuSent = false;
             try { await sendChatHome(message.from); menuSent = true; } catch { /* hold for a worker instead */ }
             if (menuSent) {
-              enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
+              enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
               continue;
             }
           }
@@ -1885,7 +1885,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF brain-first answered", { kind: "voice" }); voiceAutoNote = "Answered directly by AKIF - no reply needed unless it looks wrong. Sent:"; }
           }
-          const heldVoice = enqueueHumanRelay({ phone: message.from, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          const heldVoice = enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "voice", text: heard.text, heardLanguage: heard.language ?? undefined, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered: voiceAutoAnswered, autoNote: voiceAutoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           if (!voiceAutoAnswered && heldVoice.draft && relayFallbackReplySafe(heard.text, heldVoice.draft, draft?.toolsUsed ?? [])) {
             scheduleRelayFallback(heldVoice, deliverHumanRelayReply);
           }
@@ -1946,17 +1946,26 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
                 // Same cross-path send authority as the text path: the relay
                 // may have already answered this voice note's turn.
-                const voiceReserved = await reserveOutboundSend(message.from!, [transcript], "brain", message.id).catch(() => true);
+                const voiceCover: OutboundCover[] = [{ messageId: message.id, text: transcript }];
+                const voiceReserved = await reserveOutboundSend(message.from!, voiceCover, "brain").catch(() => true);
                 if (!voiceReserved) {
                   console.warn("AKIF voice brain reply held; the relay already answered this message", { reason: "outbound_reserved" });
                   if (voiceBrain.cancelBackground) await voiceBrain.cancelBackground();
                   continue;
                 }
                 const voiceDelivered = await deliverAnswer(message.from, voiceBrain.reply, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true, userText: transcript });
+                await markOutboundSend(message.from!, voiceCover, voiceDelivered?.delivered ? "confirmed" : "unknown").catch(() => undefined);
                 if (voiceBrain.background && voiceDelivered?.delivered) {
                   const background = voiceBrain.background;
                   const phone = message.from;
-                  runBackgroundTask(() => background(async reply => (await deliverWhatsAppReply(phone, reply)).delivered), () => {
+                  const voiceInboundId = message.id;
+                  runBackgroundTask(() => background(async reply => {
+                    if (!(await backgroundStillCurrent(phone!, voiceInboundId).catch(() => true))) {
+                      console.warn("AKIF background result dropped; the conversation moved on", { reason: "background_stale" });
+                      return false;
+                    }
+                    return (await deliverWhatsAppReply(phone, reply)).delivered;
+                  }), () => {
                     console.warn("AKIF hands work failed", { reason: "background_failed" });
                   });
                 } else if (voiceBrain.cancelBackground) {
@@ -2171,7 +2180,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // hold wait, no typing bubble (owner-approved 10 Nov, allowlist only).
         if (relayAckReactionsEnabled() && isAcknowledgementText(message.text.body)) {
           const reacted = await sendWhatsAppReaction(message.from, message.id, ackEmojiFor(message.text.body));
-          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction, no reply needed unless it looks wrong.` });
+          enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: message.text.body, autoAnswered: Boolean(reacted?.delivered), autoNote: `Auto-handled with a ${ackEmojiFor(message.text.body)} reaction, no reply needed unless it looks wrong.` });
           continue;
         }
         // Feature requests reach the real scripted feature directly: the link
@@ -2181,7 +2190,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         if (relayFeature) {
           try {
             if (await handleChatUi(message.from, { id: message.id ? `${message.id}:feature` : undefined, interactive: { type: "list_reply", list_reply: { id: `udc:${relayFeature}` } } } as ChatMessage)) {
-              enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: true, autoNote: `Auto-handled by the ${relayFeature} feature, no reply needed unless it looks wrong.` });
+              enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: message.text.body, autoAnswered: true, autoNote: `Auto-handled by the ${relayFeature} feature, no reply needed unless it looks wrong.` });
               continue;
             }
           } catch { /* fall through to the relay draft */ }
@@ -2193,7 +2202,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           let menuSent = false;
           try { await sendChatHome(message.from); menuSent = true; } catch { /* hold for a worker instead */ }
           if (menuSent) {
-            enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
+            enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: message.text.body, autoAnswered: true, autoNote: "System menu sent on explicit request, no reply needed unless it looks wrong." });
             continue;
           }
         }
@@ -2255,7 +2264,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             }
           } catch { /* fall through to the hold */ }
         }
-        const heldText = enqueueHumanRelay({ phone: message.from, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+        const heldText = enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
         if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
           scheduleRelayFallback(heldText, deliverHumanRelayReply);
         }
@@ -2274,7 +2283,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Commission questions get the fixed honest answer immediately, no
         // burst wait or brain turn (owner direction, 10 Nov).
         if (isCommissionAskText(message.text.body)) {
-          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           continue;
         }
         // Burst coalescing, same as the relay hold: rapid multi-bubble messages
@@ -2348,22 +2357,34 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           if (brain.reply) {
             // Cross-path send authority (17 Nov owner test): the human relay
             // answers the same customer turns, so the brain must win the
-            // atomic reservation for this customer text before sending. If
-            // the relay already holds it, the customer was answered - hold
-            // this reply instead of doubling. The background result below is
-            // the continuation of this authorized turn, not a new answer.
-            const reserved = await reserveOutboundSend(message.from!, [brainText || message.text.body], "brain", message.id).catch(() => true);
+            // atomic reservation for this inbound (its wamid; text is the
+            // no-wamid fallback) before sending. If the relay already holds
+            // it, the customer was answered - hold this reply instead of
+            // doubling. The reservation starts pending; the outcome marks it
+            // confirmed or unknown (unknown never frees a competing send).
+            const cover: OutboundCover[] = [{ messageId: message.id, text: brainText || message.text.body }];
+            const reserved = await reserveOutboundSend(message.from!, cover, "brain").catch(() => true);
             if (!reserved) {
               console.warn("AKIF brain reply held; the relay already answered this message", { reason: "outbound_reserved" });
               if (brain.cancelBackground) await brain.cancelBackground();
               continue;
             }
             delivered = await deliverWhatsAppReply(message.from, brain.reply);
+            await markOutboundSend(message.from!, cover, delivered?.delivered ? "confirmed" : "unknown").catch(() => undefined);
           }
           if (brain.background && delivered?.delivered) {
             const background = brain.background;
             const phone = message.from;
-            runBackgroundTask(() => background(async reply => (await deliverWhatsAppReply(phone, reply)).delivered), () => {
+            const inboundId = message.id;
+            runBackgroundTask(() => background(async reply => {
+              // Stale-result guard: a relay answer or a newer customer message
+              // (product pivot) after the brain's reply voids this late output.
+              if (!(await backgroundStillCurrent(phone!, inboundId).catch(() => true))) {
+                console.warn("AKIF background result dropped; the conversation moved on", { reason: "background_stale" });
+                return false;
+              }
+              return (await deliverWhatsAppReply(phone, reply)).delivered;
+            }), () => {
               console.warn("AKIF hands work failed", { reason: "background_failed" });
             });
           } else if (brain.cancelBackground) {
@@ -2394,7 +2415,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // (owner report, 10 Nov launch). Variants rotate so repeats don't
         // read as a canned line.
         if (isSimpleGreetingText(message.text.body)) {
-          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: fallbackGreeting(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: message.text.body, draft: fallbackGreeting(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           continue;
         }
         // Menus stay automatic without the model: the scripted home menu
@@ -2407,13 +2428,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // Commission questions never need the model either: held for a
         // worker with the approved fixed wording pre-loaded as the draft.
         if (isCommissionAskText(message.text.body)) {
-          enqueueHumanRelay({ phone: message.from, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+          enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: message.text.body, draft: commissionAskReply(), customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
           continue;
         }
         // Everything else is held silently for the human relay team: no
         // failure line, no canned note (owner direction, 10 Nov launch).
         // Workers or the relay owner answer it from the queue.
-        enqueueHumanRelay({ phone: message.from, kind: "text", text: brainText || message.text.body, draft: null, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
+        enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: brainText || message.text.body, draft: null, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
         continue;
       }
 

@@ -56,9 +56,10 @@ const SEND_HISTORY_MESSAGES = 10;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 
 type BrainSession = {
-  // Cross-path outbound ledger: who (brain/relay) already answered which
-  // customer text, with when. Written only by the atomic reservation SQL.
-  outbound?: Array<{ textKey: string; path: "brain" | "relay"; messageId?: string | null; at: string }>;
+  // Cross-path outbound ledger: who (brain/relay) reserved/answered which
+  // inbound (mid: wamid, or text: fallback), with state and when. Written
+  // only by the atomic reservation/mark SQL.
+  outbound?: Array<{ key: string; path: "brain" | "relay"; state: "pending" | "confirmed" | "unknown"; at: string }>;
   fields: Record<string, string>;
   history: Array<{ role: "user" | "assistant"; content: string; messageId?: string }>;
   // Compare-and-swap token: every write bumps v, so a whole-row save that
@@ -937,26 +938,50 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
 
 /** Cross-path outbound arbitration (17 Nov live owner test): the brain and
  *  the human relay both answer the same customer message. Send authority is
- *  an atomic reservation on the shared session row, keyed by phone + the
- *  customer text being answered (relay items carry no WhatsApp id, so the
- *  customer's own words are the common key). First reserver wins; the other
- *  path suppresses. A reservation whose send outcome is UNKNOWN (timeout/5xx)
- *  still blocks the competing path - an unknown send is never permission for
- *  a competing send or retry. Reservations expire so a crash or a repeated
- *  genuine message later in the conversation cannot wedge the line; distinct
- *  customer messages (different text) never block each other. */
+ *  an atomic reservation on the shared session row. Identity is the inbound
+ *  provider message id (wamid) - two distinct customer messages with the same
+ *  words are different turns and never conflate; the normalized text is only
+ *  the fallback for paths with no wamid (synthetic/test). One turn can cover
+ *  several keys (burst-combined bubbles); reservation is all-or-nothing.
+ *
+ *  States: a reservation starts PENDING (send not attempted yet). After the
+ *  send attempt it is marked CONFIRMED (provider accepted) or UNKNOWN
+ *  (timeout/5xx - the customer may already have it). PENDING frees after the
+ *  TTL: a crash before the send must not wedge the line, and nothing was
+ *  sent, so answering later is safe. CONFIRMED and UNKNOWN never free on the
+ *  TTL - an unknown send is never permission for a competing send or retry;
+ *  they block until the day-scale prune. Entries older than a day are pruned
+ *  in the same statement; the residual (crash between provider-accept and
+ *  the mark) is a sub-second window stated honestly, not a design choice. */
 export const OUTBOUND_RESERVE_TTL_SECS = 600;
+const OUTBOUND_LEDGER_KEEP_SECS = 86400;
+
+export type OutboundCover = { messageId?: string | null; text?: string | null };
 
 function outboundTextKey(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
 }
 
-/** Atomically reserve the right to answer each of `texts` (one customer turn
- *  can bundle several messages). Reserves all or none; returns false when any
- *  text was already answered by either path within the TTL. */
-export async function reserveOutboundSend(phone: string, texts: string[], path: "brain" | "relay", messageId?: string): Promise<boolean> {
-  const keys = [...new Set(texts.map(outboundTextKey).filter((k) => k.length > 0))];
-  if (!keys.length) return true;
+function outboundKeys(covers: OutboundCover[]): string[] {
+  const keys = covers
+    .map((c) => (c.messageId ? `mid:${c.messageId}` : c.text ? `text:${outboundTextKey(c.text)}` : null))
+    .filter((k): k is string => Boolean(k));
+  return [...new Set(keys)];
+}
+
+export type OutboundReserveResult = "reserved" | "confirmed" | "unknown" | "pending" | "stale_pending";
+
+/** Atomically reserve the right to answer the covered inbound(s). First
+ *  reserver wins; every later attempt - from EITHER path, including the same
+ *  one - is refused with the state of the blocking entry. NOTHING auto-frees:
+ *  a confirmed or unknown send blocks its wamid indefinitely (wamids never
+ *  recur), and a pending reservation never expires on a timer, because a
+ *  crash between provider-accept and the outcome write cannot be told from
+ *  never-sent. Recovery of a stale pending is an explicit human-reconciled
+ *  action (clearStalePendingOutbound), never a machine assumption. */
+export async function reserveOutboundSend(phone: string, covers: OutboundCover[], path: "brain" | "relay"): Promise<OutboundReserveResult> {
+  const keys = outboundKeys(covers);
+  if (!keys.length) return "reserved";
   const keysJson = JSON.stringify(keys);
   const identity = await guidanceHistoryIdentity(phone, async (sender) => {
     const [bound] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, sender)).limit(1);
@@ -964,33 +989,96 @@ export async function reserveOutboundSend(phone: string, texts: string[], path: 
   });
   const key = identity.key + ":brain1";
   const at = new Date().toISOString();
-  const mid = messageId ?? null;
   const result = await db.execute(sql`
     update whatsapp_chat_sessions
     set data = jsonb_set(
           jsonb_set(data, '{brain,outbound}',
-            coalesce((select jsonb_agg(e) from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e
-                      where (e->>'at')::timestamptz > now() - interval '1 day'), '[]'::jsonb)
-            || (select coalesce(jsonb_agg(jsonb_build_object('textKey', k, 'path', ${path}, 'messageId', ${mid}, 'at', ${at})), '[]'::jsonb)
+            coalesce(data->'brain'->'outbound', '[]'::jsonb)
+            || (select coalesce(jsonb_agg(jsonb_build_object('key', k, 'path', ${path}, 'state', 'pending', 'at', ${at})), '[]'::jsonb)
                 from jsonb_array_elements_text(${keysJson}::jsonb) as k)),
           '{brain,v}', to_jsonb(coalesce((data->'brain'->>'v')::int, 0) + 1)),
         updated_at = now()
     where phone_hash = ${key}
       and not exists (
         select 1 from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e
-        where (e->>'textKey') in (select k from jsonb_array_elements_text(${keysJson}::jsonb) as k)
-          and (e->>'at')::timestamptz > now() - make_interval(secs => ${OUTBOUND_RESERVE_TTL_SECS})
+        where (e->>'key') in (select k from jsonb_array_elements_text(${keysJson}::jsonb) as k)
       )`);
   const updated = (result as { rowCount?: number }).rowCount ?? 0;
-  if (updated > 0) return true;
-  const [existing] = await db.select({ phoneHash: sessions.phoneHash }).from(sessions).where(eq(sessions.phoneHash, key)).limit(1);
-  if (existing) return false; // a live reservation by the other path holds
+  if (updated > 0) return "reserved";
+  // Classify the blocking entry for the caller's recovery decision.
+  const [existing] = await db.select({ data: sessions.data }).from(sessions).where(eq(sessions.phoneHash, key)).limit(1);
+  if (existing) {
+    const entries = (((existing.data as { brain?: BrainSession })?.brain?.outbound) ?? []).filter((e) => keys.includes(e.key));
+    const settled = entries.find((e) => e.state === "confirmed" || e.state === "unknown");
+    if (settled) return settled.state;
+    const fresh = entries.find((e) => Date.now() - Date.parse(e.at) < OUTBOUND_RESERVE_TTL_SECS * 1000);
+    return fresh ? "pending" : "stale_pending";
+  }
   // No session row yet: create one carrying the reservation.
-  const entries = keys.map((k) => ({ textKey: k, path, messageId: mid, at }));
-  const inserted = await insertBrainSessionRow(key, { fields: {}, history: [], menuMentioned: false, outbound: entries });
-  if (inserted) return true; // our insert carried the reservation
+  const newEntries = keys.map((k) => ({ key: k, path, state: "pending" as const, at }));
+  const inserted = await insertBrainSessionRow(key, { fields: {}, history: [], menuMentioned: false, outbound: newEntries });
+  if (inserted) return "reserved"; // our insert carried the reservation
   // A concurrent insert won without our entry: the atomic update above is
   // the only writer that grants authority, so re-run it - it reserves, or
   // reports the other path's live reservation.
-  return reserveOutboundSend(phone, texts, path, messageId);
+  return reserveOutboundSend(phone, covers, path);
+}
+
+/** Human-reconciled recovery: delete ONLY stale pending entries for the
+ *  covered keys - entries the owning path never marked because it died.
+ *  Confirmed/unknown and fresh pending entries are untouchable here. */
+export async function clearStalePendingOutbound(phone: string, covers: OutboundCover[]): Promise<void> {
+  const keys = outboundKeys(covers);
+  if (!keys.length) return;
+  const keysJson = JSON.stringify(keys);
+  const identity = await guidanceHistoryIdentity(phone, async (sender) => {
+    const [bound] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, sender)).limit(1);
+    return bound?.id ?? null;
+  });
+  const key = identity.key + ":brain1";
+  await db.execute(sql`
+    update whatsapp_chat_sessions
+    set data = jsonb_set(data, '{brain,outbound}',
+          (select coalesce(jsonb_agg(e), '[]'::jsonb)
+           from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e
+           where not ((e->>'key') in (select k from jsonb_array_elements_text(${keysJson}::jsonb) as k)
+                      and (e->>'state') = 'pending'
+                      and (e->>'at')::timestamptz <= now() - make_interval(secs => ${OUTBOUND_RESERVE_TTL_SECS}))), true)
+    where phone_hash = ${key}`).catch(() => undefined);
+}
+
+/** Mark a previously reserved send's outcome. CONFIRMED and UNKNOWN both
+ *  block competitors until the day-scale prune; UNKNOWN is the unresolved
+ *  state - it is never treated as safe to retry by either path. */
+export async function markOutboundSend(phone: string, covers: OutboundCover[], state: "confirmed" | "unknown"): Promise<void> {
+  const keys = outboundKeys(covers);
+  if (!keys.length) return;
+  const keysJson = JSON.stringify(keys);
+  const identity = await guidanceHistoryIdentity(phone, async (sender) => {
+    const [bound] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, sender)).limit(1);
+    return bound?.id ?? null;
+  });
+  const key = identity.key + ":brain1";
+  await db.execute(sql`
+    update whatsapp_chat_sessions
+    set data = jsonb_set(data, '{brain,outbound}',
+          (select jsonb_agg(case when (e->>'key') in (select k from jsonb_array_elements_text(${keysJson}::jsonb) as k)
+                                   and (e->>'state') = 'pending'
+                                 then jsonb_set(e, '{state}', to_jsonb(${state}::text)) else e end)
+           from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e), true)
+    where phone_hash = ${key}`).catch(() => undefined);
+}
+
+/** A background tool result may only go out while the turn that authorized it
+ *  is still the latest thing in the conversation: a newer customer message
+ *  (product pivot) or a relay answer recorded after the brain's reply makes
+ *  the pending background answer stale, and it is dropped instead. */
+export async function backgroundStillCurrent(phone: string, inboundMessageId?: string): Promise<boolean> {
+  if (!inboundMessageId) return true;
+  const { state } = await loadBrainSession(phone);
+  const history = state.history;
+  let replyIdx = -1;
+  for (let i = history.length - 1; i >= 0; i--) if (history[i].messageId === `reply:${inboundMessageId}`) { replyIdx = i; break; }
+  if (replyIdx === -1) return true; // no recorded reply to be stale against
+  return !history.slice(replyIdx + 1).some((h) => h.role === "user" || (typeof h.messageId === "string" && h.messageId.startsWith("relay")));
 }
