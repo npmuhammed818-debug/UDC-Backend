@@ -9,6 +9,7 @@ import {
   stickyWorkerFor,
   lastHeardLanguageFor,
   markHumanRelayAnswered, releaseHumanRelayClaim, claimHumanRelay, claimHumanRelayWithWait, answerClaimedHumanRelayItem,
+  humanRelayItemText, newestOpenHumanRelayText,
   relayReplyCooldownActive, noteHumanRelayReplySent, relayClaimStillValid, relayReplyResetsConversation,
   pendingHumanRelay,
   relayBodyAuthorized,
@@ -19,7 +20,7 @@ import {
   replyAsksKnownDetail,
   setRelayContactBriefing,
 } from "../akif/humanRelay";
-import { isBrainOrchestratorEnabled, recordBrainRelayAnswer } from "../akif/brainOrchestrator";
+import { isBrainOrchestratorEnabled, recordBrainRelayAnswer, reserveOutboundSend } from "../akif/brainOrchestrator";
 import { resendTransportConfigured } from "../auth/resendAuthProvider.ts";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
@@ -334,6 +335,24 @@ router.post("/akif-relay/reply", async (req, res) => {
   if (!emailTo && !audio && !(text && text.trim())) {
     res.status(400).json({ ok: false, error: "invalid_reply" });
     return;
+  }
+  // Cross-path send authority: the brain answers the same customer turns, so
+  // a relay answer must win an atomic reservation for the customer text it
+  // answers before anything is sent. If the brain (or a prior relay answer)
+  // already holds that turn, refuse instead of doubling the customer. A
+  // provider timeout/5xx below leaves the reservation in place - an unknown
+  // send is never permission for a competing send or a blind retry. The
+  // email channel is a separate surface the brain does not answer.
+  if (!emailTo) {
+    const coveredText = parsed.data!.itemId ? humanRelayItemText(parsed.data!.itemId) : newestOpenHumanRelayText(phone);
+    if (coveredText) {
+      const reserved = await reserveOutboundSend(phone, [coveredText], "relay").catch(() => true);
+      if (!reserved) {
+        console.warn("AKIF human relay reply held; the brain already answered this message", { reason: "outbound_reserved" });
+        res.status(409).json({ ok: false, error: "already_answered" });
+        return;
+      }
+    }
   }
   const delivery = emailTo
     ? await sendEmailRelayAnswer({ to: emailTo, text: text ?? "" }, emailRelaySendDbPorts(), outboundDepsFromEnv())

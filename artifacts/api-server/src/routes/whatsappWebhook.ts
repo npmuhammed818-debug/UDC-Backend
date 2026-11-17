@@ -27,7 +27,7 @@ import { crisisSafetyReply } from "../akif/crisisSafety";
 import {confirmedVoiceRelay,pendingVoiceRelay,voiceRelayConfirmation} from '../deals/voiceRelay';
 import { SUPPORT_EMAIL } from '../privacy/policies';
 import { handleEmailVerification } from '../whatsapp/emailVerification';
-import { isBrainOrchestratorEnabled, runBrainTurn } from "../akif/brainOrchestrator";
+import { isBrainOrchestratorEnabled, reserveOutboundSend, runBrainTurn } from "../akif/brainOrchestrator";
 import { brainTurnHadExternalSend } from "../akif/relayOutcome";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
@@ -1944,6 +1944,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             try {
               const voiceBrain = await runBrainTurn({ phone: message.from, text: transcript, messageId: message.id });
               if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
+                // Same cross-path send authority as the text path: the relay
+                // may have already answered this voice note's turn.
+                const voiceReserved = await reserveOutboundSend(message.from!, [transcript], "brain", message.id).catch(() => true);
+                if (!voiceReserved) {
+                  console.warn("AKIF voice brain reply held; the relay already answered this message", { reason: "outbound_reserved" });
+                  if (voiceBrain.cancelBackground) await voiceBrain.cancelBackground();
+                  continue;
+                }
                 const voiceDelivered = await deliverAnswer(message.from, voiceBrain.reply, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true, userText: transcript });
                 if (voiceBrain.background && voiceDelivered?.delivered) {
                   const background = voiceBrain.background;
@@ -2336,7 +2344,22 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // (16 Nov incident: the generic retry re-armed it and it was sent).
         if (brain?.reply === BRAIN_BUSY_REPLY) brain = null;
         if (brain?.handled) {
-          const delivered = brain.reply ? await deliverWhatsAppReply(message.from, brain.reply) : null;
+          let delivered: Awaited<ReturnType<typeof deliverWhatsAppReply>> | null = null;
+          if (brain.reply) {
+            // Cross-path send authority (17 Nov owner test): the human relay
+            // answers the same customer turns, so the brain must win the
+            // atomic reservation for this customer text before sending. If
+            // the relay already holds it, the customer was answered - hold
+            // this reply instead of doubling. The background result below is
+            // the continuation of this authorized turn, not a new answer.
+            const reserved = await reserveOutboundSend(message.from!, [brainText || message.text.body], "brain", message.id).catch(() => true);
+            if (!reserved) {
+              console.warn("AKIF brain reply held; the relay already answered this message", { reason: "outbound_reserved" });
+              if (brain.cancelBackground) await brain.cancelBackground();
+              continue;
+            }
+            delivered = await deliverWhatsAppReply(message.from, brain.reply);
+          }
           if (brain.background && delivered?.delivered) {
             const background = brain.background;
             const phone = message.from;

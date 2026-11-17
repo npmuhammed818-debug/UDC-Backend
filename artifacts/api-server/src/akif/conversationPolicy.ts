@@ -92,38 +92,94 @@ function productHintOf(text: string): string | null {
   for (const c of COMMODITY_HINTS) if (new RegExp(`\\b${c}\\b`).test(t)) return c;
   return null;
 }
+/** A trade-intent phrase naming a product we do not recognize ("I sell
+ * ferrero rocher", "we supply frozen chicken"): the conservative signal that
+ * the customer switched to an uncertain product thread, which must not import
+ * prices from an older recognized thread. */
+const UNKNOWN_PRODUCT_INTENT = /\b(?:sell|selling|supply|supplying|offer|offering|export|import|need|want|buy|buying|have|got)\s+(?:of\s+|some\s+|a\s+|an\s+)?([a-z][a-z0-9\s]{2,40})/i;
+function namesUnknownProduct(text: string): boolean {
+  if (productHintOf(text)) return false;
+  const m = UNKNOWN_PRODUCT_INTENT.exec(text);
+  if (!m) return false;
+  const object = m[1].trim().toLowerCase();
+  if (!object) return false;
+  // Common non-product objects after these verbs are not a product switch.
+  if (/^(price|prices|pricing|rate|rates|quote|quotation|offer|offers|details?|info(?:rmation)?|catalog(?:ue)?|sample?s?|payment|lc|tt|documents?|invoice|contract|it|this|that|them|you|u\b)/.test(object)) return false;
+  return true;
+}
 /** The customer's own words in the CURRENT product thread: from the newest
  * message naming the current product back to (not including) the last message
- * naming a different product. No product in view: the whole conversation. */
+ * naming a different product. A bare message ("My price is 5600usd per mt")
+ * continues the thread that was active when it was sent, so an old thread's
+ * price is never credited to the new one. An unrecognized/uncertain product
+ * switch imports NOTHING from older threads: its grounding set is the
+ * switching message alone. No product anywhere in view: the whole
+ * conversation (a fresh thread has no older prices to leak). */
 export function currentProductUserStatements(history: Array<{ role: string; content: string }>, currentText: string): string[] {
   const userTexts = history.filter((h) => h.role === "user").map((h) => h.content);
   userTexts.push(currentText);
-  // A bare message ("My price is 5600usd per mt") continues the thread that
-  // was active when it was sent: inherit the previous product, so an old
-  // thread's price is never credited to the new one.
   let running: string | null = null;
   const effective = userTexts.map((t) => { const p = productHintOf(t); if (p) running = p; return running; });
   const current = effective[effective.length - 1];
+  if (namesUnknownProduct(userTexts[userTexts.length - 1])) return [userTexts[userTexts.length - 1]];
   if (!current) return userTexts;
   const scoped: string[] = [];
   for (let i = userTexts.length - 1; i >= 0 && effective[i] === current; i--) scoped.unshift(userTexts[i]);
   return scoped;
 }
-const CURRENCY_AMOUNT = /(?:[$\u20AC\u00A3\u20B9]\s?|\b(?:usd|aed|inr|eur|gbp|sar|qar|kes|omr|bhd|kwd|myr|sgd|cny|rmb|jpy|aud|cad|zar|ngn|bdt|pkr|lkr|rs|dollars?)\b\.?\s?)\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:usd|aed|inr|eur|gbp|sar|qar|kes|omr|bhd|kwd|myr|sgd|cny|rmb|jpy|aud|cad|zar|ngn|bdt|pkr|lkr|rs|dollars?)\b/gi;
-function currencyAmounts(text: string): Set<string> {
+const CURRENCY_SYMBOLS: Record<string, string> = { $: "usd", "\u20AC": "eur", "\u00A3": "gbp", "\u20B9": "inr" };
+const CURRENCY_WORDS: Record<string, string> = {
+  usd: "usd", dollar: "usd", dollars: "usd", aed: "aed", inr: "inr", rs: "inr",
+  eur: "eur", gbp: "gbp", sar: "sar", qar: "qar", kes: "kes", omr: "omr",
+  bhd: "bhd", kwd: "kwd", myr: "myr", sgd: "sgd", cny: "cny", rmb: "cny",
+  jpy: "jpy", aud: "aud", cad: "cad", zar: "zar", ngn: "ngn", bdt: "bdt",
+  pkr: "pkr", lkr: "lkr",
+};
+const CURRENCY_AMOUNT = /([$\u20AC\u00A3\u20B9]\s?|\b(usd|aed|inr|eur|gbp|sar|qar|kes|omr|bhd|kwd|myr|sgd|cny|rmb|jpy|aud|cad|zar|ngn|bdt|pkr|lkr|rs|dollars?)\b\.?\s?)(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(usd|aed|inr|eur|gbp|sar|qar|kes|omr|bhd|kwd|myr|sgd|cny|rmb|jpy|aud|cad|zar|ngn|bdt|pkr|lkr|rs|dollars?)\b/gi;
+function normalizeAmount(raw: string): string {
+  return raw.replace(/,/g, "").replace(/\.0+$/, "");
+}
+function normalizeCurrency(raw: string): string | null {
+  const w = raw.trim().toLowerCase().replace(/\.$/, "");
+  return CURRENCY_SYMBOLS[w] ?? CURRENCY_WORDS[w] ?? null;
+}
+/** Currency-tagged amounts as normalized "amount currency" pairs: "5600 USD",
+ * "$5600", "5,600.00 dollars" and "5600usd" all reduce to "5600 usd"; "5600
+ * AED" reduces to a different pair, so one currency never grounds another. */
+export function currencyAmountPairs(text: string): Set<string> {
   const out = new Set<string>();
   for (const m of text.matchAll(CURRENCY_AMOUNT)) {
-    const num = m[0].match(/\d[\d,]*(?:\.\d+)?/)?.[0]?.replace(/,/g, "");
-    if (num) out.add(num);
+    const cur = normalizeCurrency(m[1] ?? m[5] ?? "");
+    const num = m[3] ?? m[4];
+    if (cur && num) out.add(`${normalizeAmount(num)} ${cur}`);
+  }
+  return out;
+}
+/** Amounts in a price context without a currency marker ("price is 5600",
+ * "5600 per mt") - the bare-price bypass. Grounded by number alone, because
+ * that is all the customer gave. */
+const PRICE_CONTEXT_AMOUNT = /(?:\bprices?\b[^\d]{0,16}|\brates?\b[^\d]{0,16}|@\s?)(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s?(?:[a-z]{3}\s?)?per\s?(?:mt|metric\s?tons?|tons?|tonnes?|kg|kilograms?|lbs?|pounds?|containers?|fcl|pieces?|units?)/gi;
+function priceContextAmounts(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(PRICE_CONTEXT_AMOUNT)) {
+    const num = m[1] ?? m[2];
+    if (num) out.add(normalizeAmount(num));
   }
   return out;
 }
 /** First amount in the reply the customer never stated in the current product
- * thread, or null when every amount is grounded (or none appears). Quantities
- * without a currency marker (5,000 MT) are not price assertions. */
+ * thread, or null when every amount is grounded (or none appears). Currency
+ * amounts must match amount AND currency; bare price-context amounts must
+ * match a number the customer stated in any price or currency context.
+ * Quantities without a price context (5,000 MT) are not price assertions. */
 export function ungroundedPriceAssertion(reply: string, scopedUserStatements: string[]): string | null {
-  const said = new Set<string>();
-  for (const s of scopedUserStatements) for (const a of currencyAmounts(s)) said.add(a);
-  for (const a of currencyAmounts(reply)) if (!said.has(a)) return a;
+  const saidPairs = new Set<string>();
+  const saidNumbers = new Set<string>();
+  for (const s of scopedUserStatements) {
+    for (const p of currencyAmountPairs(s)) { saidPairs.add(p); saidNumbers.add(p.split(" ")[0]); }
+    for (const n of priceContextAmounts(s)) saidNumbers.add(n);
+  }
+  for (const p of currencyAmountPairs(reply)) if (!saidPairs.has(p)) return p;
+  for (const n of priceContextAmounts(reply)) if (!saidNumbers.has(n)) return n;
   return null;
 }

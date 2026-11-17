@@ -157,7 +157,7 @@ test('providerRetrySeconds honors the provider delay only for rate-limit failure
     "export { providerRetrySeconds } from '../src/routes/whatsappWebhook';",
     {
       db: dbFixture({ rowCount: 1, existing: true }),
-      brain: "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];export const BRAIN_BUSY_REPLY='busy';",
+      brain: "export const isBrainOrchestratorEnabled=()=>false;export const runBrainTurn=async()=>null;export const BRAIN_TOOLS=[];export const BRAIN_BUSY_REPLY='busy';export const reserveOutboundSend=async()=>true;",
     }, [...MAP, [/akif\/brainOrchestrator(\.ts)?$/, 'brain']]);
   try {
     const m = await import(output);

@@ -795,6 +795,20 @@ export function releaseHumanRelayClaim(phone: string): number {
   return ids.length;
 }
 
+/** Customer text carried by a relay item - the arbitration key the
+ *  cross-path outbound reservation uses (relay items hold no WhatsApp id). */
+export function humanRelayItemText(itemId: string): string | null {
+  return items.find((i) => i.id === itemId)?.text ?? null;
+}
+
+/** Text of the newest still-open relay item for this customer - the same
+ *  item a phone-level reply would answer (items are appended in order). */
+export function newestOpenHumanRelayText(phone: string): string | null {
+  const key = relayContactKey(phone);
+  const open = items.filter((i) => !i.answeredAt && !i.autoAnswered && i.phone === key);
+  return open[open.length - 1]?.text ?? null;
+}
+
 export function markHumanRelayAnswered(phone: string, replyText?: string): number {
   const digits = relayContactKey(phone);
   const at = new Date().toISOString();

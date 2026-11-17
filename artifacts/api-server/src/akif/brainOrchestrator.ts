@@ -56,6 +56,9 @@ const SEND_HISTORY_MESSAGES = 10;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 
 type BrainSession = {
+  // Cross-path outbound ledger: who (brain/relay) already answered which
+  // customer text, with when. Written only by the atomic reservation SQL.
+  outbound?: Array<{ textKey: string; path: "brain" | "relay"; messageId?: string | null; at: string }>;
   fields: Record<string, string>;
   history: Array<{ role: "user" | "assistant"; content: string; messageId?: string }>;
   // Compare-and-swap token: every write bumps v, so a whole-row save that
@@ -142,10 +145,11 @@ function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   });
 }
 
-async function insertBrainSessionRow(key: string, state: BrainSession): Promise<void> {
+async function insertBrainSessionRow(key: string, state: BrainSession): Promise<boolean> {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   const versioned: BrainSession = { ...state, v: state.v ?? 1 };
-  await db.insert(sessions).values({ phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: versioned } as never, lastMessageId: null, expiresAt, updatedAt: new Date() }).onConflictDoNothing();
+  const inserted = await db.insert(sessions).values({ phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: versioned } as never, lastMessageId: null, expiresAt, updatedAt: new Date() }).onConflictDoNothing().returning({ phoneHash: sessions.phoneHash });
+  return inserted.length > 0;
 }
 
 /** Atomic, idempotent append to the persisted brain history. Never reads and
@@ -929,4 +933,64 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
     } finally { if(handsJobs.get(input.phone)?.id===job.id)handsJobs.delete(input.phone); }
   });
   return { handled:true,reply:finalReply,toolsUsed,background: async deliver=>{deliverResult??=deliver;await start();}, cancelBackground:async()=>{clearTimeout(startDeadline);await cancelBackground();} };
+}
+
+/** Cross-path outbound arbitration (17 Nov live owner test): the brain and
+ *  the human relay both answer the same customer message. Send authority is
+ *  an atomic reservation on the shared session row, keyed by phone + the
+ *  customer text being answered (relay items carry no WhatsApp id, so the
+ *  customer's own words are the common key). First reserver wins; the other
+ *  path suppresses. A reservation whose send outcome is UNKNOWN (timeout/5xx)
+ *  still blocks the competing path - an unknown send is never permission for
+ *  a competing send or retry. Reservations expire so a crash or a repeated
+ *  genuine message later in the conversation cannot wedge the line; distinct
+ *  customer messages (different text) never block each other. */
+export const OUTBOUND_RESERVE_TTL_SECS = 600;
+
+function outboundTextKey(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200);
+}
+
+/** Atomically reserve the right to answer each of `texts` (one customer turn
+ *  can bundle several messages). Reserves all or none; returns false when any
+ *  text was already answered by either path within the TTL. */
+export async function reserveOutboundSend(phone: string, texts: string[], path: "brain" | "relay", messageId?: string): Promise<boolean> {
+  const keys = [...new Set(texts.map(outboundTextKey).filter((k) => k.length > 0))];
+  if (!keys.length) return true;
+  const keysJson = JSON.stringify(keys);
+  const identity = await guidanceHistoryIdentity(phone, async (sender) => {
+    const [bound] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.phone, sender)).limit(1);
+    return bound?.id ?? null;
+  });
+  const key = identity.key + ":brain1";
+  const at = new Date().toISOString();
+  const mid = messageId ?? null;
+  const result = await db.execute(sql`
+    update whatsapp_chat_sessions
+    set data = jsonb_set(
+          jsonb_set(data, '{brain,outbound}',
+            coalesce((select jsonb_agg(e) from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e
+                      where (e->>'at')::timestamptz > now() - interval '1 day'), '[]'::jsonb)
+            || (select coalesce(jsonb_agg(jsonb_build_object('textKey', k, 'path', ${path}, 'messageId', ${mid}, 'at', ${at})), '[]'::jsonb)
+                from jsonb_array_elements_text(${keysJson}::jsonb) as k)),
+          '{brain,v}', to_jsonb(coalesce((data->'brain'->>'v')::int, 0) + 1)),
+        updated_at = now()
+    where phone_hash = ${key}
+      and not exists (
+        select 1 from jsonb_array_elements(coalesce(data->'brain'->'outbound','[]'::jsonb)) as e
+        where (e->>'textKey') in (select k from jsonb_array_elements_text(${keysJson}::jsonb) as k)
+          and (e->>'at')::timestamptz > now() - make_interval(secs => ${OUTBOUND_RESERVE_TTL_SECS})
+      )`);
+  const updated = (result as { rowCount?: number }).rowCount ?? 0;
+  if (updated > 0) return true;
+  const [existing] = await db.select({ phoneHash: sessions.phoneHash }).from(sessions).where(eq(sessions.phoneHash, key)).limit(1);
+  if (existing) return false; // a live reservation by the other path holds
+  // No session row yet: create one carrying the reservation.
+  const entries = keys.map((k) => ({ textKey: k, path, messageId: mid, at }));
+  const inserted = await insertBrainSessionRow(key, { fields: {}, history: [], menuMentioned: false, outbound: entries });
+  if (inserted) return true; // our insert carried the reservation
+  // A concurrent insert won without our entry: the atomic update above is
+  // the only writer that grants authority, so re-run it - it reserves, or
+  // reports the other path's live reservation.
+  return reserveOutboundSend(phone, texts, path, messageId);
 }
