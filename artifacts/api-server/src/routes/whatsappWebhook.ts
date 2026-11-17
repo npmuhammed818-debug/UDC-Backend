@@ -31,7 +31,7 @@ import { backgroundStillCurrent, isBrainOrchestratorEnabled, markOutboundSend, r
 import { brainTurnHadExternalSend } from "../akif/relayOutcome";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayItemCover, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
@@ -288,6 +288,22 @@ export async function deliverHumanRelayReply(to: string, text: string, options: 
     return deliverAnswer(to, cleanedText, true, { userText: cleanedText, heardLanguage: options.heardLanguage, explicitVoice: true, voiceNote: true });
   }
   return deliverWhatsAppReply(to, cleanedText);
+}
+
+/** Every relay-queue auto-answer and the delayed fallback must win the same
+ *  atomic reservation as every other send path before going out: a worker
+ *  reply (or an earlier auto-answer) covering this inbound blocks the send,
+ *  and this send then blocks them. Without this the auto paths could double
+ *  the customer exactly like the unarbitrated paths did. */
+async function deliverRelayAutoAnswer(phone: string, text: string, cover: OutboundCover[], options: { voice?: boolean; heardLanguage?: string } = {}) {
+  const reservation = await reserveOutboundSend(phone, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+  if (reservation !== "reserved") {
+    console.warn("AKIF relay auto-answer held by outbound reservation", { reason: "outbound_reserved", state: reservation });
+    return null;
+  }
+  const sent = await deliverHumanRelayReply(phone, text, options);
+  await markOutboundSend(phone, cover, sent?.delivered ? "confirmed" : "unknown").catch(() => undefined);
+  return sent;
 }
 
 async function deliverWhatsAppReply(to: string | undefined, body: string, _withMenu = false) {
@@ -1856,32 +1872,33 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // Auto-answer simple greetings (owner-approved 10 Nov, staging allowlist
           // only). Text even for a voice greeting, so the auto path never touches
           // TTS quota; anything beyond a plain greeting stays on the human hold.
+          const voiceAutoCover: OutboundCover[] = [{ messageId: message.id, text: heard.text }];
           let voiceAutoAnswered = false;
           let voiceAutoNote: string | undefined;
           const voiceReply = draft?.reply ?? null;
           if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text) && greetingAutoReplySafe(voiceReply)) {
-            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            const sent = await deliverRelayAutoAnswer(message.from, voiceReply!, voiceAutoCover);
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", voiceReply!); console.info("AKIF relay auto-answered a simple greeting", { kind: "voice" }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoGreetingsEnabled() && isSimpleGreetingText(heard.text)) {
             // Brain down, no draft: a spoken greeting still gets a spoken
             // hello back in the customer's language (owner rule, 10 Nov).
             const hello = fallbackGreeting(heard.language);
-            const sent = await deliverHumanRelayReply(message.from, hello, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            const sent = await deliverRelayAutoAnswer(message.from, hello, voiceAutoCover, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", hello); console.info("AKIF relay auto-answered a simple greeting", { kind: "voice", fallback: true }); voiceAutoNote = "Auto-answered as a simple greeting - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoGreetingsEnabled() && isMenuRequestText(heard.text) && menuAutoReplySafe(voiceReply)) {
-            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            const sent = await deliverRelayAutoAnswer(message.from, voiceReply!, voiceAutoCover);
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", voiceReply!); console.info("AKIF relay auto-answered a menu request", { kind: "voice" }); voiceAutoNote = "Auto-answered as a menu explanation - no reply needed unless it looks wrong. Sent:"; }
           } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(voiceReply, draft?.toolsUsed ?? [])) {
-            const sent = await deliverHumanRelayReply(message.from, voiceReply);
+            const sent = await deliverRelayAutoAnswer(message.from, voiceReply!, voiceAutoCover);
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); voiceAutoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}) - no reply needed unless it looks wrong. Sent:`; }
           } else if (relayBrainFirstEnabled() && isBrainOrchestratorEnabled() && brainFirstReplySafe(message.from, voiceReply, draft?.toolsUsed ?? []) && !relayReplyResetsConversation(message.from, voiceReply!)) {
             // Brain-first for voice notes too: voice-in still gets voice-out
             // in the customer's language through the normal voice rules.
-            const sent = await deliverHumanRelayReply(message.from, voiceReply, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
+            const sent = await deliverRelayAutoAnswer(message.from, voiceReply!, voiceAutoCover, { voice: brainVoiceEnabled(), heardLanguage: heard.language ?? undefined });
             voiceAutoAnswered = Boolean(sent?.delivered);
             if (voiceAutoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", voiceReply!); console.info("AKIF brain-first answered", { kind: "voice" }); voiceAutoNote = "Answered directly by AKIF - no reply needed unless it looks wrong. Sent:"; }
           }
@@ -1947,9 +1964,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
                 // Same cross-path send authority as the text path: the relay
                 // may have already answered this voice note's turn.
                 const voiceCover: OutboundCover[] = [{ messageId: message.id, text: transcript }];
-                const voiceReserved = await reserveOutboundSend(message.from!, voiceCover, "brain").catch(() => true);
-                if (!voiceReserved) {
-                  console.warn("AKIF voice brain reply held; the relay already answered this message", { reason: "outbound_reserved" });
+                const voiceReserved = await reserveOutboundSend(message.from!, voiceCover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+                if (voiceReserved !== "reserved") {
+                  console.warn("AKIF voice brain reply held by outbound reservation", { reason: "outbound_reserved", state: voiceReserved, messageId: message.id });
                   if (voiceBrain.cancelBackground) await voiceBrain.cancelBackground();
                   continue;
                 }
@@ -2222,6 +2239,7 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         // (with one retry when the turn itself failed or came back empty).
         const draft = await buildHumanRelayDraftWithRetry(message.from, combinedText, message.id);
         if (slowNotice) clearTimeout(slowNotice);
+        const autoCover: OutboundCover[] = [{ messageId: message.id, text: combinedText }];
         let autoAnswered = false;
         let autoNote: string | undefined;
         const autoReply = draft?.reply ?? null;
@@ -2230,27 +2248,27 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // a rotating warm hello answers instead of holding (owner direction,
           // 10 Nov launch).
           const hello = greetingAutoReplySafe(autoReply) ? autoReply : fallbackGreeting();
-          const sent = await deliverHumanRelayReply(message.from, hello);
+          const sent = await deliverRelayAutoAnswer(message.from, hello, autoCover);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", hello); console.info("AKIF relay auto-answered a simple greeting", { kind: "text" }); autoNote = "Auto-answered as a simple greeting, no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoGreetingsEnabled() && isMenuRequestText(combinedText) && menuAutoReplySafe(autoReply)) {
           // Typed "menu": the brain explains the options in its own words (owner
           // rule, 8 Nov) and the relay auto-sends that explanation, a hold here
           // would leave the menu question unanswered (owner feedback 10 Nov).
-          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          const sent = await deliverRelayAutoAnswer(message.from, autoReply!, autoCover);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-auto", autoReply!); console.info("AKIF relay auto-answered a menu request", { kind: "text" }); autoNote = "Auto-answered as a menu explanation, no reply needed unless it looks wrong. Sent:"; }
         } else if (relayAutoToolsEnabled() && relayAutoToolReplySafe(autoReply, draft?.toolsUsed ?? [])) {
           // The brain really used its tools for this answer, so links and
           // references in it come from tool output, not invention.
-          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          const sent = await deliverRelayAutoAnswer(message.from, autoReply!, autoCover);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", autoReply!); console.info("AKIF relay auto-answered with tools", { tools: (draft?.toolsUsed ?? []).join(",") }); autoNote = `Auto-answered by AKIF using its tools (${(draft?.toolsUsed ?? []).join(", ")}), no reply needed unless it looks wrong. Sent:`; }
         } else if (relayBrainFirstEnabled() && isBrainOrchestratorEnabled() && brainFirstReplySafe(message.from, autoReply, draft?.toolsUsed ?? []) && !relayReplyResetsConversation(message.from, autoReply!)) {
           // Brain-first (owner direction, 10 Nov): with the orchestrator on, a
           // safe brain answer goes straight out and only failures, unsafe or
           // repetitive drafts hold for the human workers.
-          const sent = await deliverHumanRelayReply(message.from, autoReply);
+          const sent = await deliverRelayAutoAnswer(message.from, autoReply!, autoCover);
           autoAnswered = Boolean(sent?.delivered);
           if (autoAnswered) { noteHumanRelayReplySent(message.from, "akif-brain", autoReply!); console.info("AKIF brain-first answered", { kind: "text" }); autoNote = "Answered directly by AKIF, no reply needed unless it looks wrong. Sent:"; }
         }
@@ -2266,7 +2284,17 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         }
         const heldText = enqueueHumanRelay({ phone: message.from, messageId: message.id, kind: "text", text: combinedText, draft: draft?.reply ?? null, draftBackgroundDiscarded: draft?.backgroundDiscarded ?? false, autoAnswered, autoNote, customerNote: await relayCustomerNote(message.from), quotedText: quotedOutboundFor(message.context?.id, message.from) });
         if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
-          scheduleRelayFallback(heldText, deliverHumanRelayReply);
+          scheduleRelayFallback(heldText, async (fp, ft) => {
+            const cover: OutboundCover[] = [humanRelayItemCover(heldText.id) ?? { messageId: heldText.messageId, text: heldText.text }];
+            const reservation = await reserveOutboundSend(fp, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+            if (reservation !== "reserved") {
+              console.warn("AKIF relay fallback held by outbound reservation", { reason: "outbound_reserved", state: reservation });
+              return { delivered: false };
+            }
+            const sent = await deliverHumanRelayReply(fp, ft);
+            await markOutboundSend(fp, cover, sent?.delivered ? "confirmed" : "unknown").catch(() => undefined);
+            return sent;
+          });
         }
         continue;
       }
@@ -2363,9 +2391,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             // doubling. The reservation starts pending; the outcome marks it
             // confirmed or unknown (unknown never frees a competing send).
             const cover: OutboundCover[] = [{ messageId: message.id, text: brainText || message.text.body }];
-            const reserved = await reserveOutboundSend(message.from!, cover, "brain").catch(() => true);
-            if (!reserved) {
-              console.warn("AKIF brain reply held; the relay already answered this message", { reason: "outbound_reserved" });
+            const reserved = await reserveOutboundSend(message.from!, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+            if (reserved !== "reserved") {
+              console.warn("AKIF brain reply held by outbound reservation", { reason: "outbound_reserved", state: reserved, messageId: message.id });
               if (brain.cancelBackground) await brain.cancelBackground();
               continue;
             }

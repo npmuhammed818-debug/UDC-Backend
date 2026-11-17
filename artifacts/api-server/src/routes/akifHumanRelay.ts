@@ -349,7 +349,7 @@ router.post("/akif-relay/reply", async (req, res) => {
     const cover = parsed.data!.itemId ? humanRelayItemCover(parsed.data!.itemId) : newestOpenHumanRelayCover(phone);
     relayCover = cover ? [cover] : [];
     if (relayCover.length) {
-      const reservation = await reserveOutboundSend(phone, relayCover, "relay").catch(() => "reserved" as const);
+      const reservation = await reserveOutboundSend(phone, relayCover, "relay").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
       if (reservation === "confirmed") {
         console.warn("AKIF human relay reply held; this message already has a confirmed answer", { reason: "outbound_reserved" });
         autoCloseHumanRelayItem(parsed.data!.itemId ?? null, phone, "Already answered by AKIF - no relay reply sent.");

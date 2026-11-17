@@ -110,6 +110,21 @@ const dbFixture = `
         }
         return { rowCount: 1 };
       }
+      // Whole-session save (saveBrainSession): replace data but keep the LIVE
+      // outbound ledger, exactly like the production jsonb_set merge.
+      const brainDataJson = p.find(v => typeof v === 'string' && v.startsWith('{"brain"'));
+      if (brainDataJson) {
+        const key = p.find(v => typeof v === 'string' && /:brain1$/.test(v));
+        const data = JSON.parse(brainDataJson);
+        if (g.row && g.row.phoneHash === key) {
+          const liveOutbound = (g.row.data.brain && g.row.data.brain.outbound) || [];
+          g.row.data = data;
+          g.row.data.brain.outbound = liveOutbound;
+        } else if (!g.row) {
+          g.row = { phoneHash: key, purpose: 'brain_orchestrator', step: 0, data, lastMessageId: null };
+        }
+        return { rowCount: 1 };
+      }
       const entryRaw = p.find(v => typeof v === 'string' && v.startsWith('{"role"'));
       if (entryRaw === undefined) return { rowCount: 0 };
       const entry = JSON.parse(entryRaw);
@@ -457,7 +472,7 @@ test('real webhook: a rejected (fabricated-price) brain reply falls to the scrip
     [
       "export { default as webhookRouter } from '../src/routes/whatsappWebhook';",
       "export { pendingHumanRelay, __clearRelayMemoryForTests } from '../src/akif/humanRelay';",
-      "export { recordBrainInbound } from '../src/akif/brainOrchestrator';",
+      "export { recordBrainInbound, reserveOutboundSend, markOutboundSend } from '../src/akif/brainOrchestrator';",
     ].join('\n'),
     {
       db: dbFixture,
@@ -497,10 +512,16 @@ test('real webhook: a rejected (fabricated-price) brain reply falls to the scrip
     // The provider stub: a model that fabricates the copper thread's price
     // into the sugar reply, exactly the live 17 Nov failure.
     groqStub = createServer((req, res) => {
-      req.resume();
+      let body = '';
+      req.on('data', (c) => { body += c; });
       req.on('end', () => {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ choices: [{ message: { content: "Got it - sugar ICUMSA 45 from Kenya at 5600 USD per mt. Please tell me the quantity (in mt) you'd like to offer." } }] }));
+        // The second scenario's inbound ("Kenya port?") gets a grounded,
+        // price-free reply; everything else gets the fabricating model.
+        const content = body.includes('Kenya port?')
+          ? "Noted - Kenya for the sugar. What quantity in mt would you like to offer?"
+          : "Got it - sugar ICUMSA 45 from Kenya at 5600 USD per mt. Please tell me the quantity (in mt) you'd like to offer.";
+        res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
     });
     await new Promise<void>((r) => groqStub!.listen(0, '127.0.0.1', () => r()));
@@ -548,6 +569,34 @@ test('real webhook: a rejected (fabricated-price) brain reply falls to the scrip
     assert.ok(contents.includes('I have sugar icumsa 45'), 'sugar fact captured');
     assert.ok(contents.includes('Kenya'), 'inbound captured through the rejected turn');
     assert.ok(!brain.history.some((h: any) => h.role === 'assistant' && h.content.includes('5600 USD per mt')), 'fabricated reply never recorded');
+
+    // Suppression regression (the route must treat a confirmed reservation as
+    // blocking - a string compare, not a truthiness check): the relay has a
+    // CONFIRMED send covering the next inbound's wamid; the brain turn
+    // produces a grounded reply, yet nothing may be sent.
+    const coverG = [{ messageId: 'wamid.grounded-1', text: 'Kenya port?' }];
+    assert.equal(await m.reserveOutboundSend(phone, coverG, 'relay'), 'reserved');
+    await m.markOutboundSend(phone, coverG, 'confirmed');
+    console.error('LEDGER STATE AFTER MARK:', JSON.stringify(g.row?.data?.brain?.outbound ?? null));
+    const sendsBefore = g.sends.length;
+    const payload2 = {
+      entry: [{ changes: [{ value: {
+        metadata: { phone_number_id: 'test-phone-id' },
+        contacts: [{ profile: { name: 'Test Seller' } }],
+        messages: [{ id: 'wamid.grounded-1', from: phone, timestamp: '1763300060', type: 'text', text: { body: 'Kenya port?' } }],
+      } }] }],
+    };
+    const raw2 = Buffer.from(JSON.stringify(payload2));
+    const sig2 = 'sha256=' + createHmac('sha256', secret).update(raw2).digest('hex');
+    const res2 = await fetch(`http://127.0.0.1:${port}/webhooks/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-hub-signature-256': sig2 },
+      body: raw2,
+    });
+    assert.equal(res2.status, 200, 'second webhook accepted');
+    if (g.sends.length !== sendsBefore) console.error('UNEXPECTED SENDS:', JSON.stringify(g.sends.slice(sendsBefore)));
+    assert.equal(g.sends.length, sendsBefore, 'confirmed relay reservation suppresses the brain send');
+    assert.ok(!g.sends.some((s: any) => typeof s.body === 'string' && s.body.includes('What quantity in mt')), 'grounded reply also suppressed when covered');
   } finally {
     if (appServer) await new Promise((r) => appServer!.close(() => r(undefined)));
     if (groqStub) await new Promise((r) => groqStub!.close(() => r(undefined)));

@@ -87,7 +87,9 @@ async function loadBrainSession(phone: string): Promise<{ key: string; state: Br
     // Write-boundary guard for stale persisted state: an email-shaped or otherwise invalid value is never kept as the name, and a non-email is never kept as the email.
     if (loaded.full_name && !looksLikeFullName(loaded.full_name)) delete loaded.full_name;
     if (loaded.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(loaded.email.trim())) delete loaded.email;
-    return { key, state: { fields: loaded, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned), v: typeof data.brain?.v === "number" ? data.brain.v : 0 }, found: true };
+    // outbound must ride along: it is owned by the atomic reserve/mark SQL,
+    // and a merge that rebuilds state without it would wipe live reservations.
+    return { key, state: { fields: loaded, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned), v: typeof data.brain?.v === "number" ? data.brain.v : 0, outbound: data.brain?.outbound }, found: true };
   } catch {
     return { key, state: empty, found: false };
   }
@@ -123,8 +125,22 @@ export async function brainHasOpenRegistration(phone: string): Promise<boolean> 
 // Durable menu lock: the word "menu" may be surfaced exactly once per
 async function saveBrainSession(key: string, state: BrainSession) {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  const row = { phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: state } as never, lastMessageId: null, expiresAt, updatedAt: new Date() };
-  await db.insert(sessions).values(row).onConflictDoUpdate({ target: sessions.phoneHash, set: { purpose: row.purpose, step: row.step, data: row.data, lastMessageId: row.lastMessageId, expiresAt: row.expiresAt, updatedAt: row.updatedAt } });
+  const data = JSON.stringify({ brain: state });
+  // Whole-session save, but the outbound reservation ledger is owned ONLY by
+  // the atomic reserve/mark statements: on conflict keep the LIVE outbound
+  // array from the stored row instead of overwriting it with this turn's
+  // stale in-memory copy. Without this a turn-end save wipes a reservation
+  // that landed mid-turn and the customer gets double answers.
+  await db.execute(sql`
+    insert into whatsapp_chat_sessions (phone_hash, purpose, step, data, last_message_id, expires_at, updated_at)
+    values (${key}, 'brain_orchestrator', 0, ${data}::jsonb, null, ${expiresAt}, now())
+    on conflict (phone_hash) do update set
+      purpose = excluded.purpose,
+      step = excluded.step,
+      data = jsonb_set(excluded.data, '{brain,outbound}', coalesce(whatsapp_chat_sessions.data->'brain'->'outbound', '[]'::jsonb)),
+      last_message_id = excluded.last_message_id,
+      expires_at = excluded.expires_at,
+      updated_at = now()`);
 }
 
 // Per-phone serialization for whole-row session writes (single instance):

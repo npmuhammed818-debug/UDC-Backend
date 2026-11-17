@@ -1018,7 +1018,7 @@ export function resetHumanRelay(): void {
 // tests keep running without a database.
 type RelayRow = {
   id: string; phone: string; at: Date | string; kind: string; text: string;
-  heard_language: string | null; draft: string | null; draft_background_discarded: boolean;
+  message_id: string | null; heard_language: string | null; draft: string | null; draft_background_discarded: boolean;
   answered_at: Date | string | null; auto_answered: boolean; auto_note: string | null;
   claimed_by: string | null; claimed_at: Date | string | null; customer_note: string | null;
 };
@@ -1030,6 +1030,7 @@ function relayRowToItem(r: RelayRow): HumanRelayItem {
     at: new Date(r.at).toISOString(),
     kind: r.kind === "voice" ? "voice" : "text",
     text: r.text,
+    messageId: r.message_id ?? undefined,
     heardLanguage: r.heard_language ?? undefined,
     draft: r.draft,
     draftBackgroundDiscarded: Boolean(r.draft_background_discarded),
@@ -1066,8 +1067,8 @@ async function defaultRelayPersistence(): Promise<RelayPersistence | null> {
     return {
       async upsertItem(i) {
         await db.execute(sql`INSERT INTO akif_human_relay_items
-          (id, phone, at, kind, text, heard_language, draft, draft_background_discarded, answered_at, auto_answered, auto_note, claimed_by, claimed_at, customer_note)
-          VALUES (${i.id}, ${i.phone}, ${i.at}, ${i.kind}, ${i.text}, ${i.heardLanguage ?? null}, ${i.draft}, ${i.draftBackgroundDiscarded}, ${i.answeredAt}, ${Boolean(i.autoAnswered)}, ${i.autoNote ?? null}, ${i.claimedBy ?? null}, ${i.claimedAt ?? null}, ${i.customerNote ?? null})
+          (id, phone, at, kind, text, message_id, heard_language, draft, draft_background_discarded, answered_at, auto_answered, auto_note, claimed_by, claimed_at, customer_note)
+          VALUES (${i.id}, ${i.phone}, ${i.at}, ${i.kind}, ${i.text}, ${i.messageId ?? null}, ${i.heardLanguage ?? null}, ${i.draft}, ${i.draftBackgroundDiscarded}, ${i.answeredAt}, ${Boolean(i.autoAnswered)}, ${i.autoNote ?? null}, ${i.claimedBy ?? null}, ${i.claimedAt ?? null}, ${i.customerNote ?? null})
           ON CONFLICT (id) DO NOTHING`);
       },
       async markAnswered(ids, at, replyText) {
