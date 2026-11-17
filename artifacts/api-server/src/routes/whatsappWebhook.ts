@@ -2312,9 +2312,10 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           if (brain?.reply === BRAIN_BUSY_REPLY) brain = null; // never send the floor line
         }
         // Never re-run a turn that already did an external send: a re-run could send twice.
-        if (!brain?.handled && !brainTurnHadExternalSend(message.from, message.id)) {
-          // One retry before any fallback: provider rate limits are the common
-          // failure and often clear within seconds.
+        if (!brain?.handled && providerRetryMs === 0 && !brainTurnHadExternalSend(message.from, message.id)) {
+          // One retry before any fallback for transient (non-429) failures.
+          // A known provider 429 skips this: its own retry delay below governs,
+          // and a blind retry would just burn more of the per-minute budget.
           await new Promise((resolve) => setTimeout(resolve, 3000));
           brain = await callBrain();
         }
