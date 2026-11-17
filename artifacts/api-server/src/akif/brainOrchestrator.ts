@@ -985,7 +985,7 @@ function outboundKeys(covers: OutboundCover[]): string[] {
   return [...new Set(keys)];
 }
 
-export type OutboundReserveResult = "reserved" | "confirmed" | "unknown" | "pending" | "stale_pending";
+export type OutboundReserveResult = "reserved" | "confirmed" | "unknown" | "pending" | "stale_pending" | "unavailable";
 
 /** Atomically reserve the right to answer the covered inbound(s). First
  *  reserver wins; every later attempt - from EITHER path, including the same

@@ -296,13 +296,13 @@ export async function deliverHumanRelayReply(to: string, text: string, options: 
  *  and this send then blocks them. Without this the auto paths could double
  *  the customer exactly like the unarbitrated paths did. */
 async function deliverRelayAutoAnswer(phone: string, text: string, cover: OutboundCover[], options: { voice?: boolean; heardLanguage?: string } = {}) {
-  const reservation = await reserveOutboundSend(phone, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+  const reservation = await reserveOutboundSend(phone, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation unavailable; failing closed (no send)", { reason: error instanceof Error ? error.message : "unknown" }); return "unavailable" as const; });
   if (reservation !== "reserved") {
     console.warn("AKIF relay auto-answer held by outbound reservation", { reason: "outbound_reserved", state: reservation });
     return null;
   }
   const sent = await deliverHumanRelayReply(phone, text, options);
-  await markOutboundSend(phone, cover, sent?.delivered ? "confirmed" : "unknown").catch(() => undefined);
+  await markOutboundSend(phone, cover, sent?.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
   return sent;
 }
 
@@ -1964,14 +1964,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
                 // Same cross-path send authority as the text path: the relay
                 // may have already answered this voice note's turn.
                 const voiceCover: OutboundCover[] = [{ messageId: message.id, text: transcript }];
-                const voiceReserved = await reserveOutboundSend(message.from!, voiceCover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+                const voiceReserved = await reserveOutboundSend(message.from!, voiceCover, "brain").catch((error) => { console.warn("AKIF outbound reservation unavailable; failing closed (no send)", { reason: error instanceof Error ? error.message : "unknown" }); return "unavailable" as const; });
                 if (voiceReserved !== "reserved") {
                   console.warn("AKIF voice brain reply held by outbound reservation", { reason: "outbound_reserved", state: voiceReserved, messageId: message.id });
                   if (voiceBrain.cancelBackground) await voiceBrain.cancelBackground();
                   continue;
                 }
                 const voiceDelivered = await deliverAnswer(message.from, voiceBrain.reply, true, { heardLanguage: heard.language ? VOICE_LANGUAGE_NAMES[heard.language.toLowerCase()] : undefined, voiceNote: true, userText: transcript });
-                await markOutboundSend(message.from!, voiceCover, voiceDelivered?.delivered ? "confirmed" : "unknown").catch(() => undefined);
+                await markOutboundSend(message.from!, voiceCover, voiceDelivered?.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
                 if (voiceBrain.background && voiceDelivered?.delivered) {
                   const background = voiceBrain.background;
                   const phone = message.from;
@@ -2286,13 +2286,13 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         if (!autoAnswered && heldText.draft && relayFallbackReplySafe(combinedText, heldText.draft, draft?.toolsUsed ?? [])) {
           scheduleRelayFallback(heldText, async (fp, ft) => {
             const cover: OutboundCover[] = [humanRelayItemCover(heldText.id) ?? { messageId: heldText.messageId, text: heldText.text }];
-            const reservation = await reserveOutboundSend(fp, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+            const reservation = await reserveOutboundSend(fp, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation unavailable; failing closed (no send)", { reason: error instanceof Error ? error.message : "unknown" }); return "unavailable" as const; });
             if (reservation !== "reserved") {
               console.warn("AKIF relay fallback held by outbound reservation", { reason: "outbound_reserved", state: reservation });
               return { delivered: false };
             }
             const sent = await deliverHumanRelayReply(fp, ft);
-            await markOutboundSend(fp, cover, sent?.delivered ? "confirmed" : "unknown").catch(() => undefined);
+            await markOutboundSend(fp, cover, sent?.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
             return sent;
           });
         }
@@ -2391,14 +2391,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
             // doubling. The reservation starts pending; the outcome marks it
             // confirmed or unknown (unknown never frees a competing send).
             const cover: OutboundCover[] = [{ messageId: message.id, text: brainText || message.text.body }];
-            const reserved = await reserveOutboundSend(message.from!, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+            const reserved = await reserveOutboundSend(message.from!, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation unavailable; failing closed (no send)", { reason: error instanceof Error ? error.message : "unknown" }); return "unavailable" as const; });
             if (reserved !== "reserved") {
               console.warn("AKIF brain reply held by outbound reservation", { reason: "outbound_reserved", state: reserved, messageId: message.id });
               if (brain.cancelBackground) await brain.cancelBackground();
               continue;
             }
             delivered = await deliverWhatsAppReply(message.from, brain.reply);
-            await markOutboundSend(message.from!, cover, delivered?.delivered ? "confirmed" : "unknown").catch(() => undefined);
+            await markOutboundSend(message.from!, cover, delivered?.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
           }
           if (brain.background && delivered?.delivered) {
             const background = brain.background;

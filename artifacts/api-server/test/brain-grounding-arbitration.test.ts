@@ -75,6 +75,7 @@ const dbFixture = `
       const pathParam = p.find(v => v === 'brain' || v === 'relay');
       const stateParam = p.find(v => v === 'confirmed' || v === 'unknown');
       if (keysJson && pathParam) {
+        if (g.failReserve) throw new Error('synthetic reservation store outage');
         // Reserve: block on ANY matching key entry, any state, any age.
         const keysArr = JSON.parse(keysJson);
         const key = p.find(v => typeof v === 'string' && /:brain1$/.test(v));
@@ -450,11 +451,24 @@ test('relay reply route uses the arbitration ledger: held by a brain reservation
     // A turn nobody reserved: the relay answer goes out, and its confirmed
     // reservation then blocks a competing brain send for the same text.
     m.enqueueHumanRelay({ phone, kind: 'text', text: 'what is the moisture?' });
-    const sent = await post({ phone, text: 'About 12 percent.' });
+    const sent = await post({ phone, text: 'About 12 percent.', workerId: 'wk-test' });
     assert.equal(sent.status, 200, 'relay reply sends when the turn is free');
     assert.equal(sent.body.delivered, true);
     assert.equal(g.deliverCalls.length, 1, 'exactly one send');
     assert.equal(await m.reserveOutboundSend(phone, [{ text: 'what is the moisture?' }], 'brain'), 'confirmed', 'relay confirmed send blocks the brain');
+    // Reservation store DOWN: the route fails CLOSED - 503, nothing sent,
+    // the held item stays open for a later retry.
+    m.enqueueHumanRelay({ phone, kind: 'text', text: 'packing details?' });
+    g.failReserve = true;
+    const outage = await post({ phone, text: 'In 50kg bags.', workerId: 'wk-test' });
+    if (outage.status !== 503) console.error('OUTAGE BODY:', JSON.stringify(outage.body));
+    assert.equal(outage.status, 503, 'reservation outage returns 503');
+    assert.equal(outage.body.error, 'reservation_unavailable');
+    assert.equal(g.deliverCalls.length, 1, 'still exactly one send total');
+    assert.equal(m.pendingHumanRelay().length, 1, 'outage item stays held');
+    g.failReserve = false;
+    const recovered = await post({ phone, text: 'In 50kg bags.', workerId: 'wk-test' });
+    assert.equal(recovered.status, 200, 'retry after recovery sends');
   } finally {
     if (server) await new Promise((r) => server!.close(() => r(undefined)));
     await unlink(output);
@@ -597,6 +611,27 @@ test('real webhook: a rejected (fabricated-price) brain reply falls to the scrip
     if (g.sends.length !== sendsBefore) console.error('UNEXPECTED SENDS:', JSON.stringify(g.sends.slice(sendsBefore)));
     assert.equal(g.sends.length, sendsBefore, 'confirmed relay reservation suppresses the brain send');
     assert.ok(!g.sends.some((s: any) => typeof s.body === 'string' && s.body.includes('What quantity in mt')), 'grounded reply also suppressed when covered');
+
+    // Fail-closed on storage outage: with the reservation store throwing,
+    // the brain-first auto-answer must NOT go out (log-and-send is unsafe).
+    g.failReserve = true;
+    const payload3 = {
+      entry: [{ changes: [{ value: {
+        metadata: { phone_number_id: 'test-phone-id' },
+        contacts: [{ profile: { name: 'Test Seller' } }],
+        messages: [{ id: 'wamid.outage-1', from: phone, timestamp: '1763300120', type: 'text', text: { body: 'Kenya port?' } }],
+      } }] }],
+    };
+    const raw3 = Buffer.from(JSON.stringify(payload3));
+    const sig3 = 'sha256=' + createHmac('sha256', secret).update(raw3).digest('hex');
+    const res3 = await fetch(`http://127.0.0.1:${port}/webhooks/whatsapp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-hub-signature-256': sig3 },
+      body: raw3,
+    });
+    assert.equal(res3.status, 200, 'outage webhook accepted');
+    assert.equal(g.sends.length, sendsBefore, 'reservation outage suppresses the auto-answer send');
+    g.failReserve = false;
   } finally {
     if (appServer) await new Promise((r) => appServer!.close(() => r(undefined)));
     if (groqStub) await new Promise((r) => groqStub!.close(() => r(undefined)));

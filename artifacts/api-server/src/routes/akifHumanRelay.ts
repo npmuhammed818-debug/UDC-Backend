@@ -349,7 +349,13 @@ router.post("/akif-relay/reply", async (req, res) => {
     const cover = parsed.data!.itemId ? humanRelayItemCover(parsed.data!.itemId) : newestOpenHumanRelayCover(phone);
     relayCover = cover ? [cover] : [];
     if (relayCover.length) {
-      const reservation = await reserveOutboundSend(phone, relayCover, "relay").catch((error) => { console.warn("AKIF outbound reservation failed open", { reason: error instanceof Error ? error.message : "unknown" }); return "reserved" as const; });
+      const reservation = await reserveOutboundSend(phone, relayCover, "relay").catch((error) => { console.warn("AKIF outbound reservation unavailable; failing closed (no send)", { reason: error instanceof Error ? error.message : "unknown" }); return "unavailable" as const; });
+      if (reservation === "unavailable") {
+        // The send-authority store is down: nobody may send for this turn.
+        // The item stays held; the worker can retry when storage recovers.
+        res.status(503).json({ ok: false, error: "reservation_unavailable", detail: "Send-authority store unavailable; the reply was NOT sent. Retry shortly." });
+        return;
+      }
       if (reservation === "confirmed") {
         console.warn("AKIF human relay reply held; this message already has a confirmed answer", { reason: "outbound_reserved" });
         autoCloseHumanRelayItem(parsed.data!.itemId ?? null, phone, "Already answered by AKIF - no relay reply sent.");
@@ -372,7 +378,7 @@ router.post("/akif-relay/reply", async (req, res) => {
         heardLanguage: lastHeardLanguageFor(phone),
       });
   if (!emailTo && relayCover.length) {
-    await markOutboundSend(phone, relayCover, delivery.delivered ? "confirmed" : "unknown").catch(() => undefined);
+    await markOutboundSend(phone, relayCover, delivery.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
   }
   if (!delivery.delivered) {
     // An unknown outcome (timeout, network error, 5xx) is NOT a rejection: the customer may already have the message, so the worker must check before resending.
