@@ -1,7 +1,8 @@
 import {requirePrivateServiceUrl} from '../../privacy/serviceUrl.ts';
 import { isAkifWorkerConversationEnabled, runAkifWorkerChat } from "./workerClient.ts";
-import { isGroqConfigured, runGroqChat } from "./groqClient.ts";
+import { isGroqConfigured, runGroqChat, type GroqToolCall, type GroqToolChatMessage, type GroqToolDefinition } from "./groqClient.ts";
 import { runFreeChain } from "./freeProviderChain.ts";
+import { parseHermesTurn, toHermesMessages } from "./hermesBrainContract.ts";
 
 type HermesChatResponse = {
   choices?: Array<{
@@ -410,6 +411,47 @@ export async function runHermesChat(
   }
 
   return { content, raw };
+}
+
+// Brain-seat chat for the owner-number Hermes trial: speaks the brain loop's
+// tool-chat shape while enforcing the trial action contract in code. Calls
+// the Hermes gateway ONLY - no Groq, no free chain, no relay, no fallback.
+// Any Hermes error, timeout or malformed action block throws: the caller
+// turns that into an honest failure (silence), never a replacement reply.
+export async function runHermesToolChat(
+  messages: GroqToolChatMessage[],
+  tools: GroqToolDefinition[],
+  timeoutMs: number,
+): Promise<{ content: string | null; toolCalls: GroqToolCall[] }> {
+  const payload = {
+    model: "akif-hermes",
+    messages: toHermesMessages(messages, tools),
+    stream: false,
+  };
+  const raw = await hermesFetch<HermesChatResponse>(
+    "/v1/chat/completions",
+    {
+      method: "POST", redirect: "error",
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  );
+  const content = raw.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("Hermes returned no text response");
+  }
+  const parsed = parseHermesTurn(content, tools);
+  let text = parsed.text;
+  if (parsed.denied.length > 0 && parsed.toolCalls.length === 0) {
+    // Policy-denied requests are answered honestly by code; the model's own
+    // words are dropped so they cannot imply the action happened.
+    text = "That action is not available in this test - I can read your details and save your own drafts only.";
+  } else if (parsed.denied.length > 0) {
+    // Intermediate content is fed back to the model, never shown as-is: make
+    // the denial part of the record it answers from.
+    text = `${text}\n(System note: ${parsed.denied.length} requested action(s) are not available in this test and were not run: ${parsed.denied.join(", ")}. Never claim they happened.)`;
+  }
+  return { content: text, toolCalls: parsed.toolCalls };
 }
 
 export async function proposeHermesResearchLearning(input: {
