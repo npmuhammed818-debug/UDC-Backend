@@ -47,7 +47,10 @@ test("enqueue holds items, pending excludes answered, mark-answered counts", () 
   assert.equal(pending.length, 2);
   assert.equal(pending[0].draft, "draft reply");
   assert.equal(pending[0].answeredAt, null);
-  assert.equal(markHumanRelayAnswered("917022032531"), 2);
+  // One reply closes only the newest open item; the other stays pending (16 Nov).
+  assert.equal(markHumanRelayAnswered("917022032531"), 1);
+  assert.equal(pendingHumanRelay().length, 1);
+  assert.equal(markHumanRelayAnswered("917022032531"), 1);
   assert.equal(pendingHumanRelay().length, 0);
   assert.equal(markHumanRelayAnswered("917022032531"), 0);
 });

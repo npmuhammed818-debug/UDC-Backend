@@ -186,6 +186,14 @@ async function deliverAnswer(to: string, reply: string, wantsVoice: boolean, con
 // cancelled, never started, because the dev side decides what actually goes
 // out. Brain failure just means no draft - the message is still held.
 const BRAIN_BUSY_REPLY = "One moment - still answering your previous message.";
+
+/** Groq's 429 body carries its own retry delay ("Please try again in Ns").
+ *  Honour it, bounded by the caller - never invent a fixed sleep. */
+export function providerRetrySeconds(message: string): number | null {
+  if (!/(?:429|rate limit)/i.test(message)) return null;
+  const m = /try again in\s+(\d+(?:\.\d+)?)\s*s/i.exec(message);
+  return m ? Number(m[1]) : null;
+}
 const RELAY_BURST_MS = Math.max(0, Number(process.env.AKIF_RELAY_BURST_MS ?? 1500) || 0);
 // Delay ack fires only when the reply is genuinely slow, never as a per-message ack (owner feedback, 10 Nov).
 const RELAY_SLOW_NUDGE_MS = Math.max(0, Number(process.env.AKIF_RELAY_SLOW_NUDGE_MS ?? 12000) || 0);
@@ -2281,12 +2289,16 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
         markReadAndTyping(message.from, message.id);
         const typingRefresh = setInterval(() => markReadAndTyping(message.from, message.id), 20_000);
         try {
+        let providerRetryMs = 0;
         const callBrain = () => runBrainTurn({
           phone: message.from!,
           text: brainText,
           messageId: message.id,
         }).catch((error) => {
-          console.warn("AKIF brain turn failed; scripted chain takes over", { reason: error instanceof Error ? error.message : "unknown" });
+          const reason = error instanceof Error ? error.message : "unknown";
+          console.warn("AKIF brain turn failed; scripted chain takes over", { reason });
+          const retrySecs = providerRetrySeconds(reason);
+          if (retrySecs !== null) providerRetryMs = Math.max(providerRetryMs, Math.min(retrySecs, 8) * 1000);
           return null;
         });
         let brain = await callBrain();
@@ -2306,6 +2318,15 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           await new Promise((resolve) => setTimeout(resolve, 3000));
           brain = await callBrain();
         }
+        // Provider said exactly when to retry (16 Nov 429 incident): wait its
+        // own delay, bounded at 8s, one extra attempt, then fall to the queue.
+        if (!brain?.handled && providerRetryMs > 0 && !brainTurnHadExternalSend(message.from, message.id)) {
+          await new Promise((resolve) => setTimeout(resolve, providerRetryMs));
+          brain = await callBrain();
+        }
+        // The busy floor is never a reply, whichever attempt produced it
+        // (16 Nov incident: the generic retry re-armed it and it was sent).
+        if (brain?.reply === BRAIN_BUSY_REPLY) brain = null;
         if (brain?.handled) {
           const delivered = brain.reply ? await deliverWhatsAppReply(message.from, brain.reply) : null;
           if (brain.background && delivered?.delivered) {

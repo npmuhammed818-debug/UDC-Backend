@@ -97,8 +97,13 @@ test("email items keep per-contact ordering and answer marking works by contact"
   const blocked = claimHumanRelay("worker-b");
   assert.equal(blocked, null, "the second email from the same sender waits on the active claim");
 
+  // One answer closes one message: the newest open item goes first, and the
+  // claimed message keeps waiting for its own reply (16 Nov incident: batch
+  // marking closed messages that were never answered).
   const marked = markHumanRelayAnswered("email:sandra@trinity.example");
-  assert.equal(marked, 2);
+  assert.equal(marked, 1);
+  const markedNext = markHumanRelayAnswered("email:sandra@trinity.example");
+  assert.equal(markedNext, 1);
 });
 
 test("the relay allowlist admits email contacts only under the synthetic gate", () => {

@@ -19,7 +19,7 @@ import {
   replyAsksKnownDetail,
   setRelayContactBriefing,
 } from "../akif/humanRelay";
-import { isBrainOrchestratorEnabled } from "../akif/brainOrchestrator";
+import { isBrainOrchestratorEnabled, recordBrainRelayAnswer } from "../akif/brainOrchestrator";
 import { resendTransportConfigured } from "../auth/resendAuthProvider.ts";
 import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
@@ -351,11 +351,14 @@ router.post("/akif-relay/reply", async (req, res) => {
   if (parsed.data!.itemId) {
     const answeredItem = answerClaimedHumanRelayItem(parsed.data!.itemId, parsed.data!.workerId ?? "", text ?? (audio ? "[voice note]" : undefined));
     if (!answeredItem) { res.status(409).json({ ok: false, error: "claim_lost" }); return; }
+    // One conversation record: the brain must see what the relay answered.
+    await recordBrainRelayAnswer(phone, text ?? "[voice note]", `relay:${parsed.data!.itemId}`);
     res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered: 1 });
     return;
   }
   noteHumanRelayReplySent(phone, parsed.data!.workerId ?? undefined, text ?? (audio ? "[voice note]" : undefined));
   const answered = markHumanRelayAnswered(phone, text ?? (audio ? "[voice note]" : undefined));
+  if (answered > 0) await recordBrainRelayAnswer(phone, text ?? "[voice note]", `relay-phone:${phone.replace(/\D/g, "")}:${Date.now()}`);
   res.set("Cache-Control", "no-store").json({ ok: true, delivered: true, answered });
 });
 

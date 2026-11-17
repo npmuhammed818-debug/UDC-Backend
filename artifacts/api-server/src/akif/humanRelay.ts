@@ -747,23 +747,11 @@ export function answerClaimedHumanRelayItem(itemId: string, workerId: string, re
   // One reply per customer message (owner direction, 10 Nov): each message in
   // the bundle gets its own bubble from the same worker, so only this item
   // closes; the rest of the claimed turn stays with this worker.
+  // One answer closes exactly one message (16 Nov incident): marking older
+  // open items "covered" left the customer with no reply at all while the
+  // system showed those messages as answered.
   item.answeredAt = new Date().toISOString();
-  // The newer reply covers every older still-open message from this customer:
-  // mark them covered so no worker sends a separate late answer.
-  const skipped: string[] = [];
-  // Voice notes never cover each other (owner direction, 10 Nov): every voice
-  // note gets its own reply, so only text replies can cover older text.
-  for (const other of item.kind === "voice" ? [] : items) {
-    if (other === item || other.phone !== item.phone || other.answeredAt || other.autoAnswered) continue;
-    if (other.kind !== item.kind) continue; // a text reply never covers a voice note, nor the reverse
-    if (Date.parse(other.at) >= Date.parse(item.at)) continue;
-    other.answeredAt = item.answeredAt;
-    other.autoAnswered = true;
-    other.autoNote = "covered by newer reply";
-    skipped.push(other.id);
-  }
   persist((p) => p.markAnswered([item.id], item.answeredAt!, replyText));
-  if (skipped.length) persist((p) => p.markAnswered(skipped, item.answeredAt!));
   noteHumanRelayReplySent(item.phone, workerId, replyText);
   return item;
 }
@@ -810,15 +798,14 @@ export function releaseHumanRelayClaim(phone: string): number {
 export function markHumanRelayAnswered(phone: string, replyText?: string): number {
   const digits = relayContactKey(phone);
   const at = new Date().toISOString();
-  let n = 0;
-  for (const item of items) {
-    if (!item.answeredAt && item.phone === digits) {
-      item.answeredAt = at;
-      n++;
-    }
-  }
-  if (n) persist((p) => p.markPhoneAnswered(digits, at, replyText));
-  return n;
+  // Only the newest open item is the one this reply answers (16 Nov incident):
+  // a blanket mark-answered closed earlier messages that never got a reply.
+  const open = items.filter((i) => !i.answeredAt && !i.autoAnswered && i.phone === digits);
+  const latest = open[open.length - 1];
+  if (!latest) return 0;
+  latest.answeredAt = at;
+  persist((p) => p.markAnswered([latest.id], at, replyText));
+  return 1;
 }
 
 export function lastHeardLanguageFor(phone: string): string | undefined {
