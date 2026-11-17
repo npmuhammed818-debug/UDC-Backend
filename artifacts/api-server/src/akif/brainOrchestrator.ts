@@ -17,7 +17,7 @@ import { runGroqToolChat, type GroqToolChatMessage, type GroqToolDefinition } fr
 import { udcHandbookForRole } from "./udcHandbook.ts";
 import { agentReferralCode } from "../referrals/invitation.ts";
 import { isSafeConversationText } from "./dealDecisionSafety.ts";
-import { claimsUnverifiedFact } from "./conversationPolicy.ts";
+import { claimsUnverifiedFact, currentProductUserStatements, ungroundedPriceAssertion } from "./conversationPolicy.ts";
 import { guidedQuestions, validate as validateGuidedAnswer, type Question } from "../whatsapp/guidedChat.ts";
 import { handleChatUi, registerWhatsAppProfileDirect, type ChatMessage } from "../whatsapp/chatUi.ts";
 import { looksLikeFullName } from "../whatsapp/nameCheck.ts";
@@ -201,13 +201,19 @@ export async function recordBrainRelayAnswer(phone: string, text: string, refId:
 
 /** Turn-end merge under the per-phone lock: this turn's captured fields win,
  *  history entries append only when absent (intake capture already saved the
- *  customer's words), and an unreadable existing row is never clobbered. */
+ *  customer's words), and an unreadable existing row is never clobbered.
+ *  Returns whether a human-relay answer landed after this turn's snapshot -
+ *  in that case the reply is deliberately NOT recorded (never record an
+ *  assistant message the customer will not receive) and the caller suppresses
+ *  the send. */
 const MERGE_MAX_ATTEMPTS = 4;
-async function mergeBrainTurnIntoSession(key: string, phone: string, turnState: BrainSession, userText: string, messageId: string | undefined, finalReply: string | null): Promise<void> {
-  await withSessionLock(key, async () => {
+async function mergeBrainTurnIntoSession(key: string, phone: string, turnState: BrainSession, userText: string, messageId: string | undefined, finalReply: string | null): Promise<{ relayAnsweredDuringTurn: boolean }> {
+  return await withSessionLock(key, async () => {
+    const priorRelayIds = new Set(turnState.history.map((h) => h.messageId).filter((id): id is string => typeof id === "string" && id.startsWith("relay")));
     for (let attempt = 0; attempt < MERGE_MAX_ATTEMPTS; attempt++) {
       const latest = await loadBrainSession(phone);
       if (latest.found) {
+        const relayAnsweredDuringTurn = latest.state.history.some((h) => typeof h.messageId === "string" && h.messageId.startsWith("relay") && !priorRelayIds.has(h.messageId));
         const merged = latest.state;
         merged.fields = { ...merged.fields, ...turnState.fields };
         merged.menuMentioned = merged.menuMentioned || turnState.menuMentioned;
@@ -215,7 +221,7 @@ async function mergeBrainTurnIntoSession(key: string, phone: string, turnState: 
         const haveUser = (messageId !== undefined && merged.history.some((h) => h.messageId === messageId))
           || (merged.history.at(-1)?.role === "user" && merged.history.at(-1)?.content === userContent);
         if (!haveUser) merged.history = [...merged.history, { role: "user" as const, content: userContent, messageId }].slice(-HISTORY_MESSAGES);
-        if (finalReply) {
+        if (finalReply && !relayAnsweredDuringTurn) {
           const rid = messageId ? `reply:${messageId}` : undefined;
           if (!(rid && merged.history.some((h) => h.messageId === rid))) {
             merged.history = [...merged.history, { role: "assistant" as const, content: finalReply.slice(0, 1000), messageId: rid }].slice(-HISTORY_MESSAGES);
@@ -232,7 +238,7 @@ async function mergeBrainTurnIntoSession(key: string, phone: string, turnState: 
           .set({ data: { brain: merged } as never, expiresAt: new Date(Date.now() + SESSION_TTL_MS), updatedAt: new Date() })
           .where(and(eq(sessions.phoneHash, key), sql`coalesce((data->'brain'->>'v')::int, 0) = ${readV}`))
           .returning({ phoneHash: sessions.phoneHash });
-        if (written.length > 0) return;
+        if (written.length > 0) return { relayAnsweredDuringTurn };
         continue;
       }
       // No readable row: insert one built from this turn; if a concurrent
@@ -829,13 +835,36 @@ async function runBrainTurnInner(input: { phone: string; text: string; messageId
     }
   }
 
+  // Price grounding (17 Nov live owner test): the model attached the copper
+  // thread's 5600 USD/mt to a new sugar conversation. A price the customer
+  // never stated for the current product is a misquote - never deliver it.
+  if (finalReply) {
+    const ungrounded = ungroundedPriceAssertion(finalReply, currentProductUserStatements(state.history, text));
+    if (ungrounded) {
+      console.warn("AKIF brain reply quoted a price the customer never stated for the current product; falling back to scripted chain", { reason: "ungrounded_price" });
+      return null;
+    }
+  }
+
   if (backgroundRequests && finalReply) state.fields._handsJob = randomUUID();
   let sessionSaved = true;
-  await mergeBrainTurnIntoSession(key, input.phone, state, text, input.messageId, finalReply).catch((error) => {
+  const mergeOutcome = await mergeBrainTurnIntoSession(key, input.phone, state, text, input.messageId, finalReply).catch((error) => {
     sessionSaved = false;
     console.warn("AKIF brain session save failed; next turn starts empty", { reason: error instanceof Error ? error.message : "unknown" });
+    return null;
   });
   if (backgroundRequests && !sessionSaved) return null;
+
+  // Cross-path arbitration (17 Nov live owner test): a human relay answered
+  // while this turn was still running. The relay's answer stands alone - the
+  // brain's late reply was never recorded and is never sent. Detected inside
+  // the CAS merge (the last serialized write before the send), so any relay
+  // answer landed before the save is seen; a relay answer landing after the
+  // save raced the send itself and is outside this check.
+  if (mergeOutcome?.relayAnsweredDuringTurn) {
+    console.warn("AKIF brain reply suppressed; human relay answered during the turn", { reason: "relay_answered_during_turn" });
+    return { handled: true, reply: null, toolsUsed };
+  }
 
   if (!finalReply) return null;
   if (!backgroundRequests) return { handled: true, reply: finalReply, toolsUsed };

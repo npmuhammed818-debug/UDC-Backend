@@ -81,3 +81,49 @@ export function claimsUnverifiedFact(reply: string, verified: { payment?: boolea
   if (/shipment|customs/.test(c)) return !verified.shipment;
   return !verified.match;
 }
+
+// Price grounding (17 Nov live owner test): the model attached the copper
+// thread's "5600usd per mt" to a new sugar conversation. A price per unit the
+// customer never stated for the CURRENT product thread is a misquote, whether
+// the model invented it or carried it over from an older thread.
+const COMMODITY_HINTS = ["icumsa", "sugar", "copper", "rice", "wheat", "cement", "steel", "aluminium", "aluminum", "coffee", "tea", "cocoa", "pepper", "cardamom", "cashew", "rubber", "coir", "coconut", "cotton", "textile", "garment", "diesel", "petrol", "gold", "silver", "scrap", "timber", "maize", "corn", "soybean", "palm oil", "urea", "fertilizer", "coal", "clinker", "gypsum", "marble", "granite", "onion", "potato", "mango", "banana", "shrimp", "leather", "plastic", "polymer", "granules", "iron ore", "bauxite", "manganese", "chromite", "laterite"];
+function productHintOf(text: string): string | null {
+  const t = text.toLowerCase();
+  for (const c of COMMODITY_HINTS) if (new RegExp(`\\b${c}\\b`).test(t)) return c;
+  return null;
+}
+/** The customer's own words in the CURRENT product thread: from the newest
+ * message naming the current product back to (not including) the last message
+ * naming a different product. No product in view: the whole conversation. */
+export function currentProductUserStatements(history: Array<{ role: string; content: string }>, currentText: string): string[] {
+  const userTexts = history.filter((h) => h.role === "user").map((h) => h.content);
+  userTexts.push(currentText);
+  // A bare message ("My price is 5600usd per mt") continues the thread that
+  // was active when it was sent: inherit the previous product, so an old
+  // thread's price is never credited to the new one.
+  let running: string | null = null;
+  const effective = userTexts.map((t) => { const p = productHintOf(t); if (p) running = p; return running; });
+  const current = effective[effective.length - 1];
+  if (!current) return userTexts;
+  const scoped: string[] = [];
+  for (let i = userTexts.length - 1; i >= 0 && effective[i] === current; i--) scoped.unshift(userTexts[i]);
+  return scoped;
+}
+const CURRENCY_AMOUNT = /(?:[$\u20AC\u00A3\u20B9]\s?|\b(?:usd|aed|inr|eur|gbp|sar|qar|kes|omr|bhd|kwd|myr|sgd|cny|rmb|jpy|aud|cad|zar|ngn|bdt|pkr|lkr|rs|dollars?)\b\.?\s?)\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:usd|aed|inr|eur|gbp|sar|qar|kes|omr|bhd|kwd|myr|sgd|cny|rmb|jpy|aud|cad|zar|ngn|bdt|pkr|lkr|rs|dollars?)\b/gi;
+function currencyAmounts(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(CURRENCY_AMOUNT)) {
+    const num = m[0].match(/\d[\d,]*(?:\.\d+)?/)?.[0]?.replace(/,/g, "");
+    if (num) out.add(num);
+  }
+  return out;
+}
+/** First amount in the reply the customer never stated in the current product
+ * thread, or null when every amount is grounded (or none appears). Quantities
+ * without a currency marker (5,000 MT) are not price assertions. */
+export function ungroundedPriceAssertion(reply: string, scopedUserStatements: string[]): string | null {
+  const said = new Set<string>();
+  for (const s of scopedUserStatements) for (const a of currencyAmounts(s)) said.add(a);
+  for (const a of currencyAmounts(reply)) if (!said.has(a)) return a;
+  return null;
+}
