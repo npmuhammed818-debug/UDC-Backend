@@ -65,6 +65,7 @@ test('relay-for-everyone: allowlist supports "all"', async () => {
 });
 
 test('relay fallback: safe replies auto-send only while unanswered', async () => {
+  process.env.AKIF_RELAY_ANSWERS_ENABLED = 'true'; // scheduling coverage for a possible re-enable; production default is disabled
   const { enqueueHumanRelay, relayFallbackReplySafe, scheduleRelayFallback, resetHumanRelay } = await import('../src/akif/humanRelay.ts');
   resetHumanRelay();
   assert.equal(relayFallbackReplySafe('Hi', 'Hello! How can I help?', []), true);

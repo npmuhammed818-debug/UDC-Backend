@@ -308,6 +308,15 @@ export function humanRelayEnabled(env: NodeJS.ProcessEnv = process.env): boolean
   return env.AKIF_HUMAN_RELAY_ENABLED === "true";
 }
 
+/** Owner direction, 17 Nov: remove the backup route - if the brain fails,
+ *  let it fail. Relay ANSWERS (auto-answers, the delayed fallback takeover
+ *  and external worker replies) stay disabled unless this is deliberately
+ *  re-enabled. Inbound capture, the durable queue, claims and read endpoints
+ *  are unaffected: evidence and operator visibility remain. */
+export function relayAnswersEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.AKIF_RELAY_ANSWERS_ENABLED === "true";
+}
+
 /** Digits-only allowlist of test numbers whose open chat turns are held. */
 export function humanRelayNumbers(env: NodeJS.ProcessEnv = process.env): string[] {
   return (env.AKIF_HUMAN_RELAY_NUMBERS ?? "")
@@ -378,6 +387,10 @@ export function relayFallbackReplySafe(text: string, reply: string | null | unde
  *  gates are evaluated by the caller before scheduling; the timer is lost on
  *  restart (held items are memory-only by design). */
 export function scheduleRelayFallback(item: HumanRelayItem, deliver: (phone: string, reply: string) => Promise<{ delivered?: boolean } | null | undefined>, windowMs = relayFallbackMs()): void {
+  if (!relayAnswersEnabled()) {
+    console.info("AKIF relay fallback not scheduled: relay answers disabled (no replacement reply on brain failure)", { kind: item.kind });
+    return;
+  }
   if (windowMs <= 0 || item.answeredAt || !item.draft) return;
   const timer = setTimeout(() => {
     const still = items.find((i) => i.id === item.id && !i.answeredAt);

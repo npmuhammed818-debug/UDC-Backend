@@ -31,7 +31,7 @@ import { backgroundStillCurrent, isBrainOrchestratorEnabled, markOutboundSend, r
 import { brainTurnHadExternalSend } from "../akif/relayOutcome";
 import { fixRelayFallbackReply } from "../akif/formDump";
 import { runConversationChat } from "../akif/intelligence/hermesClient";
-import { enqueueHumanRelay, humanRelayItemCover, humanRelayActiveFor, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
+import { enqueueHumanRelay, humanRelayItemCover, humanRelayActiveFor, relayAnswersEnabled, relayFallbackReplySafe, scheduleRelayFallback, relayAutoGreetingsEnabled, isSimpleGreetingText, greetingAutoReplySafe, relayAckReactionsEnabled, isAcknowledgementText, ackEmojiFor, relayAutoToolsEnabled, relayAutoToolReplySafe, isMenuRequestText, menuAutoReplySafe, fallbackGreeting, isCommissionAskText, commissionAskReply, collectBurst, stripDashBreaks, brainBurstMs, brainAckReactionsEnabled, brainBusyWaitEnabled, brainSlowNudgeEnabled, brainVoiceEnabled, sanitizeRelayReplyText, knownFactsForContact, relayBrainFirstEnabled, brainFirstReplySafe, noteHumanRelayReplySent, relayReplyResetsConversation } from "../akif/humanRelay";
 import { agentReferralCode } from "../referrals/invitation";
 import { handlePhoneRecovery } from '../whatsapp/phoneRecovery';
 import {recordSignedShipmentStatuses} from '../whatsapp/shipmentDeliveryReceipts';
@@ -296,6 +296,10 @@ export async function deliverHumanRelayReply(to: string, text: string, options: 
  *  and this send then blocks them. Without this the auto paths could double
  *  the customer exactly like the unarbitrated paths did. */
 async function deliverRelayAutoAnswer(phone: string, text: string, cover: OutboundCover[], options: { voice?: boolean; heardLanguage?: string } = {}) {
+  if (!relayAnswersEnabled()) {
+    console.warn("AKIF relay auto-answer suppressed: relay answers disabled (no replacement reply on brain failure)");
+    return null;
+  }
   const reservation = await reserveOutboundSend(phone, cover, "brain").catch((error) => { console.warn("AKIF outbound reservation unavailable; failing closed (no send)", { reason: error instanceof Error ? error.message : "unknown" }); return "unavailable" as const; });
   if (reservation !== "reserved") {
     console.warn("AKIF relay auto-answer held by outbound reservation", { reason: "outbound_reserved", state: reservation });

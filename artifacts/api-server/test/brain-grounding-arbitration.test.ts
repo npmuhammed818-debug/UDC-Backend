@@ -359,6 +359,7 @@ test('relay reply route uses the arbitration ledger: held by a brain reservation
   const phone = '91000000095';
   process.env.AKIF_HUMAN_RELAY_ENABLED = 'true';
   process.env.AKIF_HUMAN_RELAY_NUMBERS = phone;
+  process.env.AKIF_RELAY_ANSWERS_ENABLED = 'true'; // arbitration coverage for a possible re-enable; production default is disabled
   const output = await bundleOut(
     [
       "export { default as relayRouter } from '../src/routes/akifHumanRelay';",
@@ -635,6 +636,95 @@ test('real webhook: a rejected (fabricated-price) brain reply falls to the scrip
   } finally {
     if (appServer) await new Promise((r) => appServer!.close(() => r(undefined)));
     if (groqStub) await new Promise((r) => groqStub!.close(() => r(undefined)));
+    await unlink(output);
+  }
+});
+
+test('relay answers disabled (owner direction 17 Nov): reply and email-send refuse 410, nothing sent', async () => {
+  (globalThis as any).__fga = {};
+  const secret = process.env.WHATSAPP_APP_SECRET!;
+  const phone = '91000000096';
+  process.env.AKIF_HUMAN_RELAY_ENABLED = 'true';
+  process.env.AKIF_HUMAN_RELAY_NUMBERS = phone;
+  delete process.env.AKIF_RELAY_ANSWERS_ENABLED; // production default
+  const output = await bundleOut(
+    [
+      "export { default as relayRouter } from '../src/routes/akifHumanRelay';",
+      "export { enqueueHumanRelay, pendingHumanRelay, __clearRelayMemoryForTests, relayAnswersEnabled, scheduleRelayFallback } from '../src/akif/humanRelay';",
+    ].join('\n'),
+    {
+      db: dbFixture,
+      webhookStub: `
+        const g = globalThis.__fga;
+        g.deliverCalls = [];
+        export async function buildHumanRelayDraft() { return null; }
+        export async function deliverHumanRelayReply(phone, text) { g.deliverCalls.push({ phone, text }); return { delivered: true, reason: 'sent' }; }
+      `,
+      waClient: `export async function sendWhatsAppVoiceNote() { throw new Error('must not be called'); } export function isWindowClosedError() { return false; } export async function sendWhatsAppInteractive() { throw new Error('must not be called'); } export async function sendWhatsAppText() { throw new Error('must not be called'); }`,
+      replySink: `export function replySinkEnabled() { return false; } export function replySinkSendAllowed() { return true; }`,
+      chatUi: `export async function handleChatUi() { return false; }`,
+      resendAuth: `export function resendTransportConfigured() { return false; } export function createResendAuthSender() { return async () => ({ ok: false }); }`,
+      workerClient: `export function isAkifWorkerMediaEnabled() { return false; } export async function synthesizeAkifSpeechTimed() { throw new Error('must not be called'); }`,
+      voiceReply: `export function voiceRepliesEnabled() { return false; } export const MAX_SPOKEN_CHARS = 1500; export function speechBlockReason() { return 'off'; } export function speechKind() { return null; }`,
+      emailChannel: `export function emailRelayTarget() { return null; } export function liveEmailRelayEnabled() { return false; }`,
+      emailOutbound: `export function buildRelayEmailPayload() { return null; } export function outboundDepsFromEnv() { return {}; } export async function sendRelayEmail() { throw new Error('must not be called'); }`,
+      emailSend: `export function emailRelaySendDbPorts() { return {}; } export async function sendEmailRelayAnswer() { throw new Error('must not be called'); }`,
+    },
+    [
+      [/^@workspace\/db$/, 'db'],
+      [/\.\/whatsappWebhook$/, 'webhookStub'],
+      [/\.\.\/whatsapp\/client$/, 'waClient'],
+      [/\.\.\/whatsapp\/replySink$/, 'replySink'],
+      [/\.\.\/whatsapp\/chatUi$/, 'chatUi'],
+      [/resendAuthProvider/, 'resendAuth'],
+      [/workerClient$/, 'workerClient'],
+      [/voiceReply/, 'voiceReply'],
+      [/emailRelayChannel$/, 'emailChannel'],
+      [/emailOutbound$/, 'emailOutbound'],
+      [/emailRelaySend$/, 'emailSend'],
+    ],
+  );
+  const { createServer } = await import('node:http');
+  const { createHmac } = await import('node:crypto');
+  let server: ReturnType<typeof createServer> | null = null;
+  try {
+    const g = (globalThis as any).__fga;
+    const m = await import(output);
+    m.__clearRelayMemoryForTests();
+    assert.equal(m.relayAnswersEnabled(), false, 'default is disabled');
+    m.enqueueHumanRelay({ phone, kind: 'text', text: 'how much sugar?' });
+    const { default: express } = await import('express');
+    const app = express();
+    app.use(express.json({ verify: (req: any, _res: any, buf: Buffer) => { req.rawBody = buf; } }));
+    app.use(m.relayRouter);
+    server = createServer(app);
+    await new Promise<void>((r) => server!.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as { port: number }).port;
+    const post = async (path: string, body: Record<string, unknown>) => {
+      const raw = Buffer.from(JSON.stringify(body));
+      const sig = 'sha256=' + createHmac('sha256', secret).update(raw).digest('hex');
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-udc-relay-signature': sig },
+        body: raw,
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const refused = await post('/akif-relay/reply', { phone, text: 'About 4200 USD per mt.', workerId: 'wk-test' });
+    assert.equal(refused.status, 410, 'reply route refuses while disabled');
+    assert.equal(refused.body.error, 'relay_disabled');
+    assert.equal(g.deliverCalls.length, 0, 'nothing sent');
+    assert.equal(m.pendingHumanRelay().length, 1, 'held item untouched: inbound evidence preserved');
+    const mailRefused = await post('/akif-relay/email-send', { draftId: '00000000-0000-4000-8000-000000000000' });
+    assert.equal(mailRefused.status, 410, 'email-send route refuses while disabled');
+    assert.equal(mailRefused.body.error, 'relay_disabled');
+    // The delayed fallback takeover is not scheduled while disabled.
+    let fallbackSends = 0;
+    m.scheduleRelayFallback({ id: 'x1', phone, at: new Date().toISOString(), kind: 'text', text: 'q', draft: 'draft answer', draftBackgroundDiscarded: false, answeredAt: null }, async () => { fallbackSends++; return { delivered: true }; }, 5);
+    await new Promise((r) => setTimeout(r, 30));
+    assert.equal(fallbackSends, 0, 'no delayed takeover fired');
+  } finally {
+    if (server) await new Promise((r) => server!.close(() => r(undefined)));
     await unlink(output);
   }
 });

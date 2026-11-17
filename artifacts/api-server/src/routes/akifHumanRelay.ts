@@ -4,6 +4,7 @@ import {
   admitHumanRelayReply,
   humanRelayActiveFor,
   humanRelayEnabled,
+  relayAnswersEnabled,
   humanRelayNumbers,
   hasActiveHumanRelayClaim,
   stickyWorkerFor,
@@ -210,6 +211,12 @@ router.get("/akif-relay/email-drafts", async (req, res) => {
 // of this exact draft. From udc@updowncircle.site only (owner rule, 10 Nov).
 router.post("/akif-relay/email-send", async (req, res) => {
   if (!writeAuthorized(req, res)) return;
+  // Same owner direction as /reply: no relay-originated customer replies.
+  if (!relayAnswersEnabled()) {
+    console.warn("AKIF relay email-send refused: relay answers disabled (backup route removed)");
+    res.status(410).json({ ok: false, error: "relay_disabled", detail: "The backup reply route was removed. If the assistant does not answer, no replacement reply is sent through this route." });
+    return;
+  }
   const parsed = z.object({ draftId: z.string().uuid() }).strict().safeParse(req.body ?? {});
   if (!parsed.success) { res.status(400).json({ ok: false, error: "invalid_body" }); return; }
   try {
@@ -264,6 +271,14 @@ router.post("/akif-relay/claim", async (req, res) => {
 
 router.post("/akif-relay/reply", async (req, res) => {
   if (!writeAuthorized(req, res)) return;
+  // Owner direction, 17 Nov: the backup answer route is removed - a brain
+  // failure must stay failed, never a replacement reply through the relay.
+  // Poll/claim/read endpoints stay available for operator visibility.
+  if (!relayAnswersEnabled()) {
+    console.warn("AKIF relay reply refused: relay answers disabled (backup route removed)");
+    res.status(410).json({ ok: false, error: "relay_disabled", detail: "The backup reply route was removed. If the assistant does not answer, no replacement reply is sent through this route." });
+    return;
+  }
   const parsed = replySchema.safeParse(req.body);
   const text = parsed.success && parsed.data.text ? validateRelayReplyText(parsed.data.text) : null;
   const audio = parsed.success && parsed.data.audioBase64 ? decodeRelayAudio(parsed.data.audioBase64) : null;
