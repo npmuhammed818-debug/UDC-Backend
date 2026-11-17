@@ -58,6 +58,10 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 type BrainSession = {
   fields: Record<string, string>;
   history: Array<{ role: "user" | "assistant"; content: string; messageId?: string }>;
+  // Compare-and-swap token: every write bumps v, so a whole-row save that
+  // raced a concurrent capture loses visibly and retries instead of
+  // silently dropping the capture (16 Nov review feedback).
+  v?: number;
   // The word "menu" may be surfaced exactly once per customer (owner rule:
   // only at the introduction); this flag locks it afterwards.
   menuMentioned: boolean;
@@ -79,7 +83,7 @@ async function loadBrainSession(phone: string): Promise<{ key: string; state: Br
     // Write-boundary guard for stale persisted state: an email-shaped or otherwise invalid value is never kept as the name, and a non-email is never kept as the email.
     if (loaded.full_name && !looksLikeFullName(loaded.full_name)) delete loaded.full_name;
     if (loaded.email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(loaded.email.trim())) delete loaded.email;
-    return { key, state: { fields: loaded, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned) }, found: true };
+    return { key, state: { fields: loaded, history: (data.brain?.history ?? []).slice(-HISTORY_MESSAGES), menuMentioned: Boolean(data.brain?.menuMentioned), v: typeof data.brain?.v === "number" ? data.brain.v : 0 }, found: true };
   } catch {
     return { key, state: empty, found: false };
   }
@@ -140,7 +144,8 @@ function withSessionLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 async function insertBrainSessionRow(key: string, state: BrainSession): Promise<void> {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  await db.insert(sessions).values({ phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: state } as never, lastMessageId: null, expiresAt, updatedAt: new Date() }).onConflictDoNothing();
+  const versioned: BrainSession = { ...state, v: state.v ?? 1 };
+  await db.insert(sessions).values({ phoneHash: key, purpose: "brain_orchestrator", step: 0, data: { brain: versioned } as never, lastMessageId: null, expiresAt, updatedAt: new Date() }).onConflictDoNothing();
 }
 
 /** Atomic, idempotent append to the persisted brain history. Never reads and
@@ -159,7 +164,9 @@ async function appendBrainHistoryEntry(phone: string, entry: { role: "user" | "a
   const mid = entry.messageId ?? null;
   const result = await db.execute(sql`
     update whatsapp_chat_sessions
-    set data = jsonb_set(data, '{brain,history}', coalesce(data->'brain'->'history', '[]'::jsonb) || ${entryJson}::jsonb),
+    set data = jsonb_set(
+          jsonb_set(data, '{brain,history}', coalesce(data->'brain'->'history', '[]'::jsonb) || ${entryJson}::jsonb),
+          '{brain,v}', to_jsonb(coalesce((data->'brain'->>'v')::int, 0) + 1)),
         expires_at = ${new Date(Date.now() + SESSION_TTL_MS)},
         updated_at = now()
     where phone_hash = ${key}
@@ -195,9 +202,10 @@ export async function recordBrainRelayAnswer(phone: string, text: string, refId:
 /** Turn-end merge under the per-phone lock: this turn's captured fields win,
  *  history entries append only when absent (intake capture already saved the
  *  customer's words), and an unreadable existing row is never clobbered. */
+const MERGE_MAX_ATTEMPTS = 4;
 async function mergeBrainTurnIntoSession(key: string, phone: string, turnState: BrainSession, userText: string, messageId: string | undefined, finalReply: string | null): Promise<void> {
   await withSessionLock(key, async () => {
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < MERGE_MAX_ATTEMPTS; attempt++) {
       const latest = await loadBrainSession(phone);
       if (latest.found) {
         const merged = latest.state;
@@ -213,12 +221,23 @@ async function mergeBrainTurnIntoSession(key: string, phone: string, turnState: 
             merged.history = [...merged.history, { role: "assistant" as const, content: finalReply.slice(0, 1000), messageId: rid }].slice(-HISTORY_MESSAGES);
           }
         }
-        await saveBrainSession(key, merged);
-        return;
+        // Compare-and-swap on the in-row version (16 Nov review feedback):
+        // every capture and merge bumps v, so when this whole-row write raced
+        // a concurrent append the WHERE matches nothing and the loop re-reads
+        // and re-merges instead of silently dropping the competing entry.
+        // Cross-instance safe: the check and the write are one statement.
+        const readV = latest.state.v ?? 0;
+        merged.v = readV + 1;
+        const written = await db.update(sessions)
+          .set({ data: { brain: merged } as never, expiresAt: new Date(Date.now() + SESSION_TTL_MS), updatedAt: new Date() })
+          .where(and(eq(sessions.phoneHash, key), sql`coalesce((data->'brain'->>'v')::int, 0) = ${readV}`))
+          .returning({ phoneHash: sessions.phoneHash });
+        if (written.length > 0) return;
+        continue;
       }
       // No readable row: insert one built from this turn; if a concurrent
-      // insert won the race, loop once and merge into it instead.
-      await insertBrainSessionRow(key, { ...turnState, history: [...turnState.history, { role: "user" as const, content: userText.slice(0, 1000), messageId }].slice(-HISTORY_MESSAGES) });
+      // insert won the race, the loop re-reads and merges into it instead.
+      await insertBrainSessionRow(key, { ...turnState, v: turnState.v ?? 1, history: [...turnState.history, { role: "user" as const, content: userText.slice(0, 1000), messageId }].slice(-HISTORY_MESSAGES) });
     }
     throw new Error("session_merge_unreadable");
   });

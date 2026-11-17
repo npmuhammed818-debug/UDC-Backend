@@ -2298,7 +2298,14 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           const reason = error instanceof Error ? error.message : "unknown";
           console.warn("AKIF brain turn failed; scripted chain takes over", { reason });
           const retrySecs = providerRetrySeconds(reason);
-          if (retrySecs !== null) providerRetryMs = Math.max(providerRetryMs, Math.min(retrySecs, 8) * 1000);
+          if (retrySecs !== null && retrySecs <= 8) {
+            providerRetryMs = Math.max(providerRetryMs, retrySecs * 1000);
+          } else if (retrySecs !== null) {
+            // Delay beyond the webhook window: never fire a knowingly-early
+            // attempt at it. The message defers to the durable relay queue
+            // below, facts already captured, instead of a doomed retry.
+            console.warn("AKIF provider deferral; durable queue takes over", { deferSeconds: Math.round(retrySecs) });
+          }
           return null;
         });
         let brain = await callBrain();
