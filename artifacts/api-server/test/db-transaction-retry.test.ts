@@ -39,7 +39,7 @@ const ro25006 = { code: "25006", message: "cannot execute INSERT in a read-only 
 // State row for a clean retry backend whose POOLER neighbour leaked a
 // session-level default (the 16-18 Nov incident signature): the leak is
 // visible in default_ro but source 'session' marks it non-intentional.
-const poisonedSessionState = [{ ro: "off", default_ro: "on", default_source: "session", pid: 4242 }];
+const poisonedSessionState = [{ ro: "off", default_ro: "on", default_source: "session", boot_ro: "off", persistent_ro: false, pid: 4242 }];
 const isStateQuery = (t: string) => t.startsWith("select current_setting('transaction_read_only')");
 const logs: string[] = [];
 const log = (l: string) => logs.push(l);
@@ -112,6 +112,25 @@ test("an UNRECOGNIZED default source fails closed too (inverted guard: only 'ses
     (e: Error) => /intentional read-only default/.test(e.message),
   );
   assert.equal(bodyRuns, 1, "unknown source never reaches the body");
+});
+
+test("session source MASKING a deliberate role/database default fails closed via catalog check", async () => {
+  // source says 'session' but pg_db_role_setting shows an ALTER ROLE/ALTER
+  // DATABASE read-only underneath: the session value is a mask, not a leak.
+  const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
+  const masked = fakeClient((text) => isStateQuery(text)
+    ? { rows: [{ ro: "off", default_ro: "on", default_source: "session", boot_ro: "off", persistent_ro: true, pid: 11 }] } : {});
+  const clients = [poisoned, masked];
+  const pool = { connect: async () => clients.shift()! };
+  let bodyRuns = 0;
+  await assert.rejects(
+    transactionWithEviction(pool, (cl) => ({ cl }), async (tx: { cl: ReturnType<typeof fakeClient> }) => {
+      bodyRuns++;
+      await tx.cl.query("insert into t values (1)");
+    }, log),
+    (e: Error) => /intentional read-only default/.test(e.message),
+  );
+  assert.equal(bodyRuns, 1, "masked deliberate default is never overridden");
 });
 
 test("still read-only inside BEGIN READ WRITE (hot standby) fails closed", async () => {

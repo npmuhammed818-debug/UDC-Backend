@@ -97,9 +97,21 @@ export interface PinnedRetryOptions {
   terminator?: "commit" | "rollback";
   log?: (line: string) => void;
 }
+// The override decision must NOT rest on pg_settings.source alone: source is
+// the MECHANISM that applied the visible value, not intent, and a session SET
+// MASKS lower-priority deliberate defaults (role/database/config). So the
+// state query independently consults authoritative configuration: boot_val
+// (config-file value) and pg_db_role_setting (ALTER ROLE / ALTER DATABASE
+// entries applicable to the current role and database). Only when NONE of
+// those declares read-only is the session value treated as leaked poison.
 export const PINNED_STATE_QUERY =
   "select current_setting('transaction_read_only') as ro, current_setting('default_transaction_read_only') as default_ro, " +
-  "(select source from pg_settings where name = 'default_transaction_read_only') as default_source, pg_backend_pid() as pid";
+  "(select source from pg_settings where name = 'default_transaction_read_only') as default_source, " +
+  "(select boot_val from pg_settings where name = 'default_transaction_read_only') as boot_ro, " +
+  "exists(select 1 from pg_db_role_setting s where (s.setrole = current_user::regrole or s.setrole = 0) " +
+  "and (s.setdatabase = (select oid from pg_database where datname = current_database()) or s.setdatabase = 0) " +
+  "and exists(select 1 from unnest(s.setconfig) c where c ilike 'default_transaction_read_only=on')) as persistent_ro, " +
+  "pg_backend_pid() as pid";
 // Intent rule (verified against a real PG 14 server, 18 Nov): pg_settings
 // reports a session-leaked SET as source 'session'; every deliberate source
 // reports something else - ALTER ROLE => 'user' (NOT 'role'), ALTER DATABASE
@@ -131,11 +143,14 @@ export async function transactionPinnedRetry<T, C extends QueryableClient>(
       // example a hot standby). Never writable; fail closed.
       throw Object.assign(new Error("retry session is read-only"), { code: READ_ONLY_SQLSTATE });
     }
-    if (String(state.default_ro) === "on" && String(state.default_source) !== OVERRIDABLE_DEFAULT_SOURCE) {
-      // An intentional configured read-only default (role/database/config/
-      // client option/anything unrecognized): do not override someone else's
-      // deliberate choice. Fail closed.
-      throw Object.assign(new Error(`target has an intentional read-only default (source ${state.default_source})`), { code: READ_ONLY_SQLSTATE });
+    const persistentReadOnly =
+      state.persistent_ro === true || String(state.persistent_ro) === "t" || String(state.boot_ro) === "on";
+    if (String(state.default_ro) === "on" && (String(state.default_source) !== OVERRIDABLE_DEFAULT_SOURCE || persistentReadOnly)) {
+      // An intentional configured read-only default: either the visible value
+      // comes from a non-session source, or authoritative configuration
+      // (role/database entry, config file) declares read-only UNDERNEATH a
+      // session-level mask. Do not override a deliberate choice. Fail closed.
+      throw Object.assign(new Error(`target has an intentional read-only default (source ${state.default_source}, persistent ${persistentReadOnly})`), { code: READ_ONLY_SQLSTATE });
     }
     const result = await runOnce();
     await client.query(opts?.terminator === "rollback" ? "ROLLBACK" : "COMMIT");
@@ -215,8 +230,24 @@ export async function transactionWithEviction<T, C extends QueryableClient, E>(
     // Set when ROLLBACK itself fails or the error came from BEGIN/COMMIT: the
     // transaction outcome is then UNKNOWN (a COMMIT transport failure may
     // still have committed server-side). Such a client is always destroyed,
-    // never returned to the pool, and the error is never retried (retrying an
-    // ambiguous COMMIT could duplicate the body's effects).
+    // never returned to the pool.
+    //
+    // Retry-safety boundary (review point, 18 Nov): outcomeUncertain does NOT
+    // gate the retry decision, because the retry key is SQLSTATE 25006 itself
+    // - and a 25006 can only arrive as a PostgreSQL ErrorResponse message,
+    // which is the SERVER DEFINITIVELY stating the transaction was aborted.
+    // That is the opposite of ambiguity:
+    //   - body-stage 25006: the statement error already aborted the tx
+    //     (ROLLBACK is cleanup only; even if ROLLBACK's own transport fails,
+    //     the server discards the aborted tx when the connection dies).
+    //   - COMMIT-stage 25006 (deferred write trigger): the server REFUSED the
+    //     commit - nothing was written.
+    //   - BEGIN-stage 25006 (hot standby): no transaction ever started.
+    // The genuinely ambiguous case - a COMMIT whose response is LOST in
+    // transit - carries NO SQLSTATE (node-pg raises a bare Error), so it is
+    // never retried here; it is destroyed and surfaced. A fabricated 25006
+    // from the pooler is also safe: the pooler speaks for the server and
+    // never confirms a commit it then reports as refused.
     let outcomeUncertain = false;
     try {
       let result: T;

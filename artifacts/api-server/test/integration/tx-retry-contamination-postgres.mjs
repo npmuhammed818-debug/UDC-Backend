@@ -27,7 +27,7 @@ assert.ok(url.includes("/tmp/pgtx"), "local socket only");
 const dir = await mkdtemp(fileURLToPath(new URL("../../tmp/txretry-", import.meta.url)));
 const out = await build({
   stdin: {
-    contents: "export { transactionWithEviction } from '../../../../lib/db/src/connection.ts';",
+    contents: "export { transactionWithEviction, transactionPinnedRetry } from '../../../../lib/db/src/connection.ts';",
     resolveDir: fileURLToPath(new URL('.', import.meta.url)), loader: "ts",
   },
   platform: "node", format: "esm", bundle: true, packages: "external", write: false,
@@ -129,13 +129,43 @@ try {
   }, (line) => logs.push(line));
 } catch (error) { rejected3 = error; }
 assert.ok(rejected3, "role-level read-only default rejects the write");
-assert.match(String(rejected3?.message), /intentional read-only default \(source user\)/, "guard names the real 'user' source");
+assert.match(String(rejected3?.message), /intentional read-only default \(source user/, "guard names the real 'user' source");
 const rows3 = await admin.query("select count(*)::int as c from txretry_t");
 assert.equal(rows3.rows[0].c, 2, "nothing written against a role-level read-only default");
 pass("intentional role-level read-only default (source 'user') fails closed - allowlist bug would have overridden it");
 await pool3.end();
 await admin.query("alter role txretry_ro_role reset default_transaction_read_only");
 await admin.query("drop role txretry_ro_role");
+
+// ---- Case 2c: session SET MASKING a deliberate role default (real server) --
+// The visible pg_settings.source is 'session' (highest priority wins the
+// source label), yet an ALTER ROLE read-only exists underneath. The old
+// source-only guard would have overridden it; the catalog check must fail
+// closed. Proven by calling transactionPinnedRetry directly on a masked
+// session (transactionWithEviction is not needed to reach the guard).
+await admin.query("drop role if exists txretry_masked");
+await admin.query("create role txretry_masked login");
+await admin.query("alter role txretry_masked set default_transaction_read_only = on");
+const maskedClient = new pg.Client({ connectionString: "postgres://txretry_masked@/udc_qa_txretry?host=/tmp/pgtx&port=54329" });
+await maskedClient.connect();
+await maskedClient.query("set default_transaction_read_only = on"); // session mask on top of the role default
+const src = await maskedClient.query("select (select source from pg_settings where name='default_transaction_read_only') as s");
+assert.equal(src.rows[0].s, "session", "precondition: session value masks the role default in pg_settings.source");
+const { transactionPinnedRetry } = await import(dir + "/conn.mjs");
+let maskedRejected;
+try {
+  await transactionPinnedRetry(maskedClient, async () => {
+    await maskedClient.query("insert into txretry_t values (11)");
+  });
+} catch (error) { maskedRejected = error; }
+assert.ok(maskedRejected, "masked deliberate role default rejects the write");
+assert.match(String(maskedRejected?.message), /intentional read-only default/, "catalog check sees through the session mask: " + String(maskedRejected?.message));
+const rows4 = await admin.query("select count(*)::int as c from txretry_t");
+assert.equal(rows4.rows[0].c, 2, "nothing written under a masked deliberate default");
+pass("session mask over a deliberate role-level default fails closed (source-only guard would have overridden)");
+await maskedClient.end();
+await admin.query("alter role txretry_masked reset default_transaction_read_only");
+await admin.query("drop role txretry_masked");
 
 await admin.end();
 console.log("ALL DETERMINISTIC CONTAMINATION CHECKS PASSED");
