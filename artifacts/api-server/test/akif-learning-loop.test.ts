@@ -35,7 +35,7 @@ async function bundleModule(entry, fixtures) {
 test("correction detection: strong signals only, ordinary talk stays out", async () => {
   const { looksLikeCorrection, isLessonDispute } = await bundleModule(
     "export {looksLikeCorrection,isLessonDispute} from '../src/akif/correctionLearning';",
-    { '^@workspace\\/db$': 'export const db={};', 'customerMemory(\\.ts)?$': 'export const saveCustomerMemory=async()=>({id:null});' },
+    { '^@workspace\\/db$': 'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={};', 'customerMemory(\\.ts)?$': 'export const saveCustomerMemory=async()=>({id:null});' },
   );
   for (const t of ["I meant 500 MT, not 50", "wrong, the price was FOB not CIF", "that's not correct", "correction: delivery is March"]) {
     assert.equal(looksLikeCorrection(t), true, t);
@@ -50,7 +50,7 @@ test("correction detection: strong signals only, ordinary talk stays out", async
 test("deal outcome note: structural fields only, no identifiers by construction", async () => {
   const { dealOutcomeNote, TERMINAL_DEAL_STATUSES } = await bundleModule(
     "export {dealOutcomeNote,TERMINAL_DEAL_STATUSES} from '../src/akif/dealOutcomeLessons';",
-    { '^@workspace\\/db$': 'export const db={};export const akifSharedLessonsTable={};export const dealsTable={};', '^drizzle-orm$': 'export const eq=()=>({});' },
+    { '^@workspace\\/db$': 'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={};export const akifSharedLessonsTable={};export const dealsTable={};', '^drizzle-orm$': 'export const eq=()=>({});' },
   );
   const note = dealOutcomeNote({ status: "cancelled", incoterm: "CIF" });
   assert.equal(note, "A deal under CIF terms ended with status 'cancelled'.");
@@ -103,7 +103,7 @@ test("correction turn: private save plus shared-learner hook; non-corrections sa
     platform: 'node', format: 'esm', bundle: true, packages: 'external', write: false,
     plugins: [{ name: 'fixture', setup(b) {
       const fixtures = {
-        db: `export const db=globalThis.${key}.db;` + tableNames.map(n => `export const ${n}=globalThis.${key}.db.__tables.${n};`).join(''),
+        db: `export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.${key}.db;` + tableNames.map(n => `export const ${n}=globalThis.${key}.db.__tables.${n};`).join(''),
         orm: "export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});",
       };
       db.__tables = tables;
@@ -183,7 +183,7 @@ test("deal outcome learning: terminal deals teach one structural lesson, staging
     platform: 'node', format: 'esm', bundle: true, packages: 'external', write: false,
     plugins: [{ name: 'fixture', setup(b) {
       const fixtures = {
-        db: `export const db=globalThis.${key}.db;` + tableNames.map(n => `export const ${n}=globalThis.${key}.db.__tables.${n};`).join(''),
+        db: `export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.${key}.db;` + tableNames.map(n => `export const ${n}=globalThis.${key}.db.__tables.${n};`).join(''),
         orm: "export const eq=(a,b)=>({kind:'eq',a,b});",
       };
       db.__tables = tables;

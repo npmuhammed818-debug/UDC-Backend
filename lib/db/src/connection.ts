@@ -37,6 +37,21 @@ export function databaseConnectionOptions(value: string) {
 // error, so the poisoned session circulates and failures repeat.
 export const READ_ONLY_SQLSTATE = '25006';
 
+// drizzle wraps pg errors (DrizzleQueryError carries the pg error as .cause),
+// so the SQLSTATE can live one or more cause hops below the thrown object.
+// Follow the cause chain; without this a drizzle-issued write that fails
+// 25006 is misclassified as an ordinary error and never retried (caught by
+// the loopback contamination check, 18 Nov).
+export function sqlstateOf(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && typeof current === 'object' && current !== null; depth++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string' && code.length > 0) return code;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 interface ReleasableClient {
   release(error?: unknown): void;
 }
@@ -151,14 +166,71 @@ export async function writeWithEviction<T, C extends ReleasableClient>(
       client.release();
       return result;
     } catch (error) {
-      const code =
-        typeof error === 'object' && error !== null && 'code' in error
-          ? String((error as { code?: unknown }).code)
-          : undefined;
+      const code = sqlstateOf(error);
       client.release(wrapped || code === READ_ONLY_SQLSTATE ? error : undefined);
       if (code !== READ_ONLY_SQLSTATE) throw error;
       lastError = error;
       log(JSON.stringify({ level: 50, event: 'db_write_readonly_session_evicted', attempt }));
+    }
+  }
+  throw lastError;
+}
+
+// Whole-transaction variant of writeWithEviction for call sites whose work is
+// already a multi-statement transaction (auth login/signin, rate-limit budget
+// charges). The FIRST attempt runs BEGIN -> body -> COMMIT on one checked-out
+// client, exactly what drizzle .transaction did before. On SQLSTATE 25006 the
+// client is destroyed (poisoned session evicted) and the ENTIRE body re-runs
+// once inside transactionPinnedRetry (BEGIN READ WRITE + read-only intent
+// guard) on a fresh backend - no session state is mutated and the retry keeps
+// the same atomicity guarantees: the poisoned attempt rolled back before
+// eviction, so the retried body is the only one that can commit.
+//
+// Two hard requirements on callers:
+// 1. The body must have NO side effects outside the database transaction
+//    (no outbound sends, no cache writes): after a 25006 mid-transaction the
+//    attempt rolls back and the body executes a second time.
+// 2. The body must not open its own transaction on the executor; the helper
+//    owns BEGIN/COMMIT (a nested BEGIN would warn and an inner COMMIT would
+//    commit the outer transaction early).
+//
+// Fail-closed cases are inherited from transactionPinnedRetry: a still-
+// read-only retry transaction (hot standby) and an intentional read-only
+// default (role/database/config source) both abort without writing.
+export async function transactionWithEviction<T, C extends QueryableClient, E>(
+  poolLike: { connect(): Promise<C> },
+  makeExecutor: (client: C) => E,
+  body: (tx: E) => Promise<T>,
+  log: (line: string) => void = (line) => console.error(line),
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const client = await poolLike.connect();
+    try {
+      let result: T;
+      if (attempt === 0) {
+        await client.query("BEGIN");
+        try {
+          result = await body(makeExecutor(client));
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        }
+      } else {
+        result = await transactionPinnedRetry(client, () => body(makeExecutor(client)), { log });
+      }
+      client.release();
+      return result;
+    } catch (error) {
+      const code = sqlstateOf(error);
+      // Destroy the client on the pinned retry (transaction state uncertain)
+      // and whenever the session is read-only-poisoned; a clean rollback on
+      // any other error leaves the client reusable.
+      client.release(attempt > 0 || code === READ_ONLY_SQLSTATE ? error : undefined);
+      if (code !== READ_ONLY_SQLSTATE) throw error;
+      lastError = error;
+      log(JSON.stringify({ level: 50, event: 'db_tx_readonly_session_evicted', attempt }));
     }
   }
   throw lastError;

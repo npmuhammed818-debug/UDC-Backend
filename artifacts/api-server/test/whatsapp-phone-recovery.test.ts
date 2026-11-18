@@ -15,7 +15,7 @@ test("verified email is required before migrating a WhatsApp number to its origi
       b.onResolve({filter:/^drizzle-orm$/},()=>({path:"orm",namespace:"fixture"}));
       b.onResolve({filter:/\/auth\/emailAuth$/},()=>({path:"emailAuth",namespace:"fixture"}));
       b.onLoad({filter:/.*/,namespace:"fixture"},args=>({loader:"js",contents:args.path==="db"
-        ?"export const db={};":args.path==="orm"
+        ?"export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={};":args.path==="orm"
         ?"export const sql=(parts,...params)=>({text:parts.join('?'),params});"
         :"export const emailAuth={ipBudget:async()=>{}};"}));
     }}],

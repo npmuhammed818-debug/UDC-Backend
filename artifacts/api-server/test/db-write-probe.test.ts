@@ -21,7 +21,7 @@ const out = await build({
   platform: 'node', format: 'esm', bundle: true, packages: 'external', write: false,
   plugins: [{ name: 'probe-fixture', setup(b) {
     b.onResolve({ filter: /^@workspace\/db$/ }, () => ({ path: 'db', namespace: 'fixture' }));
-    b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const db={};export const pool={};export const dbWrite=(run)=>run(db);export const authSessionsTable={};export const usersTable={};' }));
+    b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={};export const pool={};export const dbWrite=(run)=>run(db);export const authSessionsTable={};export const usersTable={};' }));
   } }],
 });
 await writeFile(bundled, out.outputFiles[0].text);

@@ -18,7 +18,7 @@ test("admin staging readiness is read-only, fail-closed and secret-free",async()
      b.onResolve({filter:/^drizzle-orm$/},()=>({path:"orm",namespace:"fixture"}));
      b.onResolve({filter:/auth\/middleware$/},()=>({path:"auth",namespace:"fixture"}));
      b.onLoad({filter:/.*/,namespace:"fixture"},arg=>({loader:"js",contents:
-       arg.path==="db"?"export const db={execute:async()=>{const s=globalThis.__mvpStageQa;s.reads++;if(s.dbError)throw Error('PRIVATE_POSTGRES_URL');return {rows:s.rows};}};":
+       arg.path==="db"?"export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>{const s=globalThis.__mvpStageQa;s.reads++;if(s.dbError)throw Error('PRIVATE_POSTGRES_URL');return {rows:s.rows};}};":
        arg.path==="orm"?"export const sql=(parts,...values)=>({parts,values});sql.join=(chunks,sep)=>({chunks,sep});":
        "export const requireRole=role=>(req,res,next)=>{if(!req.authUser){res.status(401).json({error:'authentication_required'});return;}if(req.authUser.status==='suspended'||req.authUser.role!==role){res.status(403).json({error:'insufficient_permissions'});return;}next();};",
      }));

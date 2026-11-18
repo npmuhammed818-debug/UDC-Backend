@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { eq, lt, sql } from 'drizzle-orm';
-import { db, dbWrite, auditLogsTable, usersTable, whatsappSigninChallengesTable as challenges } from '@workspace/db';
+import { dbWrite, dbTransaction, auditLogsTable, usersTable, whatsappSigninChallengesTable as challenges } from '@workspace/db';
 import { hashPassword } from './passwords';
 import { createSession } from './sessions';
 
@@ -31,7 +31,7 @@ export async function requestWhatsAppSignin(role: WhatsAppRole, linkUserId?: str
 export async function handleWhatsAppSignin(phone: string, text: string, fullName?: string) {
   const command = parseSigninCommand(text);
   if (!command) return null;
-  return db.transaction(async tx => {
+  return dbTransaction(async tx => {
     const codeHash = signinHash('code', command.code);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'whatsapp_signin:' + codeHash}))`);
     const [challenge] = await tx.select().from(challenges).where(eq(challenges.codeHash, codeHash)).limit(1);
@@ -70,7 +70,7 @@ export async function handleWhatsAppSignin(phone: string, text: string, fullName
 }
 
 export async function pollWhatsAppSignin(browserToken: string, initiatingUserId?: string) {
-  return db.transaction(async tx => {
+  return dbTransaction(async tx => {
     const browserTokenHash = signinHash('browser', browserToken);
     // Same challenge lock as the WhatsApp approval; the second browser poll re-reads consumed state.
     const [lookup] = await tx.select({codeHash:challenges.codeHash}).from(challenges).where(eq(challenges.browserTokenHash,browserTokenHash)).limit(1);

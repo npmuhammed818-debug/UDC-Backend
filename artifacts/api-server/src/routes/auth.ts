@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod/v4";
-import { db } from "@workspace/db";
+import { db, dbTransaction } from "@workspace/db";
 import {
   auditLogsTable,
   companiesTable,
@@ -101,7 +101,7 @@ router.post("/auth/register", async (req, res) => {
       referringAgentId = agent.id;
     }
     const passwordHash = await hashPassword(input.password);
-    const user = await db.transaction(async (tx) => {
+    const user = await dbTransaction(async (tx) => {
       const [created] = await tx
         .insert(usersTable)
         .values({
@@ -182,7 +182,7 @@ router.post("/auth/login", async (req, res) => {
     const input = loginSchema.parse(req.body);
     // Serialize password proof/session creation with password reset. Otherwise a
     // login verified against an old hash could create a session after revocation.
-    const result = await db.transaction(async tx => {
+    const result = await dbTransaction(async tx => {
       const [user] = await tx.select().from(usersTable)
         .where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1).for("update");
       // Unknown email: run the same password work against a dummy hash so the

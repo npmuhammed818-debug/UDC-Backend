@@ -28,7 +28,7 @@ const out = await build({
       if (args.path === 'db') return { contents: `
         const s=globalThis.__authWriteCov;
         const rec=(op)=>{s.writes.push(op)};
-        export const db={
+        export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={
           insert(){return {values(){rec('insert');return Promise.resolve()}}},
           update(){return {set(){return {where(){rec('update');return Promise.resolve()}}}}},
           delete(){return {where(){rec('delete');return Promise.resolve()}}},

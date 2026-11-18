@@ -34,7 +34,7 @@ async function bundle(globalName: string, stdinContents: string, fixtures: Recor
 test('draft retry returns instantly while the orchestrator is off (no dead 5s wait)', async () => {
   const dbNames = 'akifCustomerMemoriesTable akifEmotionalStatesTable akifResearchRunsTable akifSharedLessonsTable akifTasksTable auditLogsTable authSessionsTable buyerPoolAllocationsTable buyerPoolsTable buyerRequestsTable commissionsTable companiesTable companyVerificationDocumentsTable customsClearanceTable dealCasesTable dealConversationEventsTable dealFeedbackTable dealFinancialsTable dealMeetingsTable dealParticipantsTable dealsTable documentAccessTable documentExtractionsTable documentsTable inspectionsTable matchesTable messagesTable notificationPreferencesTable notificationsTable productsTable referralsTable sellerListingsTable shipmentCargoUnitsTable shipmentTrackingEventsTable shipmentWatchesTable shipmentsTable userRoleChangeRequestsTable usersTable vaultAccessLogTable whatsappChatSessionsTable whatsappInboundDedupTable whatsappIntakeDraftsTable whatsappMessageContextsTable whatsappShipmentOutboxTable whatsappUserContextsTable whatsappVoicePreferencesTable whatsappWebhookInboxTable dealIntelligenceSnapshotsTable whatsappSigninChallengesTable vaultDeletionRequestsTable vaultUploadLinksTable'.split(' ');
   const dbStub = dbNames.map(n => `export const ${n}=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});`).join('')
-    + "export const pool={};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);export const db={execute:async()=>({rows:[]}),transaction:async(f)=>f({execute:async()=>({rows:[]})}),select:()=>({from:()=>({where:()=>({limit:async()=>[]})})}),insert:()=>({values:()=>({returning:async()=>[],onConflictDoNothing:()=>({returning:async()=>[]})})}),update:()=>({set:()=>({where:()=>({returning:async()=>[]})})}),delete:()=>({where:async()=>[]})};"
+    + "export const pool={};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]}),transaction:async(f)=>f({execute:async()=>({rows:[]})}),select:()=>({from:()=>({where:()=>({limit:async()=>[]})})}),insert:()=>({values:()=>({returning:async()=>[],onConflictDoNothing:()=>({returning:async()=>[]})})}),update:()=>({set:()=>({where:()=>({returning:async()=>[]})})}),delete:()=>({where:async()=>[]})};"
     + "export const typeAkifTaskStep={};export const typeWhatsAppIntakeDraftPayload={};";
   const { output } = await bundle('__latDraft', "export { buildHumanRelayDraftWithRetry } from '../src/routes/whatsappWebhook';", {
     db: dbStub,
@@ -54,7 +54,7 @@ test('draft retry returns instantly while the orchestrator is off (no dead 5s wa
 
 test('wake-on-arrival claim returns as soon as an item lands', async () => {
   const { output } = await bundle('__latClaim', "export { claimHumanRelayWithWait, enqueueHumanRelay, claimHumanRelay } from '../src/akif/humanRelay';", {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],
@@ -82,7 +82,7 @@ test('a quoted bot line travels from the outbound log into the claim payload', a
     export { recordOutboundMessage, quotedOutboundFor } from '../src/whatsapp/outboundLog';
     export { enqueueHumanRelay, claimHumanRelay } from '../src/akif/humanRelay';
   `, {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],
@@ -107,7 +107,7 @@ test('voice items are claimable only by voice-capable workers, and stale items n
   const { output } = await bundle('__latVoice', `
     export { enqueueHumanRelay, claimHumanRelay, answerClaimedHumanRelayItem, relayClaimStillValid } from '../src/akif/humanRelay';
   `, {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],
@@ -152,7 +152,7 @@ test('skip releases items back to the pool; nothing is silently dropped', async 
   const { output } = await bundle('__latSkip', `
     export { enqueueHumanRelay, claimHumanRelay, releaseHumanRelayClaim, pendingHumanRelay } from '../src/akif/humanRelay';
   `, {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],
@@ -174,7 +174,7 @@ test('real worker ids (akif-worker-N) match their lanes by number', async () => 
   const { output } = await bundle('__latIds', `
     export { enqueueHumanRelay, claimHumanRelay } from '../src/akif/humanRelay';
   `, {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],
@@ -196,7 +196,7 @@ test('a voice item older than 20s overflows to any text worker', async () => {
   const { output } = await bundle('__latOverflow', `
     export { enqueueHumanRelay, claimHumanRelay } from '../src/akif/humanRelay';
   `, {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],
@@ -216,7 +216,7 @@ test('a stale-covered oldest item never jams the phone queue behind it', async (
   const { output } = await bundle('__latJam', `
     export { enqueueHumanRelay, claimHumanRelay, answerClaimedHumanRelayItem } from '../src/akif/humanRelay';
   `, {
-    db: "export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
+    db: "export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={execute:async()=>({rows:[]})};export const READ_ONLY_SQLSTATE='25006';export const dbWrite=async(run)=>run(db);",
     orm: "export const sql=(parts,...values)=>({parts,values});",
   }, [
     [/^@workspace\/db$/, 'db'],

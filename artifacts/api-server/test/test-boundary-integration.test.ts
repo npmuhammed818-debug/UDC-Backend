@@ -106,7 +106,7 @@ before(async () => {
       });
       b.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({ loader: 'js', contents:
         'const s=globalThis.__boundary;' + (args.path === 'db'
-          ? 'export const db=s.db;' + tableNames.map((n) => `export const ${n}=s.db.tables.${n};`).join('')
+          ? 'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=s.db;' + tableNames.map((n) => `export const ${n}=s.db.tables.${n};`).join('')
           : args.path === 'orm'
             ? 'export const eq=(a,b)=>({kind:"eq",a,b});export const ne=(a,b)=>({kind:"ne",a,b});export const and=(...args)=>({kind:"and",args});export const or=(...args)=>({kind:"or",args});export const inArray=(a,query)=>({kind:"in",a,query});export const notInArray=(a,query)=>({kind:"notIn",a,query});export const sql=()=>true;export const desc=x=>x;export const gte=(a,b)=>({kind:"gte",a,b});export const lt=(a,b)=>({kind:"lt",a,b});'
             : 'export const sendWhatsAppText=async(to,body)=>{s.sent.push({kind:"text",to,body});return {delivered:true,messageId:"m-1"};};export const sendWhatsAppInteractive=async(to,body)=>{s.sent.push({kind:"interactive",to,body});return {delivered:true,messageId:"m-2"};};') }));

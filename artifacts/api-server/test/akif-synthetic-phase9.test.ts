@@ -196,7 +196,7 @@ test("corrections and memories stay private to the synthetic customer who made t
     platform: "node", format: "esm", bundle: true, packages: "external", write: false,
     plugins: [{ name: "fixture", setup(b) {
       const fixtures: Record<string, string> = {
-        db: `export const db=globalThis.__phase9Fixture.db;export const akifCustomerMemoriesTable=globalThis.__phase9Fixture.tables.akifCustomerMemoriesTable;export const usersTable=globalThis.__phase9Fixture.tables.usersTable;`,
+        db: `export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.__phase9Fixture.db;export const akifCustomerMemoriesTable=globalThis.__phase9Fixture.tables.akifCustomerMemoriesTable;export const usersTable=globalThis.__phase9Fixture.tables.usersTable;`,
         orm: "export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const eq=(a,b)=>({kind:'eq',a,b});export const ilike=(a,pattern)=>({kind:'ilike',a,pattern});export const desc=x=>({kind:'desc',x});",
       };
       (globalThis as any).__phase9Fixture.tables = tables;

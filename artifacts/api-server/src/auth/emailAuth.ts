@@ -1,7 +1,9 @@
 import { z } from "zod/v4";
 import { createHmac, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { db, dbTransaction } from "@workspace/db";
+import * as dbSchema from "@workspace/db/schema";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { deliverAuthEmail } from "./emailTransport";
 import { hashPassword } from "./passwords";
 import {
@@ -24,7 +26,15 @@ import {
   type AuthEmail,
 } from "./emailDelivery";
 
-type Executor = Parameters<Parameters<typeof db.transaction>[0]>[0];
+// dbTransaction (16-18 Nov poisoned-session incident) hands the body a
+// drizzle handle bound to one checked-out CLIENT (not the pool), so Executor
+// is the client-level handle type shared by db.transaction callbacks and the
+// retry helper.
+type Executor = NodePgDatabase<typeof dbSchema>;
+// Real pool: whole-transaction pinned retry (BEGIN READ WRITE + intent
+// guard, one eviction). Injected database (tests): its own .transaction.
+const runTransaction = <T>(database: typeof db, body: (tx: Executor) => Promise<T>): Promise<T> =>
+  database === db ? dbTransaction(body) : database.transaction(body as never);
 type Account = {
   id: string;
   email: string | null;
@@ -121,7 +131,7 @@ export function createEmailAuthService(
   }
   async function ipBudget(ip: string, operation: "send" | "check") {
     // Commit even when the later operation is rejected; malformed requests also use this budget.
-    const allowed = await database.transaction(async (tx) => {
+    const allowed = await runTransaction(database, async (tx) => {
       await tx.execute(
         sql`delete from email_auth_limits where window_start < ${new Date(now().getTime() - 2 * 86_400_000)}`,
       );
@@ -177,7 +187,7 @@ export function createEmailAuthService(
   // Durable per-IP budget for the web auth endpoints (login, register, WhatsApp
   // sign-in): survives restarts and multi-instance deploys, unlike a Map.
   async function webAuthBudgetAllowed(ip: string, bucket: string) {
-    return database.transaction(async (tx) => {
+    return runTransaction(database, async (tx) => {
       await tx.execute(
         sql`delete from email_auth_limits where window_start < ${new Date(now().getTime() - 2 * 86_400_000)}`,
       );
@@ -200,7 +210,7 @@ export function createEmailAuthService(
       challengeId: randomUUID(),
       expiresInSeconds: EMAIL_CODE_TTL_MS / 1000,
     };
-    const issued = await database.transaction(async (tx) => {
+    const issued = await runTransaction(database, async (tx) => {
       let user: Account | undefined;
       if (userId) user = await account(tx, userId);
       else {
@@ -343,7 +353,7 @@ export function createEmailAuthService(
       }
     },
     async verify(userId: string, id: string, code: string) {
-      const success = await database.transaction(async (tx) => {
+      const success = await runTransaction(database, async (tx) => {
         const user = await account(tx, userId);
         if (!(await consume(tx, user, "verify_email", id, code))) return false;
         await tx.execute(
@@ -363,7 +373,7 @@ export function createEmailAuthService(
       password: string,
       ip: string,
     ) {
-      const success = await database.transaction(async (tx) => {
+      const success = await runTransaction(database, async (tx) => {
         const { rows } = await tx.execute(
           sql`select id,email,verified_email,email_verified_at,password_recovery_enabled,status from users where lower(email)=${email} for update`,
         );

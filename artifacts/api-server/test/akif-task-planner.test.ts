@@ -10,7 +10,7 @@ import {randomUUID} from "node:crypto";
 test("complex goal detection: multi-step requests only, questions stay out", async () => {
   const { looksLikeComplexGoal, isApprovalReply, isStatusQuestion } = await bundleModule(
     "export {looksLikeComplexGoal,isApprovalReply,isStatusQuestion} from '../src/akif/taskPlanner';",
-    { '^@workspace\\/db$': 'export const db={};export const akifTasksTable={};', '^drizzle-orm$': 'export const eq=()=>({});export const and=()=>({});export const or=()=>({});export const desc=x=>x;', 'cheapModel(\\.ts)?$': 'export const runCheapModelChat=async()=>{throw Error("no model in pure test");};' },
+    { '^@workspace\\/db$': 'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db={};export const akifTasksTable={};', '^drizzle-orm$': 'export const eq=()=>({});export const and=()=>({});export const or=()=>({});export const desc=x=>x;', 'cheapModel(\\.ts)?$': 'export const runCheapModelChat=async()=>{throw Error("no model in pure test");};' },
   );
   for (const t of ["Help me import copper from Chile", "I want to sell 500 MT of cathodes", "Find me a seller for aluminum scrap", "Set up an inspection for my shipment"]) {
     assert.equal(looksLikeComplexGoal(t), true, t);
@@ -111,7 +111,7 @@ test("task planner: plan, gate, approve, complete, cancel - honest states throug
   const mod = await bundleModule(
     "export * from '../src/akif/taskPlanner';",
     {
-      '^@workspace\\/db$': `export const db=globalThis.${key}.db;export const akifTasksTable=globalThis.${key}.tables.akifTasksTable;`,
+      '^@workspace\\/db$': `export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.${key}.db;export const akifTasksTable=globalThis.${key}.tables.akifTasksTable;`,
       '^drizzle-orm$': "export const eq=(a,b)=>({kind:'eq',a,b});export const and=(...args)=>({kind:'and',args});export const or=(...args)=>({kind:'or',args});export const desc=x=>({kind:'desc',x});",
       'cheapModel(\\.ts)?$': 'export const runCheapModelChat=async()=>{throw Error("tests must inject planner");};',
     },

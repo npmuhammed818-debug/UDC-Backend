@@ -15,7 +15,7 @@ async function loadPhoneRecovery() {
     b.onResolve({ filter: /auth\/(emailCodes|emailTransport|emailDelivery|emailAuth)$/ }, (a) => ({ path: a.path, namespace: 'fx' }));
     b.onResolve({ filter: /phoneFingerprint$/ }, () => ({ path: 'fp', namespace: 'fx' }));
     b.onLoad({ filter: /.*/, namespace: 'fx' }, (a) => ({ contents:
-      a.path === 'db' ? 'export const db=null;' :
+      a.path === 'db' ? 'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=null;' :
       a.path === 'orm' ? 'export const sql=(parts,...values)=>({text:String.raw(parts,...values),params:values});' :
       a.path === 'fp' ? 'export const guidedChatPhoneHash=(x)=>x;' :
       a.path.includes('emailAuth') ? 'export const emailAuth={ipBudget:async()=>{}};' :
