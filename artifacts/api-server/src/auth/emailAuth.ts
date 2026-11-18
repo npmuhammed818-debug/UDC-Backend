@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { createHmac, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { db, dbTransaction } from "@workspace/db";
+import { db, dbTransaction, dbWrite } from "@workspace/db";
 import * as dbSchema from "@workspace/db/schema";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { deliverAuthEmail } from "./emailTransport";
@@ -35,6 +35,10 @@ type Executor = NodePgDatabase<typeof dbSchema>;
 // guard, one eviction). Injected database (tests): its own .transaction.
 const runTransaction = <T>(database: typeof db, body: (tx: Executor) => Promise<T>): Promise<T> =>
   database === db ? dbTransaction(body) : database.transaction(body as never);
+// Single-statement writes outside a transaction get the same poisoned-session
+// eviction through dbWrite; injected test databases keep their own executor.
+const runWrite = (database: typeof db, run: (executor: Pick<typeof db, "execute">) => Promise<unknown>): Promise<unknown> =>
+  database === db ? dbWrite((wdb) => run(wdb)) : run(database);
 type Account = {
   id: string;
   email: string | null;
@@ -177,12 +181,15 @@ export function createEmailAuthService(
   async function clearPasswordLoginBudget(
     email: string,
     ip: string,
-    executor: Pick<typeof db, "execute"> = database,
+    executor?: Pick<typeof db, "execute">,
   ) {
     const address = email.trim().toLowerCase();
-    await executor.execute(
+    // Default path goes through dbWrite (poisoned-session eviction); tx
+    // callers pass their executor and stay inside their transaction.
+    const run = (x: Pick<typeof db, "execute">) => x.execute(
       sql`delete from email_auth_limits where key in (${digest(`pwd-login:${address}:${ip}`)},${digest(`pwd-login-day:${address}`)})`,
     );
+    if (executor) await run(executor); else await runWrite(database, run);
   }
   // Durable per-IP budget for the web auth endpoints (login, register, WhatsApp
   // sign-in): survives restarts and multi-instance deploys, unlike a Map.
@@ -269,9 +276,11 @@ export function createEmailAuthService(
       try {
         await deliverAuthEmail(send, issued);
       } catch {
-        await database.execute(
+        // Delivery failed: retire the challenge so it cannot be consumed
+        // later. dbWrite so a poisoned pooled session cannot strand it.
+        await runWrite(database, (x) => x.execute(
           sql`update email_auth_challenges set consumed_at=${now()} where id=${response.challengeId}`,
-        );
+        ));
         if (purpose === "verify_email") throw new EmailAuthError("unavailable");
         // Reset request responses never distinguish unknown accounts or delivery failures.
       }

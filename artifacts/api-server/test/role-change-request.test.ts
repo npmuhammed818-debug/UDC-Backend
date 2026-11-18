@@ -38,7 +38,7 @@ test("WhatsApp role requests are authenticated by phone, deduplicated, audited a
       b.onResolve({filter:/^@workspace\/db$/},()=>({namespace:"fixture",path:"db"}));
       b.onResolve({filter:/^drizzle-orm$/},()=>({namespace:"fixture",path:"orm"}));
       b.onLoad({filter:/.*/,namespace:"fixture"},arg=>({loader:"js",contents:
-        arg.path==="db"?"export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.__roleQaDb;":
+        arg.path==="db"?"export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const dbWrite=(run)=>run(db);export const db=globalThis.__roleQaDb;":
           "export const sql=(parts,...values)=>({parts,values});"}));
     }}]
   });

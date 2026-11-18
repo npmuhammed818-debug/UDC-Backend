@@ -37,7 +37,7 @@ test("an intake draft older than a day is stale and stops bypassing the relay", 
     b.onResolve({ filter: /^@workspace\/db$/ }, () => ({ path: "db", namespace: "fixture" }));
     b.onResolve({ filter: /^drizzle-orm$/ }, () => ({ path: "orm", namespace: "fixture" }));
     b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ contents: args.path === "db"
-      ? "const s=globalThis.__intakeFixture;export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=s.db;export const whatsappIntakeDraftsTable=s.tables.whatsappIntakeDraftsTable;"
+      ? "const s=globalThis.__intakeFixture;export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const dbWrite=(run)=>run(db);export const db=s.db;export const whatsappIntakeDraftsTable=s.tables.whatsappIntakeDraftsTable;"
       : "export const eq=(a,b)=>({kind:'eq',a,b});" }));
   } }] });
   await writeFile(output, bundle.outputFiles[0].text);

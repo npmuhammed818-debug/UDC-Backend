@@ -162,10 +162,47 @@ assert.ok(maskedRejected, "masked deliberate role default rejects the write");
 assert.match(String(maskedRejected?.message), /intentional read-only default/, "catalog check sees through the session mask: " + String(maskedRejected?.message));
 const rows4 = await admin.query("select count(*)::int as c from txretry_t");
 assert.equal(rows4.rows[0].c, 2, "nothing written under a masked deliberate default");
-pass("session mask over a deliberate role-level default fails closed (source-only guard would have overridden)");
+pass("session mask over a deliberate role-level default fails closed via reset_val (source-only guard would have overridden)");
 await maskedClient.end();
 await admin.query("alter role txretry_masked reset default_transaction_read_only");
 await admin.query("drop role txretry_masked");
+
+
+// ---- Case 2d: ALTER SYSTEM (config file) masked by a session SET -----------
+// reset_val is the discriminator where boot_val and source both fail:
+// file-level config hidden beneath a session SET still shows reset_val 'on'.
+await admin.query("alter system set default_transaction_read_only = on");
+await admin.query("select pg_reload_conf()");
+const maskedFile = new pg.Client({ connectionString: url });
+await maskedFile.connect();
+await maskedFile.query("set default_transaction_read_only = on"); // mask
+const srcFile = await maskedFile.query("select (select source from pg_settings where name='default_transaction_read_only') as s, (select reset_val from pg_settings where name='default_transaction_read_only') as r");
+assert.deepEqual({ s: srcFile.rows[0].s, r: srcFile.rows[0].r }, { s: "session", r: "on" }, "precondition: file config masked, reset_val exposes it");
+let fileRejected;
+try {
+  await transactionPinnedRetry(maskedFile, async () => { await maskedFile.query("insert into txretry_t values (12)"); });
+} catch (error) { fileRejected = error; }
+assert.match(String(fileRejected?.message), /intentional read-only default/, "config-file default masked by session fails closed");
+pass("ALTER SYSTEM / config-file default masked by a session SET fails closed (reset_val 'on')");
+await maskedFile.end();
+await admin.query("alter system reset default_transaction_read_only");
+await admin.query("select pg_reload_conf()");
+
+// ---- Case 2e: startup client option (PGOPTIONS-style) masked by a session SET
+const maskedClientOpt = new pg.Client({ connectionString: url, options: "-c default_transaction_read_only=on" });
+await maskedClientOpt.connect();
+await maskedClientOpt.query("set default_transaction_read_only = on"); // mask
+const srcOpt = await maskedClientOpt.query("select (select source from pg_settings where name='default_transaction_read_only') as s, (select reset_val from pg_settings where name='default_transaction_read_only') as r");
+assert.deepEqual({ s: srcOpt.rows[0].s, r: srcOpt.rows[0].r }, { s: "session", r: "on" }, "precondition: client option masked, reset_val exposes it");
+let optRejected;
+try {
+  await transactionPinnedRetry(maskedClientOpt, async () => { await maskedClientOpt.query("insert into txretry_t values (13)"); });
+} catch (error) { optRejected = error; }
+assert.match(String(optRejected?.message), /intentional read-only default/, "client-option default masked by session fails closed");
+pass("startup client option masked by a session SET fails closed (reset_val 'on')");
+await maskedClientOpt.end();
+const rowsFinal = await admin.query("select count(*)::int as c from txretry_t");
+assert.equal(rowsFinal.rows[0].c, 2, "no masked case ever wrote");
 
 await admin.end();
 console.log("ALL DETERMINISTIC CONTAMINATION CHECKS PASSED");

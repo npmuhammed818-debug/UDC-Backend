@@ -57,7 +57,7 @@ test("outbox leases and uncertain-provider outcomes never produce unsafe retries
       b.onResolve({filter:/^@workspace\/db$/},()=>({path:"db",namespace:"fixture"}));
       b.onResolve({filter:/^drizzle-orm$/},()=>({path:"orm",namespace:"fixture"}));
       b.onLoad({filter:/.*/,namespace:"fixture"},arg=>({loader:"js",contents:arg.path==="db"
-        ?"export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.__outboxFixture.db;"
+        ?"export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const dbWrite=(run)=>run(db);export const db=globalThis.__outboxFixture.db;"
         :"export const sql=(parts,...values)=>({parts,values});"}));
     }}]});
   await writeFile(filename,result.outputFiles[0].text);

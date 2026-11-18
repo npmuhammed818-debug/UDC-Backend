@@ -39,7 +39,7 @@ const ro25006 = { code: "25006", message: "cannot execute INSERT in a read-only 
 // State row for a clean retry backend whose POOLER neighbour leaked a
 // session-level default (the 16-18 Nov incident signature): the leak is
 // visible in default_ro but source 'session' marks it non-intentional.
-const poisonedSessionState = [{ ro: "off", default_ro: "on", default_source: "session", boot_ro: "off", persistent_ro: false, pid: 4242 }];
+const poisonedSessionState = [{ ro: "off", default_ro: "on", default_source: "session", reset_ro: "off", pid: 4242 }];
 const isStateQuery = (t: string) => t.startsWith("select current_setting('transaction_read_only')");
 const logs: string[] = [];
 const log = (l: string) => logs.push(l);
@@ -81,7 +81,7 @@ test("25006 mid-transaction: rollback, evict poisoned client, whole body re-runs
 test("intentional read-only default (ALTER ROLE => real source 'user') fails closed on the retry: body never re-runs", async () => {
   const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
   const intentional = fakeClient((text) => isStateQuery(text)
-    ? { rows: [{ ro: "off", default_ro: "on", default_source: "user", pid: 7 }] } : {});
+    ? { rows: [{ ro: "off", default_ro: "on", default_source: "user", reset_ro: "on", pid: 7 }] } : {});
   const clients = [poisoned, intentional];
   const pool = { connect: async () => clients.shift()! };
   let bodyRuns = 0;
@@ -100,7 +100,7 @@ test("intentional read-only default (ALTER ROLE => real source 'user') fails clo
 test("an UNRECOGNIZED default source fails closed too (inverted guard: only 'session' is overridable)", async () => {
   const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
   const unknown = fakeClient((text) => isStateQuery(text)
-    ? { rows: [{ ro: "off", default_ro: "on", default_source: "some_future_source", pid: 8 }] } : {});
+    ? { rows: [{ ro: "off", default_ro: "on", default_source: "some_future_source", reset_ro: "off", pid: 8 }] } : {});
   const clients = [poisoned, unknown];
   const pool = { connect: async () => clients.shift()! };
   let bodyRuns = 0;
@@ -119,7 +119,7 @@ test("session source MASKING a deliberate role/database default fails closed via
   // DATABASE read-only underneath: the session value is a mask, not a leak.
   const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
   const masked = fakeClient((text) => isStateQuery(text)
-    ? { rows: [{ ro: "off", default_ro: "on", default_source: "session", boot_ro: "off", persistent_ro: true, pid: 11 }] } : {});
+    ? { rows: [{ ro: "off", default_ro: "on", default_source: "session", reset_ro: "on", pid: 11 }] } : {});
   const clients = [poisoned, masked];
   const pool = { connect: async () => clients.shift()! };
   let bodyRuns = 0;
@@ -136,7 +136,7 @@ test("session source MASKING a deliberate role/database default fails closed via
 test("still read-only inside BEGIN READ WRITE (hot standby) fails closed", async () => {
   const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
   const standby = fakeClient((text) => isStateQuery(text)
-    ? { rows: [{ ro: "on", default_ro: "on", default_source: "session", pid: 9 }] } : {});
+    ? { rows: [{ ro: "on", default_ro: "on", default_source: "session", reset_ro: "off", pid: 9 }] } : {});
   const clients = [poisoned, standby];
   const pool = { connect: async () => clients.shift()! };
   let bodyRuns = 0;

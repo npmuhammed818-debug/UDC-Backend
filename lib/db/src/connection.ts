@@ -99,18 +99,19 @@ export interface PinnedRetryOptions {
 }
 // The override decision must NOT rest on pg_settings.source alone: source is
 // the MECHANISM that applied the visible value, not intent, and a session SET
-// MASKS lower-priority deliberate defaults (role/database/config). So the
-// state query independently consults authoritative configuration: boot_val
-// (config-file value) and pg_db_role_setting (ALTER ROLE / ALTER DATABASE
-// entries applicable to the current role and database). Only when NONE of
-// those declares read-only is the session value treated as leaked poison.
+// MASKS every lower-priority deliberate default. The discriminator that sees
+// through the mask is pg_settings.reset_val - the value RESET would restore,
+// i.e. the effective persistent value from ALL non-session sources combined
+// (config file, ALTER SYSTEM, ALTER ROLE, ALTER DATABASE, client startup
+// options). Verified on a real PG 14 server, 18 Nov: a pure leaked session
+// SET yields reset_val 'off'; role / startup-option / config-file values
+// masked by a session SET all yield reset_val 'on'. boot_val does NOT work
+// for this (startup default only), and pg_file_settings is unreadable from
+// the Supabase app role (42501, verified on staging 18 Nov).
 export const PINNED_STATE_QUERY =
   "select current_setting('transaction_read_only') as ro, current_setting('default_transaction_read_only') as default_ro, " +
   "(select source from pg_settings where name = 'default_transaction_read_only') as default_source, " +
-  "(select boot_val from pg_settings where name = 'default_transaction_read_only') as boot_ro, " +
-  "exists(select 1 from pg_db_role_setting s where (s.setrole = current_user::regrole or s.setrole = 0) " +
-  "and (s.setdatabase = (select oid from pg_database where datname = current_database()) or s.setdatabase = 0) " +
-  "and exists(select 1 from unnest(s.setconfig) c where c ilike 'default_transaction_read_only=on')) as persistent_ro, " +
+  "(select reset_val from pg_settings where name = 'default_transaction_read_only') as reset_ro, " +
   "pg_backend_pid() as pid";
 // Intent rule (verified against a real PG 14 server, 18 Nov): pg_settings
 // reports a session-leaked SET as source 'session'; every deliberate source
@@ -143,14 +144,14 @@ export async function transactionPinnedRetry<T, C extends QueryableClient>(
       // example a hot standby). Never writable; fail closed.
       throw Object.assign(new Error("retry session is read-only"), { code: READ_ONLY_SQLSTATE });
     }
-    const persistentReadOnly =
-      state.persistent_ro === true || String(state.persistent_ro) === "t" || String(state.boot_ro) === "on";
-    if (String(state.default_ro) === "on" && (String(state.default_source) !== OVERRIDABLE_DEFAULT_SOURCE || persistentReadOnly)) {
-      // An intentional configured read-only default: either the visible value
-      // comes from a non-session source, or authoritative configuration
-      // (role/database entry, config file) declares read-only UNDERNEATH a
-      // session-level mask. Do not override a deliberate choice. Fail closed.
-      throw Object.assign(new Error(`target has an intentional read-only default (source ${state.default_source}, persistent ${persistentReadOnly})`), { code: READ_ONLY_SQLSTATE });
+    if (String(state.default_ro) === "on" && (String(state.default_source) !== OVERRIDABLE_DEFAULT_SOURCE || String(state.reset_ro) === "on")) {
+      // A deliberate read-only default exists: either the visible value comes
+      // from a non-session source, or reset_val shows a persistent read-only
+      // UNDERNEATH a session-level mask. Do not override a deliberate choice.
+      // Fail closed. Residual limitation (documented, not solved): a
+      // DELIBERATE session-level SET by a human/tool is indistinguishable
+      // from leaked pooler poison - both show source 'session', reset 'off'.
+      throw Object.assign(new Error(`target has an intentional read-only default (source ${state.default_source}, reset ${state.reset_ro})`), { code: READ_ONLY_SQLSTATE });
     }
     const result = await runOnce();
     await client.query(opts?.terminator === "rollback" ? "ROLLBACK" : "COMMIT");
@@ -232,22 +233,21 @@ export async function transactionWithEviction<T, C extends QueryableClient, E>(
     // still have committed server-side). Such a client is always destroyed,
     // never returned to the pool.
     //
-    // Retry-safety boundary (review point, 18 Nov): outcomeUncertain does NOT
-    // gate the retry decision, because the retry key is SQLSTATE 25006 itself
-    // - and a 25006 can only arrive as a PostgreSQL ErrorResponse message,
-    // which is the SERVER DEFINITIVELY stating the transaction was aborted.
-    // That is the opposite of ambiguity:
-    //   - body-stage 25006: the statement error already aborted the tx
-    //     (ROLLBACK is cleanup only; even if ROLLBACK's own transport fails,
-    //     the server discards the aborted tx when the connection dies).
-    //   - COMMIT-stage 25006 (deferred write trigger): the server REFUSED the
-    //     commit - nothing was written.
-    //   - BEGIN-stage 25006 (hot standby): no transaction ever started.
-    // The genuinely ambiguous case - a COMMIT whose response is LOST in
-    // transit - carries NO SQLSTATE (node-pg raises a bare Error), so it is
-    // never retried here; it is destroyed and surfaced. A fabricated 25006
-    // from the pooler is also safe: the pooler speaks for the server and
-    // never confirms a commit it then reports as refused.
+    // Retry-safety boundary (review, 18 Nov): outcomeUncertain governs
+    // eviction; the retry key is SQLSTATE 25006. sqlstateOf reads error
+    // PROPERTIES - it cannot authenticate that a server ErrorResponse really
+    // arrived, so the 25006 retry is NOT justified by error provenance.
+    // It is justified by the audited caller contract instead: every body
+    // passed here is DB-only (no sends, caches, cookies or other external
+    // effects), so even a retry keyed on a misclassified 25006 cannot
+    // duplicate anything outside the database, and inside the database the
+    // first attempt provably rolled back before the retry begins. Do not
+    // pass arbitrary callbacks. A lost COMMIT response (transport ambiguity,
+    // no SQLSTATE) is never retried: the client is destroyed and the error
+    // surfaced, because the body may already have committed server-side.
+    // (Note: a genuine COMMIT-stage 25006 is unreachable in this design -
+    // the body's own writes fail 25006 first - so the unit test for it is a
+    // defensive fixture, not real-server evidence.)
     let outcomeUncertain = false;
     try {
       let result: T;

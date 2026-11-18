@@ -48,7 +48,7 @@ test("akif emotional context: honest guesses, persistent feelings that fade natu
   const output=fileURLToPath(new URL(`./akif-emotion-${randomUUID()}.mjs`,import.meta.url));
   const bundle=await build({stdin:{contents:"export * from '../src/akif/emotionContext';",resolveDir:fileURLToPath(new URL('.',import.meta.url))},platform:'node',format:'esm',bundle:true,packages:'external',write:false,plugins:[{name:'fixture',setup(b){
     const fixtures={
-      db:'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const db=globalThis.__emotionFixture.db;'+tableNames.map(n=>`export const ${n}=globalThis.__emotionFixture.db.__tables.${n};`).join(''),
+      db:'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const dbWrite=(run)=>run(db);export const db=globalThis.__emotionFixture.db;'+tableNames.map(n=>`export const ${n}=globalThis.__emotionFixture.db.__tables.${n};`).join(''),
       orm:"export const eq=(a,b)=>({kind:'eq',a,b});",
       cheap:"export const runCheapModelChat=async()=>{throw Error('tests must inject detect');};",
     };
