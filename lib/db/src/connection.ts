@@ -237,12 +237,10 @@ export async function transactionWithEviction<T, C extends QueryableClient, E>(
     // eviction; the retry key is SQLSTATE 25006. sqlstateOf reads error
     // PROPERTIES - it cannot authenticate that a server ErrorResponse really
     // arrived, so the 25006 retry is NOT justified by error provenance.
-    // It is justified by the audited caller contract instead: every body
-    // passed here is DB-only (no sends, caches, cookies or other external
-    // effects), so even a retry keyed on a misclassified 25006 cannot
-    // duplicate anything outside the database, and inside the database the
-    // first attempt provably rolled back before the retry begins. Do not
-    // pass arbitrary callbacks. A lost COMMIT response (transport ambiguity,
+    // It is accepted only under the audited caller contract: every body
+    // passed here is DB-only - no sends, caches, cookies or other external
+    // effects, and no internal commits. Do not pass arbitrary callbacks.
+    // A lost COMMIT response (transport ambiguity,
     // no SQLSTATE) is never retried: the client is destroyed and the error
     // surfaced, because the body may already have committed server-side.
     // (Note: a genuine COMMIT-stage 25006 is unreachable in this design -
