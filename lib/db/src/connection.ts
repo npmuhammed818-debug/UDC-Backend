@@ -112,7 +112,7 @@ export const PINNED_STATE_QUERY =
   "select current_setting('transaction_read_only') as ro, current_setting('default_transaction_read_only') as default_ro, " +
   "(select source from pg_settings where name = 'default_transaction_read_only') as default_source, " +
   "(select reset_val from pg_settings where name = 'default_transaction_read_only') as reset_ro, " +
-  "pg_backend_pid() as pid";
+  "pg_backend_pid() as pid, current_setting('server_version') as server_version";
 // Intent rule (verified against a real PG 14 server, 18 Nov): pg_settings
 // reports a session-leaked SET as source 'session'; every deliberate source
 // reports something else - ALTER ROLE => 'user' (NOT 'role'), ALTER DATABASE
@@ -137,6 +137,16 @@ export async function transactionPinnedRetry<T, C extends QueryableClient>(
       transaction_read_only: state.ro,
       default_read_only: state.default_ro,
       default_source: state.default_source,
+      // Error-time diagnostic (18 Nov review): reset_val and version ride the
+      // SAME already-owned pinned-transaction query - no extra query, no
+      // added retry, no behavior change. reset_val distinguishes pure pooler
+      // poison ('off') from a deliberate default underneath a session mask
+      // ('on'); the pid/backend belongs to this pinned retry, not to the
+      // first poisoned attempt, which stays unattributable in transaction
+      // mode (its aborted transaction answers nothing, and post-rollback the
+      // pooler may hand out a different backend).
+      default_reset: state.reset_ro,
+      server_version: state.server_version,
       rollback_only: opts?.terminator === "rollback" ? true : undefined,
     }));
     if (String(state.ro) === "on") {

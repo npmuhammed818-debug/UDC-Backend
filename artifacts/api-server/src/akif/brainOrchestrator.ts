@@ -39,6 +39,7 @@ import { isBrainHandsEnabled, isBrainToolModelConfigured, runBrainModelToolChat,
 import { isHermesAkifConfigured, runHermesToolChat } from "./intelligence/hermesClient.ts";
 import { hermesTrialIntentGate } from "./intelligence/hermesBrainContract.ts";
 import { asksAboutCurrentDeal, DEAL_LOOKUP_FAILED_PROMPT_LINE, NO_DEAL_PROMPT_LINE } from "./dealStatePrompt.ts";
+import { runWithSendContext } from "../whatsapp/sendRegistry.ts";
 import { impexqBrainTools, runImpexqBrainTool } from "./intelligence/impexqBrainTool.ts";
 import type { FlowPurpose } from "../whatsapp/flowToken.ts";
 
@@ -599,7 +600,7 @@ ${state}${timeLine ? "\n\n" + timeLine : ""}`;
 import { formDumpFields, hasTradeIntent, FORM_DUMP_FALLBACK, FORM_DUMP_FALLBACK_INTENT, FORM_DUMP_FALLBACK_RETRY, fixFormDumpReply } from "./formDump.ts";
 export { fixFormDumpReply } from "./formDump.ts";
 
-export type BrainTurnOutcome = { handled: boolean; reply: string | null; toolsUsed?: string[]; background?: (deliver: (reply: string) => Promise<boolean>) => Promise<void>; cancelBackground?: () => Promise<void> };
+export type BrainTurnOutcome = { handled: boolean; reply: string | null; toolsUsed?: string[]; route?: "brain" | "hermes_trial"; background?: (deliver: (reply: string) => Promise<boolean>) => Promise<void>; cancelBackground?: () => Promise<void> };
 const handsJobs = new Map<string, { id: string; cancelled: boolean }>();
 
 // Guard floors (code-level, like the form-dump floors above; not brain scripts).
@@ -654,6 +655,18 @@ export async function runBrainTurn(input: { phone: string; text: string; message
   const hermesRoute = useHermesBrainRoute(input.phone, Boolean(chat));
   const effectiveChat = chat ?? (hermesRoute ? runHermesToolChat : runBrainModelToolChat);
   if (hermesRoute) console.info("AKIF brain route selected", { route: "hermes_trial" });
+  // Send-registry origin (18 Nov review): sends inside this turn (relay tool,
+  // email code) carry the actual route as their origin tag; the run scope
+  // restores the caller's context when the turn settles.
+  // The outcome carries the selected route so the caller's reply-send tag
+  // preserves it after this turn's run scope has settled.
+  return runWithSendContext({ inbound: input.messageId, origin: hermesRoute ? "hermes_trial" : "brain" }, async () => {
+    const outcome = await runBrainTurnGuarded(input, effectiveChat, hermesRoute);
+    return outcome ? { ...outcome, route: hermesRoute ? "hermes_trial" as const : "brain" as const } : outcome;
+  });
+}
+
+async function runBrainTurnGuarded(input: { phone: string; text: string; messageId?: string }, effectiveChat: typeof runGroqToolChat, hermesRoute: boolean): Promise<BrainTurnOutcome | null> {
   try {
     const out = await runBrainTurnInner(input, effectiveChat, hermesRoute);
     if (hermesRoute) {

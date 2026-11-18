@@ -47,6 +47,7 @@ import { inviteGateHandles } from "../whatsapp/inviteGate";
 import { isMutedPhone } from "../whatsapp/mutedInbound";
 import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages, inboundClaimInProgress } from "../whatsapp/inboundDedup";
+import { runWithSendContext } from "../whatsapp/sendRegistry.ts";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
 import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction } from "../whatsapp/client";
 import { replySinkEnabled, sinkReadAuthorized, readSunkReplies } from "../whatsapp/replySink";
@@ -2404,7 +2405,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
               if (brain.cancelBackground) await brain.cancelBackground();
               continue;
             }
-            delivered = await deliverWhatsAppReply(message.from, brain.reply);
+            const replyTo = message.from!;
+            const replyBody = brain.reply;
+            delivered = await runWithSendContext({ inbound: message.id, origin: brain.route === "hermes_trial" ? "hermes_reply" : "brain_reply" }, () => deliverWhatsAppReply(replyTo, replyBody));
             await markOutboundSend(message.from!, cover, delivered?.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
           }
           if (brain.background && delivered?.delivered) {

@@ -27,6 +27,7 @@ import { isAkifWorkerMediaEnabled } from "../akif/intelligence/workerClient";
 import { voiceRepliesEnabled } from "../akif/voiceReply.ts";
 import { replySinkEnabled, replySinkSendAllowed } from "../whatsapp/replySink";
 import { sendWhatsAppVoiceNote } from "../whatsapp/client";
+import { runWithSendContext } from "../whatsapp/sendRegistry.ts";
 import { buildHumanRelayDraft, deliverHumanRelayReply } from "./whatsappWebhook";
 import { relayDeliveryFailureBody } from "../akif/relayDeliveryResult";
 import { handleChatUi } from "../whatsapp/chatUi";
@@ -384,14 +385,16 @@ router.post("/akif-relay/reply", async (req, res) => {
       }
     }
   }
-  const delivery = emailTo
+  // Send-registry origin (18 Nov review): relay-answer sends carry origin
+  // "relay" and the answered inbound's provider id when the cover has one.
+  const delivery = await runWithSendContext({ origin: "relay", inbound: relayCover[0]?.messageId ?? undefined }, async () => emailTo
     ? await sendEmailRelayAnswer({ to: emailTo, text: text ?? "" }, emailRelaySendDbPorts(), outboundDepsFromEnv())
     : audio
     ? await sendWhatsAppVoiceNote(phone, audio)
     : await deliverHumanRelayReply(phone, text!, {
         voice,
         heardLanguage: lastHeardLanguageFor(phone),
-      });
+      }));
   if (!emailTo && relayCover.length) {
     await markOutboundSend(phone, relayCover, delivery.delivered ? "confirmed" : "unknown").catch((error) => { console.warn("AKIF outbound outcome mark failed; entry stays pending (fail-closed)", { reason: error instanceof Error ? error.message : "unknown" }); });
   }

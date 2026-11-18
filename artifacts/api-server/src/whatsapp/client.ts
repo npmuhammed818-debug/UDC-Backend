@@ -4,6 +4,7 @@ import { replySinkEnabled, replySinkSendAllowed, recordSunkReply } from "./reply
 import { isAllowedMediaDownloadUrl } from "./mediaUrl.ts";
 import { recordOutboundMessage } from "./outboundLog.ts";
 import { noteOutboundForWatchdog, noteUnknownOutboundForWatchdog, beginOutboundForWatchdog, endOutboundForWatchdog } from "./inboundWatchdogState.ts";
+import { logOutboundSend, type SendOutcome } from "./sendRegistry.ts";
 
 // ---- Meta limits: pacing, retry and failure tracking -------------------------------------------------
 // Outbound token bucket (per process). Default 20 messages/second, burst 20; override with
@@ -37,6 +38,12 @@ export class WhatsAppSendError extends Error {
 }
 export const isWindowClosedError = (e: unknown) => e instanceof WhatsAppSendError && e.code === WINDOW_CLOSED_CODE;
 
+// One outcome line per call: a synthetic sink- id from the staging reply
+// sink is logged as "sunk", a real provider ack as "submitted".
+function ackOutcome(messageId: string | null | undefined): SendOutcome {
+  return messageId?.startsWith("sink-") ? "sunk" : "submitted";
+}
+
 // Per-request record of recipients whose reply could not be delivered after retries, so the webhook can
 // release its dedup claim and let Meta redeliver instead of silently dropping the reply.
 const failures = new AsyncLocalStorage<Set<string>>();
@@ -47,7 +54,13 @@ export function trackReplyFailures<T>(fn: (failed: Set<string>) => Promise<T>): 
 // Sends one provider request with pacing and rate-limit retry. Returns null when the outcome is unknown
 // (timeout or 5xx: the message may have been accepted, so it is NEVER retried; callers quarantine it).
 // Returns the last non-ok response when Meta keeps throttling, so the caller raises its usual error.
-async function metaPost(to: string, url: string, init: RequestInit): Promise<Response | null> {
+// Send-registry logging (18 Nov review): one line per metaPost CALL's final
+// outcome only - intermediate rate-limit retries are not separately logged,
+// and sends blocked by a caller's own scope pre-check return before the
+// transport and are not logged. The success line is emitted by the caller,
+// which already awaits the parsed acknowledgement: no extra body read is
+// added on the send path. Returns and errors are unchanged.
+async function metaPost(to: string, url: string, init: RequestInit, meta: { caller: string; type: string } = { caller: "unknown", type: "unknown" }): Promise<Response | null> {
   if(process.env.UDC_APP_ENV==='staging'&&url.endsWith('/messages')&&typeof init.body==='string'){
     const payload=JSON.parse(init.body),target=payload.text??payload.interactive?.body??payload.document??payload.image;
     const key=payload.text?'body':payload.interactive?'text':'caption';
@@ -60,10 +73,13 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
       init={...init,body:JSON.stringify(payload)};
     }
   }
-  if (!outboundAllowed(to)) return Response.json({ error: { code: 0, message: "recipient_not_in_scope" } }, { status: 403 });
+  if (!outboundAllowed(to)) { logOutboundSend({ caller: meta.caller, type: meta.type, outcome: "blocked_scope", httpStatus: 403 }); return Response.json({ error: { code: 0, message: "recipient_not_in_scope" } }, { status: 403 }); }
   if (replySinkEnabled() && url.endsWith("/messages") && !sinkBypassForAllowlistedRecipient(to)) { // staging reply sink: store, never send (except allowlisted test recipients with real credentials)
     let body: unknown = null; try { body = JSON.parse(String(init.body)); } catch { /* keep null */ }
-    return Response.json({ messages: [{ id: recordSunkReply(to, body).id }] });
+    const sunkId = recordSunkReply(to, body).id;
+    // The synthetic sink- id flows back to the caller, which logs the single
+    // "sunk" outcome line for this call (see ackOutcome) - never "submitted".
+    return Response.json({ messages: [{ id: sunkId }] });
   }
   const trackInFlight = url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"');
   if (trackInFlight) beginOutboundForWatchdog(to);
@@ -73,12 +89,15 @@ async function metaPost(to: string, url: string, init: RequestInit): Promise<Res
     const response = await maybeSubmitted(fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }));
     if (response?.ok && url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"')) noteOutboundForWatchdog(to);
     if (!response && url.endsWith("/messages") && typeof init.body === "string" && !init.body.includes('"type":"reaction"')) noteUnknownOutboundForWatchdog(to);
-    if (!response || response.ok) return response;
+    if (!response || response.ok) {
+      if (!response) logOutboundSend({ caller: meta.caller, type: meta.type, outcome: "unknown" });
+      return response; // a 2xx is logged by the caller from the parsed ack
+    }
     const peek = response.clone();
     const error = await providerError(peek);
     const limited = error.httpStatus === 429 || (error.code !== undefined && RATE_LIMIT_CODES.has(error.code));
-    if (!limited) return response;
-    if (attempt === MAX_ATTEMPTS) { failures.getStore()?.add(to); return response; }
+    if (!limited) { logOutboundSend({ caller: meta.caller, type: meta.type, outcome: "provider_error", httpStatus: response.status }); return response; }
+    if (attempt === MAX_ATTEMPTS) { failures.getStore()?.add(to); logOutboundSend({ caller: meta.caller, type: meta.type, outcome: "provider_error", httpStatus: response.status }); return response; }
     const retryAfter = Number(response.headers.get("retry-after"));
     await response.body?.cancel();
     const backoff = Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 250);
@@ -191,7 +210,7 @@ export async function sendWhatsAppText(to: string, body: string) {
         type: "text",
         text: { body },
       }),
-    });
+    }, { caller: "sendWhatsAppText", type: "text" });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
@@ -200,6 +219,7 @@ export async function sendWhatsAppText(to: string, body: string) {
   }
 
   const ack = await readMessageAcknowledgement(response);
+  logOutboundSend({ caller: "sendWhatsAppText", type: "text", outcome: ack.delivered ? ackOutcome(ack.messageId) : "unknown", providerMessageId: ack.messageId ?? null });
   if (ack.delivered) recordOutboundMessage(ack.messageId, to, body);
   return ack;
 }
@@ -216,10 +236,12 @@ export async function sendWhatsAppInteractive(to: string, interactive: WhatsAppI
   if (!outboundAllowed(to)) return outOfScope();
   const config=getConfig();
   if(!config)return {delivered:false as const,reason:'not_configured' as const};
-  const response=await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})});
+  const response=await metaPost(to,`https://graph.facebook.com/v21.0/${config.phoneNumberId}/messages`,{method:'POST',signal:AbortSignal.timeout(10_000),headers:{authorization:`Bearer ${config.accessToken}`,'content-type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to,type:'interactive',interactive})}, { caller: "sendWhatsAppInteractive", type: "interactive" });
   if(!response)return unknownSubmission();
   if(!response.ok){const error=await providerError(response);throw new WhatsAppSendError(`whatsapp_interactive_failed http=${error.httpStatus} code=${error.code??'unknown'}`, error.httpStatus, error.code);}
-  return readMessageAcknowledgement(response);
+  const ack=await readMessageAcknowledgement(response);
+  logOutboundSend({ caller: "sendWhatsAppInteractive", type: "interactive", outcome: ack.delivered ? ackOutcome(ack.messageId) : "unknown", providerMessageId: ack.messageId ?? null });
+  return ack;
 }
 
 // Retain the helper for existing callers, but do not append a menu button to
@@ -255,7 +277,7 @@ export async function sendWhatsAppDocument(
           ...(caption ? { caption } : {}),
         },
       }),
-    });
+    }, { caller: "sendWhatsAppDocument", type: "document" });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
@@ -263,7 +285,9 @@ export async function sendWhatsAppDocument(
     throw new WhatsAppSendError(`whatsapp_document_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
-  return readMessageAcknowledgement(response);
+  const ack = await readMessageAcknowledgement(response);
+  logOutboundSend({ caller: "sendWhatsAppDocument", type: "document", outcome: ack.delivered ? ackOutcome(ack.messageId) : "unknown", providerMessageId: ack.messageId ?? null });
+  return ack;
 }
 
 export async function sendWhatsAppImage(
@@ -291,7 +315,7 @@ export async function sendWhatsAppImage(
           ...(caption ? { caption } : {}),
         },
       }),
-    });
+    }, { caller: "sendWhatsAppImage", type: "image" });
 
   if(!response)return unknownSubmission();
   if (!response.ok) {
@@ -299,7 +323,9 @@ export async function sendWhatsAppImage(
     throw new WhatsAppSendError(`whatsapp_image_delivery_failed http=${error.httpStatus} code=${error.code ?? "unknown"} subcode=${error.subcode ?? "none"}`, error.httpStatus, error.code);
   }
 
-  return readMessageAcknowledgement(response);
+  const ack = await readMessageAcknowledgement(response);
+  logOutboundSend({ caller: "sendWhatsAppImage", type: "image", outcome: ack.delivered ? ackOutcome(ack.messageId) : "unknown", providerMessageId: ack.messageId ?? null });
+  return ack;
 }
 
 export async function downloadWhatsAppMedia(mediaId: string) {
@@ -383,10 +409,12 @@ export async function sendWhatsAppReaction(to: string, inboundMessageId: string,
     signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "reaction", reaction: { message_id: inboundMessageId, emoji } }),
-  });
+  }, { caller: "sendWhatsAppReaction", type: "reaction" });
   if(!response)return unknownSubmission();
   if(!response.ok){await response.body?.cancel();return {delivered:false as const,reason:'provider_rejected' as const};}
-  return readMessageAcknowledgement(response);
+  const ack = await readMessageAcknowledgement(response);
+  logOutboundSend({ caller: "sendWhatsAppReaction", type: "reaction", outcome: ack.delivered ? ackOutcome(ack.messageId) : "unknown", providerMessageId: ack.messageId ?? null });
+  return ack;
 }
 
 /** Uploads OGG/Opus bytes and sends them as a WhatsApp voice message. */
@@ -410,10 +438,11 @@ export async function sendWhatsAppVoiceNote(to: string, ogg: Uint8Array) {
     method: "POST", signal: AbortSignal.timeout(10_000),
     headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, type: "audio", audio: { id: mediaId, voice: true } }),
-  });
+  }, { caller: "sendWhatsAppVoiceNote", type: "audio" });
   if(!sent)return unknownSubmission();
   if(!sent.ok){await sent.body?.cancel();return {delivered:false as const,reason:'send_failed' as const};}
   const ack = await readMessageAcknowledgement(sent);
+  logOutboundSend({ caller: "sendWhatsAppVoiceNote", type: "audio", outcome: ack.delivered ? ackOutcome(ack.messageId) : "unknown", providerMessageId: ack.messageId ?? null });
   if (ack.delivered) recordOutboundMessage(ack.messageId, to, "[voice note]");
   return ack;
 }
