@@ -1,6 +1,6 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { and, eq, gt, isNull } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { db, dbWrite } from "@workspace/db";
 import { authSessionsTable, usersTable } from "@workspace/db";
 import type { AuthenticatedUser } from "./types";
 
@@ -19,15 +19,18 @@ function hashSessionToken(token: string) {
   return createHmac("sha256", sessionSecret()).update(token).digest("hex");
 }
 
-export async function createSession(userId: string, executor: Pick<typeof db, 'insert'> = db) {
+export async function createSession(userId: string, executor?: Pick<typeof db, 'insert'>) {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
-  await executor.insert(authSessionsTable).values({
+  // dbWrite: a poisoned read-only pooled session is evicted and the insert
+  // retried once (16-18 Nov incident). Transactional callers pass their tx.
+  const write = (wdb: Pick<typeof db, 'insert'>) => wdb.insert(authSessionsTable).values({
     userId,
     tokenHash: hashSessionToken(token),
     expiresAt,
   });
+  if (executor) await write(executor); else await dbWrite(write);
 
   return { token, expiresAt };
 }
@@ -56,18 +59,20 @@ export async function getAuthenticatedUser(token: string) {
 
   if (!result) return undefined;
 
-  await db
+  // dbWrite: this touch runs on EVERY authenticated request; unwrapped it
+  // 500s whenever the draw is a poisoned read-only session (18 Nov live).
+  await dbWrite((wdb) => wdb
     .update(authSessionsTable)
     .set({ lastUsedAt: now })
-    .where(eq(authSessionsTable.id, result.sessionId));
+    .where(eq(authSessionsTable.id, result.sessionId)));
 
   const { sessionId: _sessionId, userId: id, ...user } = result;
   return { id, ...user } satisfies AuthenticatedUser;
 }
 
 export async function revokeSession(token: string) {
-  await db
+  await dbWrite((wdb) => wdb
     .update(authSessionsTable)
     .set({ revokedAt: new Date() })
-    .where(eq(authSessionsTable.tokenHash, hashSessionToken(token)));
+    .where(eq(authSessionsTable.tokenHash, hashSessionToken(token))));
 }

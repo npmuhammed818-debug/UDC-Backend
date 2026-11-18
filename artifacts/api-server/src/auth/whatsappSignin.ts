@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { eq, lt, sql } from 'drizzle-orm';
-import { db, auditLogsTable, usersTable, whatsappSigninChallengesTable as challenges } from '@workspace/db';
+import { db, dbWrite, auditLogsTable, usersTable, whatsappSigninChallengesTable as challenges } from '@workspace/db';
 import { hashPassword } from './passwords';
 import { createSession } from './sessions';
 
@@ -17,11 +17,13 @@ export async function requestWhatsAppSignin(role: WhatsAppRole, linkUserId?: str
   const browserToken = randomBytes(32).toString('base64url');
   // Owner-approved 2026-11-02: 2-minute code life so a phished code dies fast.
   const expiresAt = new Date(Date.now() + 2 * 60_000);
-  await db.delete(challenges).where(lt(challenges.expiresAt, new Date(Date.now() - 86_400_000)));
+  // dbWrite for every write here: a poisoned read-only pooled session is
+  // evicted and retried once instead of failing the sign-in (16-18 Nov).
+  await dbWrite((wdb) => wdb.delete(challenges).where(lt(challenges.expiresAt, new Date(Date.now() - 86_400_000))));
   const codeHash = signinHash('code', code);
-  await db.insert(challenges).values({ codeHash, browserTokenHash: signinHash('browser', browserToken), requestedRole: role, linkUserId, expiresAt });
+  await dbWrite((wdb) => wdb.insert(challenges).values({ codeHash, browserTokenHash: signinHash('browser', browserToken), requestedRole: role, linkUserId, expiresAt }));
   // No schema change: the requester's normalized IP rides in the audit log metadata (owner-approved origin line).
-  await db.insert(auditLogsTable).values({ actorUserId: linkUserId ?? null, action: 'whatsapp_web_signin_requested', entityType: 'whatsapp_signin', metadata: { challengeHash: codeHash, ip: originIp || 'unknown' }, createdAt: new Date() });
+  await dbWrite((wdb) => wdb.insert(auditLogsTable).values({ actorUserId: linkUserId ?? null, action: 'whatsapp_web_signin_requested', entityType: 'whatsapp_signin', metadata: { challengeHash: codeHash, ip: originIp || 'unknown' }, createdAt: new Date() }));
   return { code, browserToken, expiresAt };
 }
 

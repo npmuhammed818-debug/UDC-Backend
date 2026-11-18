@@ -35,10 +35,13 @@ test('WhatsApp web sign-in requires phone ownership, private browser proof and s
     return {rows:[]};
   }};
   let queue=Promise.resolve();state.db.transaction=(f:any)=>{const job=queue.then(()=>f(state.db));queue=job.catch(()=>{});return job;};
+  // Fixture passthrough for the dbWrite wrapper used by session/signin writes;
+  // the in-memory fixture db has no pooled backends to evict (harness alignment only).
+  state.dbWrite=async(run:any)=>run(state.db);
   (globalThis as any).__whatsappSigninFixture=state;
   const output=fileURLToPath(new URL(`./whatsapp-signin-${randomUUID()}.mjs`,import.meta.url));
   const bundle=await build({stdin:{contents:"import express from 'express';import router from '../src/routes/whatsappSignin';import profile from '../src/routes/profile';export * from '../src/auth/whatsappSignin';const app=express();app.use(express.json());app.use((req,res,next)=>{req.authUser=globalThis.__whatsappSigninFixture.user;next()});app.use(router);app.use(profile);export default app;",resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-signin',setup(b){
-    const fixtures:any={db:'const s=globalThis.__whatsappSigninFixture;export const db=s.db;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const eq=(a,b)=>({kind:'eq',a,b});export const lt=(a,b)=>({kind:'lt',a,b});export const gt=()=>true;export const isNull=()=>true;export const and=()=>true;export const ne=()=>true;export const sql=(parts,...values)=>({parts,values});",profile:"export const getSafeUserProfile=async()=>({});"};
+    const fixtures:any={db:'const s=globalThis.__whatsappSigninFixture;export const db=s.db;export const dbWrite=s.dbWrite;'+names.map(n=>`export const ${n}=s.tables.${n};`).join(''),orm:"export const eq=(a,b)=>({kind:'eq',a,b});export const lt=(a,b)=>({kind:'lt',a,b});export const gt=()=>true;export const isNull=()=>true;export const and=()=>true;export const ne=()=>true;export const sql=(parts,...values)=>({parts,values});",profile:"export const getSafeUserProfile=async()=>({});"};
     for(const [filter,path] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/auth\/userProfile$/,'profile']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
   }}]});
