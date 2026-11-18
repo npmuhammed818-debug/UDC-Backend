@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { requireRole } from "../auth/middleware.ts";
 import { makeWriteProbeHandler } from "./dbWriteProbe.ts";
-import { pool } from "@workspace/db";
+import { pool, transactionPinnedRetry } from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -41,6 +41,11 @@ router.get("/db/healthz", async (req, res) => {
   }
 });
 
-router.post("/admin/db-write-probe", requireRole("admin"), makeWriteProbeHandler(pool) as never);
+// The write probe exercises the EXACT production retry path
+// (transactionPinnedRetry) but with terminator "rollback" so nothing persists.
+router.post("/admin/db-write-probe", requireRole("admin"), makeWriteProbeHandler({
+  connect: () => pool.connect(),
+  wrapRetry: (client, runOnce) => transactionPinnedRetry(client as never, runOnce, { terminator: "rollback", log: (line: string) => console.error(line) }),
+}) as never);
 
 export default router;

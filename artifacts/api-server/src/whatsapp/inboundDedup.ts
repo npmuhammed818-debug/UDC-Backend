@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq, inArray, lt, sql, and, isNull } from "drizzle-orm";
-import { db, dbWrite, whatsappInboundDedupTable } from "@workspace/db";
+import { db, dbWrite, whatsappInboundDedupTable, READ_ONLY_SQLSTATE } from "@workspace/db";
 import { logger } from "../lib/logger";
 
 // Durable claims are required before processing. Database errors (including a
@@ -23,7 +23,9 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
   // cost a customer their reply: retry the durable claim a few times before
   // failing closed. Still no process-local substitute for the durable claim.
   let lastCause: unknown;
+  let attemptsMade = 0;
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt += 1) {
+    attemptsMade = attempt + 1;
     try {
       // dbWrite: evict a poisoned read-only pooled session and retry once,
       // so one bad session cannot reject every inbound claim (16-18 Nov).
@@ -39,6 +41,13 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
       return claimed.length === 1;
     } catch (error) {
       lastCause = error;
+      // 25006 (read-only transaction): dbWrite already ran its evict + pinned
+      // retry internally, so more outer attempts would only multiply writes
+      // against the same persistent state (18 Nov: 4 outer x 2 inner = 8
+      // attempts per webhook). Stop here; transient codes still retry.
+      const code = (error as { code?: unknown; cause?: { code?: unknown } } | undefined)?.code
+        ?? (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+      if (code === READ_ONLY_SQLSTATE) break;
       if (attempt === CLAIM_ATTEMPTS - 1) break;
       await new Promise((resolve) => setTimeout(resolve, CLAIM_RETRY_DELAY_MS * (attempt + 1)));
     }
@@ -49,7 +58,7 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
   const code = cause?.code ?? cause?.cause?.code;
   const message = String(cause?.cause?.message ?? cause?.message ?? "unknown")
     .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "[url]").slice(0, 160);
-  logger.error({ flow: "whatsapp_inbound", reason: "dedup_claim_cause", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, cause: message, attempts: CLAIM_ATTEMPTS }, "Inbound claim failed after retries");
+  logger.error({ flow: "whatsapp_inbound", reason: "dedup_claim_cause", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, cause: message, attempts: attemptsMade }, "Inbound claim failed after retries");
   throw new InboundDedupUnavailable();
 }
 

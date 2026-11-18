@@ -73,7 +73,7 @@ test("other errors release cleanly and are not retried", async () => {
   assert.deepEqual(released, ["clean"]);
 });
 
-import { transactionPinnedRetry } from "../../../lib/db/src/connection.ts";
+import { transactionPinnedRetry, PINNED_STATE_QUERY } from "../../../lib/db/src/connection.ts";
 
 function fakeClient(ro: string, calls: string[], fail?: { match: string; code: string; message: string }) {
   return {
@@ -83,7 +83,7 @@ function fakeClient(ro: string, calls: string[], fail?: { match: string; code: s
       if (fail && text.toUpperCase().startsWith(fail.match.toUpperCase())) {
         throw Object.assign(new Error(fail.message), { code: fail.code });
       }
-      if (text.startsWith("select current_setting")) return { rows: [{ ro }] };
+      if (text.startsWith("select current_setting")) return { rows: [{ ro, default_ro: "off", default_source: "default", pid: 1 }] };
       return { rows: [] };
     },
     release(e?: unknown) { calls.push(e ? "release(err)" : "release()"); },
@@ -95,7 +95,7 @@ test("pinned retry: BEGIN, check, write, COMMIT in one transaction on one client
   const client = fakeClient("off", calls);
   const out = await transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); return "written"; });
   assert.equal(out, "written");
-  assert.deepEqual(calls, ["BEGIN", "select current_setting('transaction_read_only') as ro", "WRITE", "COMMIT"]);
+  assert.deepEqual(calls, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "WRITE", "COMMIT"]);
 });
 
 test("pinned retry: a still-read-only retry session aborts BEFORE the write, then rolls back", async () => {
@@ -105,7 +105,7 @@ test("pinned retry: a still-read-only retry session aborts BEFORE the write, the
     transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); }),
     (e: Error & { code?: string }) => e.code === "25006",
   );
-  assert.deepEqual(calls, ["BEGIN", "select current_setting('transaction_read_only') as ro", "ROLLBACK"]);
+  assert.deepEqual(calls, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "ROLLBACK"]);
 });
 
 test("pinned retry: write failure rolls back and rethrows; COMMIT failure rolls back and rethrows", async () => {
@@ -116,14 +116,86 @@ test("pinned retry: write failure rolls back and rethrows; COMMIT failure rolls 
     }),
     (e: Error & { code?: string }) => e.code === "25007",
   );
-  assert.deepEqual(c1, ["BEGIN", "select current_setting('transaction_read_only') as ro", "ROLLBACK"]);
+  assert.deepEqual(c1, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "ROLLBACK"]);
   const c2: string[] = [];
   const client2 = fakeClient("off", c2, { match: "COMMIT", code: "ECONN", message: "commit dropped" });
   await assert.rejects(
     transactionPinnedRetry(client2 as never, async () => "written"),
     (e: Error & { code?: string }) => e.code === "ECONN",
   );
-  assert.deepEqual(c2, ["BEGIN", "select current_setting('transaction_read_only') as ro", "COMMIT", "ROLLBACK"]);
+  assert.deepEqual(c2, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "COMMIT", "ROLLBACK"]);
+});
+
+test("pinned retry: a session-poisoned default is overridden by BEGIN READ WRITE (16-18 Nov incident semantics)", async () => {
+  // Simulates a Supavisor transaction-mode backend carrying a leaked
+  // `SET default_transaction_read_only TO 'on'` (source 'session'): inside an
+  // explicit BEGIN READ WRITE the transaction overrides the poisoned session
+  // default, so current_setting reports off and the write proceeds.
+  const calls: string[] = [];
+  let txReadWrite = false;
+  const client = {
+    async query(text: string) {
+      calls.push(text);
+      if (text === "BEGIN READ WRITE") { txReadWrite = true; return { rows: [] }; }
+      if (text.startsWith("select current_setting")) return { rows: [{ ro: txReadWrite ? "off" : "on", default_ro: "on", default_source: "session", pid: 7 }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const out = await transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); return "written"; });
+  assert.equal(out, "written");
+  assert.deepEqual(calls, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "WRITE", "COMMIT"]);
+});
+
+test("pinned retry: an INTENTIONAL configured read-only default (source database/role/config) is NOT overridden - fails closed", async () => {
+  // The guard for the inverse case: if someone deliberately sets a read-only
+  // default via ALTER DATABASE / ALTER ROLE / config, BEGIN READ WRITE could
+  // technically override it per transaction, but the retry must refuse.
+  for (const source of ["database", "role", "configuration file"]) {
+    const calls: string[] = [];
+    const client = {
+      async query(text: string) {
+        calls.push(text);
+        if (text.startsWith("select current_setting")) return { rows: [{ ro: "off", default_ro: "on", default_source: source, pid: 9 }] };
+        return { rows: [] };
+      },
+      release() {},
+    };
+    await assert.rejects(
+      transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); return "written"; }),
+      (e: Error & { code?: string }) => e.code === "25006" && /intentional/.test(e.message),
+    );
+    assert.deepEqual(calls, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "ROLLBACK"], `source=${source}: no write, rolled back`);
+  }
+});
+
+test("pinned retry with terminator rollback: ROLLBACK instead of COMMIT, write still runs, state logged internally", async () => {
+  const calls: string[] = [];
+  const logs: string[] = [];
+  const client = {
+    async query(text: string) {
+      calls.push(text);
+      if (text.startsWith("select current_setting")) return { rows: [{ ro: "off", default_ro: "off", default_source: "default", pid: 4242 }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const out = await transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); return "probed"; }, { terminator: "rollback", log: (l) => logs.push(l) });
+  assert.equal(out, "probed");
+  assert.deepEqual(calls, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "WRITE", "ROLLBACK"]);
+  const state = JSON.parse(logs[0]);
+  assert.equal(state.event, "db_pinned_tx_state");
+  assert.equal(state.backend_pid, 4242);
+  assert.equal(state.transaction_read_only, "off");
+  assert.equal(state.rollback_only, true);
+});
+
+test("pinned retry without options: COMMIT terminator (production default)", async () => {
+  const calls: string[] = [];
+  const client = fakeClient("off", calls);
+  const out = await transactionPinnedRetry(client as never, async () => { calls.push("WRITE"); return "written"; });
+  assert.equal(out, "written");
+  assert.deepEqual(calls, ["BEGIN READ WRITE", PINNED_STATE_QUERY, "WRITE", "COMMIT"]);
 });
 
 test("writeWithEviction with a pinned retry: one retry on 25006, wrapped failure destroys the client", async () => {

@@ -49,22 +49,75 @@ export interface QueryableClient extends ReleasableClient {
 // and a later write can be assigned DIFFERENT server backends even on one
 // client connection, so the check proves nothing on its own. Inside ONE
 // explicit transaction the pooler pins a single backend for the whole
-// transaction, so this runs BEGIN -> read-only check -> write -> COMMIT with
-// check and write on the same backend. A still-read-only session is detected
-// before the write runs; any failure rolls back and rethrows (the caller
-// destroys the client: its transaction state is uncertain).
+// transaction, so this runs BEGIN READ WRITE -> read-only check -> write ->
+// COMMIT with check and write on the same backend. BEGIN READ WRITE makes the
+// transaction explicitly writable: a server backend whose session carries a
+// leaked `SET default_transaction_read_only TO 'on'` (the recurring 16-18 Nov
+// poison: session-level state from another pooler client persists on
+// transaction-mode backends and 25006s every later write) is overridden for
+// THIS transaction only - no session state is mutated and nothing leaks to
+// the next borrower.
+//
+// Safety note (verified against the PostgreSQL SET TRANSACTION / hot-standby
+// docs, 18 Nov): BEGIN READ WRITE overrides only the session default
+// (default_transaction_read_only) for this one transaction. It cannot make a
+// genuine read-only server writable: on a hot standby transaction_read_only
+// is always true and any command that explicitly sets non-read-only state
+// (SET TRANSACTION READ WRITE / BEGIN READ WRITE) errors, so a replica target
+// still fails closed here instead of writing.
+//
+// Intent guard: an intentional read-only intent for this database/role lives
+// in persistent configuration (ALTER DATABASE / ALTER ROLE / config file),
+// which pg_settings reports with source 'database' / 'role' / 'configuration
+// file' (etc.). The incident poison is a LEAKED SESSION SET on a pooled
+// backend, source 'session'. The retry overrides ONLY the leaked-session
+// case; when the session default is read-only from an intentional persistent
+// source it fails closed instead of overriding someone's deliberate choice.
+//
+// Options: terminator "rollback" (diagnostic probes only) proves the exact
+// retry mechanics without persisting anything; log receives one internal
+// state line (backend pid + read-only flags + default source inside the
+// pinned transaction) - never part of any HTTP response.
+export interface PinnedRetryOptions {
+  terminator?: "commit" | "rollback";
+  log?: (line: string) => void;
+}
+export const PINNED_STATE_QUERY =
+  "select current_setting('transaction_read_only') as ro, current_setting('default_transaction_read_only') as default_ro, " +
+  "(select source from pg_settings where name = 'default_transaction_read_only') as default_source, pg_backend_pid() as pid";
+// pg_settings.source values that mean "configured on purpose" (as opposed to
+// 'session' = a leaked SET from another pooled borrower, or 'default' = off).
+const INTENTIONAL_DEFAULT_SOURCES = new Set(["database", "role", "configuration file", "environment variable", "client", "override"]);
 export async function transactionPinnedRetry<T, C extends QueryableClient>(
   client: C,
   runOnce: () => Promise<T>,
+  opts?: PinnedRetryOptions,
 ): Promise<T> {
-  await client.query("BEGIN");
+  await client.query("BEGIN READ WRITE");
   try {
-    const { rows } = await client.query("select current_setting('transaction_read_only') as ro");
-    if (String(rows[0]?.ro) === "on") {
+    const { rows } = await client.query(PINNED_STATE_QUERY);
+    const state = rows[0] ?? {};
+    opts?.log?.(JSON.stringify({
+      level: 30,
+      event: "db_pinned_tx_state",
+      backend_pid: state.pid,
+      transaction_read_only: state.ro,
+      default_read_only: state.default_ro,
+      default_source: state.default_source,
+      rollback_only: opts?.terminator === "rollback" ? true : undefined,
+    }));
+    if (String(state.ro) === "on") {
+      // Still read-only inside BEGIN READ WRITE: hard read-only target (for
+      // example a hot standby). Never writable; fail closed.
       throw Object.assign(new Error("retry session is read-only"), { code: READ_ONLY_SQLSTATE });
     }
+    if (String(state.default_ro) === "on" && INTENTIONAL_DEFAULT_SOURCES.has(String(state.default_source))) {
+      // An intentional configured read-only default (role/database/config):
+      // do not override someone else's deliberate choice. Fail closed.
+      throw Object.assign(new Error("target has an intentional read-only default"), { code: READ_ONLY_SQLSTATE });
+    }
     const result = await runOnce();
-    await client.query("COMMIT");
+    await client.query(opts?.terminator === "rollback" ? "ROLLBACK" : "COMMIT");
     return result;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);

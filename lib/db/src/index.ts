@@ -33,4 +33,5 @@ export function dbWrite<T>(run: (wdb: NodePgDatabase<typeof schema>) => Promise<
   );
 }
 
+export { READ_ONLY_SQLSTATE, transactionPinnedRetry } from "./connection";
 export * from "./schema";

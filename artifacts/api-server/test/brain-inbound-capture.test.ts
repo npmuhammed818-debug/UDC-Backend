@@ -47,7 +47,7 @@ function dbFixture(state: { rowCount: number; existing: boolean }) {
     };
     // dbWrite mirrors the real module: run the write against the fixture db
   // (no pool eviction in the harness - alignment, not behavior under test).
-  export const dbWrite = async (run) => run(db);
+  export const READ_ONLY_SQLSTATE = '25006'; export const dbWrite = async (run) => run(db);
   export const pool = {};
     export const akifCustomerMemoriesTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const akifEmotionalStatesTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
