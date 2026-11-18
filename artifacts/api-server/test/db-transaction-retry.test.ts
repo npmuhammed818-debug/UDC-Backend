@@ -78,10 +78,10 @@ test("25006 mid-transaction: rollback, evict poisoned client, whole body re-runs
   assert.ok(logs.some((l) => l.includes("db_tx_readonly_session_evicted") && l.includes('"attempt":0')));
 });
 
-test("intentional read-only default (source 'role') fails closed on the retry: body never re-runs", async () => {
+test("intentional read-only default (ALTER ROLE => real source 'user') fails closed on the retry: body never re-runs", async () => {
   const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
   const intentional = fakeClient((text) => isStateQuery(text)
-    ? { rows: [{ ro: "off", default_ro: "on", default_source: "role", pid: 7 }] } : {});
+    ? { rows: [{ ro: "off", default_ro: "on", default_source: "user", pid: 7 }] } : {});
   const clients = [poisoned, intentional];
   const pool = { connect: async () => clients.shift()! };
   let bodyRuns = 0;
@@ -95,6 +95,23 @@ test("intentional read-only default (source 'role') fails closed on the retry: b
   assert.equal(bodyRuns, 1, "guard stopped the retry before the body");
   assert.ok(intentional.calls.includes("ROLLBACK"), "pinned transaction rolled back");
   assert.ok(intentional.releasedWith instanceof Error, "uncertain-state client destroyed");
+});
+
+test("an UNRECOGNIZED default source fails closed too (inverted guard: only 'session' is overridable)", async () => {
+  const poisoned = fakeClient((text) => text.startsWith("insert") ? { error: ro25006 } : {});
+  const unknown = fakeClient((text) => isStateQuery(text)
+    ? { rows: [{ ro: "off", default_ro: "on", default_source: "some_future_source", pid: 8 }] } : {});
+  const clients = [poisoned, unknown];
+  const pool = { connect: async () => clients.shift()! };
+  let bodyRuns = 0;
+  await assert.rejects(
+    transactionWithEviction(pool, (cl) => ({ cl }), async (tx: { cl: ReturnType<typeof fakeClient> }) => {
+      bodyRuns++;
+      await tx.cl.query("insert into t values (1)");
+    }, log),
+    (e: Error) => /intentional read-only default/.test(e.message),
+  );
+  assert.equal(bodyRuns, 1, "unknown source never reaches the body");
 });
 
 test("still read-only inside BEGIN READ WRITE (hot standby) fails closed", async () => {
@@ -147,6 +164,52 @@ test("25006 at COMMIT: rolled-back attempt is evicted, body re-runs once (caller
   assert.equal(bodyRuns, 2);
   assert.ok(commitFails.releasedWith instanceof Error);
   assert.deepEqual(fresh.calls.filter((t) => t.startsWith("insert")), ["insert into t values (1)"]);
+});
+
+test("ROLLBACK failure after a body error destroys the client (uncertain transaction state)", async () => {
+  const c = fakeClient((text) => {
+    if (text.startsWith("insert")) return { error: { message: "duplicate key value" } };
+    if (text === "ROLLBACK") return { error: { message: "connection terminated" } };
+    return {};
+  });
+  const pool = { connect: async () => c };
+  await assert.rejects(
+    transactionWithEviction(pool, (cl) => ({ cl }), async (tx: { cl: typeof c }) => {
+      await tx.cl.query("insert into t values (1)");
+    }, log),
+    (e: Error) => e.message === "duplicate key value",
+  );
+  assert.ok(c.releasedWith instanceof Error, "client with unknown transaction state is destroyed, not pooled");
+});
+
+test("COMMIT transport failure: ambiguous outcome -> client destroyed, error NOT retried", async () => {
+  const c = fakeClient((text) => text === "COMMIT"
+    ? { error: { message: "Connection terminated unexpectedly" } } : {});
+  let connects = 0;
+  const pool = { connect: async () => { connects++; return c; } };
+  let bodyRuns = 0;
+  await assert.rejects(
+    transactionWithEviction(pool, (cl) => ({ cl }), async (tx: { cl: typeof c }) => {
+      bodyRuns++;
+      await tx.cl.query("insert into t values (1)");
+    }, log),
+    (e: Error) => /Connection terminated/.test(e.message),
+  );
+  assert.equal(bodyRuns, 1, "ambiguous COMMIT is never retried (duplicate-effects risk)");
+  assert.ok(c.releasedWith instanceof Error, "uncertain client destroyed");
+});
+
+test("BEGIN transport failure destroys the client and is not retried", async () => {
+  const c = fakeClient((text) => text === "BEGIN"
+    ? { error: { message: "server closed the connection unexpectedly" } } : {});
+  const pool = { connect: async () => c };
+  await assert.rejects(
+    transactionWithEviction(pool, (cl) => ({ cl }), async (tx: { cl: typeof c }) => {
+      await tx.cl.query("insert into t values (1)");
+    }, log),
+    (e: Error) => /server closed the connection/.test(e.message),
+  );
+  assert.ok(c.releasedWith instanceof Error);
 });
 
 test("drizzle-wrapped 25006 (SQLSTATE on .cause) is still detected and retried", async () => {

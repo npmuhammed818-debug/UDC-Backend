@@ -73,6 +73,28 @@ assert.deepEqual(rows1.rows.map((r) => r.n), [1, 2], "exactly one committed copy
 pass("session-poisoned backend evicted; whole transaction re-ran once on a clean backend and committed atomically");
 await pool.end();
 
+// ---- Case 1b: partial-write rollback is real -------------------------------
+// Case 1's poisoned attempt dies on its FIRST write, so its final [1,2] does
+// not by itself prove an already-successful partial write rolls back (review
+// point). On a CLEAN backend with a fresh table: the FIRST insert succeeds,
+// the SECOND violates a unique constraint, the transaction aborts -> the
+// first row must be GONE from the database.
+await admin.query("drop table if exists txretry_partial");
+await admin.query("create table txretry_partial (n int unique)");
+const poolClean = new pg.Pool({ connectionString: url, max: 1 });
+let bodyErr;
+try {
+  await transactionWithEviction(poolClean, (client) => drizzle(client), async (tx) => {
+    await tx.execute(sql`insert into txretry_partial values (100)`); // succeeds
+    await tx.execute(sql`insert into txretry_partial values (100)`); // unique violation
+  }, (line) => logs.push(line));
+} catch (error) { bodyErr = error; }
+assert.ok(bodyErr, "unique violation aborts the transaction");
+const rowsPartial = await admin.query("select count(*)::int as c from txretry_partial");
+assert.equal(rowsPartial.rows[0].c, 0, "the successful first write was rolled back with the aborted transaction");
+pass("body-stage failure rolls back an already-successful partial write (fresh table stays empty)");
+await poolClean.end();
+
 // ---- Case 2: intentional database-level read-only default fails closed ----
 await admin.query("alter database udc_qa_txretry set default_transaction_read_only = on");
 await admin.query("select pg_terminate_backend(pid) from pg_stat_activity where datname = 'udc_qa_txretry' and pid <> pg_backend_pid()");
@@ -90,6 +112,30 @@ assert.equal(rows2.rows[0].c, 2, "nothing written against an intentional read-on
 pass("intentional database-level read-only default fails closed (no override, no write)");
 await admin.query("alter database udc_qa_txretry reset default_transaction_read_only");
 await pool2.end();
+
+// ---- Case 2b: intentional ROLE-level default (real source 'user') fails closed ----
+// The first guard used an allowlist containing 'role', which PostgreSQL never
+// emits - ALTER ROLE reports source 'user'. An allowlist miss would have let
+// BEGIN READ WRITE override a deliberate role-level read-only. The inverted
+// guard (only 'session' is overridable) is verified here against the server.
+await admin.query("drop role if exists txretry_ro_role");
+await admin.query("create role txretry_ro_role login");
+await admin.query("alter role txretry_ro_role set default_transaction_read_only = on");
+const pool3 = new pg.Pool({ connectionString: "postgres://txretry_ro_role@/udc_qa_txretry?host=/tmp/pgtx&port=54329", max: 1 });
+let rejected3;
+try {
+  await transactionWithEviction(pool3, (client) => drizzle(client), async (tx) => {
+    await tx.execute(sql`insert into txretry_t values (10)`);
+  }, (line) => logs.push(line));
+} catch (error) { rejected3 = error; }
+assert.ok(rejected3, "role-level read-only default rejects the write");
+assert.match(String(rejected3?.message), /intentional read-only default \(source user\)/, "guard names the real 'user' source");
+const rows3 = await admin.query("select count(*)::int as c from txretry_t");
+assert.equal(rows3.rows[0].c, 2, "nothing written against a role-level read-only default");
+pass("intentional role-level read-only default (source 'user') fails closed - allowlist bug would have overridden it");
+await pool3.end();
+await admin.query("alter role txretry_ro_role reset default_transaction_read_only");
+await admin.query("drop role txretry_ro_role");
 
 await admin.end();
 console.log("ALL DETERMINISTIC CONTAMINATION CHECKS PASSED");

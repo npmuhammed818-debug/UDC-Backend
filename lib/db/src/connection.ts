@@ -100,9 +100,14 @@ export interface PinnedRetryOptions {
 export const PINNED_STATE_QUERY =
   "select current_setting('transaction_read_only') as ro, current_setting('default_transaction_read_only') as default_ro, " +
   "(select source from pg_settings where name = 'default_transaction_read_only') as default_source, pg_backend_pid() as pid";
-// pg_settings.source values that mean "configured on purpose" (as opposed to
-// 'session' = a leaked SET from another pooled borrower, or 'default' = off).
-const INTENTIONAL_DEFAULT_SOURCES = new Set(["database", "role", "configuration file", "environment variable", "client", "override"]);
+// Intent rule (verified against a real PG 14 server, 18 Nov): pg_settings
+// reports a session-leaked SET as source 'session'; every deliberate source
+// reports something else - ALTER ROLE => 'user' (NOT 'role'), ALTER DATABASE
+// => 'database', config file => 'configuration file', PGOPTIONS/client
+// options => 'client'. The guard is INVERTED on purpose: only source
+// 'session' is overridable, so a source this list did not anticipate fails
+// closed instead of silently overriding someone's deliberate read-only.
+const OVERRIDABLE_DEFAULT_SOURCE = "session";
 export async function transactionPinnedRetry<T, C extends QueryableClient>(
   client: C,
   runOnce: () => Promise<T>,
@@ -126,10 +131,11 @@ export async function transactionPinnedRetry<T, C extends QueryableClient>(
       // example a hot standby). Never writable; fail closed.
       throw Object.assign(new Error("retry session is read-only"), { code: READ_ONLY_SQLSTATE });
     }
-    if (String(state.default_ro) === "on" && INTENTIONAL_DEFAULT_SOURCES.has(String(state.default_source))) {
-      // An intentional configured read-only default (role/database/config):
-      // do not override someone else's deliberate choice. Fail closed.
-      throw Object.assign(new Error("target has an intentional read-only default"), { code: READ_ONLY_SQLSTATE });
+    if (String(state.default_ro) === "on" && String(state.default_source) !== OVERRIDABLE_DEFAULT_SOURCE) {
+      // An intentional configured read-only default (role/database/config/
+      // client option/anything unrecognized): do not override someone else's
+      // deliberate choice. Fail closed.
+      throw Object.assign(new Error(`target has an intentional read-only default (source ${state.default_source})`), { code: READ_ONLY_SQLSTATE });
     }
     const result = await runOnce();
     await client.query(opts?.terminator === "rollback" ? "ROLLBACK" : "COMMIT");
@@ -206,15 +212,31 @@ export async function transactionWithEviction<T, C extends QueryableClient, E>(
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     const client = await poolLike.connect();
+    // Set when ROLLBACK itself fails or the error came from BEGIN/COMMIT: the
+    // transaction outcome is then UNKNOWN (a COMMIT transport failure may
+    // still have committed server-side). Such a client is always destroyed,
+    // never returned to the pool, and the error is never retried (retrying an
+    // ambiguous COMMIT could duplicate the body's effects).
+    let outcomeUncertain = false;
     try {
       let result: T;
       if (attempt === 0) {
-        await client.query("BEGIN");
+        let stage: "begin" | "body" | "commit" = "begin";
         try {
+          await client.query("BEGIN");
+          stage = "body";
           result = await body(makeExecutor(client));
+          stage = "commit";
           await client.query("COMMIT");
         } catch (error) {
-          await client.query("ROLLBACK").catch(() => undefined);
+          // A failed BEGIN never started a transaction (connection suspect);
+          // a failed COMMIT leaves the outcome ambiguous - it may have
+          // committed server-side even when a later ROLLBACK answers. Only a
+          // body-stage error followed by a SUCCESSFUL rollback leaves the
+          // client provably clean and the body provably uncommitted.
+          if (stage !== "body") outcomeUncertain = true;
+          const rolledBack = await client.query("ROLLBACK").then(() => true, () => false);
+          if (!rolledBack) outcomeUncertain = true;
           throw error;
         }
       } else {
@@ -224,10 +246,11 @@ export async function transactionWithEviction<T, C extends QueryableClient, E>(
       return result;
     } catch (error) {
       const code = sqlstateOf(error);
-      // Destroy the client on the pinned retry (transaction state uncertain)
-      // and whenever the session is read-only-poisoned; a clean rollback on
-      // any other error leaves the client reusable.
-      client.release(attempt > 0 || code === READ_ONLY_SQLSTATE ? error : undefined);
+      // Destroy the client on the pinned retry (transaction state uncertain),
+      // whenever the session is read-only-poisoned, and whenever rollback or
+      // BEGIN/COMMIT transport left the outcome unknown; only a clean
+      // rollback after a body error makes the client reusable.
+      client.release(attempt > 0 || outcomeUncertain || code === READ_ONLY_SQLSTATE ? error : undefined);
       if (code !== READ_ONLY_SQLSTATE) throw error;
       lastError = error;
       log(JSON.stringify({ level: 50, event: 'db_tx_readonly_session_evicted', attempt }));
