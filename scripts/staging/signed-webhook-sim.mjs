@@ -17,6 +17,8 @@ const secret = process.env.WHATSAPP_APP_SECRET ?? '';
 const DENY = /(^|\.)(udc-production|updowncircle\.(com|site))$|prod/i;
 // Synthetic numbers: the reserved fictional 555-01xx range, e.g. 15555550101 only. Never a real customer or the owner's own number.
 const SYNTHETIC = /^1\d{3}55501\d{2}$/;
+// Exact-match allowlist: the two staging SIM TEST accounts seeded on 2026-10-26 (area code 555 is not assigned; the store sink blocks all sends). Nothing else is loosened.
+const SEEDED_SIM_NUMBERS = new Set(['15555550201', '15555550202']);
 
 function fail(msg) { console.error(`sim: ${msg}`); process.exit(2); }
 if (!base) fail('--base is required');
@@ -30,7 +32,7 @@ const script = JSON.parse(await readFile(args.script, 'utf8'));
 let failures = 0;
 for (const [i, step] of script.steps.entries()) {
   const from = String(step.from);
-  if (!SYNTHETIC.test(from)) fail(`step ${i + 1}: "from" must be a synthetic fictional number like 15555550101`);
+  if (!SYNTHETIC.test(from) && !SEEDED_SIM_NUMBERS.has(from)) fail(`step ${i + 1}: "from" must be a synthetic fictional number like 15555550101`);
   const message = { id: step.id ?? `wamid.SIM-${randomUUID()}`, from, timestamp: String(Math.floor(Date.now() / 1000)),
     ...(step.interactive ? { type: 'interactive', interactive: step.interactive } : { type: 'text', text: { body: String(step.text ?? '') } }) };
   const body = JSON.stringify({ object: 'whatsapp_business_account', entry: [{ id: 'SIM', changes: [{ field: 'messages', value: {
