@@ -362,6 +362,32 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       assert.equal((await receipt()).status,503,"database loss must cause Meta retry, not silent success");
       state.failReceipt=false;
     });
+    await t.test("passive diag (flag on): signed posts persist a content-free receipt, unsigned posts never do, acks unchanged",async(t)=>{
+      reset();
+      const priorFlag=process.env.UDC_WHATSAPP_DIAG_RECEIPTS;
+      const priorPhoneId=process.env.WHATSAPP_PHONE_NUMBER_ID;
+      process.env.UDC_WHATSAPP_DIAG_RECEIPTS="1";
+      process.env.WHATSAPP_PHONE_NUMBER_ID="qa-receipt-sender";
+      t.after(()=>{
+        if(priorFlag===undefined)delete process.env.UDC_WHATSAPP_DIAG_RECEIPTS;else process.env.UDC_WHATSAPP_DIAG_RECEIPTS=priorFlag;
+        if(priorPhoneId===undefined)delete process.env.WHATSAPP_PHONE_NUMBER_ID;else process.env.WHATSAPP_PHONE_NUMBER_ID=priorPhoneId;
+      });
+      const body=JSON.stringify({entry:[{changes:[{value:{metadata:{phone_number_id:"qa-receipt-sender"},statuses:[{id:"wamid.synthetic.diag",status:"delivered",timestamp:"1792800000",recipient_id:"10000000001"}]}}]}]});
+      const post=(signed:boolean)=>fetch(base+"/webhooks/whatsapp",{method:"POST",headers:{
+        "content-type":"application/json",
+        "x-hub-signature-256":signed?"sha256="+createHmac("sha256","fixture-secret").update(body).digest("hex"):"sha256=invalid",
+      },body});
+      assert.equal((await post(true)).status,200,"ack unchanged with the diagnostic on");
+      await new Promise(r=>setTimeout(r,100)); // the receipt is written after the response is sent
+      const receipts=rows.whatsappWebhookReceiptsTable;
+      assert.equal(receipts.length,1,"one receipt persisted for the signed post");
+      const r0=receipts[0];
+      assert.equal(r0.payloadClass,"statuses");assert.equal(r0.itemCount,1);assert.equal(r0.handlerOutcome,"200");assert.equal(r0.signed,true);
+      assert.deepEqual(Object.keys(r0).sort(),["createdAt","handlerOutcome","id","itemCount","payloadClass","signed"],"receipt carries no content, phone or message id fields");
+      assert.equal((await post(false)).status,401,"auth failure ack unchanged");
+      await new Promise(r=>setTimeout(r,100));
+      assert.equal(receipts.length,1,"unsigned post is never persisted (no unbounded writes from auth failures)");
+    });
     await t.test("accepting consent opens role selection without sending AGREE to trade intelligence", async () => {
       reset();state.privacyReply={kind:"consent_accepted"};
       assert.equal((await message({text:{body:"AGREE"}})).status,200);

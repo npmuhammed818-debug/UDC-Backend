@@ -59,12 +59,18 @@ export function errorClassOf(error: unknown): string {
   return "unknown";
 }
 
-// One content-free receipt per POST, called from a finally AFTER the response is
-// sent. A failed receipt write increments a counter and drops to the in-memory
-// ring so a failing database (the very condition under diagnosis) cannot break
-// the ack path or go entirely unnoticed.
+// One content-free receipt per SIGNED POST, called from a finally AFTER the
+// response is sent. Unsigned or malformed POSTs never reach the table: they
+// could be sprayed by anyone, so they go only to the bounded in-memory ring.
+// A failed receipt write increments a counter and drops to the ring so a
+// failing database (the very condition under diagnosis) cannot break the ack
+// path or go entirely unnoticed.
 export async function recordWebhookReceipt(input: { payloadClass: string; itemCount: number; handlerOutcome: string; signed: boolean }): Promise<void> {
   if (!diagReceiptsEnabled()) return;
+  if (!input.signed) {
+    pushRing({ at: new Date().toISOString(), kind: "unsigned_post", stage: input.payloadClass.slice(0, 20), errorClass: input.handlerOutcome.slice(0, 20) });
+    return;
+  }
   try {
     await dbWrite((wdb) => wdb.insert(whatsappWebhookReceiptsTable).values({
       payloadClass: input.payloadClass.slice(0, 20),

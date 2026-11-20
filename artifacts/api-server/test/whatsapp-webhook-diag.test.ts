@@ -80,6 +80,15 @@ test('webhook diagnostic: classification, flag gating, fail-silent writes, reten
     assert.equal(state.inserts.length, 1);
     assert.deepEqual(state.inserts[0], { payloadClass: 'statuses', itemCount: 3, handlerOutcome: '200', signed: true });
 
+    // Unsigned posts (anyone can spray the endpoint) never reach the table:
+    // they land in the bounded ring instead, so auth failures cannot cause
+    // unbounded database writes.
+    for (let i = 0; i < 100; i += 1) await m.recordWebhookReceipt({ payloadClass: 'unknown', itemCount: 0, handlerOutcome: '401', signed: false });
+    assert.equal(state.inserts.length, 1, 'unsigned posts are never persisted');
+    assert.equal(m.diagSnapshot().ring.length, 50, 'unsigned spray is bounded by the ring');
+    assert.equal(m.diagSnapshot().ring.at(-1).kind, 'unsigned_post');
+    m.resetWebhookDiagForTest();
+
     // A failing database must not break the ack path: the write failure is
     // counted and drops into the in-memory ring instead of throwing.
     state.failWrites = '25006';
@@ -118,7 +127,7 @@ test('webhook diagnostic: classification, flag gating, fail-silent writes, reten
 
     // The ring is bounded at 50 entries.
     state.failWrites = true;
-    for (let i = 0; i < 80; i += 1) await m.recordWebhookReceipt({ payloadClass: 'unknown', itemCount: 0, handlerOutcome: '401', signed: false });
+    for (let i = 0; i < 80; i += 1) await m.recordWebhookReceipt({ payloadClass: 'unknown', itemCount: 0, handlerOutcome: 'no_response', signed: true });
     assert.equal(m.diagSnapshot().ring.length, 50, 'ring is bounded');
     state.failWrites = false;
   } finally {
