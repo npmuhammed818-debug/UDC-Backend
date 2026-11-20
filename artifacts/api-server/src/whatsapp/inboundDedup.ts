@@ -65,7 +65,9 @@ export async function claimInboundMessage(id: unknown): Promise<boolean> {
 export async function completeInboundMessages(ids: unknown[]) {
   const hashes = ids.filter((x): x is string => typeof x === "string" && x.length >= 6 && x.length <= 200).map(fingerprintProviderMessage);
   if (!hashes.length) return;
-  try { await db.update(whatsappInboundDedupTable).set({ completedAt: new Date() }).where(inArray(whatsappInboundDedupTable.idHash, hashes)); }
+  // Completion also clears any diagnostic failure marker (staging flag UDC_WHATSAPP_DIAG_RECEIPTS):
+  // a redelivery that now finishes means the earlier stop did not lose the message.
+  try { await db.update(whatsappInboundDedupTable).set({ completedAt: new Date(), failedAt: null, failedStage: null, errorClass: null }).where(inArray(whatsappInboundDedupTable.idHash, hashes)); }
   catch { /* table missing or database unavailable: the stale-claim rule still protects retries */ }
 }
 

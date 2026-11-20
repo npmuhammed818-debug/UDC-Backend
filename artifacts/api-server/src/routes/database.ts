@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { requireRole } from "../auth/middleware.ts";
 import { makeWriteProbeHandler } from "./dbWriteProbe.ts";
+import { diagSnapshot } from "../whatsapp/webhookDiag.ts";
 import { pool, transactionPinnedRetry } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -47,5 +48,13 @@ router.post("/admin/db-write-probe", requireRole("admin"), makeWriteProbeHandler
   connect: () => pool.connect(),
   wrapRetry: (client, runOnce) => transactionPinnedRetry(client as never, runOnce, { terminator: "rollback", log: (line: string) => console.error(line) }),
 }) as never);
+
+// Passive webhook diagnostic readout (staging flag UDC_WHATSAPP_DIAG_RECEIPTS):
+// the in-memory ring survives a failing database, so the last diagnostic events
+// stay readable exactly when the persisted tables cannot be queried. Read-only;
+// classes, stages and error codes only - never message content or identifiers.
+router.get("/admin/whatsapp-diag", requireRole("admin"), (_req, res) => {
+  res.json(diagSnapshot());
+});
 
 export default router;

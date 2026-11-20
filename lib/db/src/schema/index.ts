@@ -44,4 +44,5 @@ export * from "./whatsappCustomerWindows";
 export * from "./userRoleChangeRequests";
 export * from "./vaultDocuments";
 export * from "./whatsappInboundDedup";
+export * from "./whatsappWebhookReceipts";
 export * from "./whatsappVoicePreferences";

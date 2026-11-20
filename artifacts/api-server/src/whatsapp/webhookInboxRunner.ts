@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, lt } from "drizzle-orm";
 import { db, whatsappWebhookInboxTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { runBackgroundTask } from "../lib/backgroundTask";
+import { purgeOldWebhookReceipts } from "./webhookDiag";
 
 const POLL_MS = 15_000;
 const GRACE_MS = 120_000;
@@ -75,6 +76,10 @@ async function replayPendingWebhookInbox() {
   } finally {
     running = false;
   }
+
+  // Receipt retention for the passive webhook diagnostic (staging flag
+  // UDC_WHATSAPP_DIAG_RECEIPTS): best-effort, fail-silent, inert when the flag is off.
+  await purgeOldWebhookReceipts();
 }
 
 export function startWhatsAppWebhookInboxRunner() {

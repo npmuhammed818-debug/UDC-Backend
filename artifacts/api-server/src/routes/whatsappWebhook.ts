@@ -47,6 +47,7 @@ import { inviteGateHandles } from "../whatsapp/inviteGate";
 import { isMutedPhone } from "../whatsapp/mutedInbound";
 import { noteInboundForWatchdog } from "../whatsapp/inboundWatchdogState";
 import { claimInboundMessage, completeInboundMessages, releaseInboundMessages, inboundClaimInProgress } from "../whatsapp/inboundDedup";
+import { classifyWebhookPayload, recordInboundFailure, recordWebhookReceipt } from "../whatsapp/webhookDiag";
 import { runWithSendContext } from "../whatsapp/sendRegistry.ts";
 import { checkInboundCap, INBOUND_CAP_NOTICE } from "../whatsapp/inboundRateCap";
 import { trackReplyFailures, markReadAndTyping, markRead, sendWhatsAppReaction } from "../whatsapp/client";
@@ -1585,19 +1586,44 @@ router.get("/webhooks/whatsapp-sink", (req, res) => {
   res.json({ replies: readSunkReplies(to, since) });
 });
 
-router.post("/webhooks/whatsapp", async (req, res) => { await trackReplyFailures((failed) => handleWhatsAppWebhook(req, res, failed)); });
-async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies: Set<string>) {
+router.post("/webhooks/whatsapp", async (req, res) => {
+  try {
+    await trackReplyFailures((failed) => handleWhatsAppWebhook(req, res, failed));
+  } finally {
+    // Passive diagnostic (staging, UDC_WHATSAPP_DIAG_RECEIPTS=1): one content-free
+    // receipt per POST, written after the response. Fail-silent inside; it never
+    // changes the ack, the reply path or any gate.
+    const { payloadClass, itemCount } = classifyWebhookPayload(req.body);
+    await recordWebhookReceipt({
+      payloadClass,
+      itemCount,
+      handlerOutcome: res.headersSent ? String(res.statusCode) : "no_response",
+      signed: webhookSignatureOk(req),
+    });
+  }
+});
+function webhookSignatureOk(req: Request): boolean {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.header("x-hub-signature-256");
   const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
-
-  if (!appSecret || !signature?.startsWith("sha256=") || !rawBody) {
-    res.sendStatus(401);
-    return;
-  }
-
+  if (!appSecret || !signature?.startsWith("sha256=") || !rawBody) return false;
   const expected = `sha256=${createHmac("sha256", appSecret).update(rawBody).digest("hex")}`;
-  if (!isEqual(signature, expected)) {
+  return isEqual(signature, expected);
+}
+async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies: Set<string>) {
+  // Passive diagnostic (staging flag): tracks the in-flight message and stage so a
+  // handler escape can be pinned to where it stopped. The error is rethrown
+  // unchanged - the diagnostic never alters failure or reply behavior.
+  const active: { messageId: unknown; stage: string } = { messageId: undefined, stage: "processing" };
+  try {
+    await handleWhatsAppWebhookChanges(req, res, failedReplies, active);
+  } catch (error) {
+    await recordInboundFailure(active.messageId === undefined ? [] : [active.messageId], active.stage, error);
+    throw error;
+  }
+}
+async function handleWhatsAppWebhookChanges(req: Request, res: Response, failedReplies: Set<string>, active: { messageId: unknown; stage: string }) {
+  if (!webhookSignatureOk(req)) {
     res.sendStatus(401);
     return;
   }
@@ -1648,6 +1674,8 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
       }
       if (!claimed) { if (await inboundClaimInProgress(message.id)) inProgressRedelivery.push(message.id); continue; } // answer each Meta message id once; an unfinished fresh claim is not done, see below
       claimedInbound.push(message.id);
+      active.messageId = message.id;
+      active.stage = "processing";
       if (isMutedPhone(message.from)) {
         req.log.warn({ flow: "whatsapp_inbound", reason: "muted_by_owner", phoneTail: String(message.from).slice(-4), type: String(message.type ?? "text") }, "Inbound from a muted number: no automated reply");
         await completeInboundMessages([message.id]);
@@ -1967,7 +1995,9 @@ async function handleWhatsAppWebhook(req: Request, res: Response, failedReplies:
           // brain path never spends TTS quota.
           if (brainVoiceEnabled() && isBrainOrchestratorEnabled()) {
             try {
+              active.stage = "brain";
               const voiceBrain = await runBrainTurn({ phone: message.from, text: transcript, messageId: message.id });
+              active.stage = "processing";
               if (voiceBrain?.handled && voiceBrain.reply && voiceBrain.reply !== BRAIN_BUSY_REPLY) {
                 // Same cross-path send authority as the text path: the relay
                 // may have already answered this voice note's turn.

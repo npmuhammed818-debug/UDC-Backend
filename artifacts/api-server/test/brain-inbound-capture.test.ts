@@ -90,6 +90,7 @@ function dbFixture(state: { rowCount: number; existing: boolean }) {
     export const vaultAccessLogTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const whatsappChatSessionsTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const whatsappInboundDedupTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
+    export const whatsappWebhookReceiptsTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const whatsappIntakeDraftsTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const whatsappMessageContextsTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
     export const whatsappShipmentOutboxTable=new Proxy({},{get:(t,k)=>typeof k==='symbol'?undefined:{key:String(k)}});
