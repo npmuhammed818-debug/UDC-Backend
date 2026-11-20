@@ -1,0 +1,11 @@
+export type BriefKind='market'|'festival';
+export type TradeBrief={id:string;kind:BriefKind;source:string;publisher:string;published:string;checked:string;expires:string;scope:string;title:string;text:string};
+/** Human-reviewed source snapshots. Never presented as live prices, carrier
+ * closures, buying advice, demand forecasts or proof of a private deal. */
+export const reviewedBriefs:TradeBrief[]=[
+ {id:'fao-2026-10-02',kind:'market',source:'https://www.fao.org/worldfoodsituation/foodpricesindex/en/',publisher:'FAO',published:'2026-10-02',checked:'2026-11-05',expires:'2026-11-06',scope:'global food commodities',title:'September 2026 food-price index',text:'FAO reported its September food-price index at 136.0 points, up 1.5% from August. Its sugar index rose 6.1%. These are monthly international indices, not a supplier quote, an October result or a live trade price. The next release is scheduled for 6 November 2026.'},
+ {id:'kerala-central-diwali-2026',kind:'festival',source:'https://www.pib.gov.in/PressReleasePage.aspx?PRID=2187285&lang=2&reg=48',publisher:'PIB Thiruvananthapuram',published:'2025-11-07',checked:'2026-11-05',expires:'2026-11-09',scope:'Kerala central government offices',title:'Diwali office-calendar note',text:'The published 2026 calendar lists Diwali on Sunday, 8 November, for central government offices in Kerala. This does not establish port, bank, private supplier or nationwide closure. Check your actual supplier, bank and forwarder before setting a deadline. No extra demand or sales increase is assumed.'},
+];
+const day=(value:string)=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+export function eligibleBrief(b:TradeBrief,now:Date){const today=now.toISOString().slice(0,10);try{return [b.published,b.checked,b.expires].every(day)&&b.published<=today&&b.checked<=today&&b.checked>=b.published&&today<b.expires&&b.expires>b.checked&&now.getTime()-Date.parse(b.checked+'T00:00:00Z')<7*86400000&&new URL(b.source).protocol==='https:';}catch{return false;}}
+export function formatBrief(b:TradeBrief){return `${b.title}\n${b.text}\nScope: ${b.scope}. Source: ${b.publisher}; published ${b.published}; checked ${b.checked}.\n${b.source}\nInformation only. No deal terms changed.`;}

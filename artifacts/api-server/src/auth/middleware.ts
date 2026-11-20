@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { getAuthenticatedUser } from "./sessions";
+import { getAuthenticatedUser } from "./sessions.ts";
 import type { AuthenticatedUser } from "./types";
 
 function getToken(req: Request) {

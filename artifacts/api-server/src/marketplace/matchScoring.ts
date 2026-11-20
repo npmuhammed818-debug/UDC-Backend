@@ -44,18 +44,21 @@ function specificationOverlap(buyer: string, seller: string) {
 export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
   let score = 50;
   const reasons = ["same approved product", "both counterparties verified"];
-  const buyerQuantity = Number(buyer.quantity);
-  const listedQuantity = Number(seller.quantity);
-  const monthlyCapacity = Number(seller.monthlyCapacity ?? 0);
-  const capacity = Math.max(listedQuantity, monthlyCapacity);
+  const buyerQuantity = exactTerm(buyer.quantity);
+  const listedQuantity = exactTerm(seller.quantity);
+  const monthlyCapacity = exactTerm(seller.monthlyCapacity, true);
+  const capacity = listedQuantity === null || monthlyCapacity === null ? null : listedQuantity > monthlyCapacity ? listedQuantity : monthlyCapacity;
   const sameUnit = normalize(buyer.unit) === normalize(seller.unit);
 
   if (!sameUnit) {
     score -= 30;
     reasons.push("quantity units differ; manual review needed");
+  } else if (capacity === null || buyerQuantity === null || buyerQuantity <= 0n) {
+    score -= 15;
+    reasons.push("quantity data is invalid; manual review needed");
   } else if (capacity >= buyerQuantity) {
     score += 20;
-    reasons.push(monthlyCapacity >= buyerQuantity
+    reasons.push(monthlyCapacity !== null && monthlyCapacity >= buyerQuantity
       ? "monthly capacity covers the request"
       : "available quantity covers the request");
   } else {
@@ -63,8 +66,11 @@ export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
     reasons.push("listed quantity and monthly capacity are below the request");
   }
 
-  const minimumOrder = Number(seller.minimumOrderQuantity ?? 0);
-  if (sameUnit && minimumOrder > 0) {
+  const minimumOrder = exactTerm(seller.minimumOrderQuantity, true);
+  if (minimumOrder === null) {
+    score -= 15;
+    reasons.push("minimum order data is invalid; manual review needed");
+  } else if (sameUnit && minimumOrder > 0n && buyerQuantity !== null) {
     if (minimumOrder <= buyerQuantity) {
       score += 5;
       reasons.push("minimum order fits the requested quantity");
@@ -74,9 +80,12 @@ export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
     }
   }
 
-  const targetPrice = buyer.targetPrice === null ? undefined : Number(buyer.targetPrice);
-  const offerPrice = Number(seller.price);
-  if (targetPrice !== undefined && buyer.currency.toUpperCase() === seller.currency.toUpperCase()) {
+  const targetPrice = buyer.targetPrice == null ? undefined : exactTerm(buyer.targetPrice);
+  const offerPrice = exactTerm(seller.price);
+  if (offerPrice === null || offerPrice <= 0n || targetPrice === null) {
+    score -= 10;
+    reasons.push("price data is invalid; manual review needed");
+  } else if (targetPrice !== undefined && buyer.currency.toUpperCase() === seller.currency.toUpperCase()) {
     if (offerPrice <= targetPrice) {
       score += 15;
       reasons.push("offer is within the buyer's target price");
@@ -119,15 +128,22 @@ export function scoreTradeMatch(buyer: BuyerTerms, seller: SellerTerms) {
   return { score: Math.max(0, Math.min(100, score)), reasons };
 }
 
+// Bounded exact six-decimal terms, matching stored marketplace precision.
+// Invalid data refuses a proposal rather than rounding into compatibility.
+function exactTerm(value:string|null|undefined,missingZero=false){
+ if(value===null||value===undefined)return missingZero?0n:null;
+ if(!/^\d{1,24}(?:\.\d{1,6})?$/.test(value))return null;
+ const [whole,fraction='']=value.split('.');return BigInt(whole!)*1000000n+BigInt(fraction.padEnd(6,'0'));
+}
 // Automatically present only an offer that can cover the recorded requirement.
 // Presenting is a proposal, never buyer consent or permission to create a deal.
 export function canAutomaticallyPresentOffer(buyer: BuyerTerms, seller: SellerTerms) {
   if(buyer.contractDuration?.trim()||buyer.additionalConditions?.trim())return false;
   if(buyer.inspectionRequirements?.trim()&&(!seller.inspectionTerms||normalize(buyer.inspectionRequirements)!==normalize(seller.inspectionTerms)))return false;
-  const quantity=Number(buyer.quantity),capacity=Math.max(Number(seller.quantity),Number(seller.monthlyCapacity??0));
-  const price=Number(seller.price),minimum=Number(seller.minimumOrderQuantity??0);
-  if(buyer.unit!==seller.unit||!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(capacity)||capacity<quantity||minimum>quantity||!Number.isFinite(price)||price<=0)return false;
-  if(buyer.targetPrice!==null&&buyer.targetPrice!==undefined){const target=Number(buyer.targetPrice);if(!Number.isFinite(target)||price>target||buyer.currency.toUpperCase()!==seller.currency.toUpperCase())return false;}
+  const quantity=exactTerm(buyer.quantity),listed=exactTerm(seller.quantity),monthly=exactTerm(seller.monthlyCapacity,true),price=exactTerm(seller.price),minimum=exactTerm(seller.minimumOrderQuantity,true);
+  if(buyer.unit!==seller.unit||quantity===null||quantity<=0n||listed===null||monthly===null||minimum===null||minimum>quantity||price===null||price<=0n)return false;
+  const capacity=listed>monthly?listed:monthly;if(capacity<quantity)return false;
+  if(buyer.targetPrice!==null&&buyer.targetPrice!==undefined){const target=exactTerm(buyer.targetPrice);if(target===null||price>target||buyer.currency.toUpperCase()!==seller.currency.toUpperCase())return false;}
   const term=seller.incoterm?.toUpperCase();
   if(!term||!['EXW','FCA','FAS','FOB','CFR','CIF','CPT','CIP','DAP','DPU','DDP'].includes(term))return false;
   if(!seller.destination?.trim())return false;

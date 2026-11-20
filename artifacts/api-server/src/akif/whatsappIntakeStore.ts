@@ -12,8 +12,18 @@ export async function loadWhatsAppIntakeDraft(phone: string) {
 
   if (!row) return null;
 
-  return { ...row, stale: false };
+  // An intake draft is a live conversation for a day, not forever (owner
+  // report, 10 Nov: an 8-day-old draft silently bypassed the human relay and
+  // routed every later message to the legacy guidance chain). Stale drafts
+  // stop suppressing the relay and the scripted intake; the row stays so a
+  // fresh message can still pick the details up.
+  const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
+  const stale = !Number.isFinite(updatedAt.getTime()) || Date.now() - updatedAt.getTime() > INTAKE_DRAFT_TTL_MS;
+
+  return { ...row, stale };
 }
+
+export const INTAKE_DRAFT_TTL_MS = 24 * 60 * 60_000;
 
 export async function saveWhatsAppIntakeDraft(input: {
   phone: string;

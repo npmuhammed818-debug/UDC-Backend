@@ -41,6 +41,7 @@ export function conversationSafeDealMemory(snapshot: unknown, viewer?: { userId:
       documentId: item.documentId ?? null,
       status: item.status,
       structuredData: item.structuredData ?? null,
+      humanReview: item.humanReview ?? null,
       confidence: item.confidence ?? null,
     }));
 

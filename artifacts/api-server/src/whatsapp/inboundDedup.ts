@@ -1,53 +1,103 @@
 import { createHash } from "node:crypto";
 import { eq, inArray, lt, sql, and, isNull } from "drizzle-orm";
-import { db, whatsappInboundDedupTable } from "@workspace/db";
+import { db, dbWrite, whatsappInboundDedupTable, READ_ONLY_SQLSTATE } from "@workspace/db";
+import { logger } from "../lib/logger";
 
-// Claims a provider message id before it is processed. A second delivery of the same id (Meta retry, restart,
-// another instance) is refused. A claim that never completed becomes reclaimable after 2 minutes so a crash
-// cannot swallow a message. If the table does not exist yet (migration not approved/applied) the in-memory
-// guard below is used, so behaviour is never worse than before.
+// Durable claims are required before processing. Database errors (including a
+// missing table) fail closed so the webhook can return 503 and Meta can retry.
+// Never substitute a process-local cache for cross-instance replay protection.
 const STALE_CLAIM_MS = 2 * 60_000;
-const memory = new Map<string, number>();
+const CLAIM_ATTEMPTS = 4;
+const CLAIM_RETRY_DELAY_MS = 400;
 
 export const fingerprintProviderMessage = (id: string) => createHash("sha256").update("wa-inbound:" + id).digest("hex");
 
-function claimInMemory(hash: string, now = Date.now()) {
-  for (const [key, at] of memory) { if (now - at > 15 * 60_000) memory.delete(key); else break; }
-  if (memory.has(hash)) return false;
-  if (memory.size >= 5000) memory.delete(memory.keys().next().value as string);
-  memory.set(hash, now);
-  return true;
+export class InboundDedupUnavailable extends Error {
+  constructor() { super("inbound_dedup_unavailable"); this.name = "InboundDedupUnavailable"; }
 }
 
-const tableMissing = (error: unknown) => {
-  const e = error as { code?: string; cause?: { code?: string } };
-  return e?.code === "42P01" || e?.cause?.code === "42P01";
-};
-
 export async function claimInboundMessage(id: unknown): Promise<boolean> {
-  if (typeof id !== "string" || id.length < 6 || id.length > 200) return true;
+  if (typeof id !== "string" || id.length < 6 || id.length > 200) return false;
   const hash = fingerprintProviderMessage(id);
-  try {
-    const claimed = await db.insert(whatsappInboundDedupTable).values({ idHash: hash })
-      .onConflictDoUpdate({
-        target: whatsappInboundDedupTable.idHash,
-        set: { claimedAt: new Date() },
-        setWhere: and(isNull(whatsappInboundDedupTable.completedAt), sql`${whatsappInboundDedupTable.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`),
-      }).returning({ idHash: whatsappInboundDedupTable.idHash });
-    if (Math.random() < 0.02) {
-      await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
+  // A transient database blip (cold pooler connection, brief reconnect) must not
+  // cost a customer their reply: retry the durable claim a few times before
+  // failing closed. Still no process-local substitute for the durable claim.
+  let lastCause: unknown;
+  let attemptsMade = 0;
+  for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt += 1) {
+    attemptsMade = attempt + 1;
+    try {
+      // dbWrite: evict a poisoned read-only pooled session and retry once,
+      // so one bad session cannot reject every inbound claim (16-18 Nov).
+      const claimed = await dbWrite((wdb) => wdb.insert(whatsappInboundDedupTable).values({ idHash: hash })
+        .onConflictDoUpdate({
+          target: whatsappInboundDedupTable.idHash,
+          set: { claimedAt: new Date() },
+          setWhere: and(isNull(whatsappInboundDedupTable.completedAt), sql`${whatsappInboundDedupTable.claimedAt} < now() - make_interval(secs => ${STALE_CLAIM_MS / 1000})`),
+        }).returning({ idHash: whatsappInboundDedupTable.idHash }));
+      if (Math.random() < 0.02) {
+        await db.delete(whatsappInboundDedupTable).where(lt(whatsappInboundDedupTable.claimedAt, sql`now() - interval '7 days'`)).catch(() => undefined);
+      }
+      return claimed.length === 1;
+    } catch (error) {
+      lastCause = error;
+      // 25006 (read-only transaction): dbWrite already ran its evict + pinned
+      // retry internally, so more outer attempts would only multiply writes
+      // against the same persistent state (18 Nov: 4 outer x 2 inner = 8
+      // attempts per webhook). Stop here; transient codes still retry.
+      const code = (error as { code?: unknown; cause?: { code?: unknown } } | undefined)?.code
+        ?? (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+      if (code === READ_ONLY_SQLSTATE) break;
+      if (attempt === CLAIM_ATTEMPTS - 1) break;
+      await new Promise((resolve) => setTimeout(resolve, CLAIM_RETRY_DELAY_MS * (attempt + 1)));
     }
-    return claimed.length === 1;
-  } catch (error) {
-    if (tableMissing(error)) return claimInMemory(hash);
-    // Unknown database trouble: do not drop the customer's message.
-    return true;
   }
+  // Keep the real database cause (for example a read-only session, SQLSTATE 25006) in a bounded,
+  // redacted form so a repeated 503 is diagnosable. No message content, phone or id is logged.
+  const cause = lastCause as { code?: unknown; message?: unknown; cause?: { code?: unknown; message?: unknown } } | undefined;
+  const code = cause?.code ?? cause?.cause?.code;
+  const message = String(cause?.cause?.message ?? cause?.message ?? "unknown")
+    .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "[url]").slice(0, 160);
+  logger.error({ flow: "whatsapp_inbound", reason: "dedup_claim_cause", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, cause: message, attempts: attemptsMade }, "Inbound claim failed after retries");
+  throw new InboundDedupUnavailable();
 }
 
 export async function completeInboundMessages(ids: unknown[]) {
   const hashes = ids.filter((x): x is string => typeof x === "string" && x.length >= 6 && x.length <= 200).map(fingerprintProviderMessage);
   if (!hashes.length) return;
-  try { await db.update(whatsappInboundDedupTable).set({ completedAt: new Date() }).where(inArray(whatsappInboundDedupTable.idHash, hashes)); }
-  catch { /* table missing or database unavailable: the stale-claim rule still protects retries */ }
+  // Completion also clears any diagnostic failure marker (staging flag UDC_WHATSAPP_DIAG_RECEIPTS):
+  // a redelivery that now finishes means the earlier stop did not lose the message.
+  // dbWrite: completion must survive a poisoned read-only pooled session the same
+  // way the claim does - a silently failed completion left permanent
+  // "uncompleted claim" rows behind 200 acks (20 Nov reproduction).
+  try { await dbWrite((wdb) => wdb.update(whatsappInboundDedupTable).set({ completedAt: new Date(), failedAt: null, failedStage: null, errorClass: null }).where(inArray(whatsappInboundDedupTable.idHash, hashes))); }
+  catch (error) {
+    // A full outage still cannot be allowed to break the ack; log the bounded class only.
+    const code = (error as { code?: unknown; cause?: { code?: unknown } } | undefined)?.code ?? (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+    logger.warn({ flow: "whatsapp_inbound", reason: "completion_write_failed", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, count: hashes.length }, "Inbound claim completion could not be persisted");
+  }
+}
+
+// Release claims whose reply could not be delivered, so a Meta redelivery is processed again instead of being
+// treated as done. Only unfinished claims are deleted.
+export async function releaseInboundMessages(ids: unknown[]) {
+  const hashes = ids.filter((x): x is string => typeof x === "string" && x.length >= 6 && x.length <= 200).map(fingerprintProviderMessage);
+  if (!hashes.length) return;
+  // dbWrite: same poisoning survival as the claim/completion path (20 Nov repair).
+  try { await dbWrite((wdb) => wdb.delete(whatsappInboundDedupTable).where(and(inArray(whatsappInboundDedupTable.idHash, hashes), isNull(whatsappInboundDedupTable.completedAt)))); }
+  catch (error) {
+    const code = (error as { code?: unknown; cause?: { code?: unknown } } | undefined)?.code ?? (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+    logger.warn({ flow: "whatsapp_inbound", reason: "release_write_failed", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, count: hashes.length }, "Inbound claim release could not be persisted; the stale-claim window still protects retries");
+  }
+}
+
+/** True when this message has a fresh claim that nobody completed: a first delivery may still be running, or its process died.
+ *  Either way a redelivery must not be acknowledged yet, or work lost to a restart is never retried. */
+export async function inboundClaimInProgress(id: unknown): Promise<boolean> {
+  if (typeof id !== "string" || id.length < 6 || id.length > 200) return false;
+  try {
+    const rows = await db.select({ idHash: whatsappInboundDedupTable.idHash }).from(whatsappInboundDedupTable)
+      .where(and(eq(whatsappInboundDedupTable.idHash, fingerprintProviderMessage(id)), isNull(whatsappInboundDedupTable.completedAt)));
+    return rows.length > 0;
+  } catch { return false; }
 }

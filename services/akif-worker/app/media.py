@@ -1,5 +1,6 @@
 import base64
 import io
+from json import dumps as _dumps
 import json
 import os
 
@@ -16,30 +17,52 @@ class ImageRequest(BaseModel):
     base64: str = Field(min_length=4, max_length=7_000_000)
 
 
+_AUDIO_TYPES = {"audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/webm", "audio/flac"}
+
+
+def _transcribe_groq(data: bytes, mime_type: str) -> dict:
+    if not os.getenv("GROQ_API_KEY"):
+        raise ValueError("groq_not_configured")
+    from litellm import transcription
+    audio = io.BytesIO(data)
+    # A generated filename prevents passing untrusted provider names as filesystem paths.
+    suffix = {"audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/webm": ".webm", "audio/wav": ".wav", "audio/flac": ".flac"}.get(mime_type.split(";")[0], ".mp3")
+    audio.name = "voice" + suffix
+    result = transcription(model="groq/whisper-large-v3-turbo", file=audio, timeout=20, max_retries=0)
+    text = result.text
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("empty_transcript")
+    return {"text": text.strip()[:30_000], "language": None}
+
+
 def transcribe_audio(data: bytes, filename: str, mime_type: str) -> dict:
     if not data or len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="audio_size_invalid")
-    if mime_type.split(";")[0].lower() not in {
-        "audio/ogg", "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/webm", "audio/flac",
-    }:
+    if mime_type.split(";")[0].lower() not in _AUDIO_TYPES:
         raise HTTPException(status_code=415, detail="audio_type_unsupported")
+    # Groq (free Whisper) is the sole STT provider (owner direction, 14 Nov: voice is 100% free,
+    # ElevenLabs out of the chain entirely). NVIDIA NIM hosts no transcription model, so there is
+    # no free second provider to chain; a failure is logged loud below.
     if not os.getenv("GROQ_API_KEY"):
         raise HTTPException(status_code=503, detail="groq_not_configured")
-    try:
-        from litellm import transcription
-        audio = io.BytesIO(data)
-        # A generated filename prevents passing untrusted provider names as filesystem paths.
-        suffix = {"audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/webm": ".webm", "audio/wav": ".wav", "audio/flac": ".flac"}.get(mime_type.split(";")[0], ".mp3")
-        audio.name = "voice" + suffix
-        result = transcription(model="groq/whisper-large-v3-turbo", file=audio,
-                               timeout=20, max_retries=0)
-        text = result.text
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("empty_transcript")
-        return {"text": text.strip()[:30_000], "source": "voice_transcription",
-                "requires_confirmation": True}
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="audio_transcription_failed") from exc
+    used = None
+    result = None
+    for provider in ["groq"]:
+        try:
+            result = _transcribe_groq(data, mime_type)
+            used = provider
+            break
+        except Exception as exc:
+            # Never log audio, transcripts or keys: type and size only.
+            print("AKIF audio provider failure: " + _dumps({"provider": provider, "error_type": type(exc).__name__,
+                  "audio_bytes": len(data)}), flush=True)
+    if result is None:
+        print("AKIF STT ALERT: sole free STT provider (groq) failed - voice notes have no transcription path",
+              flush=True)
+        # An empty or failed transcript is never guessed at: the caller tells the user it was not understood.
+        raise HTTPException(status_code=502, detail="audio_transcription_failed")
+    return {"text": result["text"], "language": result["language"], "source": "voice_transcription",
+            "provider": used, "requires_confirmation": True}
 
 
 def _gemini_model(override: str | None = None) -> str:

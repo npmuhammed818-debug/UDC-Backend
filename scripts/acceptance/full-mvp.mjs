@@ -47,7 +47,13 @@ const docker = (...args) => {
 };
 
 run('codegen', 'pnpm', ['--filter', '@workspace/api-spec', 'run', 'codegen']);
-run('legal-text-preserved', 'git', ['diff', '--exit-code', '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
+// Fixed source baseline for the Oct27 staging wording, not launch/legal approval.
+const legalSourceBaseline = '6ad693fa4e4e93a2631ee68c6378efb8071a2248';
+// Shallow CI checkouts may lack this exact source object. Fetch only that fixed
+// commit; never substitute HEAD or skip the subsequent content comparison.
+const legalObject = spawnSync('git', ['cat-file', '-e', legalSourceBaseline + '^{commit}'], { cwd: root, encoding: 'utf8' });
+if (legalObject.status !== 0) run('legal-source-fetch', 'git', ['fetch', '--no-tags', 'origin', legalSourceBaseline]);
+run('legal-text-preserved', 'git', ['diff', '--exit-code', legalSourceBaseline, '--', 'artifacts/api-server/src/privacy/policies.ts', 'artifacts/api-server/src/privacy/consentNotice.ts']);
 run('generated-contracts', 'git', ['diff', '--exit-code', '--', 'lib/api-zod/src/generated', 'lib/api-client-react/src/generated']);
 run('release', 'pnpm', ['run', 'release:verify'], {}, true);
 run('feature-groups', 'pnpm', ['run', 'acceptance'], {}, true);
@@ -119,7 +125,8 @@ const requirements = [
   ['Generated API contracts, builds and dependency advisories', ['codegen', 'generated-contracts', 'release', 'dependency-audit'], 'Audit and current code checks; no guarantee against unknown vulnerabilities'],
   ['Exact migration compatibility, restricted grants/RLS and lock rollback', ['email-migrations', 'shipment-migrations', 'pg:whatsapp-webhook-retry'], 'Disposable PostgreSQL roles only; not hosted project permissions'],
   ['Selected new-table database backup/restore including vault and dedup', ['restore'], 'Real pinned pg_dump/pg_restore for 14 selected tables; excludes hosted Storage and full Supabase project restore'],
-  ['Actual canonical role activation / multi-role transition', [], 'Not implemented by the reviewed request-only design; requires owner-approved access/identity transition policy'],
+  ['Role transition cannot turn a historical agent assignment into buyer/seller access', ['pg:role-transition', 'pg:full-mvp-lifecycle'], 'Real SQL/API regression: buyer->agent->completed deal->buyer loses every generic deal/tracking route; principals and current agents unchanged'],
+  ['Actual canonical role activation', ['pg:role-transition', 'pg:full-mvp-lifecycle'], 'Real admin-reviewed guarded single-role activation: nonterminal obligations block, verified company required for buyer/seller targets, one serializable transaction with session revocation, WhatsApp-state reset, audit and notice; reviewed alone does not activate; simultaneous multi-role accounts remain outside the current design'],
   ['Live WhatsApp onboarding, natural multilingual guidance and complete human UAT', [], 'Requires approved staging number, real provider and authorized participants'],
   ['Real OTP inbox delivery, domain/provider readiness', [], 'Requires verified sender/domain and separately approved test mail'],
   ['Hosted private Storage signed access, expiry and physical deletion', [], 'Requires approved test project/credentials; local fake storage is insufficient'],
@@ -131,7 +138,7 @@ const requirements = [
 const capabilities = requirements.map(([capability, needed, scope]) => ({ capability, automated: !needed.length ? 'NOT YET VERIFIED' : needed.every(id => proof.get(id) === 'PASS') ? 'PASS' : 'FAIL',
   realProvider: 'NOT YET VERIFIED', evidence: needed, scope }));
 const passed = stages.every(s => s.status === 'PASS') && pg.length > 0 && pg.every(s => s.status === 'PASS');
-const report = { generatedAt: new Date().toISOString(), revision, sourceDigest: digest,
+const report = { legalSourceBaseline, legalLaunchApproved: false, generatedAt: new Date().toISOString(), revision, sourceDigest: digest,
   localChecksPassed: passed, fullMvpAccepted: false, stagingActivationApproved: false,
   parallelSources: { acceptanceBase: '2ad7aa7a359adfd4b64d3a3527e673eda15f3170', base: '83fddc6cd8fba5f7fa6f2edc36a27aba9cdd2bb2', pr181: 'd71c1573bd0f96e19ba6bcbdbb914ec08283f5ca', pr182: '767f0fad88ba0fec3204d79f1a88f5fb4b406481', onboarding: '1578783b60c38c5e4b107f923e686e1dd8107606' },
   stages, postgres: pg, capabilities };

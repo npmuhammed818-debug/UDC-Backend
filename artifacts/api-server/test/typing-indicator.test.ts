@@ -1,0 +1,77 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { markReadAndTyping } from "../src/whatsapp/client.ts";
+
+const env = (over: Record<string, string | undefined>) => {
+  const keys = ["UDC_WHATSAPP_TYPING", "AKIF_WHATSAPP_REPLY_SINK", "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID"];
+  const before = Object.fromEntries(keys.map(k => [k, process.env[k]]));
+  for (const k of keys) delete process.env[k];
+  for (const [k, v] of Object.entries(over)) if (v !== undefined) process.env[k] = v;
+  return () => { for (const k of keys) before[k] === undefined ? delete process.env[k] : (process.env[k] = before[k]); };
+};
+async function withFetch(fn: (calls: Array<{ url: string; body: any }>) => Promise<void> | void, impl?: () => Promise<Response>) {
+  const real = globalThis.fetch; const calls: Array<{ url: string; body: any }> = [];
+  globalThis.fetch = (async (url: any, init: any) => { calls.push({ url: String(url), body: JSON.parse(init.body) }); return impl ? impl() : new Response("{}"); }) as typeof fetch;
+  try { await fn(calls); await new Promise(r => setTimeout(r, 20)); } finally { globalThis.fetch = real; }
+}
+
+test("off by default: no call to Meta", async () => {
+  const restore = env({ WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  try { await withFetch(calls => { markReadAndTyping("15555550101", "wamid.ABC123"); assert.equal(calls.length, 0); }); } finally { restore(); }
+});
+test("on: one read + typing call with the inbound message id", async () => {
+  const restore = env({ UDC_WHATSAPP_TYPING: "on", WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  try { await withFetch(calls => { markReadAndTyping("15555550101", "wamid.ABC123");
+    assert.equal(calls.length, 1); assert.match(calls[0].url, /\/p\/messages$/);
+    assert.deepEqual(calls[0].body, { messaging_product: "whatsapp", status: "read", message_id: "wamid.ABC123", typing_indicator: { type: "text" } }); }); } finally { restore(); }
+});
+test("on but missing id or config: nothing sent", async () => {
+  let restore = env({ UDC_WHATSAPP_TYPING: "on", WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  try { await withFetch(calls => { markReadAndTyping("1", undefined); markReadAndTyping("1", ""); assert.equal(calls.length, 0); }); } finally { restore(); }
+  restore = env({ UDC_WHATSAPP_TYPING: "on" });
+  try { await withFetch(calls => { markReadAndTyping("1", "wamid.ABC123"); assert.equal(calls.length, 0); }); } finally { restore(); }
+});
+test("sink on: nothing sent to Meta", async () => {
+  const restore = env({ UDC_WHATSAPP_TYPING: "on", AKIF_WHATSAPP_REPLY_SINK: "store", WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  try { await withFetch(calls => { markReadAndTyping("15555550101", "wamid.ABC123"); assert.equal(calls.length, 0); }); } finally { restore(); }
+});
+test("a failing or rejected call never throws", async () => {
+  const restore = env({ UDC_WHATSAPP_TYPING: "on", WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  try {
+    await withFetch(() => { assert.doesNotThrow(() => markReadAndTyping("1", "wamid.ABC123")); }, () => Promise.reject(new Error("network down")));
+    await withFetch(() => { assert.doesNotThrow(() => markReadAndTyping("1", "wamid.ABC123")); }, async () => new Response("{}", { status: 500 }));
+  } finally { restore(); }
+});
+test("a delivered deal document reacts with one complete beat", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  assert.ok(src.includes('if (documentDelivered) react("complete", message.from, message.id)'));
+});
+test("a saved guided form reacts with one complete beat", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/whatsapp/guidedChat.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("if(saved)react('complete',phone,message.id)"));
+});
+test("brain-handled text turn shows typing, refreshes it, and stops the refresh", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/routes/whatsappWebhook.ts", import.meta.url), "utf8");
+  const i = src.indexOf("const typingRefresh = setInterval(() => markReadAndTyping(message.from, message.id), 20_000)");
+  assert.ok(i > 0);
+  assert.ok(src.lastIndexOf("markReadAndTyping(message.from, message.id);", i) > i - 700);
+  assert.ok(src.includes("clearInterval(typingRefresh);"));
+});
+test("typing call logs only the Meta status, no ids", async () => {
+  const restore = env({ UDC_WHATSAPP_TYPING: "on", WHATSAPP_ACCESS_TOKEN: "t", WHATSAPP_PHONE_NUMBER_ID: "p" });
+  const logs: unknown[][] = []; const real = console.info; console.info = (...a: unknown[]) => { logs.push(a); };
+  try { await withFetch(() => { markReadAndTyping("15555550101", "wamid.SECRET1"); }, async () => new Response("{}", { status: 200 })); } finally { console.info = real; restore(); }
+  assert.deepEqual(logs, [["whatsapp_typing_result", { status: 200 }]]);
+});
+test("brain system prompt carries the trade-only scope rule and no language override", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/akif/brainOrchestrator.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("SCOPE: you only help with import and export trade"));
+  assert.ok(src.includes("Never refuse a legitimate trade question because of an ambiguous word"));
+  assert.ok(src.includes("never suggest registering, becoming a buyer or seller"));
+  assert.ok(src.includes("ROLE WORDS:"));
+  assert.ok(!src.includes("LANGUAGE: answer in the language the customer writes in"));
+});

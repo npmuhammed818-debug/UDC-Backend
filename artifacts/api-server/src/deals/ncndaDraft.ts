@@ -1,3 +1,4 @@
+import { withUdcWarning } from "./draftWarning.ts";
 function line(value: string | null | undefined, fallback: string) {
   return value?.replace(/[\r\n\t]+/g, " ").trim() || fallback;
 }
@@ -5,7 +6,7 @@ function line(value: string | null | undefined, fallback: string) {
 export function createNcndaDraft(input: {
   dealNumber: string; date: string; buyerName?: string | null; sellerName?: string | null;
 }) {
-  return [
+  return withUdcWarning([
     "NON-CIRCUMVENTION AND NON-DISCLOSURE — DISCUSSION DRAFT",
     `UDC deal reference: ${line(input.dealNumber, "[DEAL REFERENCE]")}`,
     `Prepared: ${line(input.date, "[DATE]")}`,
@@ -35,5 +36,5 @@ export function createNcndaDraft(input: {
     "6. Authority and execution",
     "Each party must verify legal identity and signatory authority. Changes and signatures: [COMPLETE AFTER REVIEW].",
     "No sale, supply, banking instrument, inspection booking, verification approval or transfer of funds is authorized by this draft.",
-  ].join("\n");
+  ].join("\n"));
 }

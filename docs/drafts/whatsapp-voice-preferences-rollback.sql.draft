@@ -1,0 +1,4 @@
+-- DRAFT ONLY. Drops the voice preference table; users then get text-only replies until it is recreated.
+BEGIN;
+DROP TABLE IF EXISTS public.whatsapp_voice_preferences;
+COMMIT;

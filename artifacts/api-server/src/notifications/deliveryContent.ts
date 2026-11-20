@@ -8,6 +8,7 @@ const texts: Record<string, string> = {
   cargo_unit_status_updated: 'A cargo status or estimated arrival was updated for your UDC deal.',
   shipment_eta_updated: 'An estimated arrival was updated. This is an estimate, not confirmation of arrival.',
   shipment_eta_followup: 'A recorded shipment estimate or report needs confirmation. This is not proof of delay or arrival.',
+  shipment_watch_update: 'A shipment update was reported by the carrier for a tracking number you asked UDC to watch. UDC has not verified this update.',
   document_reviewed: 'A document review status was updated for your UDC deal.',
   deal_issue_recorded: 'An issue was recorded for review on your UDC deal.',
   payment_status_updated: 'A financial instrument record was updated for your UDC deal. This is not authorization or confirmation of payment.',
@@ -26,7 +27,8 @@ export function notificationText(type: string, role: string): string | null {
   }
   if (!Object.hasOwn(texts, type) || !['buyer', 'seller', 'agent'].includes(role)) return null;
   if (role === 'agent') {
-    if (!type.startsWith('shipment_') && type !== 'cargo_unit_status_updated') return null;
+    if (type !== 'shipment_watch_update' && !type.startsWith('shipment_') && type !== 'cargo_unit_status_updated') return null;
+    if (type === 'shipment_watch_update') return texts[type] + ' Open My deals in WhatsApp to review your authorized information.';
     return 'A shipment update was recorded for an assigned UDC deal. Open My deals → Track shipment. No arrival, inspection or payment approval is implied.';
   }
   return texts[type] + ' Open My deals in WhatsApp to review your authorized information.';

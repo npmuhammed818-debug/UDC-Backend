@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 const url = new URL(process.env.UDC_DELIVERY_QA_DATABASE_URL ?? 'http://missing.invalid');
 assert.ok(['postgres:', 'postgresql:'].includes(url.protocol));
-assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.port, '5432');
+assert.equal(url.hostname, '127.0.0.1'); assert.ok(['5432','55433'].includes(url.port), 'dedicated local QA PostgreSQL only');
 assert.match(url.pathname, /^\/udc_qa_delivery_[a-z0-9_]+$/);
 assert.deepEqual([...url.searchParams.keys()], ['sslmode']); assert.equal(url.searchParams.get('sslmode'), 'disable');
 for (const key of Object.keys(process.env)) if (/^(SUPABASE_|WHATSAPP_|UDC_|AKIF_|NVIDIA_|OPENAI_|HERMES_|SESSION_SECRET)/.test(key)) delete process.env[key];
@@ -47,7 +47,7 @@ try {
     import express from 'express'; import cookieParser from 'cookie-parser';
     import admin from './src/routes/admin'; import webhook from './src/routes/whatsappWebhook';
     import {loadAuth} from './src/auth/middleware';
-    export {pool,db} from '@workspace/db'; export {createSession} from './src/auth/sessions';
+    export {pool,db} from '@workspace/db';export {runShipmentWatchPoll} from './src/tracking/shipmentWatch'; export {createSession} from './src/auth/sessions';
     export {dispatchShipmentNotifications} from './src/notifications/shipmentDispatcher';
     export {enqueueShipmentWhatsApp} from './src/notifications/shipmentOutbox';export {replayVerificationWhatsAppNotifications,replayDealStatusWhatsAppNotification,replayDealSummaryWhatsAppNotification} from './src/whatsapp/replayVerificationNotifications';
     export {recordSignedCustomerInbound} from './src/whatsapp/customerServiceWindow';
@@ -57,7 +57,7 @@ try {
     const app=express();app.use(express.json({verify(req,res,buffer){req.rawBody=buffer;}}));app.use(cookieParser());
     app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(loadAuth);app.use(admin);app.use(webhook);export default app;
   `, resolveDir: fileURLToPath(new URL('../../', import.meta.url)) }, outfile: directory + '/app.mjs', bundle: true,
-    platform: 'node', format: 'esm', external: ['pg-native'], logLevel: 'silent',
+    platform: 'node', format: 'esm', external: ['pg-native', '@resvg/resvg-js'], logLevel: 'silent',
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" } });
   mod = await import(directory + '/app.mjs'); pool = mod.pool;
   for (const name of ['20261024_whatsapp_shipment_outbox.sql', '20261024_whatsapp_shipment_receipts.sql', '20261024_whatsapp_customer_windows.sql'])
@@ -83,6 +83,30 @@ try {
   const deal = (await pool.query("INSERT INTO deals(buyer_user_id,seller_user_id,product_id,quantity,unit,agreed_price) VALUES($1,$2,$3,1,'MT',1) RETURNING id", [buyer.id, seller.id, product])).rows[0].id;
   await pool.query("INSERT INTO deal_participants(deal_id,user_id,participant_role,status) VALUES($1,$2,'agent','active')", [deal, agent.id]);
   const shipment = (await pool.query('INSERT INTO shipments(deal_id) VALUES($1) RETURNING id', [deal])).rows[0].id;
+  const watchId=(await pool.query("insert into shipment_watches(user_id,deal_id,tracking_number) values($1,$2,'SYNTHETICWATCH123') returning id",[buyer.id,deal])).rows[0].id;
+  let carrierCalls=0;const fakeCarrier={name:'synthetic-only',async fetchEvents(){carrierCalls++;await new Promise(resolve=>setTimeout(resolve,60));return [{time:'2026-11-05T10:00:00Z',description:'Departed origin port'}];}};
+  const watchNow=new Date('2026-11-05T22:00:00Z');
+  const parallelWatch=await Promise.all([mod.runShipmentWatchPoll({tracker:fakeCarrier,now:watchNow}),mod.runShipmentWatchPoll({tracker:fakeCarrier,now:watchNow})]);
+  assert.equal(carrierCalls,1,'concurrent due-watch polling calls carrier once');assert.equal(parallelWatch.reduce((n,r)=>n+r.notified,0),1,'one watch change notification');
+  assert.equal((await pool.query("select count(*)::int n from audit_logs where action='shipment_watch_update_created' and entity_id=$1",[watchId])).rows[0].n,1);
+  const watchNotices=(await pool.query("select id from notifications where user_id=$1 and type='shipment_watch_update'",[buyer.id])).rows.map(r=>r.id);assert.equal(watchNotices.length,1);
+  assert.equal((await pool.query('select count(*)::int n from whatsapp_shipment_outbox where notification_id=any($1::uuid[])',[watchNotices])).rows[0].n,1);
+  for(const events of [[{time:'2026-11-05T11:00:00Z',description:'Delivered to sender'}],[{time:'2026-11-05T11:00:00Z',description:'Left message for recipient'}],[{time:'2026-11-04T09:00:00Z',description:'Delivered'}],[{time:'2026-02-30T12:00:00Z',description:'Delivered'}],[{time:'2099-01-01T12:00:00Z',description:'Delivered'}],[{time:'2026-11-05T09:00:00Z',description:'Delivered'},{time:'2026-11-05T11:00:00Z',description:'Label created'}],[{time:'2026-11-05T09:00:00Z',description:'Delivered'},{time:'2026-11-05T09:00:00Z',description:'Customs hold'}]]){
+    await pool.query('update shipment_watches set last_polled_at=null where id=$1',[watchId]);
+    const r=await mod.runShipmentWatchPoll({tracker:{name:'synthetic-invalid-feed',async fetchEvents(){return events;}},now:watchNow});assert.equal(r.notified,0,'invalid, future, stale array order or equal-time conflict cannot queue delivery');
+    assert.equal((await pool.query("select count(*)::int n from audit_logs where action='shipment_watch_update_created' and entity_id=$1",[watchId])).rows[0].n,1,'rejected feed creates no false delivery audit');
+    assert.equal((await pool.query('select count(*)::int n from whatsapp_shipment_outbox where notification_id=any($1::uuid[])',[watchNotices])).rows[0].n,1,'rejected feed creates no extra outbox entry');
+    assert.equal((await pool.query("select count(*)::int n from notifications where user_id=$1 and type='shipment_watch_update'",[buyer.id])).rows[0].n,1);
+  }
+  let failedCarrierCalls=0;const brokenCarrier={name:'synthetic-error',async fetchEvents(){failedCarrierCalls++;throw Error('synthetic bounded provider failure');}};
+  await pool.query('update shipment_watches set last_polled_at=null where id=$1',[watchId]);
+  const failedWatch=await mod.runShipmentWatchPoll({tracker:brokenCarrier,now:watchNow});assert.equal(failedWatch.failed,1);
+  assert.equal((await mod.runShipmentWatchPoll({tracker:brokenCarrier,now:new Date(watchNow.getTime()+60000)})).polled,0);assert.equal(failedCarrierCalls,1,'provider failure respects the same quota cadence');
+  await pool.query('update shipment_watches set last_polled_at=null where id=$1',[watchId]);const disabledWriter=await pool.connect();
+  try{await disabledWriter.query('begin');await disabledWriter.query('update shipment_watches set active=false where id=$1',[watchId]);const beforeCarrier=carrierCalls;await mod.runShipmentWatchPoll({tracker:fakeCarrier,now:watchNow});assert.equal(carrierCalls,beforeCarrier,'pending watch disable is skipped before provider access');await disabledWriter.query('commit');assert.equal((await mod.runShipmentWatchPoll({tracker:fakeCarrier,now:watchNow})).polled,0);}
+  finally{await disabledWriter.query('rollback');disabledWriter.release();}
+  await pool.query('delete from whatsapp_shipment_outbox where notification_id=any($1::uuid[])',[watchNotices]);await pool.query('delete from notifications where id=any($1::uuid[])',[watchNotices]);await pool.query('delete from shipment_watches where id=$1',[watchId]);
+  pass('concurrent due watch checks use one synthetic carrier call and atomically create one notice/outbox/audit');
   async function queue(recipient, type = 'shipment_milestone') {
     const id = (await pool.query("INSERT INTO notifications(user_id,type,title,body) VALUES($1,$2,'Fictional','BANK-SECRET PASSPORT-SECRET https://private.invalid 99999') RETURNING id", [recipient.id, type])).rows[0].id;
     assert.equal(await mod.enqueueShipmentWhatsApp(mod.db, { notificationId: id, recipientUserId: recipient.id, dealId: deal }), true);

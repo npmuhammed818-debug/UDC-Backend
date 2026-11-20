@@ -1,11 +1,26 @@
 import { Router, type IRouter } from "express";
-import { pool } from "@workspace/db";
+import { requireRole } from "../auth/middleware.ts";
+import { makeWriteProbeHandler } from "./dbWriteProbe.ts";
+import { diagSnapshot } from "../whatsapp/webhookDiag.ts";
+import { pool, transactionPinnedRetry } from "@workspace/db";
 
 const router: IRouter = Router();
 
 router.get("/db/healthz", async (req, res) => {
   try {
-    await pool.query("SELECT 1");
+    // Sample a few pooled sessions: a session stuck read-only (25006 on writes) still answers SELECT 1.
+    // Each sample names its own session (recurring incident, 16-17 Nov): the
+    // role, backend pid and setting of a poisoned session go to the log.
+    // Role names only - no credentials or connection details reach the log.
+    const samples = await Promise.all([0, 1, 2].map(() => pool.query(
+      "select current_setting('transaction_read_only') as transaction_read_only, current_user as session_user, pg_backend_pid() as backend_pid, current_setting('default_transaction_read_only', true) as default_read_only",
+    )));
+    const poisoned = samples.find((result) => String(result.rows[0]?.transaction_read_only) === "on")?.rows[0];
+    if (poisoned) {
+      req.log.error({ databaseError: { code: "25006", poisonedSession: poisoned } }, "Database session is read-only");
+      res.status(503).json({ status: "error", database: "read_only" });
+      return;
+    }
     res.json({ status: "ok", database: "connected" });
   } catch (error) {
     const safeError = {
@@ -25,6 +40,21 @@ router.get("/db/healthz", async (req, res) => {
     );
     res.status(503).json({ status: "error", database: "unavailable" });
   }
+});
+
+// The write probe exercises the EXACT production retry path
+// (transactionPinnedRetry) but with terminator "rollback" so nothing persists.
+router.post("/admin/db-write-probe", requireRole("admin"), makeWriteProbeHandler({
+  connect: () => pool.connect(),
+  wrapRetry: (client, runOnce) => transactionPinnedRetry(client as never, runOnce, { terminator: "rollback", log: (line: string) => console.error(line) }),
+}) as never);
+
+// Passive webhook diagnostic readout (staging flag UDC_WHATSAPP_DIAG_RECEIPTS):
+// the in-memory ring survives a failing database, so the last diagnostic events
+// stay readable exactly when the persisted tables cannot be queried. Read-only;
+// classes, stages and error codes only - never message content or identifiers.
+router.get("/admin/whatsapp-diag", requireRole("admin"), (_req, res) => {
+  res.json(diagSnapshot());
 });
 
 export default router;

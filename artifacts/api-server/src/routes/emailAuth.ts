@@ -76,7 +76,7 @@ for (const purpose of ["email/verification", "password/recovery"] as const) {
           ? undefined
           : z.object({ email }).strict().parse(req.body);
         const result = verification
-          ? await emailAuth.requestVerification(req.authUser!.id)
+          ? (({ sent: _sent, ...rest }) => rest)(await emailAuth.requestVerification(req.authUser!.id))
           : await emailAuth.requestReset(input!.email);
         res.status(202).json({ ...requested, ...result });
       } catch (error) {
@@ -108,6 +108,7 @@ router.post("/auth/password/recovery/confirm", async (req, res) => {
       input.challengeId,
       input.code,
       input.password,
+      authRateLimitKey(req),
     );
     // No auto-login: all old sessions are revoked and the new password must be used.
     res.json({ success: true });

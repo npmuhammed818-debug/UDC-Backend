@@ -1,4 +1,5 @@
-import { eq } from "drizzle-orm";
+import {documentExtractionReview,parseDocumentExtractionObject} from './documentExtractionReview';
+import { and,eq,sql } from "drizzle-orm";
 import {
   db,
   dealIntelligenceSnapshotsTable,
@@ -8,16 +9,6 @@ import { extractDocumentBytes } from "./documentExtractorClient";
 import { getAkifDealContext } from "./intelligence/dealContext";
 import { isAkifWorkerMediaEnabled, transcribeAkifImage } from "./intelligence/workerClient";
 import { runConversationChat, runHermesMultimodal } from "./intelligence/hermesClient";
-
-function cleanJson(raw: string) {
-  const value = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  const start = value.indexOf("{");
-  const end = value.lastIndexOf("}");
-  return start >= 0 && end > start ? value.slice(start, end + 1) : null;
-}
 
 const extractionSchemaDescription = {
   documentType: "LOI, ICPO, FCO, SCO, SPA, NCNDA, SGS, BL, COA, CO, invoice, packing_list, banking, other",
@@ -51,6 +42,7 @@ const extractionSchemaDescription = {
   discrepanciesOrConflicts: "array of facts in this document that may conflict with known deal terms",
   otherTerms: "array of material terms not captured above",
   confidence: "number from 0 to 1",
+  items: "For price_list, product_photo or image only: array of {product, unitPrice, currency, unit}. Copy exact visible product text. unitPrice must be a positive plain decimal STRING with no separators or exponent, never a JSON number. currency must be an explicitly visible three-letter uppercase code; never infer a code from a symbol. unit must be explicitly visible MT, kg, tonne, piece, carton or container; do not convert, infer pack quantities or normalize ambiguous box/bag. Omit the whole row if any required value is absent or ambiguous. Never infer seller identity, availability, shipping, taxes, agreement, quotation or a match.",
 };
 
 async function extractChunkFacts(input: {
@@ -80,9 +72,7 @@ async function extractChunkFacts(input: {
   });
 
   const { content } = await runConversationChat(prompt, system, 60_000);
-  const json = cleanJson(content);
-  if (!json) throw new Error("document_ai_invalid_json");
-  return JSON.parse(json) as Record<string, unknown>;
+  return parseDocumentExtractionObject(content);
 }
 
 async function mergeChunkFacts(
@@ -109,9 +99,7 @@ async function mergeChunkFacts(
   });
 
   const { content } = await runConversationChat(prompt, system, 60_000);
-  const json = cleanJson(content);
-  if (!json) throw new Error("document_ai_merge_invalid_json");
-  return JSON.parse(json) as Record<string, unknown>;
+  return parseDocumentExtractionObject(content);
 }
 
 async function transcribeVisionPage(input: {
@@ -237,6 +225,7 @@ function snapshotSafeContext(context: NonNullable<Awaited<ReturnType<typeof getA
       fileName: extraction.fileName,
       pageCount: extraction.pageCount,
       structuredData: extraction.structuredData,
+      humanReview: extraction.humanReview,
       warnings: extraction.warnings,
       confidence: extraction.confidence,
       errorCode: extraction.errorCode,
@@ -282,7 +271,7 @@ export async function processDocumentIntelligence(input: {
   fileName: string;
   mimeType: string;
 }) {
-  await db.insert(documentExtractionsTable)
+  const [claim]=await db.insert(documentExtractionsTable)
     .values({
       documentId: input.documentId,
       dealId: input.dealId,
@@ -290,7 +279,7 @@ export async function processDocumentIntelligence(input: {
       extractor: "udc-open-source+qwen",
       mimeType: input.mimeType,
       fileName: input.fileName,
-      updatedAt: new Date(),
+      updatedAt: sql`clock_timestamp()`,
     })
     .onConflictDoUpdate({
       target: documentExtractionsTable.documentId,
@@ -299,10 +288,17 @@ export async function processDocumentIntelligence(input: {
         extractor: "udc-open-source+qwen",
         mimeType: input.mimeType,
         fileName: input.fileName,
+        fullText: null,
+        structuredData: null,
+        warnings: [],
+        confidence: null,
+        pageCount: null,
         errorCode: null,
-        updatedAt: new Date(),
+        updatedAt: sql`clock_timestamp()`,
       },
-    });
+    }).returning({revision:sql<string>`${documentExtractionsTable.updatedAt}::text`});
+  if(!claim)throw Error("document_extraction_claim_failed");
+  const owns=and(eq(documentExtractionsTable.documentId,input.documentId),eq(documentExtractionsTable.status,"processing"),sql`${documentExtractionsTable.updatedAt}::text=${claim.revision}`);
 
   try {
     const extraction = await extractDocumentBytes({
@@ -332,24 +328,19 @@ export async function processDocumentIntelligence(input: {
       knownDeal,
     });
 
-    const warnings = [...new Set([
+    const review = documentExtractionReview(vision.text,[
+      ...(['price_list','product_photo','image'].includes(input.documentType)?['photo_price_list_requires_human_review']:[]),
       ...(extraction.warnings ?? []),
       ...vision.warnings,
       ...aiWarnings,
-    ])];
-    const status = warnings.some((warning) =>
-      warning.includes("_failed")
-      || warning === "vision_fallback_limited_to_20_pages"
-      || warning === "structured_analysis_truncated_after_24_chunks"
-    )
-      ? "needs_review"
-      : "completed";
+    ]);
+    const {status,warnings}=review;
     const rawConfidence = structured["confidence"];
     const confidence = typeof rawConfidence === "number" && Number.isFinite(rawConfidence)
       ? String(Math.max(0, Math.min(1, rawConfidence)))
       : null;
 
-    await db.update(documentExtractionsTable)
+    const [saved]=await db.update(documentExtractionsTable)
       .set({
         status,
         extractor: `${extraction.extraction_method}+qwen`,
@@ -361,7 +352,8 @@ export async function processDocumentIntelligence(input: {
         errorCode: null,
         updatedAt: new Date(),
       })
-      .where(eq(documentExtractionsTable.documentId, input.documentId));
+      .where(owns).returning({id:documentExtractionsTable.id});
+    if(!saved)throw Error("document_extraction_superseded");
 
     await refreshDealIntelligenceSnapshot(input.dealId);
     return { status, structured, warnings, textLength: vision.text.length };
@@ -373,7 +365,7 @@ export async function processDocumentIntelligence(input: {
         errorCode,
         updatedAt: new Date(),
       })
-      .where(eq(documentExtractionsTable.documentId, input.documentId));
+      .where(owns);
 
     await refreshDealIntelligenceSnapshot(input.dealId).catch(() => undefined);
     throw error;

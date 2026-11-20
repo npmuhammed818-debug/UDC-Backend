@@ -34,7 +34,7 @@ test('real intake writers persist supplied terms and keep fixed payment policy a
       const state = globalThis[${JSON.stringify(key)}];
       const table = name => ({name, phone: name + '.phone'});
       export const usersTable = table('users'), productsTable = table('products'), buyerRequestsTable = table('buyer'), sellerListingsTable = table('seller');
-      export const db = {
+      export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const dbWrite=(run)=>run(db); export const db = {
         select: () => ({from: () => ({where: () => ({limit: async () => [{id:'product'}]})})}),
         insert: t => ({values: input => {
           state.writes.push({table:t.name, input});

@@ -1,8 +1,10 @@
 import { verifyAgentInvitation, agentReferralCode } from "../referrals/invitation";
+import { isTestWorldId, SYNTHETIC_EMAIL_SUFFIX } from "../testPrincipal.ts";
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod/v4";
-import { db } from "@workspace/db";
+import { db, dbTransaction } from "@workspace/db";
 import {
   auditLogsTable,
   companiesTable,
@@ -10,12 +12,8 @@ import {
   notificationPreferencesTable,
   usersTable,
 } from "@workspace/db";
-import {
-  authRateLimitKey,
-  clearAuthFailures,
-  isAuthRateLimited,
-  recordAuthFailure,
-} from "../auth/rateLimit";
+import { emailAuth } from "../auth/emailAuth";
+import { authRateLimitKey } from "../auth/rateLimit";
 import { hashPassword, verifyPassword } from "../auth/passwords";
 import { createSession, revokeSession, SESSION_COOKIE } from "../auth/sessions";
 import { requireAuth } from "../auth/middleware";
@@ -46,6 +44,14 @@ function setSessionCookie(res: Response, token: string, expiresAt: Date) {
   });
 }
 
+// One cached scrypt hash of a random value; unknown-email logins verify
+// against it so their timing matches a real wrong-password attempt.
+let cachedDummyHash: string | undefined;
+async function dummyPasswordHash() {
+  if (!cachedDummyHash) cachedDummyHash = await hashPassword(randomUUID());
+  return cachedDummyHash;
+}
+
 function validationResponse(res: Response, error: unknown) {
   if (error instanceof z.ZodError) {
     res.status(400).json({
@@ -62,13 +68,18 @@ function validationResponse(res: Response, error: unknown) {
 
 router.post("/auth/register", async (req, res) => {
   const rateKey = authRateLimitKey(req);
-  if (isAuthRateLimited(rateKey)) {
+  if (!(await emailAuth.webAuthBudgetAllowed(rateKey, "register"))) {
     res.status(429).json({ error: "too_many_auth_attempts" });
     return;
   }
 
   try {
     const input = registrationSchema.parse(req.body);
+    // The reserved synthetic-fixture domain is never registerable, in any environment.
+    if (input.email.toLowerCase().endsWith(SYNTHETIC_EMAIL_SUFFIX)) {
+      res.status(400).json({ error: "reserved_email_domain" });
+      return;
+    }
     const [existing] = await db
       .select({ id: usersTable.id })
       .from(usersTable)
@@ -85,11 +96,12 @@ router.post("/auth/register", async (req, res) => {
       const id = verifyAgentInvitation(input.referral_token, process.env.WHATSAPP_APP_SECRET ?? "");
       const [agent] = id ? await db.select({ id: usersTable.id }).from(usersTable)
         .where(and(eq(usersTable.id, id), eq(usersTable.role, "agent"), eq(usersTable.status, "verified"))).limit(1) : [];
-      if (!agent || input.role === "agent") { res.status(400).json({ error: "invalid_referral_invitation" }); return; }
+      // A new registrant is always real-world, so a test-world agent can never refer one.
+      if (!agent || input.role === "agent" || isTestWorldId(agent.id)) { res.status(400).json({ error: "invalid_referral_invitation" }); return; }
       referringAgentId = agent.id;
     }
     const passwordHash = await hashPassword(input.password);
-    const user = await db.transaction(async (tx) => {
+    const user = await dbTransaction(async (tx) => {
       const [created] = await tx
         .insert(usersTable)
         .values({
@@ -161,7 +173,7 @@ router.post("/auth/register", async (req, res) => {
 
 router.post("/auth/login", async (req, res) => {
   const rateKey = authRateLimitKey(req);
-  if (isAuthRateLimited(rateKey)) {
+  if (!(await emailAuth.webAuthBudgetAllowed(rateKey, "login"))) {
     res.status(429).json({ error: "too_many_auth_attempts" });
     return;
   }
@@ -170,18 +182,36 @@ router.post("/auth/login", async (req, res) => {
     const input = loginSchema.parse(req.body);
     // Serialize password proof/session creation with password reset. Otherwise a
     // login verified against an old hash could create a session after revocation.
-    const result = await db.transaction(async tx => {
+    const result = await dbTransaction(async tx => {
       const [user] = await tx.select().from(usersTable)
         .where(sql`lower(${usersTable.email}) = ${input.email}`).limit(1).for("update");
-      if (!user || !(await verifyPassword(input.password, user.passwordHash))) return { kind: "invalid" as const };
+      // Unknown email: run the same password work against a dummy hash so the
+      // response timing does not reveal which emails have accounts. No budget
+      // row is written for emails that do not exist.
+      if (!user) {
+        await verifyPassword(input.password, await dummyPasswordHash());
+        return { kind: "invalid" as const };
+      }
+      // Per-account budget: charged atomically inside the account row lock
+      // BEFORE verification, so parallel wrong guesses cannot slip past the cap.
+      // Even when the cap is already burned, verify once: the owner-approved
+      // recovery rule lets the correct password in, while wrong ones stay 429
+      // and are not charged beyond the cap.
+      const withinBudget = await emailAuth.chargePasswordLoginAttempt(tx, input.email, rateKey);
+      if (!(await verifyPassword(input.password, user.passwordHash)))
+        return withinBudget ? { kind: "invalid" as const } : { kind: "limited" as const };
       if (["suspended", "rejected"].includes(user.status)) return { kind: "blocked" as const };
       // Successful password proof safely identifies legacy password accounts;
       // random WhatsApp-only hashes are never inferred to be recovery credentials.
       await tx.update(usersTable).set({ passwordRecoveryEnabled: true }).where(eq(usersTable.id,user.id));
+      await emailAuth.clearPasswordLoginBudget(input.email, rateKey, tx);
       return { kind: "authenticated" as const, userId: user.id, ...await createSession(user.id,tx) };
     });
+    if (result.kind === "limited") {
+      res.status(429).json({ error: "too_many_auth_attempts" });
+      return;
+    }
     if (result.kind === "invalid") {
-      recordAuthFailure(rateKey);
       res.status(401).json({ error: "invalid_email_or_password" });
       return;
     }
@@ -189,7 +219,6 @@ router.post("/auth/login", async (req, res) => {
       res.status(403).json({ error: "account_suspended" });
       return;
     }
-    clearAuthFailures(rateKey);
     setSessionCookie(res, result.token, result.expiresAt);
     res.json({ user: await getSafeUserProfile(result.userId) });
   } catch (error) {

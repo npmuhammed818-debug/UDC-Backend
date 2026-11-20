@@ -109,3 +109,45 @@ def test_vision_configuration_never_guesses_a_paid_provider(monkeypatch):
     monkeypatch.setenv("AKIF_VISION_MODEL", "groq/qwen/qwen3.8-27b")
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     assert media.vision_status()["reason"] == "groq_not_configured"
+
+
+class _R:
+    def __init__(self, body): self.body = body
+    def read(self): return self.body
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def test_stt_is_groq_only_even_with_elevenlabs_key_present(monkeypatch):
+    # Owner direction, 14 Nov: ElevenLabs is out of the STT chain entirely, so a leftover
+    # ELEVENLABS_API_KEY in the environment must never be called.
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    monkeypatch.setattr(media, "_transcribe_groq", lambda d, m: {"text": "hello", "language": None})
+    out = media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
+    assert out["text"] == "hello" and out["provider"] == "groq"
+    assert not hasattr(media, "_transcribe_elevenlabs")
+
+
+def test_stt_groq_failure_is_loud_and_never_invents_text(monkeypatch, capsys):
+    monkeypatch.setenv("GROQ_API_KEY", "g")
+    def boom(d, m): raise ValueError("empty_transcript")
+    monkeypatch.setattr(media, "_transcribe_groq", boom)
+    with pytest.raises(HTTPException) as error:
+        media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
+    assert error.value.status_code == 502
+    assert "AKIF STT ALERT" in capsys.readouterr().out
+    monkeypatch.setattr(media, "_transcribe_groq", lambda d, m: (_ for _ in ()).throw(ValueError("empty_transcript")))
+    with pytest.raises(HTTPException) as e:
+        media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
+    assert e.value.status_code == 502 and e.value.detail == "audio_transcription_failed"
+    logged = capsys.readouterr().out
+    assert "SECRETKEY" not in logged and "OggS" not in logged
+
+
+def test_empty_groq_transcript_is_a_failure(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setattr(media, "_transcribe_groq", lambda d, m: (_ for _ in ()).throw(ValueError("empty_transcript")))
+    with pytest.raises(HTTPException) as e:
+        media.transcribe_audio(b"OggS....", "voice", "audio/ogg")
+    assert e.value.status_code == 502

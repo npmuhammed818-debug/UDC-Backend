@@ -25,7 +25,7 @@ router.get("/admin/incidents", requireRole("admin"), async (_req, res) => {
   const notices = rows.length ? await db.select().from(auditLogsTable).where(and(eq(auditLogsTable.action, "incident_users_notified"), inArray(sql`${auditLogsTable.metadata}->>'incidentId'`, rows.map((r) => r.id)))) : [];
   const notified = new Map<string, number>();
   for (const n of notices) notified.set(String(n.metadata?.["incidentId"]), (notified.get(String(n.metadata?.["incidentId"])) ?? 0) + Number(n.metadata?.["count"] ?? 0));
-  res.set("Cache-Control", "no-store").json({ incidents: rows.map((r) => ({ id: r.id, loggedAt: r.createdAt, title: r.metadata?.["title"], severity: r.metadata?.["severity"], dataCategories: r.metadata?.["dataCategories"], affectedCount: (r.metadata?.["affectedUserIds"] as string[] | undefined)?.length ?? 0, notifiedCount: notified.get(r.id) ?? 0 })) });
+  res.set("Cache-Control", "no-store").json({ incidents: rows.map((r) => ({ id: r.id, loggedAt: r.createdAt, title: r.metadata?.["title"], severity: r.metadata?.["severity"], dataCategories: r.metadata?.["dataCategories"], affectedUserIds: (r.metadata?.["affectedUserIds"] as string[] | undefined) ?? [], affectedCount: (r.metadata?.["affectedUserIds"] as string[] | undefined)?.length ?? 0, notifiedCount: notified.get(r.id) ?? 0 })) });
 });
 
 // Queues an in-app notice for every affected user. WhatsApp and email are NOT sent here:

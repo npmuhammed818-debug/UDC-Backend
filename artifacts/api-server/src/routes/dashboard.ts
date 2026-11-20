@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import { buyerRequestsTable, db, dealParticipantsTable, dealsTable, notificationsTable, sellerListingsTable } from "@workspace/db";
+import { and, eq, isNull, sql } from "drizzle-orm";
+import { buyerRequestsTable, db, dealsTable, notificationsTable, sellerListingsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { dealAccess } from "../deals/access";
 
 const router: IRouter = Router();
 
@@ -13,15 +14,11 @@ router.get("/dashboard", requireAuth, async (req, res) => {
         .where(req.authUser!.role === "admin" ? sql`true` : eq(buyerRequestsTable.buyerUserId, userId)),
       db.select({ status: sellerListingsTable.status }).from(sellerListingsTable)
         .where(req.authUser!.role === "admin" ? sql`true` : eq(sellerListingsTable.sellerUserId, userId)),
+      // Same rule as the deal routes: principal identity plus, only while the
+      // account is an agent, active agent assignments. A historical assignment
+      // must not keep counting another deal after a role change.
       db.select({ status: dealsTable.status }).from(dealsTable)
-        .where(req.authUser!.role === "admin" ? sql`true` : or(
-          eq(dealsTable.buyerUserId, userId), eq(dealsTable.sellerUserId, userId),
-          inArray(dealsTable.id, db.select({ dealId: dealParticipantsTable.dealId })
-            .from(dealParticipantsTable).where(and(
-              eq(dealParticipantsTable.userId, userId),
-              eq(dealParticipantsTable.status, "active"),
-            ))),
-        )),
+        .where(dealAccess(userId, req.authUser!.role)),
       db.select({ id: notificationsTable.id }).from(notificationsTable)
         .where(and(eq(notificationsTable.userId, userId), isNull(notificationsTable.readAt))),
     ]);

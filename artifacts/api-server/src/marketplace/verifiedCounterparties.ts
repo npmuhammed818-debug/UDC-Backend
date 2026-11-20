@@ -5,12 +5,39 @@ import {
   companiesTable,
   companyVerificationDocumentsTable,
 } from "@workspace/db";
+import { isTestWorldEnabled, isTestPrincipal, isTestWorldId } from "../testPrincipal.ts";
+import { testWorldCounterpartyRowsOk, testWorldPair } from "../testBoundary.ts";
+import { provenFixtureIds } from "../fixtureEligibility.ts";
 
 export async function verifiedCounterparties(
   buyerId: string,
   sellerId: string,
   executor: Pick<typeof db, "select"> = db,
 ) {
+  const pair = testWorldPair(buyerId, sellerId);
+  if (pair === false) {
+    // Mixed pair (one real account, one test-world account): never verified
+    // counterparties, in either direction.
+    return false;
+  }
+  if (pair === true) {
+    // Test-world pairs trade only inside the test world, and without company
+    // evidence: the owner test account and its fixtures are documentless on
+    // purpose. Verified status, roles and full principal identity still apply,
+    // and fixture eligibility needs the DB-backed proof (shape + provenance),
+    // never the env registry alone.
+    const testUsers = await executor
+      .select()
+      .from(usersTable)
+      .where(
+        and(
+          inArray(usersTable.id, [buyerId, sellerId]),
+          eq(usersTable.status, "verified"),
+        ),
+      );
+    const proven = await provenFixtureIds([buyerId, sellerId], executor);
+    return testWorldCounterpartyRowsOk(testUsers, buyerId, sellerId, proven);
+  }
   const users = await executor
     .select()
     .from(usersTable)
@@ -29,9 +56,11 @@ export async function verifiedCounterparties(
   return true;
 }
 
-export async function approvedCompanyEvidence(userId:string,executor:Pick<typeof db,'select'>=db){
-  const companies=await executor.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.ownerUserId,userId),eq(companiesTable.verificationStatus,'verified')));
+export async function approvedCompanyEvidence(userId:string,executor:Pick<typeof db,'select'>=db,companyId?:string,lockEvidence=false){
+  const companyQuery=executor.select({id:companiesTable.id}).from(companiesTable).where(and(eq(companiesTable.ownerUserId,userId),eq(companiesTable.verificationStatus,'verified'),...(companyId?[eq(companiesTable.id,companyId)]:[])));
+  const companies=await (lockEvidence?companyQuery.for('share'):companyQuery);
   if(!companies.length)return false;
-  const [evidence]=await executor.select({id:companyVerificationDocumentsTable.id}).from(companyVerificationDocumentsTable).where(and(inArray(companyVerificationDocumentsTable.companyId,companies.map(c=>c.id)),eq(companyVerificationDocumentsTable.status,'approved'))).limit(1);
+  const evidenceQuery=executor.select({id:companyVerificationDocumentsTable.id}).from(companyVerificationDocumentsTable).where(and(inArray(companyVerificationDocumentsTable.companyId,companies.map(c=>c.id)),eq(companyVerificationDocumentsTable.status,'approved'))).limit(1);
+  const [evidence]=await (lockEvidence?evidenceQuery.for('share'):evidenceQuery);
   return Boolean(evidence);
 }

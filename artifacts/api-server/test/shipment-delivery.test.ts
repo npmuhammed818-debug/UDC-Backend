@@ -20,6 +20,10 @@ test('notification content is allowlisted, role-aware and excludes arbitrary in-
   assert.equal(notificationText('bank_credentials', 'buyer'), null);
   assert.equal(notificationText('document_reviewed', 'agent'), null);
   assert.equal(notificationText('deal_status_updated', 'outsider'), null);
+  assert.match(notificationText('shipment_watch_update', 'buyer')!, /tracking number you asked UDC to watch/);
+  assert.match(notificationText('shipment_watch_update', 'agent')!, /tracking number you asked UDC to watch/);
+  assert.match(notificationText('shipment_watch_update', 'buyer')!, /UDC has not verified/);
+  assert.equal(notificationText('shipment_watch_update', 'outsider'), null);
   assert.match(notificationText('shipment_eta_updated', 'seller')!, /estimate, not confirmation/);
   assert.match(notificationText('shipment_milestone', 'agent')!, /assigned UDC deal/);
 });

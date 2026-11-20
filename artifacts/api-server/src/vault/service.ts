@@ -6,8 +6,8 @@ import {
 } from "@workspace/db";
 import { uploadDocumentBytes } from "../supabase/storage";
 import {
-  type VaultDocumentType, checkUploadLink, hashLinkToken, issueUploadLinkToken, vaultPublicOrigin,
-  publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath,
+  checkUploadLink, hashLinkToken, issueUploadLinkToken, isVaultDocumentType, parseMultiDocumentType,
+  vaultPublicOrigin, publicDocumentStatus, sniffUpload, uploadPageUrl, vaultObjectPath,
 } from "./uploadLink";
 
 const NO_VAULT_ROLES = new Set(["agent"]);
@@ -25,11 +25,12 @@ async function companyOf(userId: string) {
 
 export type CreateLinkResult =
   | { ok: true; url: string; expiresAt: Date }
-  | { ok: false; error: "role_not_allowed" | "company_required" | "too_many_active_links" | "vault_base_url_not_configured" };
+  | { ok: false; error: "role_not_allowed" | "company_required" | "too_many_active_links" | "vault_base_url_not_configured" | "invalid_document_type" };
 
 // Used by the authenticated API and, later, by AKIF for the signed-in WhatsApp user.
-export async function createVaultUploadLink(user: { id: string; role: string }, documentType: VaultDocumentType): Promise<CreateLinkResult> {
+export async function createVaultUploadLink(user: { id: string; role: string }, documentType: string): Promise<CreateLinkResult> {
   if (NO_VAULT_ROLES.has(user.role)) return { ok: false, error: "role_not_allowed" };
+  if (!isVaultDocumentType(documentType) && !parseMultiDocumentType(documentType)) return { ok: false, error: "invalid_document_type" };
   const base = process.env["VAULT_PUBLIC_BASE_URL"];
   if (!base || !vaultPublicOrigin(base)) return { ok: false, error: "vault_base_url_not_configured" };
   const company = await companyOf(user.id);
@@ -55,30 +56,69 @@ export async function lookupLink(token: string) {
 
 export type UploadResult =
   | { ok: true; documentId: string }
-  | { ok: false; error: "invalid" | "expired" | "used" | "revoked" | "unsupported_file" | "upload_failed" };
+  | { ok: false; error: "invalid" | "expired" | "used" | "revoked" | "unsupported_file" | "upload_failed" | "already_uploaded" };
 
-export async function acceptUpload(token: string, bytes: unknown): Promise<UploadResult> {
+export async function acceptUpload(token: string, bytes: unknown, documentKey?: string): Promise<UploadResult> {
   const { row, check } = await lookupLink(token);
   if (!check.ok) return { ok: false, error: check.reason };
   const kind = sniffUpload(bytes);
   if (!kind) return { ok: false, error: "unsupported_file" };
+  const multiKeys = parseMultiDocumentType(row!.documentType);
+  // A multi link stays open until every expected document has arrived (or it
+  // expires); each upload names its document with ?doc=<key>.
+  if (multiKeys) {
+    const key = typeof documentKey === "string" ? documentKey : "";
+    if (!multiKeys.includes(key)) return { ok: false, error: "invalid" };
+    const already = await db.select({ id: companyVerificationDocumentsTable.id }).from(companyVerificationDocumentsTable)
+      .where(and(eq(companyVerificationDocumentsTable.companyId, row!.companyId),
+        eq(companyVerificationDocumentsTable.documentType, key),
+        gt(companyVerificationDocumentsTable.createdAt, row!.createdAt))).limit(1);
+    if (already.length) return { ok: false, error: "already_uploaded" };
+    return storeUpload(row!, key, kind, bytes, {
+      onSuccess: async () => {
+        const uploaded = await db.select({ documentType: companyVerificationDocumentsTable.documentType })
+          .from(companyVerificationDocumentsTable)
+          .where(and(eq(companyVerificationDocumentsTable.companyId, row!.companyId),
+            gt(companyVerificationDocumentsTable.createdAt, row!.createdAt)));
+        const uploadedTypes = new Set(uploaded.map((d) => d.documentType));
+        if (multiKeys.every((k) => uploadedTypes.has(k))) {
+          await db.update(vaultUploadLinksTable).set({ usedAt: new Date() }).where(eq(vaultUploadLinksTable.id, row!.id));
+        }
+      },
+    });
+  }
   // Atomic single-use claim: only one concurrent request can win.
   const claimed = await db.update(vaultUploadLinksTable).set({ usedAt: new Date() }).where(and(
     eq(vaultUploadLinksTable.id, row!.id), isNull(vaultUploadLinksTable.usedAt),
     isNull(vaultUploadLinksTable.revokedAt), gt(vaultUploadLinksTable.expiresAt, new Date()))).returning({ id: vaultUploadLinksTable.id });
   if (claimed.length !== 1) return { ok: false, error: "used" };
+  return storeUpload(row!, row!.documentType, kind, bytes, {
+    onFailure: async () => {
+      // Release the link so the user can retry within the original window.
+      await db.update(vaultUploadLinksTable).set({ usedAt: null }).where(eq(vaultUploadLinksTable.id, row!.id));
+    },
+  });
+}
+
+type VaultLinkRow = NonNullable<Awaited<ReturnType<typeof lookupLink>>["row"]>;
+type SniffedKind = NonNullable<ReturnType<typeof sniffUpload>>;
+
+async function storeUpload(
+  row: VaultLinkRow, documentType: string, kind: SniffedKind, bytes: unknown,
+  hooks: { onSuccess?: () => Promise<void>; onFailure?: () => Promise<void> } = {},
+): Promise<UploadResult> {
   try {
-    const fileUrl = await uploadDocumentBytes(vaultObjectPath(row!.companyId, randomUUID(), kind), bytes as Buffer, kind.contentType);
+    const fileUrl = await uploadDocumentBytes(vaultObjectPath(row.companyId, randomUUID(), kind), bytes as Buffer, kind.contentType);
     const [doc] = await db.insert(companyVerificationDocumentsTable).values({
-      companyId: row!.companyId, uploadedBy: row!.userId, documentType: row!.documentType, fileUrl, status: "pending",
+      companyId: row.companyId, uploadedBy: row.userId, documentType, fileUrl, status: "pending",
     }).returning({ id: companyVerificationDocumentsTable.id });
-    await logVaultAccess(row!.userId, "owner", "document_uploaded", doc.id);
-    await db.insert(auditLogsTable).values({ actorUserId: row!.userId, action: "vault_document_uploaded",
-      entityType: "company_verification_document", entityId: doc.id, metadata: { documentType: row!.documentType } });
+    await logVaultAccess(row.userId, "owner", "document_uploaded", doc.id);
+    await db.insert(auditLogsTable).values({ actorUserId: row.userId, action: "vault_document_uploaded",
+      entityType: "company_verification_document", entityId: doc.id, metadata: { documentType } });
+    await hooks.onSuccess?.();
     return { ok: true, documentId: doc.id };
   } catch {
-    // Release the link so the user can retry within the original window.
-    await db.update(vaultUploadLinksTable).set({ usedAt: null }).where(eq(vaultUploadLinksTable.id, row!.id));
+    await hooks.onFailure?.();
     return { ok: false, error: "upload_failed" };
   }
 }

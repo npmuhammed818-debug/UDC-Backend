@@ -1,3 +1,4 @@
+import {currentDocumentExtractions} from '../currentDocumentExtractions';
 import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   auditLogsTable,
@@ -9,7 +10,6 @@ import {
   dealFinancialsTable,
   dealParticipantsTable,
   dealsTable,
-  documentExtractionsTable,
   documentsTable,
   documentAccessTable,
   inspectionsTable,
@@ -39,6 +39,11 @@ export async function getAkifDealContext(dealId: string, viewerUserId?: string) 
     .limit(1);
 
   if (!deal) return null;
+  if(viewerUserId){
+    const [viewer]=await db.select({role:usersTable.role,status:usersTable.status}).from(usersTable).where(eq(usersTable.id,viewerUserId)).limit(1);
+    if(viewer?.status!=='verified'||!((viewer.role==='buyer'&&deal.buyerUserId===viewerUserId)||(viewer.role==='seller'&&deal.sellerUserId===viewerUserId)))return null;
+  }
+
 
   const [
     product,
@@ -68,7 +73,7 @@ export async function getAkifDealContext(dealId: string, viewerUserId?: string) 
     db.select(safeUserSelection).from(usersTable).where(eq(usersTable.id, deal.sellerUserId)).limit(1),
     db.select().from(dealParticipantsTable).where(eq(dealParticipantsTable.dealId, dealId)),
     db.select().from(documentsTable).where(eq(documentsTable.dealId, dealId)).orderBy(asc(documentsTable.createdAt)),
-    db.select().from(documentExtractionsTable).where(eq(documentExtractionsTable.dealId, dealId)).orderBy(asc(documentExtractionsTable.createdAt)),
+    currentDocumentExtractions(dealId),
     db.select().from(dealFinancialsTable).where(eq(dealFinancialsTable.dealId, dealId)).orderBy(asc(dealFinancialsTable.createdAt)),
     db.select().from(inspectionsTable).where(eq(inspectionsTable.dealId, dealId)).orderBy(asc(inspectionsTable.createdAt)),
     db.select().from(shipmentsTable).where(eq(shipmentsTable.dealId, dealId)).orderBy(asc(shipmentsTable.createdAt)),

@@ -28,8 +28,8 @@ try {
       contents: `import express from 'express';import cookieParser from 'cookie-parser';import auth from './src/routes/auth';import marketplace from './src/routes/marketplace';import deals from './src/routes/deals';import documents from './src/routes/documents';import referrals from './src/routes/referrals';import admin from './src/routes/admin';import commissions from './src/routes/commissions';import notifications from './src/routes/notifications';import {loadAuth} from './src/auth/middleware';export {pool,db} from '@workspace/db';export {hashPassword} from './src/auth/passwords';const app=express();app.set('trust proxy','loopback');app.use(express.json());app.use(cookieParser());app.use(loadAuth);app.use(auth);app.use(marketplace);app.use(deals);app.use(documents);app.use(referrals);app.use(admin);app.use(commissions);app.use(notifications);export default app;`,
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
-    plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
-    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
+    plugins: [{ name: "fake-storage", setup(b) { b.onResolve({ filter: /supabase\/storage$/ }, () => ({ path: "fs", namespace: "fake" })); b.onLoad({ filter: /.*/, namespace: "fake" }, () => ({ loader: "js", contents: "export async function removeDocumentObject(){};export async function uploadDocumentBytes(path){ return 'storage://udc-documents/'+path; } export async function createSignedDownloadUrl(path){ return 'https://signed.example.invalid/'+path; } export async function createSignedUploadUrl(path){ return 'https://signed.example.invalid/up/'+path; } export function storagePath(p){ return 'storage://udc-documents/'+p; } export function parseStoragePath(v){ const m=/^storage:\\/\\/udc-documents\\/(.+)$/.exec(v); return m?m[1]:null; } export async function downloadDocumentBytes(){ throw new Error('no network'); }" })); } }],
+    outfile: directory + "/app.mjs", bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
   const app = await import(directory + "/app.mjs");
@@ -101,7 +101,8 @@ try {
   assert.equal((await call("POST", `/admin/deals/${dealId}/agents`, { userId: agent.id, commissionSharePct: 50 }, admin.cookie)).status, 201);
   assert.equal((await call("GET", `/deals/${dealId}`, undefined, agent.cookie)).status, 403);
   const ad = await call("GET", "/agent/deals", undefined, agent.cookie);
-  assert.equal(ad.status, 200); assert.ok(!JSON.stringify(ad.body).includes("505"));
+  assert.equal(ad.status, 200);
+  for(const item of ad.body.deals) assert.deepEqual(Object.keys(item).sort(),["id","dealNumber","status","quantity","unit","currency","destination","updatedAt","progress","readOnly","referralChain"].sort(),"agent deal allowlist excludes prices and parties");
   const ref = await call("POST", "/admin/referrals", { agentUserId: agent.id, referredUserId: buyer.id, referralCode: "QA-REF-1" }, admin.cookie);
   assert.equal(ref.status, 201, JSON.stringify(ref.body));
   assert.equal(ref.body.referral.status, "pending");
@@ -129,8 +130,22 @@ try {
   assert.equal((await call("GET", `/deals/${dealId}/tracking`, undefined, stranger.cookie)).status, 404);
   assert.equal((await call("GET", `/deals/${dealId}/tracking`, undefined, seller.cookie)).status, 200);
   assert.equal((await call("PATCH", `/admin/shipments/${shId}`, { status: "in_transit" }, admin.cookie)).status, 200);
+  // Deliberately put the price digits inside a public random identifier. A raw
+  // JSON substring search can falsely call this a leak.
+  const safeIdentifier='50500000-0000-4000-8000-000000000001';
+  await pool.query("update shipment_tracking_events set id=$1 where id=(select id from shipment_tracking_events where shipment_id=$2 limit 1)",[safeIdentifier,shId]);
+  await pool.query("update shipments set notes='PRIVATE agreed price 505 USD',carrier='PRIVATE seller carrier' where id=$1",[shId]);
   const agentTr = await call("GET", `/deals/${dealId}/tracking`, undefined, agent.cookie);
-  assert.ok(!JSON.stringify(agentTr.body).includes("505"), "tracking shows the agent no price");
+  assert.equal(agentTr.status,200);
+  assert.deepEqual(Object.keys(agentTr.body).sort(),['deal','inspections','shipments','events','cargoUnits','sourceDisclosure'].sort());
+  const keys=(row,expected)=>assert.deepEqual(Object.keys(row).sort(),expected.sort(),'agent response field allowlist excludes private fields');
+  keys(agentTr.body.deal,['id','dealNumber','status']);
+  for(const row of agentTr.body.inspections)keys(row,['id','status','scheduledAt','updatedAt']);
+  for(const row of agentTr.body.shipments)keys(row,['id','status','estimatedArrival','updatedAt']);
+  for(const row of agentTr.body.events)keys(row,['id','shipmentId','kind','shipmentStatus','occurredAt','createdAt']);
+  for(const row of agentTr.body.cargoUnits)keys(row,['id','shipmentId','transportMode','status','estimatedArrival','etaAdvisory']);
+  assert.ok(agentTr.body.events.some(e=>e.id===safeIdentifier),'legitimate IDs may contain price digits');
+  assert.ok(!JSON.stringify(agentTr.body).includes('PRIVATE'),'free-form sensitive shipment values stay excluded');
   pass("shipment created, milestone replay-safe and conflict-checked, future/unsourced milestones refused, tracking visible to the deal's buyer and seller only, no price to the agent");
 
   // 6 commission recorded by admin for the agent; each user sees only their own

@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { auditLogsTable, dealParticipantsTable, dealsTable, db, notificationsTable, referralsTable, usersTable } from "@workspace/db";
 import { guidedChatPhoneHash } from "../whatsapp/phoneFingerprint";
+import { isTestWorldId } from "../testPrincipal.ts";
 import { agentReferralCode } from "./invitation";
 import { INVITE_QUESTION, invitedByGreeting, isInviteDecline, maskName, parseJoinCode, redactedStage } from "./joinInvite";
 
@@ -15,6 +16,9 @@ async function resolveAgent(exec: Exec, code: string) {
 }
 
 async function attribute(exec: Exec, user: { id: string; role: string }, agent: { id: string }, via: string) {
+  // Test-world isolation: a synthetic fixture is never attributed to a real agent,
+  // and the owner test account is never attributed as a real referral.
+  if (isTestWorldId(agent.id) !== isTestWorldId(user.id)) return false;
   const [existing] = await exec.select({ id: referralsTable.id }).from(referralsTable).where(eq(referralsTable.referredUserId, user.id)).limit(1);
   if (existing) return false;
   await exec.insert(referralsTable).values({ agentUserId: agent.id, referredUserId: user.id, referralCode: agentReferralCode(agent.id), status: "pending" });

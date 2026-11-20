@@ -9,14 +9,19 @@ import {
 } from "../src/akif/intelligence/impexqClient.ts";
 
 const originalFetch = globalThis.fetch;
+const originalNow = Date.now;
+let testNow = originalNow();
 const originalKey = process.env.IMPEXQ_API_KEY;
 const originalBase = process.env.IMPEXQ_SANDBOX_BASE_URL;
 beforeEach(() => {
+  testNow += 61_000;
+  Date.now = () => testNow;
   process.env.IMPEXQ_API_KEY = "sb_test_unit_test_only";
   delete process.env.IMPEXQ_SANDBOX_BASE_URL;
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  Date.now = originalNow;
   if (originalKey === undefined) delete process.env.IMPEXQ_API_KEY;
   else process.env.IMPEXQ_API_KEY = originalKey;
   if (originalBase === undefined) delete process.env.IMPEXQ_SANDBOX_BASE_URL;
@@ -129,3 +134,11 @@ test("FTA without explicit non-mock flag remains conservatively labelled mock", 
   globalThis.fetch = async () => Response.json({ _sandbox: true });
   assert.equal((await callImpexqFtaSandbox({ destination: "uae" })).mock, true);
 });
+
+ test("local budget stops ninth request without calling provider", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return Response.json({ _sandbox: true, _mock: true }); };
+  for (let i=0;i<8;i++) await callImpexqHsnSandbox({query:"rice"});
+  await assert.rejects(callImpexqHsnSandbox({query:"rice"}), /budget reached/);
+  assert.equal(calls,8);
+ });

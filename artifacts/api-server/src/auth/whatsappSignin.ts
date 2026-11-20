@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { eq, lt, sql } from 'drizzle-orm';
-import { db, auditLogsTable, usersTable, whatsappSigninChallengesTable as challenges } from '@workspace/db';
+import { dbWrite, dbTransaction, auditLogsTable, usersTable, whatsappSigninChallengesTable as challenges } from '@workspace/db';
 import { hashPassword } from './passwords';
 import { createSession } from './sessions';
 
@@ -12,12 +12,18 @@ export const parseSigninCommand = (text: string) => {
   return match ? { confirm: match[1].toUpperCase() === 'CONFIRM LOGIN', code: match[2].toUpperCase() } : null;
 };
 
-export async function requestWhatsAppSignin(role: WhatsAppRole, linkUserId?: string) {
+export async function requestWhatsAppSignin(role: WhatsAppRole, linkUserId?: string, originIp?: string) {
   const code = randomBytes(8).toString('hex').toUpperCase();
   const browserToken = randomBytes(32).toString('base64url');
-  const expiresAt = new Date(Date.now() + 5 * 60_000);
-  await db.delete(challenges).where(lt(challenges.expiresAt, new Date(Date.now() - 86_400_000)));
-  await db.insert(challenges).values({ codeHash: signinHash('code', code), browserTokenHash: signinHash('browser', browserToken), requestedRole: role, linkUserId, expiresAt });
+  // Owner-approved 2026-11-02: 2-minute code life so a phished code dies fast.
+  const expiresAt = new Date(Date.now() + 2 * 60_000);
+  // dbWrite for every write here: a poisoned read-only pooled session is
+  // evicted and retried once instead of failing the sign-in (16-18 Nov).
+  await dbWrite((wdb) => wdb.delete(challenges).where(lt(challenges.expiresAt, new Date(Date.now() - 86_400_000))));
+  const codeHash = signinHash('code', code);
+  await dbWrite((wdb) => wdb.insert(challenges).values({ codeHash, browserTokenHash: signinHash('browser', browserToken), requestedRole: role, linkUserId, expiresAt }));
+  // No schema change: the requester's normalized IP rides in the audit log metadata (owner-approved origin line).
+  await dbWrite((wdb) => wdb.insert(auditLogsTable).values({ actorUserId: linkUserId ?? null, action: 'whatsapp_web_signin_requested', entityType: 'whatsapp_signin', metadata: { challengeHash: codeHash, ip: originIp || 'unknown' }, createdAt: new Date() }));
   return { code, browserToken, expiresAt };
 }
 
@@ -25,7 +31,7 @@ export async function requestWhatsAppSignin(role: WhatsAppRole, linkUserId?: str
 export async function handleWhatsAppSignin(phone: string, text: string, fullName?: string) {
   const command = parseSigninCommand(text);
   if (!command) return null;
-  return db.transaction(async tx => {
+  return dbTransaction(async tx => {
     const codeHash = signinHash('code', command.code);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'whatsapp_signin:' + codeHash}))`);
     const [challenge] = await tx.select().from(challenges).where(eq(challenges.codeHash, codeHash)).limit(1);
@@ -35,7 +41,11 @@ export async function handleWhatsAppSignin(phone: string, text: string, fullName
     if (challenge.status === 'approved') return 'This request is already approved. Return to the browser where you started it.';
     if (!command.confirm) {
       await tx.update(challenges).set({phone, status:'confirmation'}).where(eq(challenges.id, challenge.id));
-      return `Approve web sign-in only if YOU started this request on the UDC website. Never approve a code sent by someone else.\n${challenge.linkUserId ? 'This will link your WhatsApp number to the web account where you started the request.' : `Existing WhatsApp accounts keep their role and verification status. A new account will be a pending ${challenge.requestedRole}.`}\nIf you started it, reply CONFIRM LOGIN ${command.code}. Otherwise ignore this request.`;
+      const requests = await tx.select().from(auditLogsTable).where(eq(auditLogsTable.action, 'whatsapp_web_signin_requested')).limit(200);
+      const origin = requests.filter(r => (r.metadata as Record<string, unknown> | null)?.challengeHash === codeHash).sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0];
+      const originIp = (origin?.metadata as Record<string, unknown> | undefined)?.ip || 'unknown';
+      const stamp = origin ? new Date(origin.createdAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : 'an unknown time';
+      return `Approve web sign-in only if YOU started this request on the UDC website. Never approve a code sent by someone else.\nThis request came from internet address ${originIp} at ${stamp}. The code expires in 2 minutes.\n${challenge.linkUserId ? 'This will link your WhatsApp number to the web account where you started the request.' : `Existing WhatsApp accounts keep their role and verification status. A new account will be a pending ${challenge.requestedRole}.`}\nIf you started it, reply CONFIRM LOGIN ${command.code}. Otherwise ignore this request.`;
     }
     if (challenge.status !== 'confirmation' || challenge.phone !== phone) return 'Send LOGIN followed by your code first, then read the confirmation warning.';
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'whatsapp_identity:' + phone}))`);
@@ -60,7 +70,7 @@ export async function handleWhatsAppSignin(phone: string, text: string, fullName
 }
 
 export async function pollWhatsAppSignin(browserToken: string, initiatingUserId?: string) {
-  return db.transaction(async tx => {
+  return dbTransaction(async tx => {
     const browserTokenHash = signinHash('browser', browserToken);
     // Same challenge lock as the WhatsApp approval; the second browser poll re-reads consumed state.
     const [lookup] = await tx.select({codeHash:challenges.codeHash}).from(challenges).where(eq(challenges.browserTokenHash,browserTokenHash)).limit(1);

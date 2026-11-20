@@ -3,6 +3,11 @@ import {and,desc,eq,sql} from "drizzle-orm";
 import {z} from "zod/v4";
 import {db,userRoleChangeRequestsTable,usersTable,auditLogsTable,notificationsTable} from "@workspace/db";
 import {requireRole,type AuthenticatedRequest} from "../auth/middleware";
+import {guidedChatPhoneHash} from "../whatsapp/phoneFingerprint";
+import {OWNER_TEST_USER_ID,isOwnerTestPrincipal,isTestWorldId,ownerTestSwitchEnabled,sameWorldIds,SYNTHETIC_EMAIL_SUFFIX} from "../testPrincipal";
+import {obligationCounterpartIds} from "../fixtureEligibility";
+import {hashPassword} from "../auth/passwords";
+import {randomBytes} from "node:crypto";
 const router:IRouter=Router();
 
 // No email, phone, bank documents, or identity papers in the review list.
@@ -15,7 +20,7 @@ router.get("/admin/role-change-requests",requireRole("admin"),async(_req,res)=>{
       reviewedAt:userRoleChangeRequestsTable.reviewedAt,
     }).from(userRoleChangeRequestsTable)
       .orderBy(desc(userRoleChangeRequestsTable.createdAt)).limit(50);
-    res.set("Cache-Control","no-store").json({requests,autoSwitchEnabled:false});
+    res.set("Cache-Control","no-store").json({requests,autoSwitchEnabled:false,ownerTestSwitchEnabled:ownerTestSwitchEnabled()});
   }catch{res.status(503).json({error:"role_change_review_unavailable"});}
 });
 const review=z.object({
@@ -28,7 +33,7 @@ router.post("/admin/role-change-requests/:requestId/review",
   try{
     const id=z.string().uuid().parse(req.params["requestId"]);
     const input=review.parse(req.body);
-    const result=await db.transaction(async tx=>{
+    const run=()=>db.transaction(async tx=>{
       const rows=await tx.execute(sql`
         SELECT r.id,r.user_id,r.from_role,r.to_role,r.status,u.role,u.status AS user_status
         FROM public.user_role_change_requests r
@@ -44,20 +49,77 @@ router.post("/admin/role-change-requests/:requestId/review",
       if(input.decision==="activate"){
         if(input.verificationConfirmed!==true||!input.note||input.note.length<12)
           return "verification_required" as const;
-        // Fail closed: do not reassign any existing trade obligation or referral.
-        // Historical ownership and commission attribution must not be rewritten.
+        // Block live obligations, not settled history. Never rewrite attribution.
+        // Terminal allowlists deliberately treat unknown/legacy states as active.
         const obligations=await tx.execute(sql`
           SELECT
-            EXISTS(SELECT 1 FROM public.deals WHERE buyer_user_id=${item.user_id} OR seller_user_id=${item.user_id}) AS has_deals,
-            EXISTS(SELECT 1 FROM public.referrals WHERE agent_user_id=${item.user_id} OR referred_user_id=${item.user_id}) AS has_referrals,
-            EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${item.user_id}) AS has_requests,
-            EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${item.user_id}) AS has_listings
+            EXISTS(SELECT 1 FROM public.deals d WHERE
+              (d.buyer_user_id=${item.user_id} OR d.seller_user_id=${item.user_id} OR d.agent_id=${item.user_id}
+               OR EXISTS(SELECT 1 FROM public.deal_participants p WHERE p.deal_id=d.id AND p.user_id=${item.user_id} AND p.status='active'))
+              AND d.status NOT IN ('completed','cancelled','rejected')) AS has_deals,
+            EXISTS(SELECT 1 FROM public.referrals WHERE
+              (agent_user_id=${item.user_id} OR referred_user_id=${item.user_id})
+              AND status NOT IN ('paid','cancelled')) AS has_referrals,
+            EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${item.user_id}
+              AND status NOT IN ('converted','cancelled','rejected')) AS has_requests,
+            EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${item.user_id}
+              AND status NOT IN ('sold','cancelled','rejected')) AS has_listings,
+            EXISTS(SELECT 1 FROM public.commissions c JOIN public.deals d ON d.id=c.deal_id
+              WHERE c.status NOT IN ('paid','cancelled') AND
+              (c.beneficiary_user_id=${item.user_id} OR c.agent_id=${item.user_id}
+               OR d.buyer_user_id=${item.user_id} OR d.seller_user_id=${item.user_id}
+               OR EXISTS(SELECT 1 FROM public.deal_participants p WHERE p.deal_id=d.id AND p.user_id=${item.user_id} AND p.status='active')))
+              AS has_unsettled_commissions
         `);
         const flags=obligations.rows[0] as Record<string,boolean>|undefined;
         if(!flags||Object.values(flags).some(Boolean))return "existing_obligations" as const;
-        // Update identity and revoke every browser session in the same transaction.
-        // WhatsApp conversation state must also be invalidated before enabling this path.
-        return "conversation_invalidation_pending" as const;
+        // Test-world accounts: classification is ID-stable, so the same full historic
+        // linkage gate as pre-enable applies on every switch - any opposite-world link
+        // (any status, including terminal rows, pool allocations, matches, meetings)
+        // blocks the role change even when no live obligation remains.
+        if(isTestWorldId(item.user_id)){
+          const counterparts=await obligationCounterpartIds(item.user_id,tx,{includeTerminal:true});
+          if(!sameWorldIds(item.user_id,...counterparts))return "existing_obligations" as const;
+        }
+        // Buyer and seller roles need a human-verified company. Agents need none, and an
+        // agent switching to buyer/seller has no company yet, so that stays blocked.
+        if(item.to_role==="buyer"||item.to_role==="seller"){
+          const company=await tx.execute(sql`
+            SELECT 1 FROM public.companies WHERE owner_user_id=${item.user_id} AND verification_status='verified' LIMIT 1
+          `);
+          if(!company.rows.length)return "company_verification_required" as const;
+        }
+        // Everything below is one transaction: role, sessions, WhatsApp state, request, audit, notice.
+        const moved=await tx.execute(sql`
+          UPDATE public.users SET role=${item.to_role},updated_at=now()
+          WHERE id=${item.user_id} AND role=${item.from_role} AND status='verified' RETURNING phone
+        `);
+        if(!moved.rows.length)return "account_changed" as const;
+        const phone=(moved.rows[0] as {phone:string|null}).phone;
+        await tx.execute(sql`UPDATE public.auth_sessions SET revoked_at=now() WHERE user_id=${item.user_id} AND revoked_at IS NULL`);
+        await tx.execute(sql`UPDATE public.whatsapp_signin_challenges SET status='expired' WHERE (link_user_id=${item.user_id} OR approved_user_id=${item.user_id}) AND status='pending'`);
+        if(phone){
+          // Role-bound WhatsApp state: half-finished intake and guided-chat steps are dropped,
+          // so the next message starts clean under the new role. Nothing historical is touched.
+          await tx.execute(sql`DELETE FROM public.whatsapp_intake_drafts WHERE phone=${phone}`);
+          await tx.execute(sql`DELETE FROM public.whatsapp_chat_sessions WHERE phone_hash=${guidedChatPhoneHash(phone)}`);
+        }
+        await tx.execute(sql`
+          UPDATE public.user_role_change_requests
+          SET status='activated',reviewer_user_id=${req.authUser!.id},review_note=${input.note??null},reviewed_at=now(),updated_at=now()
+          WHERE id=${id} AND status='pending'
+        `);
+        await tx.insert(auditLogsTable).values({
+          actorUserId:req.authUser!.id,action:"role_change_activated",entityType:"user",entityId:item.user_id,
+          metadata:{fromRole:item.from_role,toRole:item.to_role,requestId:id,sessionsRevoked:true,whatsappStateReset:true,
+            historyPreserved:true},
+        });
+        await tx.insert(notificationsTable).values({
+          userId:item.user_id,type:"role_change_review",title:"UDC role changed",
+          body:`Your UDC account is now a ${item.to_role} account. Please sign in again. Your earlier activity stays on record under your previous role.`,
+          link:"/profile",
+        });
+        return "activated" as const;
       }
       // Reviewed does not confer approval or access. Require a verified\n      // account and lock both request and identity to avoid stale review.\n      // Deliberately NOT an approval/role update: switching canonical
       // users.role could grant unrelated deal/referral access or erase role
@@ -84,6 +146,17 @@ router.post("/admin/role-change-requests/:requestId/review",
       });
       return "recorded" as const;
     },{isolationLevel:"serializable"});
+    // Concurrent reviews of one request conflict at SERIALIZABLE (40001). Retry, so the loser sees
+    // the committed outcome ("already_reviewed") instead of a 503.
+    let result:Awaited<ReturnType<typeof run>>|undefined;
+    for(let attempt=1;attempt<=4&&result===undefined;attempt++){
+      try{result=await run();}
+      catch(e){
+        const code=(e as {code?:string;cause?:{code?:string}})?.code??(e as {cause?:{code?:string}})?.cause?.code;
+        if(code!=="40001"||attempt===4)throw e;
+      }
+    }
+    if(result===undefined)throw new Error("role_review_no_result");
     if(result==="not_found"){res.status(404).json({error:"request_not_found"});return;}
     if(result!=="recorded"&&result!=="activated"){res.status(409).json({error:result});return;}
     res.set("Cache-Control","no-store").json({
@@ -93,5 +166,87 @@ router.post("/admin/role-change-requests/:requestId/review",
     if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
     res.status(503).json({error:"role_change_review_unavailable"});
   }
+});
+
+// OWNER TEST SETUP (staging only). Switches the role of the ONE hard-coded owner test account so the owner can
+// try buyer/seller/agent flows. It is not a verification: no company is created or marked verified, no
+// documents are checked, users.status is never changed here, and the audit row says so. Every other user is refused.
+const ownerTestSwitch=z.object({toRole:z.enum(["agent","buyer","seller"])}).strict();
+router.post("/admin/owner-test/switch-role",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    if(!ownerTestSwitchEnabled()){res.status(404).json({error:"not_available"});return;}
+    const input=ownerTestSwitch.parse(req.body);
+    const result=await db.transaction(async tx=>{
+      const rows=await tx.execute(sql`SELECT id,phone,email,role,status FROM public.users WHERE id=${OWNER_TEST_USER_ID} FOR UPDATE`);
+      const u=rows.rows[0] as {id:string;phone:string|null;email:string|null;role:string;status:string}|undefined;
+      if(!u||!isOwnerTestPrincipal(u))return "not_owner_test_account" as const;
+      if(u.role===input.toRole)return "already_that_role" as const;
+      const o=await tx.execute(sql`
+        SELECT
+          EXISTS(SELECT 1 FROM public.deals d WHERE (d.buyer_user_id=${u.id} OR d.seller_user_id=${u.id} OR d.agent_id=${u.id}) AND d.status NOT IN ('completed','cancelled','rejected')) AS has_deals,
+          EXISTS(SELECT 1 FROM public.deal_participants p JOIN public.deals d ON d.id=p.deal_id WHERE p.user_id=${u.id} AND p.status='active' AND d.status NOT IN ('completed','cancelled','rejected')) AS has_participations,
+          EXISTS(SELECT 1 FROM public.referrals WHERE (agent_user_id=${u.id} OR referred_user_id=${u.id}) AND status NOT IN ('paid','cancelled')) AS has_referrals,
+          EXISTS(SELECT 1 FROM public.commissions c WHERE c.beneficiary_user_id=${u.id} AND c.status NOT IN ('paid','cancelled')) AS has_commissions,
+          EXISTS(SELECT 1 FROM public.buyer_requests WHERE buyer_user_id=${u.id} AND status NOT IN ('converted','cancelled','rejected')) AS has_requests,
+          EXISTS(SELECT 1 FROM public.seller_listings WHERE seller_user_id=${u.id} AND status NOT IN ('sold','cancelled','rejected')) AS has_listings
+      `);
+      const f=o.rows[0] as Record<string,boolean>|undefined;
+      if(!f||Object.values(f).some(Boolean))return "existing_obligations" as const;
+      await tx.execute(sql`UPDATE public.users SET role=${input.toRole},updated_at=now() WHERE id=${u.id}`);
+      await tx.execute(sql`UPDATE public.auth_sessions SET revoked_at=now() WHERE user_id=${u.id} AND revoked_at IS NULL`);
+      await tx.execute(sql`UPDATE public.whatsapp_signin_challenges SET status='expired' WHERE (link_user_id=${u.id} OR approved_user_id=${u.id}) AND status='pending'`);
+      if(u.phone){
+        await tx.execute(sql`DELETE FROM public.whatsapp_intake_drafts WHERE phone=${u.phone}`);
+        await tx.execute(sql`DELETE FROM public.whatsapp_chat_sessions WHERE phone_hash=${guidedChatPhoneHash(u.phone)}`);
+      }
+      await tx.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"owner_test_role_switch",entityType:"user",entityId:u.id,
+        metadata:{synthetic:true,ownerTestAccount:true,fromRole:u.role,toRole:input.toRole,statusUnchanged:u.status,
+          companyVerificationPerformed:false,documentsChecked:false,note:"Owner test account role switch. This is not a verification."},
+      });
+      return "switched" as const;
+    },{isolationLevel:"serializable"});
+    if(result!=="switched"){res.status(409).json({error:result});return;}
+    res.set("Cache-Control","no-store").json({switched:true,verification:false,statusChanged:false});
+  }catch(e){
+    if(e instanceof z.ZodError){res.status(400).json({error:"validation_error"});return;}
+    res.status(503).json({error:"owner_test_switch_unavailable"});
+  }
+});
+// OWNER TEST FIXTURES (staging only, behind the same explicit switch). Provisions the documentless
+// synthetic counterparties the owner test account trades with: ordinary users rows with reserved
+// .invalid emails and a random unrecoverable password, marked verified with an audit row that says
+// it is NOT a real verification (no company, no documents). They only become test-world members
+// once their ids are added to UDC_TEST_FIXTURE_IDS; until then the evidence gate keeps them inert.
+const fixtureSpecs=[
+  {key:"buyer",email:`test-buyer${SYNTHETIC_EMAIL_SUFFIX}`,fullName:"UDC Test Fixture Buyer",role:"buyer"},
+  {key:"seller",email:`test-seller${SYNTHETIC_EMAIL_SUFFIX}`,fullName:"UDC Test Fixture Seller",role:"seller"},
+] as const;
+router.post("/admin/owner-test/fixtures",requireRole("admin"),async(req:AuthenticatedRequest,res)=>{
+  try{
+    if(!ownerTestSwitchEnabled()){res.status(404).json({error:"not_available"});return;}
+    const fixtures=[];
+    for(const spec of fixtureSpecs){
+      const [existing]=await db.select({id:usersTable.id,role:usersTable.role,status:usersTable.status}).from(usersTable).where(sql`lower(${usersTable.email})=${spec.email}`).limit(1);
+      if(existing){fixtures.push({key:spec.key,id:existing.id,email:spec.email,role:spec.role,created:false});continue;}
+      const passwordHash=await hashPassword(randomBytes(24).toString("hex"));
+      const [created]=await db.insert(usersTable).values({
+        fullName:spec.fullName,email:spec.email,passwordHash,passwordRecoveryEnabled:false,
+        role:spec.role,status:"verified",
+      }).returning({id:usersTable.id});
+      await db.insert(auditLogsTable).values({
+        actorUserId:req.authUser!.id,action:"owner_test_fixture_created",entityType:"user",entityId:created.id,
+        metadata:{synthetic:true,testAccount:true,role:spec.role,statusSetTo:"verified",
+          companyVerificationPerformed:false,documentsChecked:false,
+          note:"Synthetic owner-test fixture. This is not a real verification."},
+      });
+      fixtures.push({key:spec.key,id:created.id,email:spec.email,role:spec.role,created:true});
+    }
+    res.set("Cache-Control","no-store").json({
+      fixtures,
+      fixtureIds:fixtures.map((fixture)=>fixture.id),
+      note:"Add fixtureIds to UDC_TEST_FIXTURE_IDS in the staging environment to activate the isolated test world.",
+    });
+  }catch{res.status(503).json({error:"owner_test_fixtures_unavailable"});}
 });
 export default router;

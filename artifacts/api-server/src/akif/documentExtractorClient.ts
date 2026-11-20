@@ -1,3 +1,4 @@
+import {requirePrivateServiceUrl} from '../privacy/serviceUrl.ts';
 export type DocumentExtractionResult = {
   text: string;
   page_count?: number | null;
@@ -15,7 +16,7 @@ function config() {
   const rawUrl = process.env.UDC_DOCUMENT_EXTRACTOR_URL?.trim();
   const token = process.env.UDC_DOCUMENT_EXTRACTOR_TOKEN?.trim();
   if (!rawUrl || !token) throw new Error("document_extractor_not_configured");
-  return { baseUrl: rawUrl.replace(/\/$/, ""), token };
+  return { baseUrl: requirePrivateServiceUrl(rawUrl), token };
 }
 
 export async function extractDocumentBytes(input: {
@@ -51,7 +52,7 @@ export async function extractDocumentBytes(input: {
 
     try {
       const response = await fetch(`${baseUrl}/extract`, {
-        method: "POST",
+        method: "POST", redirect: "error",
         headers: { authorization: `Bearer ${token}` },
         body,
         signal: AbortSignal.timeout(60_000),

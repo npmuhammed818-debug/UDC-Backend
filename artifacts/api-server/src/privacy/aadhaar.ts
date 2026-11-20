@@ -10,12 +10,16 @@ function verhoeff(digits: string): boolean {
   return c === 0;
 }
 
+// UUID identifiers can end with twelve numeric hex characters. A checksum
+// coincidence inside that identifier is not a standalone identity number.
+const UUID = /(?<![a-z0-9])[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}(?![a-z0-9])/gi;
+const withoutUuids=(text:string)=>text.replace(UUID,'[record-id]');
 const NUMBER = /(?<!\d)([2-9]\d{3})[\s-]?(\d{4})[\s-]?(\d{4})(?!\d)/g;
 
 /** True when the text holds a 12-digit number that passes the Aadhaar (Verhoeff) check. */
 export function containsAadhaarNumber(text: string | null | undefined): boolean {
   if (typeof text !== "string") return false;
-  for (const m of text.matchAll(NUMBER)) if (verhoeff(`${m[1]}${m[2]}${m[3]}`)) return true;
+  for (const m of withoutUuids(text).matchAll(NUMBER)) if (verhoeff(`${m[1]}${m[2]}${m[3]}`)) return true;
   return false;
 }
 
@@ -25,8 +29,13 @@ export function mentionsAadhaarDocument(text: string | null | undefined): boolea
 
 /** Replace Aadhaar-valid numbers so they are never stored. */
 export function scrubAadhaar(text: string): string {
-  return text.replace(NUMBER, (all, a, b, c) => (verhoeff(`${a}${b}${c}`) ? "[aadhaar removed]" : all));
+  // Match complete record IDs first, so scrubbing agrees with detection.
+  const identifiersOrNumbers = new RegExp(`${UUID.source}|${NUMBER.source}`, "gi");
+  return text.replace(identifiersOrNumbers, (all, a, b, c) => (a && verhoeff(`${a}${b}${c}`) ? "[aadhaar removed]" : all));
 }
 
+// Country-neutral refusal: UDC never collects or stores national ID numbers
+// (Aadhaar or any other country's), and never redirects the sender to other
+// documents, menus, or uploads.
 export const AADHAAR_REFUSAL =
-  "UDC does not collect or store Aadhaar numbers or Aadhaar cards. Please don't send them. If we need to verify you, use another ID such as a passport, through a secure private upload link (send Menu, then Documents).";
+  "UDC never collects or stores national ID numbers or ID cards. Please don't send them - we can't accept them.";

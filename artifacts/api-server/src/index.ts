@@ -1,15 +1,23 @@
+import { pool } from "@workspace/db";
+import {startDealReminderRunner} from './whatsapp/dealReminders';
+import {startPriceWatchRunner} from './whatsapp/priceWatch';
+import {startProactiveRunner} from './akif/proactiveNudges.ts';
 import { startAutomaticMatching } from './marketplace/automaticMatching';
 import { startGuidedDraftCleanup } from './whatsapp/guidedChat';
 import { startChatFlowSetup } from './whatsapp/setupFlows';
 import { startAcceptanceProbe } from "./akif/acceptanceProbe";
+import { hydrateHumanRelay } from "./akif/humanRelay.ts";
+import { startEmailLiveInboundRunner } from "./channels/emailLiveInbound.ts";
 import app from "./app";
-import { getAkifWorkerCapabilities, isAkifWorkerConfigured } from "./akif/intelligence/workerClient";
+import { getAkifWorkerCapabilities, isAkifWorkerConfigured, startAkifWorkerKeepWarm } from "./akif/intelligence/workerClient";
 import { logger } from "./lib/logger";
 import { startAkifResearchQueueRunner } from "./akif/intelligence/researchQueueRunner";
 import { checkWhatsAppConnection, ensureWhatsAppWebhookSubscription } from "./whatsapp/client";
 import { replayDealStatusWhatsAppNotification, replayDealSummaryWhatsAppNotification, replayVerificationWhatsAppNotifications } from "./whatsapp/replayVerificationNotifications";
+import { startInboundWatchdog, restoreWatchdogFromRelay } from "./whatsapp/inboundWatchdog";
 import { startWhatsAppWebhookInboxRunner } from "./whatsapp/webhookInboxRunner";
 import { startEtaFollowupRunner } from "./tracking/etaFollowupRunner";
+import { startShipmentWatchRunner } from "./tracking/shipmentWatchRunner";
 import { startShipmentNotificationRunner } from "./notifications/shipmentRunner";
 
 const rawPort = process.env["PORT"];
@@ -26,7 +34,21 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+// Restore the held relay queue before accepting traffic: a deploy must not
+// drop customer messages still waiting on a human answer (10 Nov).
+let server: import("node:http").Server | undefined;
+// Graceful shutdown: a deploy swap must finish in-flight customer messages instead of killing them mid-reply
+// (a message was lost at the 6:54pm swap because SIGTERM killed the process immediately).
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received; draining in-flight requests");
+  const force = setTimeout(() => process.exit(0), 25_000);
+  force.unref();
+  server?.close(() => process.exit(0));
+  server?.closeIdleConnections?.();
+});
+void hydrateHumanRelay().catch(() => 0).then(() => {
+try { const restored = restoreWatchdogFromRelay(); if (restored) logger.warn({ restored }, "watchdog_restored_after_restart"); } catch { /* never block startup */ }
+server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -36,11 +58,20 @@ app.listen(port, (err) => {
   startChatFlowSetup(logger);
   startGuidedDraftCleanup();
   startAutomaticMatching(logger);
+  startPriceWatchRunner();
+  startProactiveRunner();
+  startDealReminderRunner();
   void startAcceptanceProbe();
   startAkifResearchQueueRunner();
   startWhatsAppWebhookInboxRunner();
+  startInboundWatchdog();
+  // Open several DB connections now so the first customer message after a restart does not pay TLS and pooler setup (503s seen right after deploys).
+  void Promise.allSettled(Array.from({ length: 5 }, () => pool.query("select 1"))).then(() => logger.info("db pool warmed"));
   startEtaFollowupRunner();
+  startShipmentWatchRunner();
   startShipmentNotificationRunner();
+  startAkifWorkerKeepWarm();
+  startEmailLiveInboundRunner();
   if (isAkifWorkerConfigured()) {
     void getAkifWorkerCapabilities().then((worker) => {
       const gateway = worker.capabilities.llm_gateway as { configured?: boolean; model?: string; missing_configuration?: string | null } | undefined;
@@ -48,7 +79,20 @@ app.listen(port, (err) => {
         model: gateway?.model ?? null, missingConfiguration: gateway?.missing_configuration ?? null,
         conversationEnabled: process.env.AKIF_WORKER_CONVERSATION_ENABLED === "true" },
         "AKIF worker connection check completed");
-    }).catch(() => logger.warn({ workerReachable: false }, "AKIF worker connection check failed"));
+    }).catch((error: unknown) => {
+      // Log only a bounded, sanitized failure category; never log headers, tokens, or response bodies.
+      const message = error instanceof Error ? error.message : "";
+      const httpStatus = /\bHTTP\s+(\d{3})\b/i.exec(message)?.[1];
+      const failure = httpStatus
+        ? `http_${httpStatus}`
+        : /abort|timeout/i.test(message)
+          ? "timeout"
+          : /fetch|network|connect|ENOTFOUND|ECONN/i.test(message)
+            ? "network_error"
+            : "other_error";
+      const errorType = error instanceof Error && ["TypeError", "SyntaxError", "AbortError", "TimeoutError", "Error"].includes(error.name) ? error.name : "UnknownError";
+      logger.warn({ workerReachable: false, failure, errorType }, "AKIF worker connection check failed");
+    });
   }
 
   void Promise.all([
@@ -81,4 +125,5 @@ app.listen(port, (err) => {
       logger.error({ subscription }, "WhatsApp WABA webhook subscription failed");
     }
   });
+});
 });

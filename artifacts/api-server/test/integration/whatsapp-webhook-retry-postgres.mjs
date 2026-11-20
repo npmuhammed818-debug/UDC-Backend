@@ -82,7 +82,7 @@ try {
       resolveDir: fileURLToPath(new URL('../../', import.meta.url)),
     },
     outfile: output, bundle: true, platform: 'node', format: 'esm',
-    external: ['pg-native'],
+    external: ['pg-native', '@resvg/resvg-js'],
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
     logLevel: 'silent',
     plugins: [{ name: 'fictional-email-provider', setup(b) {
@@ -96,7 +96,7 @@ try {
   server = module.default.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   localOrigin = `http://127.0.0.1:${server.address().port}`;
-  async function post(text, id = randomUUID(), from = phone) {
+  async function post(text, id = randomUUID(), from = phone, expectedStatus = 200) {
     const raw = JSON.stringify({ entry: [{ changes: [{ value: {
       contacts: [{ profile: { name: label } }],
       messages: [{ id, from, ...(typeof text==='string'?{text:{body:text}}:{interactive:text}) }],
@@ -107,7 +107,7 @@ try {
         'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`,
       }, body: raw,
     });
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, expectedStatus, await response.text());
   }
   const migration = await readFile(new URL('../../../../lib/db/migrations/20261025_whatsapp_inbound_dedup.sql', import.meta.url), 'utf8');
   await pool.query(migration);
@@ -147,11 +147,11 @@ try {
   const n2 = sent.length; await post('Hello', rid2); assert.equal(sent.length - n2, 1, 'a stale unfinished claim (crash) is answered on retry');
   const n3 = sent.length; await post('Hello', rid2); assert.equal(sent.length - n3, 0, 'and then not again');
   console.log('PASSED: durable dedup table: fingerprint-only rows, completed marking, crash-reclaim after 2 minutes, no repeat afterwards');
-  // Before the migration exists: fall back to the in-memory guard (behaviour never worse than before)
+  // Missing durable store must refuse processing so Meta can retry safely
   await pool.query('drop table whatsapp_inbound_dedup');
   const rid3 = randomUUID(); const n4 = sent.length;
-  await post('Hello', rid3); await post('Hello', rid3);
-  assert.equal(sent.length - n4, 1, 'table missing: in-memory fallback still answers once');
+  await post('Hello', rid3, phone, 503); await post('Hello', rid3, phone, 503);
+  assert.equal(sent.length - n4, 0, 'missing durable table must fail closed without a send');
   await pool.query(migration);
   const rid4 = randomUUID(); const n5 = sent.length;
   await post('Hello', rid4); await post('Hello', rid4);
@@ -161,7 +161,7 @@ try {
   await Promise.all([1, 2, 3, 4, 5].map(() => post('Hello', rid5)));
   assert.equal(sent.length - n6, 1, 'five simultaneous deliveries of one id (parallel instances) are answered once');
   console.log('PASSED: five simultaneous deliveries of one message id answered once (atomic database claim)');
-  console.log('PASSED: missing-table fallback works and the versioned migration creates a working table (synthetic DB only)');
+  console.log('PASSED: missing durable table fails closed and restored versioned migration works (synthetic DB only)');
   // Prompt-injection boundary: hostile text from a consented sender must not change roles, verification, or leak other accounts.
   await pool.query("insert into users(email,password_hash,role,status,full_name,phone) values('victim-secret@example.invalid','x','buyer','verified','Victim Secret Name','+919999900001')");
   await post('AGREE'); await post('Buyer');

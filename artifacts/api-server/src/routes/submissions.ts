@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { and, desc, eq } from "drizzle-orm";
 import { buyerRequestsTable, db, matchesTable, sellerListingsTable } from "@workspace/db";
 import { requireAuth } from "../auth/middleware";
+import { sameWorldIds } from "../testPrincipal.ts";
 
 const router: IRouter = Router();
 
@@ -49,6 +50,7 @@ router.get("/buyer-matching-offers", requireAuth, async (req, res) => {
         destination: sellerListingsTable.destination,
         specification: sellerListingsTable.specification,
         availability: sellerListingsTable.availability,
+        counterpartyUserId: sellerListingsTable.sellerUserId,
       })
       .from(matchesTable)
       .innerJoin(buyerRequestsTable, eq(matchesTable.buyerRequestId, buyerRequestsTable.id))
@@ -60,7 +62,11 @@ router.get("/buyer-matching-offers", requireAuth, async (req, res) => {
       ))
       .orderBy(desc(matchesTable.createdAt));
 
-    res.json({ offers });
+    // Test-world boundary on reads: a viewer never sees a match row whose other side
+    // belongs to the opposite world, regardless of when the row was created.
+    res.json({ offers: offers
+      .filter((o) => sameWorldIds(req.authUser!.id, o.counterpartyUserId))
+      .map(({ counterpartyUserId: _drop, ...o }) => o) });
   } catch {
     res.status(500).json({ error: "buyer_matching_offers_fetch_failed" });
   }
@@ -81,6 +87,7 @@ router.get("/seller-matching-inquiries", requireAuth, async (req, res) => {
         preferredIncoterm: buyerRequestsTable.preferredIncoterm,
         specification: buyerRequestsTable.specification,
         contractDuration: buyerRequestsTable.contractDuration,
+        counterpartyUserId: buyerRequestsTable.buyerUserId,
       })
       .from(matchesTable)
       .innerJoin(sellerListingsTable, eq(matchesTable.sellerListingId, sellerListingsTable.id))
@@ -92,7 +99,9 @@ router.get("/seller-matching-inquiries", requireAuth, async (req, res) => {
       ))
       .orderBy(desc(matchesTable.createdAt));
 
-    res.json({ inquiries });
+    res.json({ inquiries: inquiries
+      .filter((i) => sameWorldIds(req.authUser!.id, i.counterpartyUserId))
+      .map(({ counterpartyUserId: _drop, ...i }) => i) });
   } catch {
     res.status(500).json({ error: "seller_matching_inquiries_fetch_failed" });
   }

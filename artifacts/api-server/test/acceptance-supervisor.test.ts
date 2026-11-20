@@ -14,7 +14,7 @@ test('acceptance supervisor claims each run once and isolates child credentials'
   (globalThis as any).__acceptanceSupervisor=state;
   const output=fileURLToPath(new URL(`./acceptance-supervisor-${randomUUID()}.mjs`,import.meta.url));
   const bundled=await build({entryPoints:[fileURLToPath(new URL('../src/akif/acceptanceProbe.ts',import.meta.url))],bundle:true,platform:'node',format:'esm',packages:'external',write:false,plugins:[{name:'isolated-supervisor',setup(b){
-    const fixtures:any={db:'export const db=globalThis.__acceptanceSupervisor.db;export const auditLogsTable={id:1,action:2,metadata:3};',orm:'export const and=()=>true;export const eq=()=>true;export const sql=()=>true;',child:'export const spawn=globalThis.__acceptanceSupervisor.spawn;',logger:'export const logger=globalThis.__acceptanceSupervisor.logger;'};
+    const fixtures:any={db:'export const dbTransaction=(run)=>db?.transaction?db.transaction(run):run(db);export const dbWrite=(run)=>run(db);export const db=globalThis.__acceptanceSupervisor.db;export const auditLogsTable={id:1,action:2,metadata:3};',orm:'export const and=()=>true;export const eq=()=>true;export const sql=()=>true;',child:'export const spawn=globalThis.__acceptanceSupervisor.spawn;',logger:'export const logger=globalThis.__acceptanceSupervisor.logger;'};
     for(const [filter,path] of [[/^@workspace\/db$/,'db'],[/^drizzle-orm$/,'orm'],[/^node:child_process$/,'child'],[/\/lib\/logger$/,'logger']] as const)b.onResolve({filter},()=>({path,namespace:'fixture'}));
     b.onLoad({filter:/.*/,namespace:'fixture'},args=>({contents:fixtures[args.path]}));
   }}]});

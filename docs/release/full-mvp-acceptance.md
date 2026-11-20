@@ -1,5 +1,17 @@
 # Full MVP acceptance evidence
 
+## Current scoped update: November 2, 2026
+
+Reviewed baseline: `203e588b80b95be7fc700064af30127a007c3fa4`. The historical evidence below is retained, not rerun or relabeled as current. This supplement covers the role-switch/CI patch prepared from that baseline; its final commit is recorded by Git history, not a self-referential hash.
+
+- Canonical role activation **is implemented**: admin evidence and target-company checks, serializable transaction, audit, session revocation and WhatsApp-state reset. Review alone does not activate.
+- Owner-approved role patch blocks nonterminal deals (including assigned agents), requests, listings, pending/qualified referrals and unsettled commissions. Settled rows and attribution are preserved; unknown states fail closed. The owner approved this active-only rule on November 2; production release remains a separate gate.
+- Current main CI was not green: the outbox step referenced a missing `.test.mjs`; the existing `.test.ts` passes with Node type stripping. This patch adds the compatible `.mjs` entry point, which launches the canonical TypeScript test with type stripping and propagates failure. A local pass is not a green hosted workflow.
+- Both hosted DB status constraints were inspected in read-only transactions on November 2: both allow `activated`. The migration file's DRAFT/UNAPPLIED comment is not accurate evidence of hosted state. No hosted SQL was changed for this patch.
+- Scoped local checks: 618 API tests and API typecheck passed; 26 disposable PostgreSQL lifecycle scenarios tested active-obligation denials and settled-history preservation. Provider boundaries were simulated; no real messages, payment or hosted writes.
+
+## Historical full acceptance run (October 25, 2026)
+
 Local checks: **PASS**. Full MVP acceptance and staging activation: **not approved**.
 
 Commit at run: `2ad7aa7a359adfd4b64d3a3527e673eda15f3170`; source digest: `918d24da06f980c1b360d9c22c5ddf3b332711f7e49b84c2ecc174bbddb874c1`. Fresh artifacts are in this report directory.
@@ -32,7 +44,7 @@ Commit at run: `2ad7aa7a359adfd4b64d3a3527e673eda15f3170`; source digest: `918d2
 | Generated API contracts, builds and dependency advisories | PASS | NOT YET VERIFIED | codegen, generated-contracts, release, dependency-audit | Audit and current code checks; no guarantee against unknown vulnerabilities |
 | Exact migration compatibility, restricted grants/RLS and lock rollback | PASS | NOT YET VERIFIED | email-migrations, shipment-migrations, pg:whatsapp-webhook-retry | Disposable PostgreSQL roles only; not hosted project permissions |
 | Selected new-table database backup/restore including vault and dedup | PASS | NOT YET VERIFIED | restore | Real pinned pg_dump/pg_restore for 14 selected tables; excludes hosted Storage and full Supabase project restore |
-| Actual canonical role activation / multi-role transition | NOT YET VERIFIED | NOT YET VERIFIED | External/human gate | Not implemented by the reviewed request-only design; requires owner-approved access/identity transition policy |
+| Actual canonical role activation / multi-role transition | Historical: NOT YET VERIFIED | NOT YET VERIFIED | See current scoped update above | Activation was not implemented at the October 25 run; the November 2 baseline now implements guarded single-role activation, not simultaneous multi-role accounts |
 | Live WhatsApp onboarding, natural multilingual guidance and complete human UAT | NOT YET VERIFIED | NOT YET VERIFIED | External/human gate | Requires approved staging number, real provider and authorized participants |
 | Real OTP inbox delivery, domain/provider readiness | NOT YET VERIFIED | NOT YET VERIFIED | External/human gate | Requires verified sender/domain and separately approved test mail |
 | Hosted private Storage signed access, expiry and physical deletion | NOT YET VERIFIED | NOT YET VERIFIED | External/human gate | Requires approved test project/credentials; local fake storage is insufficient |

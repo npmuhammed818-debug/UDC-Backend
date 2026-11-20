@@ -1,0 +1,19 @@
+commit d2776056f0d637c643e0e5665e08c5f97986ae24
+Author: UDC dev <dev@updowncircle.site>
+Date:   Mon Oct 26 03:29:58 2026 +0530
+
+    AKIF: Gemini->Groq failover with data-gate, provider-agnostic TTS with ElevenLabs (fakes only)
+
+diff --git a/.github/workflows/akif-stack.yml b/.github/workflows/akif-stack.yml
+index 27e2f81..9dfb324 100644
+--- a/.github/workflows/akif-stack.yml
++++ b/.github/workflows/akif-stack.yml
+@@ -41,7 +41,7 @@ jobs:
+           python-version: "3.12"
+       - run: python -m compileall -q services/akif-worker/app services/akif-worker/tests
+       - run: pip install 'pytest>=8,<9' 'fastapi>=0.115,<1' 'pydantic>=2.11,<3'
+-      - run: PYTHONPATH=services/akif-worker python -m pytest services/akif-worker/tests/test_reasoning.py services/akif-worker/tests/test_media.py services/akif-worker/tests/test_chat.py services/akif-worker/tests/test_llm_gateway.py -q
++      - run: PYTHONPATH=services/akif-worker python -m pytest services/akif-worker/tests/test_reasoning.py services/akif-worker/tests/test_media.py services/akif-worker/tests/test_chat.py services/akif-worker/tests/test_llm_gateway.py services/akif-worker/tests/test_speech.py -q
+ 
+ 
+   hermes-compose:

@@ -35,7 +35,7 @@ try {
       resolveDir: fileURLToPath(new URL("../../", import.meta.url)),
     },
     outfile: directory + "/app.mjs",
-    bundle: true, platform: "node", format: "esm", external: ["pg-native"], logLevel: "silent",
+    bundle: true, platform: "node", format: "esm", external: ["pg-native", "@resvg/resvg-js"], logLevel: "silent",
     banner: { js: "import {createRequire} from 'node:module';const require=createRequire(import.meta.url);" },
   });
   const app = await import(directory + "/app.mjs");
