@@ -67,8 +67,15 @@ export async function completeInboundMessages(ids: unknown[]) {
   if (!hashes.length) return;
   // Completion also clears any diagnostic failure marker (staging flag UDC_WHATSAPP_DIAG_RECEIPTS):
   // a redelivery that now finishes means the earlier stop did not lose the message.
-  try { await db.update(whatsappInboundDedupTable).set({ completedAt: new Date(), failedAt: null, failedStage: null, errorClass: null }).where(inArray(whatsappInboundDedupTable.idHash, hashes)); }
-  catch { /* table missing or database unavailable: the stale-claim rule still protects retries */ }
+  // dbWrite: completion must survive a poisoned read-only pooled session the same
+  // way the claim does - a silently failed completion left permanent
+  // "uncompleted claim" rows behind 200 acks (20 Nov reproduction).
+  try { await dbWrite((wdb) => wdb.update(whatsappInboundDedupTable).set({ completedAt: new Date(), failedAt: null, failedStage: null, errorClass: null }).where(inArray(whatsappInboundDedupTable.idHash, hashes))); }
+  catch (error) {
+    // A full outage still cannot be allowed to break the ack; log the bounded class only.
+    const code = (error as { code?: unknown; cause?: { code?: unknown } } | undefined)?.code ?? (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+    logger.warn({ flow: "whatsapp_inbound", reason: "completion_write_failed", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, count: hashes.length }, "Inbound claim completion could not be persisted");
+  }
 }
 
 // Release claims whose reply could not be delivered, so a Meta redelivery is processed again instead of being
@@ -76,8 +83,12 @@ export async function completeInboundMessages(ids: unknown[]) {
 export async function releaseInboundMessages(ids: unknown[]) {
   const hashes = ids.filter((x): x is string => typeof x === "string" && x.length >= 6 && x.length <= 200).map(fingerprintProviderMessage);
   if (!hashes.length) return;
-  try { await db.delete(whatsappInboundDedupTable).where(and(inArray(whatsappInboundDedupTable.idHash, hashes), isNull(whatsappInboundDedupTable.completedAt))); }
-  catch { /* An unfinished durable claim becomes retryable after the stale-claim window. */ }
+  // dbWrite: same poisoning survival as the claim/completion path (20 Nov repair).
+  try { await dbWrite((wdb) => wdb.delete(whatsappInboundDedupTable).where(and(inArray(whatsappInboundDedupTable.idHash, hashes), isNull(whatsappInboundDedupTable.completedAt)))); }
+  catch (error) {
+    const code = (error as { code?: unknown; cause?: { code?: unknown } } | undefined)?.code ?? (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+    logger.warn({ flow: "whatsapp_inbound", reason: "release_write_failed", sqlState: typeof code === "string" ? code.slice(0, 10) : undefined, count: hashes.length }, "Inbound claim release could not be persisted; the stale-claim window still protects retries");
+  }
 }
 
 /** True when this message has a fresh claim that nobody completed: a first delivery may still be running, or its process died.

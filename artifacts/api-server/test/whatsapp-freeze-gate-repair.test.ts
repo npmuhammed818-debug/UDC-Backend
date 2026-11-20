@@ -11,7 +11,7 @@ import { build } from "esbuild";
 // All identities, models, media, storage and provider calls are isolated fixtures.
 test("WhatsApp webhook intake and private media acceptance", async (t) => {
   const names = ["buyerPoolAllocationsTable","buyerPoolsTable","matchesTable","referralsTable","commissionsTable","notificationPreferencesTable","sellerListingsTable","companyVerificationDocumentsTable","messagesTable","notificationsTable", "auditLogsTable", "productsTable", "dealConversationEventsTable", "dealParticipantsTable", "dealsTable",
-    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "buyerRequestsTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable", "dealFinancialsTable", "whatsappInboundDedupTable", "whatsappWebhookReceiptsTable"];
+    "documentAccessTable", "documentExtractionsTable", "documentsTable", "usersTable", "buyerRequestsTable", "whatsappMessageContextsTable", "whatsappUserContextsTable", "companiesTable", "akifSharedLessonsTable", "dealMeetingsTable", "dealFinancialsTable", "whatsappInboundDedupTable", "whatsappWebhookReceiptsTable", "whatsappChatSessionsTable"];
   const tables: any = Object.fromEntries(names.map(name => [name, new Proxy({ _tableName: name }, {
     get(target, key) { return key === "_tableName" ? target._tableName : { kind: "column", table: name, key }; },
   })]));
@@ -20,6 +20,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     if (node?.kind === "column") return row[node.table]?.[node.key];
     if (node?.kind === "eq") return evaluate(node.a, row) === evaluate(node.b, row);
     if (node?.kind === "ne") return evaluate(node.a, row) !== evaluate(node.b, row);
+    if (node?.kind === "isNull") return evaluate(node.a, row) == null;
     if (node?.kind === "and") return node.args.every((n: any) => evaluate(n, row));
     if (node?.kind === "or") return node.args.some((n: any) => evaluate(n, row));
     if (node?.kind === "in" && Array.isArray(node.query)) return node.query.includes(evaluate(node.a, row));
@@ -44,10 +45,12 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     };
     return q;
   }
-  function insert(table: any, poisonAware = true) {
+  function insert(table: any, lane = 'raw') {
     let input: any, ignoreConflict = false, inserted: any[] | undefined;
     const run = () => {
-      if (poisonAware && state.poison) throw Object.assign(new Error('fixture read-only transaction'), { code: '25006' });
+      if ((lane === 'raw' && (state.poison || state.poisonAll)) || (lane === 'clean' && state.poisonAll)) throw Object.assign(new Error('fixture read-only transaction'), { code: '25006' });
+      if (lane === 'clean' && table._tableName === 'whatsappInboundDedupTable' && state.poisonAllAfterClaim) state.poisonAll = true; // outage begins right after the durable claim lands
+      if (table._tableName === 'whatsappInboundDedupTable' && rows.whatsappInboundDedupTable.some(r => r.idHash === input.idHash)) return inserted = [];  // existing claim (fresh or completed): not reclaimed in this harness
       if (inserted) return inserted;
       if (ignoreConflict && rows[table._tableName].some(r => r.providerMessageId === input.providerMessageId && input.providerMessageId)) return inserted = [];
       const records = (Array.isArray(input) ? input : [input]).map(item => ({ id: randomUUID(),createdAt:new Date(), ...item }));
@@ -60,9 +63,9 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       then(resolve: any, reject: any) { return Promise.resolve().then(run).then(resolve, reject); } };
     return q;
   }
-  function update(table:any,poisonAware=true){let input:any,condition:any;const run=()=>{if(poisonAware&&state.poison)throw Object.assign(new Error('fixture read-only transaction'),{code:'25006'});const values=rows[table._tableName].filter(r=>evaluate(condition,{[table._tableName]:r}));values.forEach(r=>Object.assign(r,input));return values;};const q:any={set(v:any){input=v;return q;},where(v:any){condition=v;return q;},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};return q;}
-  const del = (table:any,poisonAware=true)=>({ where: async (c:any) => { if(poisonAware&&state.poison)throw Object.assign(new Error('fixture read-only transaction'),{code:'25006'}); return []; } });
-  const state: any = { tables, db: { select, insert,update, delete: del }, cleanDb: { select, insert:(t:any)=>insert(t,false), update:(t:any)=>update(t,false), delete:(t:any)=>del(t,false) }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
+  function update(table:any,lane='raw'){let input:any,condition:any;const run=()=>{if((lane==='raw'&&(state.poison||state.poisonAll))||(lane==='clean'&&state.poisonAll))throw Object.assign(new Error('fixture read-only transaction'),{code:'25006'});const values=rows[table._tableName].filter(r=>evaluate(condition,{[table._tableName]:r}));values.forEach(r=>Object.assign(r,input));return values;};const q:any={set(v:any){input=v;return q;},where(v:any){condition=v;return q;},returning:async()=>run(),then:(resolve:any,reject:any)=>Promise.resolve().then(run).then(resolve,reject)};return q;}
+  const del = (table:any,lane='raw')=>({ where: async (c:any) => { if((lane==='raw'&&(state.poison||state.poisonAll))||(lane==='clean'&&state.poisonAll))throw Object.assign(new Error('fixture read-only transaction'),{code:'25006'}); return []; } });
+  const state: any = { tables, db: { select, insert, update, delete: del }, cleanDb: { select, insert:(t:any)=>insert(t,'clean'), update:(t:any)=>update(t,'clean'), delete:(t:any)=>del(t,'clean') }, sent: [], signed: [], uploaded: [], intake: [], recorded: [],
     privacyReply: null, saved: null, decision: null, dealDecision: null, dealCalls: 0,
     send: async (to: string, body: any) => { state.sent.push({ to, body }); return { delivered: true, messageId: randomUUID() }; },
     sign: async (path: string) => { state.signed.push(path); return `https://signed.example/${path}`; },
@@ -100,6 +103,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
     "../privacy/whatsappPrivacyGate": "export const whatsappPrivacyGate=async()=>s.privacyReply;",
     "../vault/service": "export const createVaultUploadLink=async()=>({ok:false,error:'vault_base_url_not_configured'});export const acceptUpload=async()=>({ok:false,error:'invalid'});export const listOwnDocumentStatuses=async()=>[];export const lookupLink=async()=>({row:null,check:{ok:false,reason:'invalid'}});export const requestDocumentDeletion=async()=>({ok:false,error:'not_found'});export const logVaultAccess=async()=>{};",
   };
+  fixtures["../whatsapp/client@gate"] = "export const sendWhatsAppText=async(to,body)=>{(s.gateSends=s.gateSends||[]).push(to);if(s.poisonAfterGateSend){s.poisonAll=true;}return {delivered:true,messageId:'gate-1'};};";
   const output = fileURLToPath(new URL(`./webhook-${randomUUID()}.mjs`, import.meta.url));
   const bundle = await build({
     stdin: { contents: 'import express from "express";import router from "../src/routes/whatsappWebhook.ts";const app=express();app.use(express.json({verify:(req,res,buf)=>{req.rawBody=buf;}}));app.use((req,res,next)=>{req.log={info(){},warn(){},error(){}};next();});app.use(router);export default app;export {buildHumanRelayDraftWithRetry} from "../src/routes/whatsappWebhook.ts";', resolveDir: fileURLToPath(new URL(".", import.meta.url)), loader: "ts" },
@@ -111,6 +115,7 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
         if (args.importer.endsWith("/whatsapp/voiceSend.ts") && args.path === "./client") return { path: "../whatsapp/client", namespace: "fixture" };
         if (args.path === "./voicePreference" && args.importer.endsWith("/whatsapp/voiceSend.ts")) return { path: "../whatsapp/voicePreference", namespace: "fixture" };
         if (args.path === "drizzle-orm") return { path: "orm", namespace: "fixture" };
+        if (args.importer.endsWith("/whatsapp/inviteGate.ts") && args.path === "./client") return { path: "../whatsapp/client@gate", namespace: "fixture" };
         if (args.importer.endsWith("/routes/whatsappWebhook.ts") && fixtures[args.path]) return { path: args.path, namespace: "fixture" };
       });
       b.onLoad({ filter: /.*/, namespace: "fixture" }, args => ({ loader: "js", contents:
@@ -151,47 +156,83 @@ test("WhatsApp webhook intake and private media acceptance", async (t) => {
       return fetch(base + "/webhooks/whatsapp", { method: "POST", headers: { "content-type": "application/json",
         "x-hub-signature-256": signature ? "sha256=" + createHmac("sha256", "fixture-secret").update(body).digest("hex") : "sha256=invalid" }, body });
     }
-    await t.test('25006 reproduction: gated customer message acks 200 while claim + holding reply are silently lost', async (t) => {
-      reset();
-      const priorFlag = process.env.UDC_WHATSAPP_DIAG_RECEIPTS;
-      const priorInvite = process.env.UDC_INVITE_ONLY;
-      const priorAllowed = process.env.UDC_ALLOWED_PHONES;
+    const diagEnv = (t) => {
+      const saved = {};
+      for (const k of ['UDC_WHATSAPP_DIAG_RECEIPTS','UDC_INVITE_ONLY','UDC_ALLOWED_PHONES','UDC_MUTED_PHONES']) { saved[k] = process.env[k]; }
       process.env.UDC_WHATSAPP_DIAG_RECEIPTS = '1';
       process.env.UDC_INVITE_ONLY = 'on';
       process.env.UDC_ALLOWED_PHONES = '917994133604';
-      t.after(() => {
-        if (priorFlag === undefined) delete process.env.UDC_WHATSAPP_DIAG_RECEIPTS; else process.env.UDC_WHATSAPP_DIAG_RECEIPTS = priorFlag;
-        if (priorInvite === undefined) delete process.env.UDC_INVITE_ONLY; else process.env.UDC_INVITE_ONLY = priorInvite;
-        if (priorAllowed === undefined) delete process.env.UDC_ALLOWED_PHONES; else process.env.UDC_ALLOWED_PHONES = priorAllowed;
-      });
-      const msgId = 'wamid.synthetic.freeze.' + randomUUID();
-      const body = JSON.stringify({ entry: [{ changes: [{ value: { metadata: { phone_number_id: 'qa-sender-number' }, messages: [{ id: msgId, from: '10000000099', type: 'text', text: { body: 'hello, is this open?' } }] } }] }] });
-      const post = () => fetch(base + '/webhooks/whatsapp', { method: 'POST', headers: { 'content-type': 'application/json',
+      process.env.UDC_MUTED_PHONES = '10000000098';
+      t.after(() => { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+    };
+    const postText = (id, from) => {
+      const body = JSON.stringify({ entry: [{ changes: [{ value: { metadata: { phone_number_id: 'qa-sender-number' }, messages: [{ id, from, type: 'text', text: { body: 'hello, is this open?' } }] } }] }] });
+      return fetch(base + '/webhooks/whatsapp', { method: 'POST', headers: { 'content-type': 'application/json',
         'x-hub-signature-256': 'sha256=' + createHmac('sha256', 'fixture-secret').update(body).digest('hex') }, body });
+    };
+    const settle = () => new Promise(r => setTimeout(r, 100));
 
-      // Poisoned pool: raw-db writes throw 25006; dbWrite-wrapped paths land on the clean session.
-      state.poison = true;
-      const r1 = await post();
-      assert.equal(r1.status, 200, 'handler still acks 200 under 25006 (no Meta redelivery follows)');
-      await new Promise(r => setTimeout(r, 100));
-      assert.equal(state.sent.length, 0, 'first-contact holding reply is silently skipped when the gate mark fails');
-      const claims = rows.whatsappInboundDedupTable;
-      assert.equal(claims.length, 1, 'claim was written via dbWrite (clean session)');
-      assert.equal(claims[0].completedAt ?? null, null, 'completion write silently failed: permanent uncompleted claim');
-      const receipts = rows.whatsappWebhookReceiptsTable;
-      assert.equal(receipts.length, 1);
-      assert.equal(receipts[0].handlerOutcome, '200', 'receipt shows a clean 200 - indistinguishable from success before the diagnostic');
-      assert.equal(receipts[0].payloadClass, 'messages');
-
-      // Recovery: poison cleared, a redelivery would now complete - but Meta never redelivers after a 200.
+    await t.test('repair: partial 25006 poisoning - holding reply sent once, claim completed, repeat contact stays silent', async (t) => {
+      reset(); diagEnv(t); state.gateSends = [];
+      state.poison = true; // raw-db writes fail; dbWrite lands on the clean session
+      const id1 = 'wamid.repair.a1.' + randomUUID();
+      assert.equal((await postText(id1, '10000000099')).status, 200);
+      await settle();
+      assert.deepEqual(state.gateSends, ['10000000099'], 'holding reply survives poisoning via dbWrite mark');
+      assert.equal(rows.whatsappInboundDedupTable.length, 1);
+      assert.notEqual(rows.whatsappInboundDedupTable[0].completedAt ?? null, null, 'completion survives poisoning via dbWrite');
+      assert.equal(rows.whatsappWebhookReceiptsTable.length, 1);
+      // Once-only: a repeat message from the same number gets freeze silence, no second holding reply.
       state.poison = false;
-      const r2 = await post();
-      assert.equal(r2.status, 200);
-      await new Promise(r => setTimeout(r, 100));
-      // (The gate's holding-reply send uses the real WhatsApp client here, so the
-      // send itself is not observable in this harness; the gate source shows
-      // first=true -> d.send once the mark succeeds.)
-      assert.notEqual(rows.whatsappInboundDedupTable[0].completedAt ?? null, null, 'redelivery completes the claim');
+      assert.equal((await postText('wamid.repair.a2.' + randomUUID(), '10000000099')).status, 200);
+      await settle();
+      assert.equal(state.gateSends.length, 1, 'once-only holding policy preserved');
+      // Duplicate redelivery of the completed message: no resend, no new claim.
+      assert.equal((await postText(id1, '10000000099')).status, 200);
+      await settle();
+      assert.equal(state.gateSends.length, 1, 'no duplicate send after completed redelivery');
+      assert.equal(rows.whatsappInboundDedupTable.length, 2, 'second real message claimed; duplicate was not reclaimed');
+    });
+
+    await t.test('repair: outage after claim - mark-before-send failure stays silent, once-only preserved on recovery', async (t) => {
+      reset(); diagEnv(t); state.gateSends = []; state.poison = false; state.poisonAll = false; state.poisonAfterGateSend = false;
+      // A static full outage fails at the claim itself (503, Meta retries later). The
+      // silent-loss window is an outage that begins mid-processing, after the claim.
+      state.poisonAllAfterClaim = true;
+      assert.equal((await postText('wamid.repair.b1.' + randomUUID(), '10000000097')).status, 200, 'ack path still protected');
+      await settle();
+      assert.equal(state.gateSends.length, 0, 'no send when the mark cannot land (send is anchored to the mark)');
+      assert.equal(rows.whatsappInboundDedupTable.length, 1, 'claim written before the outage... ');
+      assert.equal(rows.whatsappInboundDedupTable[0].completedAt ?? null, null, '...but completion could not persist either (residual invisible loss, logged)');
+      // Recovery: the NEXT message from the same number is treated as first contact again - exactly once overall.
+      state.poisonAll = false; state.poisonAllAfterClaim = false;
+      assert.equal((await postText('wamid.repair.b2.' + randomUUID(), '10000000097')).status, 200);
+      await settle();
+      assert.deepEqual(state.gateSends, ['10000000097'], 'holding reply sent exactly once across the outage');
+    });
+
+    await t.test('repair: send-success/completion-failure - redelivery never resends (gate mark anchors once-only)', async (t) => {
+      reset(); diagEnv(t); state.gateSends = []; state.poison = false; state.poisonAll = false; state.poisonAllAfterClaim = false;
+      state.poisonAfterGateSend = true; // send succeeds, then every dbWrite (completion) fails 25006
+      const id = 'wamid.repair.c1.' + randomUUID();
+      assert.equal((await postText(id, '10000000096')).status, 200);
+      await settle();
+      assert.deepEqual(state.gateSends, ['10000000096'], 'holding reply went out');
+      assert.equal(rows.whatsappInboundDedupTable[0].completedAt ?? null, null, 'completion failed behind the successful send');
+      state.poisonAfterGateSend = false; state.poisonAll = false;
+      const r2 = await postText(id, '10000000096'); // Meta-style redelivery of the same id
+      await settle();
+      assert.equal(r2.status, 503, 'unfinished fresh claim asks Meta to retry later instead of reprocessing');
+      assert.equal(state.gateSends.length, 1, 'no duplicate holding reply on redelivery');
+    });
+
+    await t.test('repair: muted number gets silence, no send, claim completed', async (t) => {
+      reset(); diagEnv(t); state.gateSends = []; state.poison = false; state.poisonAll = false; state.poisonAllAfterClaim = false; state.poisonAfterGateSend = false;
+      assert.equal((await postText('wamid.repair.d1.' + randomUUID(), '10000000098')).status, 200);
+      await settle();
+      assert.equal(state.gateSends.length, 0, 'muted numbers never get the holding reply');
+      assert.equal(rows.whatsappInboundDedupTable.length, 1);
+      assert.notEqual(rows.whatsappInboundDedupTable[0].completedAt ?? null, null, 'muted message completes cleanly');
     });
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));

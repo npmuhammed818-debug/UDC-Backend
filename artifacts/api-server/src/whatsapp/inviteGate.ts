@@ -17,7 +17,11 @@ async function defaultDeps(): Promise<GateDeps> {
   const db = dbm.db; const sessions = dbm.whatsappChatSessionsTable;
   return {
     seen: async (key) => { const [row] = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.phoneHash, key)).limit(1); return Boolean(row); },
-    mark: async (key) => { await db.insert(sessions).values({ phoneHash: key, purpose: "invite_hold", step: 0, data: {} as never, lastMessageId: null, expiresAt: new Date(Date.now() + 365 * 86400_000), updatedAt: new Date() }).onConflictDoNothing(); },
+    // dbWrite: the mark must survive a poisoned read-only pooled session. A raw
+    // insert here failed silently under 25006 and the one-time holding reply was
+    // lost behind a 200 ack (20 Nov reproduction). Once-only is still anchored
+    // by this row: the send happens only when the mark lands first.
+    mark: async (key) => { await dbm.dbWrite((wdb: typeof db) => wdb.insert(sessions).values({ phoneHash: key, purpose: "invite_hold", step: 0, data: {} as never, lastMessageId: null, expiresAt: new Date(Date.now() + 365 * 86400_000), updatedAt: new Date() }).onConflictDoNothing()); },
     send: sendWhatsAppText,
   };
 }
