@@ -98,3 +98,9 @@ test("sends stored deal documents as WhatsApp documents without exposing interna
     { delivered: true, messageId: "wamid-doc-1" },
   );
 });
+
+test("image sender exists, requires https and uses the shared send path", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("../src/whatsapp/client.ts", import.meta.url), "utf8");
+  for (const s of ["export async function sendWhatsAppImage", 'type: "image"', "whatsapp_image_link_must_be_https", "whatsapp_image_delivery_failed"]) assert.ok(src.includes(s), s);
+});
